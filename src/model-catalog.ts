@@ -7,6 +7,11 @@ import {
   resolveChatGptWebContextLimits,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
+import {
+  availableM365ModelRoutes,
+  M365_COPILOT_MODEL_PREFIX,
+  type M365ModelRoute,
+} from "./m365-models";
 
 type JsonObject = Record<string, unknown>;
 
@@ -60,7 +65,7 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const model = value as JsonObject;
   const modelSlug = slug(model);
-  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) return false;
+  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX)) return false;
   // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
   // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
   // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
@@ -161,6 +166,39 @@ export function buildChatGptWebModel(
   return model;
 }
 
+export function buildM365Model(
+  templateValue: unknown,
+  route: M365ModelRoute,
+  config: AppConfig,
+): JsonObject {
+  const template = object(templateValue, "native Codex model template");
+  const multiAgentVersion = routedSubagentVersion(template, config);
+  const model: JsonObject = {
+    ...structuredClone(template),
+    slug: route.slug,
+    display_name: route.displayName,
+    description: route.description,
+    input_modalities: ["text"],
+    visibility: "list",
+    supported_in_api: true,
+    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
+    tool_mode: null,
+    upgrade: null,
+    default_reasoning_level: "low",
+    supported_reasoning_levels: [reasoningLevel(template, "low", route.displayName)],
+    context_window: route.contextWindow,
+    max_context_window: route.contextWindow,
+    effective_context_window_percent: route.effectiveContextWindowPercent,
+    auto_compact_token_limit: route.autoCompactTokenLimit,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    default_service_tier: null,
+  };
+  delete model.comp_hash;
+  delete model.availability_nux;
+  return model;
+}
+
 export function augmentNativeModelCatalog(
   value: unknown,
   config: AppConfig,
@@ -171,7 +209,10 @@ export function augmentNativeModelCatalog(
     throw new Error("Native Codex models response is missing a models array");
   }
   const nativeModels = structuredClone(
-    catalog.models.filter(model => !slug(model)?.startsWith(CHATGPT_WEB_MODEL_PREFIX)),
+    catalog.models.filter(model => {
+      const s = slug(model);
+      return !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s?.startsWith(M365_COPILOT_MODEL_PREFIX);
+    }),
   );
   if (config.subagentProtocol === "compatibility-v1") {
     for (const candidate of nativeModels) {
@@ -201,8 +242,10 @@ export function augmentNativeModelCatalog(
   }
   const webModels = availableChatGptWebModelRoutes(config, true)
     .map(route => buildChatGptWebModel(template, route, config));
+  const m365Models = availableM365ModelRoutes()
+    .map(route => buildM365Model(template, route, config));
   return {
     ...structuredClone(catalog),
-    models: [...nativeModels, ...webModels],
+    models: [...nativeModels, ...webModels, ...m365Models],
   };
 }

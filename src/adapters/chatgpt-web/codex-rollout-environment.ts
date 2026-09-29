@@ -1,4 +1,29 @@
-import { Database } from "bun:sqlite";
+// Tương thích đa nền tảng cho cả Bun (bun:sqlite) và Node.js 22 (node:sqlite)
+type SqliteQuery = { get: (...params: unknown[]) => unknown };
+type SqliteDb = { query: (sql: string) => SqliteQuery; close?: () => void };
+
+let createDatabase: (path: string, options?: { readonly?: boolean; strict?: boolean }) => SqliteDb;
+
+if (typeof (globalThis as unknown as { Bun?: unknown }).Bun !== "undefined") {
+  // @ts-ignore
+  const bunSqlite = await import("bun:sqlite");
+  createDatabase = (path, options) => new bunSqlite.Database(path, options);
+} else {
+  // @ts-ignore
+  const { DatabaseSync } = await import("node:sqlite");
+  createDatabase = (path, options) => {
+    const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false });
+    return {
+      query: (sql: string) => {
+        const stmt = db.prepare(sql);
+        return {
+          get: (...params: unknown[]) => stmt.get(...(params as any)),
+        };
+      },
+      close: () => db.close(),
+    };
+  };
+}
 import {
   closeSync,
   existsSync,
@@ -90,9 +115,9 @@ function indexedRollout(
 ): IndexedRollout {
   const databasePath = join(sqliteHome, "state_5.sqlite");
   if (!existsSync(databasePath)) return { kind: "unavailable" };
-  let database: Database | undefined;
+  let database: SqliteDb | undefined;
   try {
-    database = new Database(databasePath, { readonly: true, strict: true });
+    database = createDatabase(databasePath, { readonly: true, strict: true });
     const row = database.query(`
       SELECT t.rollout_path, t.agent_path, e.parent_thread_id, e.status
       FROM threads AS t

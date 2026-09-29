@@ -21,8 +21,63 @@ import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
-import { httpStatusFromTerminalError } from "./lib/errors";
-import { createHash } from "node:crypto";
+import http from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
+
+export interface UniversalServer {
+  port: number;
+  stop: (closeActiveConnections?: boolean) => Promise<void> | void;
+}
+
+function serveUniversal(options: {
+  hostname: string;
+  port: number;
+  idleTimeout?: number;
+  fetch: (req: Request) => Promise<Response>;
+}): UniversalServer {
+  if (typeof (globalThis as unknown as { Bun?: { serve: (opts: unknown) => UniversalServer } }).Bun !== "undefined") {
+    return (globalThis as any).Bun.serve(options);
+  }
+  const server = http.createServer(async (nodeReq, nodeRes) => {
+    try {
+      const url = new URL(nodeReq.url ?? "/", `http://${nodeReq.headers.host || options.hostname}`);
+      const bodyChunks: Buffer[] = [];
+      for await (const chunk of nodeReq) {
+        bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const body = ["GET", "HEAD"].includes(nodeReq.method ?? "") ? undefined : Buffer.concat(bodyChunks);
+      const req = new Request(url.href, {
+        method: nodeReq.method,
+        headers: new Headers(nodeReq.headers as Record<string, string>),
+        body,
+      });
+      const res = await options.fetch(req);
+      nodeRes.writeHead(res.status, res.statusText, Object.fromEntries(res.headers.entries()));
+      if (res.body) {
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          nodeRes.write(value);
+        }
+      }
+      nodeRes.end();
+    } catch (err: unknown) {
+      if (!nodeRes.headersSent) {
+        nodeRes.writeHead(500, { "content-type": "application/json" });
+        nodeRes.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
+    }
+  });
+
+  server.listen(options.port, options.hostname);
+  return {
+    port: options.port,
+    stop: async () => {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
 import { augmentNativeModelCatalog } from "./model-catalog";
 import {
   readCodexModelContextOverride,
@@ -35,6 +90,8 @@ import {
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
+import { isM365ModelSlug } from "./m365-models";
+import { createM365CopilotAdapter } from "./adapters/m365-copilot";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
 import {
@@ -411,8 +468,32 @@ export async function modelsRequest(
       return (fetchUpstream ?? fetchNativeCodex)(input);
     });
   } catch (error) {
-    onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+    try {
+      const fallbackTemplate = {
+        id: "gpt-5",
+        slug: "gpt-5",
+        display_name: "GPT-5",
+        description: "Standard model template",
+        visibility: "list",
+        supported_in_api: true,
+        tool_mode: "responses",
+        supported_reasoning_levels: [{ effort: "low", description: "Low effort" }],
+        priority: 0,
+      };
+      const fallbackCatalog = augmentNativeModelCatalog(
+        { object: "list", models: [fallbackTemplate] },
+        config,
+        contextOverride?.(),
+      );
+      const body = JSON.stringify(fallbackCatalog);
+      const headers = new Headers();
+      headers.set("content-type", "application/json");
+      headers.set("etag", `W/\"${createHash("sha256").update(body).digest("base64url")}\"`);
+      return new Response(body, { status: 200, headers });
+    } catch {
+      onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
+      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+    }
   }
   if (!upstream.ok) {
     onFailure?.({ stage: "upstream" });
@@ -477,6 +558,82 @@ function toolBridgeMaps(parsed: CodexParsedRequest): {
   return { toolNsMap, freeformToolNames, toolSearchToolNames };
 }
 
+async function handleM365ResponseRequest(
+  req: Request,
+  raw: unknown,
+  requestedModel: string,
+  options: ResponseRequestOptions = {},
+): Promise<Response> {
+  let parsed: CodexParsedRequest;
+  try {
+    parsed = parseRequest(raw);
+    const identity = extractCodexTurnIdentityFromBody(raw);
+    if (identity.threadId && identity.turnId) {
+      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+    }
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
+
+  const adapter = createM365CopilotAdapter();
+  const queue = new AsyncEventQueue<AdapterEvent>();
+  const abort = new AbortController();
+  if (req.signal.aborted) abort.abort();
+  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+
+  const run = async () => {
+    try {
+      await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
+        options.onAdapterEvent?.(event);
+        queue.push(event);
+      });
+    } catch (error) {
+      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      options.onAdapterEvent?.(event);
+      queue.push(event);
+    } finally {
+      queue.close();
+    }
+  };
+
+  const maps = toolBridgeMaps(parsed);
+  const responseModel = requestedModel;
+
+  if (parsed.stream) {
+    void run();
+    const stream = bridgeToResponsesSSE(
+      queue,
+      responseModel,
+      maps.toolNsMap,
+      maps.freeformToolNames,
+      maps.toolSearchToolNames,
+      () => abort.abort(),
+      2_000,
+      {
+        hideThinkingSummary: parsed.options.hideThinkingSummary,
+      },
+    );
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
+
+  await run();
+  const events = await queue.collect();
+  const json = buildResponseJSON(events, responseModel, {
+    hideThinkingSummary: parsed.options.hideThinkingSummary,
+    toolNsMap: maps.toolNsMap,
+  });
+  return new Response(JSON.stringify(json), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function responseRequest(
   req: Request,
   config: AppConfig,
@@ -504,6 +661,9 @@ export async function responseRequest(
     }
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
+  if (typeof requestedModel === "string" && isM365ModelSlug(requestedModel)) {
+    return await handleM365ResponseRequest(req, raw, requestedModel, options);
   }
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
     try {
@@ -737,6 +897,18 @@ export async function compactRequest(
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
+  if (isM365ModelSlug(raw.model)) {
+    const input = Array.isArray(raw.input) ? raw.input : [];
+    const headers = new Headers(req.headers);
+    headers.set("content-type", "application/json");
+    const internal = new Request("http://127.0.0.1/v1/responses", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
+      signal: req.signal,
+    });
+    return await responseRequest(internal, config, adapterFactory, options);
+  }
   if (!isChatGptWebModelSlug(raw.model)) {
     try {
       return await forwardNativeCodexRequest(nativeRequest, "responses/compact", undefined, raw);
@@ -811,7 +983,7 @@ export async function compactRequest(
 export function startServer(
   config: AppConfig,
   dependencies: { fetchUpstream?: NativeFetch; adapterFactory?: ChatGptWebAdapterFactory } = {},
-): ReturnType<typeof Bun.serve> {
+): UniversalServer {
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
@@ -843,7 +1015,7 @@ export function startServer(
     const actual = Buffer.from(header);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
-  const server = Bun.serve({
+  const server = serveUniversal({
     hostname: config.host,
     port: config.port,
     idleTimeout: 0,
