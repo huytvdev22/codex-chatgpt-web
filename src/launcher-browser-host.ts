@@ -111,10 +111,15 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!helperScript || !existsSync(helperScript)) {
     throw new Error("Launcher browser descriptor helper script does not exist");
   }
-  const expectedPartition = descriptor.profile === "development"
-    ? "persist:codex-web-gpt-dev-chatgpt"
-    : "persist:codex-web-gpt-chatgpt";
-  if (descriptor.partition !== expectedPartition) {
+  const allowedPartitions = descriptor.profile === "development"
+    ? ["persist:codex-web-gpt-dev-chatgpt"]
+    : [
+        "persist:codex-web-gpt-chatgpt",
+        "persist:codex-web-m365",
+        "persist:codex-m365-copilot",
+        "persist:codex-web-gpt-m365",
+      ];
+  if (!allowedPartitions.includes(descriptor.partition)) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }
   if (descriptor.idleUrl !== LAUNCHER_BROWSER_IDLE_URL) {
