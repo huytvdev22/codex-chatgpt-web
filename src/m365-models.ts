@@ -14,7 +14,7 @@ export interface M365ModelRoute {
 export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
   {
     slug: "m365-copilot/gpt-5",
-    displayName: "M365 Copilot (GPT-5)",
+    displayName: "M365 Copilot (Web)",
     description: "Microsoft 365 Copilot Web with Enterprise Commercial Data Protection and Temporary Chat",
     backendModel: "m365-copilot-gpt5",
     contextWindow: 100_000,
@@ -24,7 +24,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
   },
   {
     slug: "m365-copilot/fast",
-    displayName: "M365 Copilot (Fast)",
+    displayName: "M365 Copilot Fast (Web)",
     description: "Microsoft 365 Copilot Web Fast Mode for rapid coding tasks",
     backendModel: "m365-copilot-fast",
     contextWindow: 100_000,
