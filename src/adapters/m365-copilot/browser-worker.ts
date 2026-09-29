@@ -44,20 +44,28 @@ export async function executeM365Turn(
     const editorSelector = "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']";
     await page.waitForSelector(editorSelector, { timeout: 12_000 });
 
-    // 3. Đọc nội dung tin nhắn cuối cùng trước khi gửi
+    // 3. Tùy chọn kích hoạt Temporary Chat nếu có nút và chưa bật
+    await page.evaluate(() => {
+      const tempBtn = document.querySelector('button[aria-label="Temporary chat"]') as HTMLButtonElement;
+      if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
+        tempBtn.click();
+      }
+    }).catch(() => {});
+
+    // Đọc nội dung tin nhắn cuối cùng trước khi gửi
     const lastContentBefore = await page.evaluate(() => {
-      const messages = Array.from(document.querySelectorAll(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage"));
+      const messages = Array.from(document.querySelectorAll(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"));
       if (messages.length === 0) return "";
       const last = messages[messages.length - 1] as HTMLElement;
       return last.innerText || "";
     });
 
     // 4. Nhập prompt vào editor và kích hoạt nút Gửi
-    const submitSuccess = await page.evaluate((text) => {
+    await page.evaluate((text) => {
       const editor = (document.getElementById("m365-chat-editor-target-element") ||
         document.querySelector("div[contenteditable='true']") ||
         document.querySelector("[role='textbox']")) as HTMLElement;
-      if (!editor) return false;
+      if (!editor) throw new Error("Không tìm thấy ô nhập liệu của M365 Copilot!");
       editor.focus();
 
       // Xoá nội dung cũ nếu có
@@ -68,26 +76,35 @@ export async function executeM365Turn(
       sel?.addRange(range);
       document.execCommand("delete", false, undefined);
 
-      // Chèn prompt qua sự kiện paste
+      // Chèn prompt
       const dt = new DataTransfer();
       dt.setData("text/plain", text);
       editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-
-      // Tìm và click nút Gửi
-      const sendBtn = (document.querySelector('button[aria-label*="Submit"], button[aria-label*="Send"], button[aria-label*="Gửi"], [data-testid="send-button"]') ||
-        editor.closest("form")?.querySelector("button[type='submit']")) as HTMLButtonElement;
-      if (sendBtn && !sendBtn.disabled) {
-        sendBtn.click();
-        return true;
-      }
-
-      // Fallback: Dispatch phím Enter
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-      return true;
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(new Event("change", { bubbles: true }));
     }, promptText);
 
-    if (!submitSuccess) {
-      throw new Error("Không thể gửi prompt vào ô nhập liệu M365 Copilot trên ứng dụng Desktop!");
+    // Chờ ngắn để React cập nhật trạng thái nút Gửi
+    await new Promise(r => setTimeout(r, 250));
+
+    // Thử click nút Send (.fai-SendButton / aria-label="Send")
+    let sent = false;
+    for (let i = 0; i < 5; i++) {
+      sent = await page.evaluate(() => {
+        const sendBtn = document.querySelector('.fai-SendButton, button[aria-label="Send"], button[aria-label*="Send" i], button[aria-label*="Submit" i]') as HTMLButtonElement;
+        if (sendBtn && !sendBtn.disabled) {
+          sendBtn.click();
+          return true;
+        }
+        return false;
+      });
+      if (sent) break;
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // Nếu click chưa xong, fallback phím Enter native của CDP
+    if (!sent) {
+      await page.keyboard.press("Enter");
     }
 
     // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client

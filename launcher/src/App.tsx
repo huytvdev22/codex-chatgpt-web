@@ -1250,7 +1250,7 @@ function SetupSurface({
             title={isM365 ? "Sign in to Microsoft 365 Copilot" : copy.stepAccount}
           />
           <SetupRow
-            action={snapshot.smokePassed ? copy.smokePassed : isM365 ? "Run verify" : copy.runSmoke}
+            action={snapshot.smokePassed ? (isM365 ? "Verify again" : copy.smokePassed) : isM365 ? "Run verify" : copy.runSmoke}
             complete={snapshot.smokePassed}
             description={isM365
               ? "Check that the embedded Microsoft 365 Copilot chat interface is ready and responsive."
@@ -1258,6 +1258,7 @@ function SetupSurface({
             disabled={busy || !browser?.authenticated}
             index={2}
             onAction={smoke}
+            repeatable={true}
             title={isM365 ? "Verify M365 Copilot connection" : copy.stepSmoke}
           />
         </> : null}
