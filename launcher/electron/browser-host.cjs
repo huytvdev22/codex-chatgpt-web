@@ -28,6 +28,8 @@ const {
 
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
+const M365_CHAT_URL = "https://m365.cloud.microsoft/chat";
+const M365_ORIGIN = "https://m365.cloud.microsoft";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
@@ -60,6 +62,12 @@ const AUTH_PROVIDER_HOSTS = new Set([
   "accounts.openai.com",
   "accounts.google.com",
   "login.microsoftonline.com",
+  "account.activedirectory.windowsazure.com",
+  "login.live.com",
+  "mysignins.microsoft.com",
+  "aadcdn.msauth.net",
+  "aadcdn.msftauth.net",
+  "m365.cloud.microsoft",
   "appleid.apple.com",
   "idmsa.apple.com",
 ]);
@@ -135,6 +143,9 @@ function allowedAuthUrl(value) {
     return parsed.pathname === "/auth"
       || parsed.pathname.startsWith("/auth/")
       || parsed.pathname === "/login";
+  }
+  if (parsed.hostname === "m365.cloud.microsoft" || parsed.hostname.endsWith(".m365.cloud.microsoft") || parsed.hostname.endsWith(".microsoft.com")) {
+    return true;
   }
   return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
 }
@@ -319,6 +330,7 @@ class BrowserHost {
     clipboardApi = clipboard,
     getBrowserInteractionMode = () => "automatic",
     getUseSavedChats = () => false,
+    provider = "m365",
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -338,10 +350,16 @@ class BrowserHost {
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
-    const expectedPartition = profile === "development"
-      ? "persist:codex-web-gpt-dev-chatgpt"
-      : "persist:codex-web-gpt-chatgpt";
-    if (partition !== expectedPartition) throw new Error("Browser host partition does not match its profile");
+    const allowedPartitions = new Set([
+      "persist:codex-web-gpt-chatgpt",
+      "persist:codex-web-gpt-dev-chatgpt",
+      "persist:codex-web-m365",
+      "persist:codex-m365-copilot",
+    ]);
+    if (!allowedPartitions.has(partition)) {
+      this.logger.warn?.("browser.unexpected_partition", { partition });
+    }
+    this.provider = provider || (partition.includes("m365") ? "m365" : "chatgpt");
     this.partition = partition;
     this.profile = profile;
     this.publishState = publishState;
@@ -394,7 +412,7 @@ class BrowserHost {
       status: "idle",
       message: "No active task",
       url: "about:blank",
-      title: "ChatGPT",
+      title: this.provider === "m365" ? "M365 Copilot" : "ChatGPT",
       authenticated: false,
       visible: false,
       surfaceActive: true,
@@ -402,6 +420,7 @@ class BrowserHost {
       canGoBack: false,
       canGoForward: false,
       zoomFactor: 1,
+      provider: this.provider,
     };
     this.view = new WebContentsView({
       webPreferences: {
@@ -431,6 +450,33 @@ class BrowserHost {
       this.setState({ status: "error", message: "Embedded browser failed to initialize" });
       throw error;
     });
+  }
+
+  getHomeUrl() {
+    if (this.provider === "m365") {
+      return M365_CHAT_URL;
+    }
+    return this.getUseSavedChats() ? "https://chatgpt.com/" : TEMPORARY_CHAT_URL;
+  }
+
+  async switchProvider(provider) {
+    if (provider !== "m365" && provider !== "chatgpt") return;
+    this.provider = provider;
+    const targetUrl = this.getHomeUrl();
+    this.setState({
+      status: "loading",
+      message: `Opening ${provider === "m365" ? "M365 Copilot" : "ChatGPT"}...`,
+      title: provider === "m365" ? "M365 Copilot" : "ChatGPT",
+      provider,
+      loading: true,
+    });
+    try {
+      await this.view.webContents.loadURL(targetUrl);
+    } catch (err) {
+      this.logger.error("browser.switch_provider_load_failed", { message: err instanceof Error ? err.message : String(err) });
+    }
+    await this.probeAuthentication();
+    this.writeDescriptor();
   }
 
   async ready() {
@@ -1373,10 +1419,11 @@ class BrowserHost {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
     const manualInteraction = browserInteractionModeFor(this) === "manual";
+    const defaultTitle = this.provider === "m365" ? "M365 Copilot" : "ChatGPT";
     const homeTab = {
       id: "home",
       traceId: null,
-      title: manualInteraction ? "ChatGPT" : this.state.title || "ChatGPT",
+      title: manualInteraction ? defaultTitle : this.state.title || defaultTitle,
       status: this.state.status,
       loading: this.state.loading === true,
       active: this.selectedTabId === "home",
@@ -1392,7 +1439,7 @@ class BrowserHost {
           loading: selected.loading,
         }
       : manualInteraction
-        ? { ...this.state, title: "ChatGPT" }
+        ? { ...this.state, title: defaultTitle }
         : this.state;
     return {
       ...readBrowserNavigationState(contents, {
@@ -1403,6 +1450,7 @@ class BrowserHost {
         readPageTitle: !manualInteraction,
       }),
       activeTabId: this.selectedTabId,
+      provider: this.provider,
       tabs: this.turnTabs.size > 0
         ? [
             ...(this.selectedTabId === "home" ? [homeTab] : []),
@@ -2556,11 +2604,20 @@ class BrowserHost {
     }
     this.setState({
       status: this.state.authenticated ? "ready" : "signed-out",
-      message: this.state.authenticated ? "No active task" : "Sign in to ChatGPT",
+      message: this.state.authenticated ? "No active task" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT"),
     });
   }
 
   openLogin() {
+    if (this.provider === "m365") {
+      this.activateHomeSurface();
+      this.show();
+      const current = this.view.webContents.getURL();
+      if (!current.includes("m365.cloud.microsoft") && !current.includes("login.microsoftonline.com") && !current.includes("login.live.com")) {
+        void this.view.webContents.loadURL(M365_CHAT_URL);
+      }
+      return Promise.resolve(this.snapshot());
+    }
     requireAutomaticBrowserInspection(this, "Automated ChatGPT sign-in verification");
     if (this.state.authenticated) {
       this.activateHomeSurface();
@@ -2781,6 +2838,72 @@ class BrowserHost {
   }
 
   async probeAuthentication() {
+    if (this.provider === "m365") {
+      if (this.authenticationProbe) return this.authenticationProbe;
+      const revision = this.authenticationRevision;
+      const operation = (async () => {
+        if (!this.view || this.view.webContents.isDestroyed()) return this.snapshot();
+        let url = this.view.webContents.getURL();
+        if (!url || url === IDLE_BROWSER_URL || url === "about:blank") {
+          this.setState({
+            status: this.state.authenticated ? "ready" : "signed-out",
+            message: this.state.authenticated ? "M365 Copilot is ready" : "Sign in to Microsoft 365 Copilot",
+            url,
+            title: "M365 Copilot",
+          });
+          return this.snapshot();
+        }
+        const probe = (contents) => contents.executeJavaScript(`(() => {
+          const href = location.href;
+          const isM365 = href.includes("m365.cloud.microsoft");
+          const isLogin = href.includes("login.microsoftonline.com")
+            || href.includes("login.live.com")
+            || href.includes("account.activedirectory.windowsazure.com");
+          const composer = Boolean(document.querySelector("#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']"));
+          return {
+            url: href,
+            composer,
+            authenticated: isM365 && !isLogin,
+            readyState: document.readyState,
+          };
+        })()`, true).catch(() => ({
+          url: url || "",
+          composer: false,
+          authenticated: false,
+          readyState: "unknown",
+        }));
+        const result = await probe(this.view.webContents);
+        if (revision !== this.authenticationRevision) return this.snapshot();
+        if (result.authenticated) {
+          this.reauthenticationRequired = false;
+          if (this.authView && !this.authView.webContents.isDestroyed()) {
+            this.closeAuthView(this.authView, true, false);
+          }
+          this.setState({
+            status: this.activeTraceId ? "running" : "ready",
+            message: this.activeTraceId ? "M365 Copilot is working" : "M365 Copilot is ready",
+            authenticated: true,
+            url: result.url,
+            title: "M365 Copilot",
+          });
+        } else {
+          const loaded = result.readyState === "complete";
+          this.setState({
+            status: loaded ? "signed-out" : "loading",
+            message: loaded ? "Sign in to Microsoft 365 Copilot" : "Waiting for M365 Copilot",
+            authenticated: false,
+            url: result.url || url,
+            title: "M365 Copilot",
+          });
+        }
+        return this.snapshot();
+      })();
+      const tracked = operation.finally(() => {
+        if (this.authenticationProbe === tracked) this.authenticationProbe = null;
+      });
+      this.authenticationProbe = tracked;
+      return tracked;
+    }
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (this.reauthenticationRequired
       && !["ChatGPT login", "ChatGPT passkey login", "ChatGPT logout"].includes(this.manualOperation)) return this.snapshot();
@@ -3075,6 +3198,7 @@ class BrowserHost {
       idleUrl: IDLE_BROWSER_URL,
       surfaceId: this.surfaceId,
       surfaceTargets,
+      provider: this.provider,
       createdAt: new Date().toISOString(),
     };
     writePrivateFileAtomic(this.descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);

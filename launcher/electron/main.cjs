@@ -982,6 +982,16 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
   });
+  handle("launcher:set-provider", async (_event, provider) => {
+    if (provider !== "m365" && provider !== "chatgpt") throw new Error("Invalid provider");
+    const nextState = stateStore.update({ selectedProvider: provider });
+    if (browserHost) {
+      await browserHost.switchProvider(provider);
+      send("launcher:browser-state", browserHost.snapshot());
+    }
+    send("launcher:state-changed", nextState);
+    return nextState;
+  });
   handle("launcher:set-preference", (_event, key, value) => {
     const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
     if (!ordinary) throw new Error("Unknown preference");
@@ -1193,6 +1203,7 @@ async function start() {
     publishState: (state) => send("launcher:browser-state", state),
     showWindow: showMainWindow,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
+    provider: stateStore.read().selectedProvider || "m365",
   });
   await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();

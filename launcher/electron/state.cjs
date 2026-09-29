@@ -26,6 +26,7 @@ const DEFAULT_STATE = Object.freeze({
   sidebarWidth: 252,
   mcpGuideStep: 0,
   sessionRefreshReminderAt: null,
+  selectedProvider: "m365",
 });
 
 function nextSessionRefreshReminderAt(now = Date.now()) {
@@ -41,6 +42,9 @@ function readState(filePath) {
     delete state.bridgeEnabled;
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
+    }
+    if (state.selectedProvider !== "m365" && state.selectedProvider !== "chatgpt") {
+      state.selectedProvider = DEFAULT_STATE.selectedProvider;
     }
     for (const key of [
       "onboardingComplete",

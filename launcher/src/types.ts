@@ -32,6 +32,7 @@ export interface LauncherState {
   codexRestartRequired?: boolean;
   mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
+  selectedProvider: "m365" | "chatgpt";
 }
 
 export interface BrowserState {
@@ -48,6 +49,7 @@ export interface BrowserState {
   zoomFactor: number;
   activeTabId: string;
   maxTabs: number;
+  provider?: "m365" | "chatgpt";
   tabs: BrowserTabState[];
 }
 
@@ -173,6 +175,7 @@ export interface LauncherApi {
     credentialsRequired: boolean;
     targetMode: BrowserInteractionMode;
   }>;
+  setProvider(provider: "m365" | "chatgpt"): Promise<LauncherState>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,

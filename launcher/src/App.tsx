@@ -669,6 +669,8 @@ function LauncherShell({
                 operation={operation}
                 platform={snapshot.platform}
                 setError={setError}
+                selectedProvider={snapshot.state.selectedProvider || "m365"}
+                onSwitchProvider={(provider) => void api!.setProvider(provider).then(updateState).catch((cause) => setError(messageOf(cause)))}
               />
             ) : null}
             {surface === "setup" ? (
@@ -839,6 +841,8 @@ function BrowserSurface({
   operation,
   platform,
   setError,
+  selectedProvider,
+  onSwitchProvider,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
@@ -847,6 +851,8 @@ function BrowserSurface({
   operation: OperationState | null;
   platform: string;
   setError: (error: string | null) => void;
+  selectedProvider: "m365" | "chatgpt";
+  onSwitchProvider: (provider: "m365" | "chatgpt") => void;
 }) {
   const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
   const visible = browser?.visible === true;
@@ -979,6 +985,44 @@ function BrowserSurface({
           />
           <IconButton disabled={navigationLocked || !visible} icon="reload" label={copy.reload} onClick={() => void navigate("reload")} />
         </div>
+        <div style={{ display: "inline-flex", gap: "2px", background: "rgba(255,255,255,0.08)", borderRadius: "6px", padding: "2px", alignItems: "center" }}>
+          <button
+            type="button"
+            className="toolbar-text-button"
+            style={{
+              padding: "2px 8px",
+              height: "22px",
+              fontSize: "11px",
+              fontWeight: (browser?.provider === "m365" || (!browser?.provider && selectedProvider === "m365")) ? 600 : 400,
+              background: (browser?.provider === "m365" || (!browser?.provider && selectedProvider === "m365")) ? "var(--color-accent, #0078d4)" : "transparent",
+              color: "#fff",
+              borderRadius: "4px",
+              border: "none",
+              cursor: "pointer",
+            }}
+            onClick={() => void onSwitchProvider("m365")}
+          >
+            M365 Copilot
+          </button>
+          <button
+            type="button"
+            className="toolbar-text-button"
+            style={{
+              padding: "2px 8px",
+              height: "22px",
+              fontSize: "11px",
+              fontWeight: browser?.provider === "chatgpt" ? 600 : 400,
+              background: browser?.provider === "chatgpt" ? "var(--color-accent, #10a37f)" : "transparent",
+              color: "#fff",
+              borderRadius: "4px",
+              border: "none",
+              cursor: "pointer",
+            }}
+            onClick={() => void onSwitchProvider("chatgpt")}
+          >
+            ChatGPT
+          </button>
+        </div>
         <div className="browser-address" title={browser?.url || copy.browserAddress}>
           <Icon name="globe" />
           <span>{formatBrowserAddress(browser?.url, copy)}</span>
@@ -1009,7 +1053,7 @@ function BrowserSurface({
           </button>
         ) : null}
         <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
-          {visible ? copy.hideBrowser : copy.openChatgpt}
+          {visible ? copy.hideBrowser : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
@@ -1748,6 +1792,30 @@ function SettingsSurface({
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
       <SectionHeading label={copy.general} />
       <div className="settings-list">
+        <SettingRow body="Choose active AI provider and embedded browser view" label="AI Provider">
+          <div style={{ display: "flex", gap: "8px" }}>
+            <SecondaryButton
+              disabled={busy}
+              style={{
+                borderColor: snapshot.state.selectedProvider === "m365" ? "var(--color-accent, #0078d4)" : undefined,
+                fontWeight: snapshot.state.selectedProvider === "m365" ? 600 : 400,
+              }}
+              onClick={() => void api!.setProvider("m365").then(updateState).catch((cause) => setError(messageOf(cause)))}
+            >
+              M365 Copilot
+            </SecondaryButton>
+            <SecondaryButton
+              disabled={busy}
+              style={{
+                borderColor: snapshot.state.selectedProvider === "chatgpt" ? "var(--color-accent, #10a37f)" : undefined,
+                fontWeight: snapshot.state.selectedProvider === "chatgpt" ? 600 : 400,
+              }}
+              onClick={() => void api!.setProvider("chatgpt").then(updateState).catch((cause) => setError(messageOf(cause)))}
+            >
+              ChatGPT Web
+            </SecondaryButton>
+          </div>
+        </SettingRow>
         {!devProfile ? <SettingRow body={copy.launchAtLoginBody} flushAfter label={copy.launchAtLogin}>
           <Switch
             checked={snapshot.state.autoStart}

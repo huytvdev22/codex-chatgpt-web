@@ -2,7 +2,7 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
 import { compileM365Prompt } from "./prompt";
-import { sendM365Prompt, streamM365Response } from "./browser-worker";
+import { executeM365Turn } from "./browser-worker";
 
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
@@ -33,11 +33,9 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Chuyển giao prompt thực tế cho M365 Copilot Tab
+    // 2. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
-      const lastContentBefore = await sendM365Prompt(compiledPrompt);
-
-      const reply = await streamM365Response(lastContentBefore, {
+      const reply = await executeM365Turn(compiledPrompt, {
         onChunk: (delta) => {
           emit({ type: "text_delta", text: delta });
         },
