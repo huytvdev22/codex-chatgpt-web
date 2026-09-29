@@ -1,4 +1,4 @@
-import { connectLauncherBrowserHost } from "../../launcher-browser-host";
+import { connectLauncherBrowserHost, notifyLauncherTurn } from "../../launcher-browser-host";
 import { getConfigDir } from "../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -7,6 +7,8 @@ export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
   signal?: AbortSignal;
   descriptorPath?: string;
+  traceId?: string;
+  conversationKey?: string;
 }
 
 function resolveDescriptorPath(customPath?: string): string {
@@ -30,8 +32,24 @@ export async function executeM365Turn(
     );
   }
 
+  if (options.traceId) {
+    try {
+      await notifyLauncherTurn(descriptorPath, {
+        phase: "start",
+        traceId: options.traceId,
+        helperPid: process.pid,
+        conversationKey: options.conversationKey || "",
+        connectorIdentity: "m365-copilot",
+        requireRetainedConversation: false,
+      }, undefined, options.signal);
+    } catch (e) {
+      // Ignore start error if launcher doesn't respond
+    }
+  }
+
   const connection = await connectLauncherBrowserHost(descriptorPath, 20_000, undefined, options.signal);
   const { browser, page } = connection;
+  let finalStatus: "completed" | "failed" | "aborted" = "failed";
 
   try {
     // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
@@ -117,7 +135,7 @@ export async function executeM365Turn(
     while (attempts < maxAttempts) {
       if (options.signal?.aborted) {
         await page.evaluate(() => {
-          const stopBtn = document.querySelector('button[aria-label*="Stop"], button[aria-label*="Dừng"]') as HTMLButtonElement;
+          const stopBtn = document.querySelector('button[aria-label*="Stop"], button[aria-label*="Dừng"], button[aria-label="Stop generating"]') as HTMLButtonElement;
           if (stopBtn) stopBtn.click();
         }).catch(() => {});
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
@@ -127,7 +145,7 @@ export async function executeM365Turn(
       attempts++;
 
       const status = await page.evaluate((before) => {
-        const stopBtn = document.querySelector('button[aria-label*="Stop"], button[aria-label*="Dừng"]');
+        const stopBtn = document.querySelector('button[aria-label*="Stop"], button[aria-label*="Dừng"], button[aria-label="Stop generating"]');
         const isGenerating = Boolean(stopBtn);
         const messages = Array.from(document.querySelectorAll(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage"));
         const lastMsg = messages.length > 0 ? (messages[messages.length - 1] as HTMLElement) : null;
@@ -147,6 +165,15 @@ export async function executeM365Turn(
         seenGenerating = true;
       }
 
+      if (options.traceId && attempts % 40 === 0) { // every 10s
+        notifyLauncherTurn(descriptorPath, {
+          phase: "heartbeat",
+          traceId: options.traceId,
+          helperPid: process.pid,
+          refreshViewport: false,
+        }, undefined, options.signal).catch(() => {});
+      }
+
       if (status.isNew && status.reply && status.reply !== previousText) {
         const delta = status.reply.slice(previousText.length);
         if (delta.length > 0) {
@@ -163,8 +190,21 @@ export async function executeM365Turn(
       }
     }
 
+    finalStatus = "completed";
     return previousText;
+  } catch (err) {
+    if (options.signal?.aborted) finalStatus = "aborted";
+    throw err;
   } finally {
+    if (options.traceId) {
+      notifyLauncherTurn(descriptorPath, {
+        phase: "end",
+        traceId: options.traceId,
+        helperPid: process.pid,
+        status: finalStatus,
+        retain: true,
+      }).catch(() => {});
+    }
     await browser.close().catch(() => {});
   }
 }

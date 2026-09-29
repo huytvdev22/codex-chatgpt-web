@@ -40,6 +40,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
           emit({ type: "text_delta", text: delta });
         },
         signal: incoming.abortSignal,
+        traceId: incoming.headers.get("x-codex-trace-id") || undefined,
+        conversationKey: incoming.headers.get("x-codex-conversation-key") || undefined,
       });
 
       const inputTokens = Math.ceil(compiledPrompt.length / 4);

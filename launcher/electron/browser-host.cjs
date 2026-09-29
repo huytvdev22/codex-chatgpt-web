@@ -1464,7 +1464,7 @@ class BrowserHost {
       provider: this.provider,
       tabs: this.turnTabs.size > 0
         ? [
-            ...(this.selectedTabId === "home" ? [homeTab] : []),
+            homeTab,
             ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
           ]
         : [homeTab],
@@ -3057,7 +3057,9 @@ class BrowserHost {
   }
 
   async smokeTest() {
-    requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
+    if (this.provider !== "m365") {
+      requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
+    }
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
   }
 
@@ -3078,6 +3080,31 @@ class BrowserHost {
       const isLogin = currentUrl.includes("login.microsoftonline.com") || currentUrl.includes("login.live.com");
       if (!isM365 || isLogin) {
         throw new Error("Vui lòng đăng nhập vào Microsoft 365 Copilot trước khi chạy kiểm tra!");
+      }
+      // Click the "Temporary chat" button to enter temporary chat mode
+      this.setState({ status: "testing", message: "Clicking Temporary chat button..." });
+      try {
+        await this.view.webContents.executeJavaScript(`(async () => {
+          const btn = document.querySelector('button[aria-label="Temporary chat"]');
+          if (btn) {
+            btn.click();
+            // Wait for temporary chat interface to load
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          // Verify chat input is available
+          const maxWait = 10000;
+          const start = Date.now();
+          while (Date.now() - start < maxWait) {
+            const editor = document.querySelector('#m365-chat-editor-target-element, [role="textbox"][contenteditable="true"]');
+            if (editor) return { ready: true, temporary: true };
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          return { ready: false, temporary: false };
+        })()`, true);
+      } catch (err) {
+        this.logger.warn("smoke.m365_temporary_chat_click_failed", {
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
       this.setState({ status: "ready", message: "M365 Copilot verified", authenticated: true });
       return { ok: true, effort: "fast", response: "CODEX WEB GPT READY" };

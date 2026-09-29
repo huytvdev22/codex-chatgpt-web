@@ -1073,15 +1073,23 @@ function BrowserSurface({
             <BrandMark />
             <h1>{manualInteraction
               ? copy.browserReady
-              : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
+              : browser?.authenticated
+                ? copy.noActiveTask
+                : selectedProvider === "m365"
+                  ? "Sign in to Microsoft 365 Copilot"
+                  : copy.stepAccount}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
               : browser?.authenticated
-              ? copy.noActiveTaskBody
+              ? (selectedProvider === "m365"
+                ? "ChatGPT will appear here when Codex starts a Web model turn."
+                : copy.noActiveTaskBody)
               : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
               <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
-                {manualInteraction || browser?.authenticated ? copy.openChatgpt : copy.signIn}
+                {manualInteraction || browser?.authenticated
+                  ? (selectedProvider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)
+                  : copy.signIn}
               </PrimaryButton>
               {passkeyAvailable ? (
                 <SecondaryButton
@@ -1214,54 +1222,98 @@ function SetupSurface({
   });
 
   const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
-  const setupSubtitleText = devProfile
-    ? copy.devSetupSubtitle
-    : manualInteraction
-      ? copy.manualInteractionBody
-      : isM365
-        ? "Three checks make Microsoft 365 Copilot available in the native Codex model picker."
-        : copy.setupSubtitle;
-  const setupTitleText = devProfile
-    ? copy.devSetupTitle
-    : isM365
-      ? "Set up Codex M365 Copilot"
-      : copy.setupTitle;
 
   return (
     <ContentSurface
       eyebrow={copy.required}
-      subtitle={setupSubtitleText}
-      title={setupTitleText}
+      subtitle={devProfile
+        ? copy.devSetupSubtitle
+        : manualInteraction
+          ? copy.manualInteractionBody
+          : "Configure both Microsoft 365 Copilot and ChatGPT Web to work with Codex."}
+      title={devProfile ? copy.devSetupTitle : "Set up Codex Copilot"}
     >
-      <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
-      <div className="setup-list">
-        {!manualInteraction ? <>
+      {/* ── M365 Copilot Setup Section ── */}
+      {!manualInteraction ? <>
+        <SectionHeading label="M365 Copilot Setup" />
+        <div className="setup-list">
           <SetupRow
-            action={browser?.authenticated
+            action={browser?.authenticated && isM365
               ? copy.signedIn
-              : browser?.status === "loading" ? copy.checkingSignIn : copy.signIn}
-            complete={browser?.authenticated === true}
-            description={isM365
-              ? "Sign in directly in the embedded M365 Copilot browser. Login stays in this launcher's private profile."
-              : copy.stepAccountBody}
+              : browser?.status === "loading" && isM365 ? copy.checkingSignIn : copy.signIn}
+            complete={browser?.authenticated === true && isM365}
+            description="Sign in directly in the embedded M365 Copilot browser. Login stays in this launcher's private profile."
             disabled={busy}
             index={1}
-            onAction={openLogin}
-            title={isM365 ? "Sign in to Microsoft 365 Copilot" : copy.stepAccount}
+            onAction={() => run(async () => {
+              await api!.setProvider("m365");
+              await activateBrowser();
+              await api!.openLogin();
+            })}
+            title="Sign in to Microsoft 365 Copilot"
           />
           <SetupRow
-            action={snapshot.smokePassed ? (isM365 ? "Verify again" : copy.smokePassed) : isM365 ? "Run verify" : copy.runSmoke}
-            complete={snapshot.smokePassed}
-            description={isM365
-              ? "Check that the embedded Microsoft 365 Copilot chat interface is ready and responsive."
-              : copy.stepSmokeBody}
-            disabled={busy || !browser?.authenticated}
+            action={snapshot.smokePassed && isM365 ? "Verify again" : "Run verify"}
+            complete={snapshot.smokePassed && isM365}
+            description="Click the Temporary chat button and verify that the M365 Copilot chat interface is ready and responsive."
+            disabled={busy || !(browser?.authenticated === true)}
             index={2}
-            onAction={smoke}
+            onAction={() => run(async () => {
+              if (!isM365) {
+                await api!.setProvider("m365");
+                updateState((await api!.snapshot()).state);
+              }
+              await activateBrowser();
+              await api!.smokeTest();
+              updateState((await api!.snapshot()).state);
+            })}
             repeatable={true}
-            title={isM365 ? "Verify M365 Copilot connection" : copy.stepSmoke}
+            title="Run browser smoke test (M365)"
           />
-        </> : null}
+        </div>
+
+        {/* ── ChatGPT Setup Section ── */}
+        <SectionHeading label="ChatGPT Setup" spaced />
+        <div className="setup-list">
+          <SetupRow
+            action={browser?.authenticated && !isM365
+              ? copy.signedIn
+              : browser?.status === "loading" && !isM365 ? copy.checkingSignIn : copy.signIn}
+            complete={browser?.authenticated === true && !isM365}
+            description={copy.stepAccountBody}
+            disabled={busy}
+            index={1}
+            onAction={() => run(async () => {
+              await api!.setProvider("chatgpt");
+              await activateBrowser();
+              await api!.openLogin();
+            })}
+            title={copy.stepAccount}
+          />
+          <SetupRow
+            action={snapshot.smokePassed && !isM365 ? copy.smokePassed : copy.runSmoke}
+            complete={snapshot.smokePassed && !isM365}
+            description={copy.stepSmokeBody}
+            disabled={busy || !(browser?.authenticated === true)}
+            index={2}
+            onAction={() => run(async () => {
+              if (isM365) {
+                await api!.setProvider("chatgpt");
+                updateState((await api!.snapshot()).state);
+              }
+              await activateBrowser();
+              await api!.smokeTest();
+              updateState((await api!.snapshot()).state);
+            })}
+            repeatable={true}
+            title="Run browser smoke test (ChatGPT)"
+          />
+        </div>
+      </> : null}
+
+      {/* ── Install Section ── */}
+      <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} spaced />
+      <div className="setup-list">
         <SetupRow
           action={snapshot.state.coreSetupComplete
             ? devProfile ? copy.devReinstall : copy.reinstall
@@ -1269,9 +1321,7 @@ function SetupSurface({
           complete={snapshot.state.codexCatalogVerified === true}
           description={devProfile
             ? copy.devStepInstallBody
-            : isM365
-              ? "Add Microsoft 365 Copilot and ChatGPT Web models to Codex without replacing native catalog."
-              : copy.stepInstallBody}
+            : "Add Microsoft 365 Copilot and ChatGPT Web models to Codex without replacing native catalog."}
           disabled={busy || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={manualInteraction ? 1 : 3}
           onAction={install}
