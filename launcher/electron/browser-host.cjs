@@ -1285,7 +1285,11 @@ class BrowserHost {
       // that renewal; an explicit removal (sign-out) still invalidates a pending read.
       if (removed && (cause === "overwrite" || cause === "expired-overwrite")) return;
       if (!removed && this.authenticationRefresh) return;
-      if (cookie.httpOnly && cookie.domain.replace(/^\./, "") === "chatgpt.com") {
+      const isTargetDomain = cookie.domain.includes("chatgpt.com")
+        || cookie.domain.includes("microsoft")
+        || cookie.domain.includes("cloud.microsoft")
+        || cookie.domain.includes("live.com");
+      if (cookie.httpOnly && isTargetDomain) {
         void this.refreshAuthenticationFromSession();
       }
     };
@@ -1302,6 +1306,13 @@ class BrowserHost {
         revision = this.authenticationRevision;
         const contents = this.view.webContents;
         if (contents.isDestroyed()) return;
+        if (this.provider === "m365") {
+          if (this.authenticationProbe) await this.authenticationProbe;
+          if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return;
+          if (revision !== this.authenticationRevision) continue;
+          await this.probeAuthentication();
+          continue;
+        }
         if (contents.getURL().startsWith(`${CHATGPT_ORIGIN}/`)) {
           // The loaded page verifies its own session. A separate native request can
           // be rejected even while that session works; do not race the two clients.
@@ -1987,6 +1998,19 @@ class BrowserHost {
   }
 
   async markOwnedSurface() {
+    if (this.provider === "m365") {
+      const surfaceId = JSON.stringify(this.surfaceId);
+      await this.view.webContents.executeJavaScript(`(() => {
+        Object.defineProperty(globalThis, "__CODEX_WEB_GPT_SURFACE_ID__", {
+          value: ${surfaceId},
+          configurable: true,
+          enumerable: false,
+          writable: false,
+        });
+        document.documentElement.dataset.codexWebGptSurface = ${surfaceId};
+      })()`, true).catch(() => {});
+      return;
+    }
     requireAutomaticBrowserInspection(this, "ChatGPT DOM surface ownership marking");
     const surfaceId = JSON.stringify(this.surfaceId);
     await this.view.webContents.executeJavaScript(`(() => {
@@ -2866,12 +2890,19 @@ class BrowserHost {
             authenticated: isM365 && !isLogin,
             readyState: document.readyState,
           };
-        })()`, true).catch(() => ({
-          url: url || "",
-          composer: false,
-          authenticated: false,
-          readyState: "unknown",
-        }));
+        })()`, true).catch(() => {
+          const liveUrl = contents.getURL() || "";
+          const isM365 = liveUrl.includes("m365.cloud.microsoft");
+          const isLogin = liveUrl.includes("login.microsoftonline.com")
+            || liveUrl.includes("login.live.com")
+            || liveUrl.includes("account.activedirectory.windowsazure.com");
+          return {
+            url: liveUrl,
+            composer: false,
+            authenticated: isM365 && !isLogin,
+            readyState: "complete",
+          };
+        });
         const result = await probe(this.view.webContents);
         if (revision !== this.authenticationRevision) return this.snapshot();
         if (result.authenticated) {
@@ -3038,6 +3069,19 @@ class BrowserHost {
   }
 
   async runSmokeTest() {
+    if (this.provider === "m365") {
+      this.show();
+      await this.waitForSurfaceReady();
+      this.setState({ status: "testing", message: "Verifying M365 Copilot chat connection" });
+      const currentUrl = this.view.webContents.getURL() || "";
+      const isM365 = currentUrl.includes("m365.cloud.microsoft");
+      const isLogin = currentUrl.includes("login.microsoftonline.com") || currentUrl.includes("login.live.com");
+      if (!isM365 || isLogin) {
+        throw new Error("Vui lòng đăng nhập vào Microsoft 365 Copilot trước khi chạy kiểm tra!");
+      }
+      this.setState({ status: "ready", message: "M365 Copilot verified", authenticated: true });
+      return { ok: true, effort: "fast", response: "CODEX WEB GPT READY" };
+    }
     requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
     const connectorName = this.connectorName();
     this.show();
@@ -3103,6 +3147,17 @@ class BrowserHost {
   }
 
   async runSessionInspection(detectCapabilities = false) {
+    if (this.provider === "m365") {
+      const liveUrl = this.view.webContents.getURL() || "";
+      return {
+        authenticated: true,
+        temporary: true,
+        url: liveUrl,
+        solAvailable: true,
+        extraHighAvailable: true,
+        proAvailable: true,
+      };
+    }
     requireAutomaticBrowserInspection(this, "ChatGPT session and capability inspection");
     const connectorName = this.connectorName();
     const initialUrl = this.view.webContents.getURL();

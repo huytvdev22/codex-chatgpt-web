@@ -562,7 +562,7 @@ function LauncherShell({
             <div className="sidebar-brand-row">
               <div className="sidebar-brand-identity">
                 <BrandMark small />
-                <strong>{copy.product}</strong>
+                <strong>{(browser?.provider || snapshot.state.selectedProvider || "m365") === "m365" ? "Codex M365 Copilot" : copy.product}</strong>
                 {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
               </div>
               <div className="sidebar-brand-actions">
@@ -1213,13 +1213,25 @@ function SetupSurface({
     updateState(await api!.setZeroRiskPro(enabled));
   });
 
+  const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
+  const setupSubtitleText = devProfile
+    ? copy.devSetupSubtitle
+    : manualInteraction
+      ? copy.manualInteractionBody
+      : isM365
+        ? "Three checks make Microsoft 365 Copilot available in the native Codex model picker."
+        : copy.setupSubtitle;
+  const setupTitleText = devProfile
+    ? copy.devSetupTitle
+    : isM365
+      ? "Set up Codex M365 Copilot"
+      : copy.setupTitle;
+
   return (
     <ContentSurface
       eyebrow={copy.required}
-      subtitle={devProfile
-        ? copy.devSetupSubtitle
-        : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
-      title={devProfile ? copy.devSetupTitle : copy.setupTitle}
+      subtitle={setupSubtitleText}
+      title={setupTitleText}
     >
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
       <div className="setup-list">
@@ -1229,20 +1241,24 @@ function SetupSurface({
               ? copy.signedIn
               : browser?.status === "loading" ? copy.checkingSignIn : copy.signIn}
             complete={browser?.authenticated === true}
-            description={copy.stepAccountBody}
+            description={isM365
+              ? "Sign in directly in the embedded M365 Copilot browser. Login stays in this launcher's private profile."
+              : copy.stepAccountBody}
             disabled={busy}
             index={1}
             onAction={openLogin}
-            title={copy.stepAccount}
+            title={isM365 ? "Sign in to Microsoft 365 Copilot" : copy.stepAccount}
           />
           <SetupRow
-            action={snapshot.smokePassed ? copy.smokePassed : copy.runSmoke}
+            action={snapshot.smokePassed ? copy.smokePassed : isM365 ? "Run verify" : copy.runSmoke}
             complete={snapshot.smokePassed}
-            description={copy.stepSmokeBody}
+            description={isM365
+              ? "Check that the embedded Microsoft 365 Copilot chat interface is ready and responsive."
+              : copy.stepSmokeBody}
             disabled={busy || !browser?.authenticated}
             index={2}
             onAction={smoke}
-            title={copy.stepSmoke}
+            title={isM365 ? "Verify M365 Copilot connection" : copy.stepSmoke}
           />
         </> : null}
         <SetupRow
@@ -1250,7 +1266,11 @@ function SetupSurface({
             ? devProfile ? copy.devReinstall : copy.reinstall
             : devProfile ? copy.devInstall : copy.install}
           complete={snapshot.state.codexCatalogVerified === true}
-          description={devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
+          description={devProfile
+            ? copy.devStepInstallBody
+            : isM365
+              ? "Add Microsoft 365 Copilot and ChatGPT Web models to Codex without replacing native catalog."
+              : copy.stepInstallBody}
           disabled={busy || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={manualInteraction ? 1 : 3}
           onAction={install}
@@ -2728,7 +2748,7 @@ function FatalMessage({ message }: { message: string }) {
 function browserTabTitleFromTitle(value: string | undefined, copy: Copy): string {
   const title = value?.trim();
   if (!title || title === "about:blank" || title.includes("codex-web-gpt-browser-host")) return copy.temporaryChat;
-  return title.replace(/\s*[|–-]\s*ChatGPT\s*$/i, "") || copy.temporaryChat;
+  return title.replace(/\s*[|–-]\s*(ChatGPT|Microsoft Copilot|Copilot)\s*$/i, "") || copy.temporaryChat;
 }
 
 function browserTabTone(status: BrowserState["tabs"][number]["status"]): "idle" | "ready" | "busy" | "error" {

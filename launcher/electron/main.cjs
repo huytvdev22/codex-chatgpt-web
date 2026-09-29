@@ -786,20 +786,22 @@ function registerIpc({ logger, stateStore }) {
       const browser = await browserHost.probeAuthentication();
       if (!browser.authenticated) {
         if (browser.status === "error") throw new Error(browser.message);
+        const providerLabel = browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT";
         throw new Error(
           IS_DEV_PROFILE
             ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
-            : "Sign in to ChatGPT before installing the Codex integration",
+            : `Sign in to ${providerLabel} before installing the Codex integration`,
         );
       }
     }
     if (setupState.browserInteractionMode === "automatic"
       && !setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
+      const testLabel = browserHost.provider === "m365" ? "connection verification" : "browser smoke test";
       throw new Error(
         IS_DEV_PROFILE
           ? "Run the browser smoke test before configuring the DEV harness"
-          : "Run the browser smoke test before installing the Codex integration",
+          : `Run the ${testLabel} before installing the Codex integration`,
       );
     }
     const result = IS_DEV_PROFILE ? await runtimeHost.setupDevCore() : await runtimeHost.setupCore();
