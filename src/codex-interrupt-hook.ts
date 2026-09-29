@@ -88,11 +88,21 @@ export function installCodexInterruptHook(
   return installCodexInterruptHookCommand(text, configPath, codexInterruptHookCommand(config));
 }
 
+export function stripManagedInterruptHook(text: string): string {
+  while (text.includes(MANAGED_INTERRUPT_HOOK_START) && text.includes(MANAGED_INTERRUPT_HOOK_END)) {
+    const startIndex = text.indexOf(MANAGED_INTERRUPT_HOOK_START);
+    const endIndex = text.indexOf(MANAGED_INTERRUPT_HOOK_END) + MANAGED_INTERRUPT_HOOK_END.length;
+    text = text.slice(0, startIndex).trimEnd() + (text.slice(endIndex).length > 0 ? "\n" + text.slice(endIndex).trimStart() : "");
+  }
+  return text;
+}
+
 export function installCodexInterruptHookCommand(
   text: string,
   configPath: string,
   command: string,
 ): { text: string; installed: InstalledCodexInterruptHook } {
+  text = stripManagedInterruptHook(text);
   if (managedMarkerCount(text) !== 0 || text.includes(MANAGED_INTERRUPT_HOOK_END)) {
     throw new Error("Codex config already contains a codex-chatgpt-web interrupt hook marker");
   }
