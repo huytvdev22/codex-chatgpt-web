@@ -41,9 +41,9 @@
     "fast-uri": "3.1.6"
   },
   "build": {
-    "appId": "dev.codexwebgpt.launcher",
-    "productName": "Codex Web GPT",
-    "artifactName": "codex-web-gpt-${version}-${os}-${arch}.${ext}",
+    "appId": "dev.codexm365.launcher",
+    "productName": "Codex M365 Copilot",
+    "artifactName": "codex-m365-copilot-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
       "assets/linux-appimage-runner.sh"

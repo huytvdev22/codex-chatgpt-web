@@ -154,7 +154,7 @@ export function expandUserPath(value: string): string {
 
 export function getConfigDir(): string {
   const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
-  return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
+  return resolve(expandUserPath(configured || join(homedir(), ".codex-m365-copilot")));
 }
 
 export function getConfigPath(): string {
@@ -235,7 +235,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     mode,
     subagentProtocol: "compatibility-v1",
     host: "127.0.0.1",
-    port: 17841,
+    port: 17842,
     contextWindow: 256_000,
     appName: CHATGPT_CONNECTOR_NAME,
     automaticAppName: CHATGPT_CONNECTOR_NAME,
