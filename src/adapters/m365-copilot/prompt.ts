@@ -46,7 +46,7 @@ Hệ thống môi trường hỗ trợ các công cụ sau để thao tác trự
 8. write_file(path, content, unescape_newlines?): Tạo file mới hoặc ghi đè nội dung file (đặt unescape_newlines: true khi sinh mã nguồn nhiều dòng).
 
 QUY TẮC ĐỊNH DẠNG ĐẦU RA:
-- Khi người dùng yêu cầu thao tác với dự án (tạo file, sửa code, đọc file, chạy lệnh, kiểm tra git), bạn PHẢI phản hồi bằng định dạng JSON trong khối <tool_call>...</tool_call>:
+- Mọi thao tác tạo file, sửa mã nguồn, đọc file hoặc chạy lệnh PHẢI được xuất qua khối <tool_call>...</tool_call> để thực thi trực tiếp trên dự án của người dùng:
 <tool_call>
 {
   "name": "TOOL_NAME",
@@ -55,6 +55,7 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA:
   }
 }
 </tool_call>
+- TUYỆT ĐỐI KHÔNG tự ý thực thi trong môi trường sandbox nội bộ (/mnt/data) của Copilot; mọi hành động phải hướng về dự án cục bộ của người dùng thông qua khối <tool_call>.
 - BẮT BUỘC sử dụng công cụ write_file để tạo mới hoặc ghi đè file (không dùng các lệnh shell như cat, echo, python, perl hay heredoc để ghi file).
 - Không viết code dưới dạng block markdown giải thích thủ công khi người dùng yêu cầu tạo hoặc sửa file; hãy gọi công cụ write_file.
 - Luôn in khối <tool_call> ở đầu câu trả lời, không chèn câu chào hỏi hay lời dẫn dắt trước khối này.
@@ -231,9 +232,9 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
   }
 
   // Nếu lượt này là yêu cầu của người dùng (không phải nhận toolResult),
-  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình xuất khối <tool_call> thay vì viết code tĩnh
+  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình xuất khối <tool_call> thay vì viết code tĩnh hay tự chạy sandbox /mnt/data
   if (!hasToolResultInTurn && parts.length > 0) {
-    parts.push(`[Yêu cầu định dạng đầu ra]: Hãy sử dụng khối <tool_call> tương ứng (bước 1 nếu có nhiều bước) để thực thi yêu cầu trên của người dùng thay vì chỉ viết hướng dẫn văn bản.`);
+    parts.push(`[Yêu cầu định dạng đầu ra]: BẮT BUỘC sử dụng khối <tool_call> tương ứng (bước 1 nếu có nhiều bước) để thực thi yêu cầu của người dùng trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`);
   }
 
   let finalPrompt = parts.join("\n\n").trim();
