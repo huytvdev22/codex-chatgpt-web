@@ -2,7 +2,7 @@ import { connectLauncherBrowserHost, notifyLauncherTurn, readLauncherBrowserHost
 import { getConfigDir } from "../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { m365HtmlToMarkdown } from "./markdown";
+import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "./markdown";
 
 export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
@@ -171,8 +171,8 @@ export async function executeM365Turn(
       await page.keyboard.press("Enter");
     }
 
-    // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client
-    let previousText = "";
+    // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
+    const markdownBuffer = new M365MarkdownBuffer();
     let seenGenerating = false;
     let attempts = 0;
     let stableCycles = 0;
@@ -194,7 +194,7 @@ export async function executeM365Turn(
       await new Promise(r => setTimeout(r, pollIntervalMs));
       attempts++;
 
-      // Trích xuất HTML đã được làm sạch và chuẩn hóa khối code
+      // Trích xuất các khối ngữ nghĩa (Semantic Blocks) đã được làm sạch và chuẩn hóa khối code
       const status = await page.evaluate((before) => {
         const stopBtn = document.querySelector(
           'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
@@ -206,17 +206,17 @@ export async function executeM365Turn(
           ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
         ));
         
-        // Nếu số lượng tin nhắn chưa tăng hoặc không có tin nhắn
         if (messages.length === 0) {
-          return { isGenerating: Boolean(stopBtn), rawHtml: "", isNew: false, hasContent: false };
+          return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false };
         }
 
         const lastMsg = messages[messages.length - 1] as HTMLElement;
         const hasShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i], .fai-StatusMessage, .fai-BebopMessageStatus'));
         const isGenerating = Boolean(stopBtn) || hasShimmer || editorDisabled;
 
-        // Chỉ lấy thẻ content chứa câu trả lời thực sự của Copilot
-        const contentEl = (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
+        // Ưu tiên cao nhất: lấy markdown-reply (nơi chứa toàn bộ nội dung câu trả lời thật sự của Copilot)
+        const replyEl = lastMsg.querySelector('[data-testid="markdown-reply"]') as HTMLElement | null;
+        const contentEl = replyEl || (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
 
         // 1. Quét các khối code trên LIVE DOM trước khi clone để lấy chính xác text (có newline + indent) và language
         const codeBlockSelectors = ".scriptor-component-code-block, [class*='scriptor-component-code-block'], div[role='group'][aria-label='Code Preview']";
@@ -226,8 +226,16 @@ export async function executeM365Turn(
           let lang = langEl?.textContent?.trim().toLowerCase() || "";
           if (lang === "plain text" || lang === "text") lang = "plain";
 
-          const findRoot = block.querySelector("[data-virtualized-code-find-root='true']") || block.lastElementChild;
-          const codeText = (findRoot ? (findRoot as HTMLElement).innerText : (block as HTMLElement).innerText || "").replace(/^\n+|\n+$/g, "");
+          // Lấy chính xác code từ các thẻ data-line-index
+          const lineEls = Array.from(block.querySelectorAll("[data-line-index]"));
+          let codeText = "";
+          if (lineEls.length > 0) {
+            codeText = lineEls.map(el => (el.textContent || "").replace(/\u00a0/g, " ")).join("\n");
+          } else {
+            const findRoot = block.querySelector("[data-virtualized-code-find-root='true'], [role='textbox'][aria-label*='Code editor' i]") || block.lastElementChild;
+            codeText = (findRoot ? (findRoot as HTMLElement).innerText : (block as HTMLElement).innerText || "").replace(/\u00a0/g, " ");
+          }
+          codeText = codeText.replace(/^\n+|\n+$/g, "");
           return { lang, codeText };
         });
 
@@ -247,7 +255,11 @@ export async function executeM365Turn(
           }
           code.textContent = data.codeText;
           pre.appendChild(code);
-          block.replaceWith(pre);
+
+          // Tìm container của khối code (thường là div có role='group' hoặc div.___hy8ozz0 cha của nó)
+          const previewGroup = block.closest("div[role='group'][aria-label='Code Preview']");
+          const container = previewGroup?.parentElement || previewGroup || block;
+          container.replaceWith(pre);
         });
 
         // Hỗ trợ nếu có thẻ pre thông thường
@@ -265,38 +277,78 @@ export async function executeM365Turn(
           "[role='status'], [role='progressbar'], .fai-Shimmer, [class*='shimmer' i], .fai-StatusMessage, .fai-BebopMessageStatus, [role='toolbar'], .fai-CopilotMessage__actions, .fai-CopilotMessage__accessibleHeading, button, svg"
         ).forEach(el => el.remove());
 
-        // Loại bỏ các đoạn text status nếu còn sót trong các thẻ div/span
-        const statusPhrases = [
-          "taking a look",
-          "getting things ready",
-          "digging in",
-          "working on it",
-          "searching the web",
-          "searching work data",
-          "searching",
-          "thinking",
-          "generating response",
-          "đang xem xét",
-          "đang chuẩn bị",
-          "đang tìm kiếm",
-          "đang đào sâu",
-          "đang xử lý",
-          "đang suy nghĩ",
-        ];
-        clone.querySelectorAll("div, span, p").forEach(el => {
-          const text = el.textContent?.trim().toLowerCase() || "";
-          for (const phrase of statusPhrases) {
-            if (text.startsWith(phrase) && text.length < phrase.length + 35) {
-              el.remove();
-              break;
+        // Nếu không có replyEl (fallback), lọc các cụm từ status nếu còn sót trong các thẻ div/span
+        if (!replyEl) {
+          const statusPhrases = [
+            "checking that now",
+            "taking a look",
+            "getting things ready",
+            "digging in",
+            "working on it",
+            "searching the web",
+            "searching work data",
+            "searching",
+            "thinking",
+            "generating response",
+            "đang xem xét",
+            "đang kiểm tra",
+            "đang chuẩn bị",
+            "đang tìm kiếm",
+            "đang đào sâu",
+            "đang xử lý",
+            "đang suy nghĩ",
+            "đang tạo câu trả lời",
+          ];
+          clone.querySelectorAll("div, span, p").forEach(el => {
+            const text = el.textContent?.trim().toLowerCase() || "";
+            for (const phrase of statusPhrases) {
+              if (text.startsWith(phrase) && text.length < phrase.length + 35) {
+                el.remove();
+                break;
+              }
             }
-          }
-        });
+          });
+        }
 
-        const rawHtml = clone.innerHTML || "";
-        const hasContent = (clone.textContent || "").trim().length > 0;
-        const isNew = (messages.length > before.count) || (rawHtml !== before.lastHtml) || isGenerating;
-        return { isGenerating, rawHtml, isNew, hasContent };
+        // 4. Phân rã thành các Semantic Blocks (paragraphs, headings, code blocks, lists, hr...)
+        const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "ul", "ol", "hr", "blockquote", "table"]);
+        let targetRoot: HTMLElement = clone;
+        // Bóc lớp div wrapper trung gian nếu có
+        while (targetRoot.children.length === 1 && targetRoot.firstElementChild && !blockTags.has(targetRoot.firstElementChild.tagName.toLowerCase())) {
+          targetRoot = targetRoot.firstElementChild as HTMLElement;
+        }
+
+        const rawChildren = Array.from(targetRoot.children) as HTMLElement[];
+        const hasBlockChildren = rawChildren.some(c => blockTags.has(c.tagName.toLowerCase()));
+
+        let blocks: Array<{ key: string; tag: string; html: string; text: string; streamable: boolean }> = [];
+        if (hasBlockChildren) {
+          blocks = rawChildren.map((child, idx) => {
+            const tag = child.tagName.toLowerCase();
+            return {
+              key: `block-${idx}-${tag}`,
+              tag,
+              html: child.outerHTML,
+              text: child.textContent?.trim() || "",
+              streamable: idx < rawChildren.length - 1, // Khối đã hoàn tất vì khối kế tiếp đã xuất hiện
+            };
+          }).filter(b => b.text.length > 0 || b.tag === "hr");
+        } else {
+          const text = targetRoot.textContent?.trim() || "";
+          if (text) {
+            blocks = [{
+              key: "root-0-div",
+              tag: "div",
+              html: targetRoot.innerHTML,
+              text,
+              streamable: false,
+            }];
+          }
+        }
+
+        const hasContent = blocks.length > 0;
+        const isNew = (messages.length > before.count) || isGenerating;
+        return { isGenerating, blocks, isNew, hasContent };
       }, beforeState);
 
       if (status.isGenerating) {
@@ -312,57 +364,36 @@ export async function executeM365Turn(
         }, undefined, options.signal).catch(() => {});
       }
 
-      if (status.hasContent && status.rawHtml) {
-        // Chuyển đổi HTML sang Markdown chuẩn bằng logic kế thừa từ ChatGPT
-        const currentMarkdown = m365HtmlToMarkdown(status.rawHtml);
-
-        // Bỏ qua nếu nội dung chỉ là thinking indicator hoặc text rác
-        const isOnlyStatus = /^(?:Taking a look|Getting things ready|Digging in|Working on it|Searching the web|Searching work data|Searching|Thinking|Generating response|Đang xem xét|Đang chuẩn bị|Đang tìm kiếm|Đang đào sâu|Đang xử lý|Đang suy nghĩ|Đang tạo câu trả lời)[.…\s]*$/i.test(currentMarkdown);
-
-        // Chỉ stream khi đã có nội dung trả lời thực sự
-        if (!isOnlyStatus && currentMarkdown) {
-          if (currentMarkdown !== previousText) {
-            lastTextChangeAt = Date.now();
-            stableCycles = 0;
-
-            if (!previousText) {
-              options.onChunk(currentMarkdown);
-              previousText = currentMarkdown;
-            } else if (currentMarkdown.startsWith(previousText)) {
-              const delta = currentMarkdown.slice(previousText.length);
-              if (delta.length > 0) {
-                options.onChunk(delta);
-              }
-              previousText = currentMarkdown;
-            } else if (currentMarkdown.length > previousText.length) {
-              let matchLen = 0;
-              while (matchLen < previousText.length && matchLen < currentMarkdown.length && previousText[matchLen] === currentMarkdown[matchLen]) {
-                matchLen++;
-              }
-              const delta = currentMarkdown.slice(matchLen);
-              if (delta.length > 0) {
-                options.onChunk(delta);
-              }
-              previousText = currentMarkdown;
-            }
-          } else {
-            stableCycles++;
-          }
+      // Stream các khối đã hoàn thành thông qua M365MarkdownBuffer
+      if (status.blocks && status.blocks.length > 0) {
+        const delta = markdownBuffer.observe(status.blocks as M365MarkdownBlock[]);
+        if (delta.length > 0) {
+          options.onChunk(delta);
+          lastTextChangeAt = Date.now();
+          stableCycles = 0;
+        } else {
+          stableCycles++;
         }
       }
 
       // Điều kiện kết thúc:
-      // 1. Phải có nội dung trả lời (previousText.length > 0)
+      // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
       // 3. Nội dung văn bản đã hoàn toàn ổn định (không thay đổi trong ít nhất 1.5 giây = 6 nhịp)
       const isSettled = stableCycles >= 6 || (Date.now() - lastTextChangeAt >= 1500);
-      if (previousText.length > 0 && !status.isGenerating && isSettled) {
+      if (status.hasContent && !status.isGenerating && isSettled) {
         break;
       }
     }
 
+    // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
+    const { delta: finalDelta, markdown: fullMarkdown } = markdownBuffer.finish();
+    if (finalDelta.length > 0) {
+      options.onChunk(finalDelta);
+    }
+
     finalStatus = "completed";
-    return previousText;
+    return fullMarkdown;
   } catch (err) {
     if (options.signal?.aborted) finalStatus = "aborted";
     throw err;
