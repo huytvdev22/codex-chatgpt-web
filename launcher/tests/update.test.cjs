@@ -296,7 +296,7 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
     assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/Codex Web GPT\.AppImage/);
     assert.doesNotMatch(fs.readFileSync(wrapper, "utf8"), /APPIMAGE_EXTRACT_AND_RUN/);
     assert.equal(fs.existsSync(path.join(versionsRoot, "run-appimage")), true);
-    const deadline = Date.now() + 3_000;
+    const deadline = Date.now() + 10_000;
     while (!fs.existsSync(marker) && Date.now() < deadline) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }

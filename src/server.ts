@@ -469,34 +469,7 @@ export async function modelsRequest(
     });
   } catch (error) {
     onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
-    if (fetchUpstream) {
-      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-    }
-    try {
-      const fallbackTemplate = {
-        id: "gpt-5",
-        slug: "gpt-5",
-        display_name: "GPT-5",
-        description: "Standard model template",
-        visibility: "list",
-        supported_in_api: true,
-        tool_mode: "responses",
-        supported_reasoning_levels: [{ effort: "low", description: "Low effort" }],
-        priority: 0,
-      };
-      const fallbackCatalog = augmentNativeModelCatalog(
-        { object: "list", models: [fallbackTemplate] },
-        config,
-        contextOverride?.(),
-      );
-      const body = JSON.stringify(fallbackCatalog);
-      const headers = new Headers();
-      headers.set("content-type", "application/json");
-      headers.set("etag", `W/\"${createHash("sha256").update(body).digest("base64url")}\"`);
-      return new Response(body, { status: 200, headers });
-    } catch {
-      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-    }
+    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
   }
   if (!upstream.ok) {
     onFailure?.({ stage: "upstream" });
