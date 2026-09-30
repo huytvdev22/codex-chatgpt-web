@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
+import { M365ToolBridge } from "../src/adapters/m365-copilot/tool-bridge";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
@@ -225,5 +226,62 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(parsedCmd).toContain('"demo.txt"');
     const expectedB64 = Buffer.from("console.log('hello');").toString("base64");
     expect(parsedCmd).toContain(expectedB64);
+  });
+
+  test("Phase 7: compileM365Prompt includes neutral protocol specification, multi-step rules, and end-of-prompt formatting directive", () => {
+    const parsed: CodexParsedRequest = {
+      modelId: "m365-copilot/default",
+      stream: true,
+      context: {
+        messages: [{
+          role: "user",
+          content: "# Context from my IDE setup:\n## Active file: server.js\n\nkiểm tra cú pháp file sau đó run server lên rồi test cho tôi",
+          timestamp: Date.now(),
+        }],
+      },
+      options: {},
+    };
+
+    const prompt = compileM365Prompt(parsed, true);
+    expect(prompt).toContain("QUY TẮC ĐỊNH DẠNG ĐẦU RA");
+    expect(prompt).toContain("write_file");
+    expect(prompt).toContain("MULTI-STEP");
+    expect(prompt).toContain("node --check server.js");
+    expect(prompt).toContain("[Yêu cầu định dạng đầu ra]");
+    expect(prompt.endsWith("thay vì chỉ viết hướng dẫn văn bản.")).toBeTrue();
+  });
+
+  test("Phase 8: M365ToolCallDetector parses raw multiline unescaped newlines in JSON string literals (Self-healing parser)", () => {
+    const detector = new M365ToolCallDetector();
+    // Payload thực tế từ Copilot với dấu ENTER xuống dòng thật bên trong chuỗi content
+    const rawCopilotPayload = `<tool_call> { "name": "write_file", "arguments": { "path": "server.js", "content": "const http = require('http');\n\nconst PORT = process.env.PORT || 3000;\n\nconst server = http.createServer(function(req, res) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ message: 'Hello from Node.js server' })); });\n\nserver.listen(PORT, function() { console.log('Server is running on port ' + PORT); });" } } </tool_call>`;
+
+    detector.feed(rawCopilotPayload);
+    const { toolCall } = detector.finish();
+
+    expect(detector.hasDetectedToolCall()).toBeTrue();
+    expect(toolCall).not.toBeNull();
+    expect(toolCall?.name).toBe("write_file");
+    const args = toolCall?.arguments as Record<string, any>;
+    expect(args.path).toBe("server.js");
+    expect(args.content).toContain("const http = require('http');");
+    expect(args.content).toContain("server.listen(PORT");
+    expect(args.content.split("\n").length).toBeGreaterThan(1);
+  });
+
+  test("Phase 8: M365ToolBridge automatically unescapes literal \\n in single-line write_file payload", () => {
+    const singleLineEscaped = "const http = require('http');\\nconst PORT = 3000;\\nconsole.log(PORT);";
+    const mapped = M365ToolBridge.mapToolCall({
+      name: "write_file",
+      arguments: { path: "server.js", content: singleLineEscaped },
+    });
+
+    const parsedArgs = JSON.parse(mapped.arguments);
+    const match = parsedArgs.cmd.match(/node -e "[^"]+"\s+"[^"]+"\s+"([^"]+)"/);
+    expect(match).not.toBeNull();
+    const base64Decoded = Buffer.from(match[1], "base64").toString("utf8");
+    // Phải được unescape thành các dòng mới thực tế
+    expect(base64Decoded).toContain("\n");
+    expect(base64Decoded.split("\n").length).toBe(3);
   });
 });

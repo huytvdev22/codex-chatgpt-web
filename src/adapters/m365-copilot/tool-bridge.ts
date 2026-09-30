@@ -90,7 +90,11 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   write_file: (args) => {
     const targetPath = String(args.path || args.file || "");
-    const content = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "");
+    let content = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "");
+    // Tự động chuẩn hóa nếu nội dung không có dấu xuống dòng thực tế nhưng lại bị double-escaped thành text \n
+    if (!content.includes("\n") && content.includes("\\n")) {
+      content = content.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
+    }
     const base64Content = Buffer.from(content, "utf8").toString("base64");
     // Nháy kép bên ngoài, nháy đơn bên trong, truyền path và base64 qua process.argv
     const script = `const fs=require('fs'),p=require('path');fs.mkdirSync(p.dirname(process.argv[1]),{recursive:true});fs.writeFileSync(process.argv[1],Buffer.from(process.argv[2],'base64'));console.log('Successfully wrote '+process.argv[1]);`;

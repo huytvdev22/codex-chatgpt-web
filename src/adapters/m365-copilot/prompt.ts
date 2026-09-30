@@ -35,7 +35,7 @@ export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_C
 }
 
 const TOOL_DECLARATION_PROMPT = `[CHẾ ĐỘ GIAO THỨC CÔNG CỤ (TOOL CALLING PROTOCOL)]
-Hệ thống bên ngoài của người dùng hỗ trợ các công cụ sau:
+Hệ thống môi trường hỗ trợ các công cụ sau để thao tác trực tiếp với dự án:
 1. git_status(): Kiểm tra trạng thái Git (các file đã thay đổi, file mới tạo, nhánh hiện tại).
 2. git_diff(path?): Xem chi tiết các dòng code vừa thay đổi trong Git.
 3. read_file(path): Đọc nội dung file từ dự án.
@@ -45,8 +45,8 @@ Hệ thống bên ngoài của người dùng hỗ trợ các công cụ sau:
 7. run_command(cmd): Chạy lệnh shell/terminal bất kỳ (build, test, lint, script...).
 8. write_file(path, content): Tạo file mới hoặc ghi đè nội dung file.
 
-QUY TẮC BẮT BUỘC:
-- Bạn KHÔNG THỂ và KHÔNG CẦN tự đọc file hay tự chạy git. Để hệ thống bên ngoài thực thi giúp bạn, bạn BẮT BUỘC PHẢI IN RA CHÍNH XÁC khối sau:
+QUY TẮC ĐỊNH DẠNG ĐẦU RA:
+- Khi người dùng yêu cầu thao tác với dự án (tạo file, sửa code, đọc file, chạy lệnh, kiểm tra git), bạn PHẢI phản hồi bằng định dạng JSON trong khối <tool_call>...</tool_call>:
 <tool_call>
 {
   "name": "TOOL_NAME",
@@ -55,11 +55,14 @@ QUY TẮC BẮT BUỘC:
   }
 }
 </tool_call>
+- Không viết code dưới dạng block markdown giải thích thủ công khi người dùng yêu cầu tạo hoặc sửa file; hãy sử dụng công cụ write_file để tạo/ghi file vào dự án.
+- Luôn in khối <tool_call> ở đầu câu trả lời, không chèn câu chào hỏi hay lời dẫn dắt trước khối này.
 
-- Tuyệt đối KHÔNG từ chối, KHÔNG giải thích rằng bạn không có quyền truy cập máy hay bảo người dùng tự tải file lên.
-- Bạn PHẢI ÂM THẦM IN RA KHỐI <tool_call> ĐẦU TIÊN (KHÔNG in bất kỳ câu chào hỏi, lời dẫn dắt hay văn bản nào trước khối này).
+QUY TẮC YÊU CẦU ĐA BƯỚC (MULTI-STEP):
+- Khi yêu cầu gồm một chuỗi nhiều bước (ví dụ: kiểm tra cú pháp sau đó chạy server rồi test), hãy xuất <tool_call> cho bước đầu tiên trước (ví dụ: dùng run_command với "node --check <file>").
+- Sau khi nhận được kết quả trong thẻ <tool_result> ở lượt tiếp theo, bạn sẽ tiếp tục xuất <tool_call> cho bước kế tiếp cho đến khi hoàn thành toàn bộ nhiệm vụ.
 
-CÁC VÍ DỤ MẪU BẮT BUỘC TUÂN THEO:
+CÁC VÍ DỤ MẪU CHUẨN:
 
 Ví dụ 1 (Kiểm tra Git status):
 Người dùng: Cho tôi xem git status hiện tại của dự án
@@ -132,14 +135,26 @@ Bạn in ra:
 </tool_call>
 
 Ví dụ 7 (Tạo hoặc sửa file):
-Người dùng: Tạo file demo.txt với nội dung Hello
+Người dùng: tạo 1 server đơn giản bằng node js vào project hiện tại
 Bạn in ra:
 <tool_call>
 {
   "name": "write_file",
   "arguments": {
-    "path": "demo.txt",
-    "content": "Hello"
+    "path": "server.js",
+    "content": "const http = require('http');\\nconst PORT = process.env.PORT || 3000;\\nconst server = http.createServer((req, res) => { res.writeHead(200, {'Content-Type': 'application/json'}); res.end(JSON.stringify({ message: 'Hello' })); });\\nserver.listen(PORT);"
+  }
+}
+</tool_call>
+
+Ví dụ 8 (Yêu cầu đa bước - Kiểm tra và chạy thử):
+Người dùng: kiểm tra cú pháp file server.js sau đó run server lên rồi test cho tôi
+Bạn in ra (thực hiện bước 1 kiểm tra cú pháp trước):
+<tool_call>
+{
+  "name": "run_command",
+  "arguments": {
+    "cmd": "node --check server.js"
   }
 }
 </tool_call>
@@ -212,6 +227,12 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
         parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới. Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
       }
     }
+  }
+
+  // Nếu lượt này là yêu cầu của người dùng (không phải nhận toolResult),
+  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình xuất khối <tool_call> thay vì viết code tĩnh
+  if (!hasToolResultInTurn && parts.length > 0) {
+    parts.push(`[Yêu cầu định dạng đầu ra]: Hãy sử dụng khối <tool_call> tương ứng (bước 1 nếu có nhiều bước) để thực thi yêu cầu trên của người dùng thay vì chỉ viết hướng dẫn văn bản.`);
   }
 
   let finalPrompt = parts.join("\n\n").trim();

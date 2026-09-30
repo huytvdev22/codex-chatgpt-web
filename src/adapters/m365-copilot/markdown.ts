@@ -230,13 +230,117 @@ export class M365ToolCallDetector {
     return this.detectedToolCall;
   }
 
+  /**
+   * Tự động chuẩn hóa các ký tự điều khiển thô (raw newline, carriage return, tab)
+   * nằm bên trong string literal của JSON để JSON.parse không bị lỗi Bad control character.
+   */
+  private sanitizeJsonControlChars(raw: string): string {
+    let inString = false;
+    let escaped = false;
+    let out = "";
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (ch === '"' && !escaped) {
+        inString = !inString;
+        out += ch;
+      } else if (inString) {
+        if (ch === "\n") {
+          out += "\\n";
+        } else if (ch === "\r") {
+          out += "\\r";
+        } else if (ch === "\t") {
+          out += "\\t";
+        } else {
+          out += ch;
+        }
+      } else {
+        out += ch;
+      }
+      escaped = (ch === "\\" && !escaped);
+    }
+    return out;
+  }
+
+  /**
+   * Fallback trích xuất tool call bằng Regex nếu JSON.parse vẫn thất bại
+   */
+  private fallbackExtractToolCall(raw: string): ParsedToolCall | null {
+    const nameMatch = raw.match(/"name"\s*:\s*"([^"]+)"/i);
+    if (!nameMatch) return null;
+    const name = nameMatch[1].trim();
+
+    if (name === "write_file") {
+      const pathMatch = raw.match(/"path"\s*:\s*"([^"]+)"/i);
+      const contentMatch = raw.match(/"content"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*\}|\}\s*$)/);
+      if (pathMatch) {
+        return {
+          name,
+          arguments: {
+            path: pathMatch[1].trim(),
+            content: contentMatch ? contentMatch[1] : "",
+          },
+        };
+      }
+    }
+
+    if (name === "run_command") {
+      const cmdMatch = raw.match(/"cmd"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*\}|\}\s*$)/i);
+      if (cmdMatch) {
+        return {
+          name,
+          arguments: { cmd: cmdMatch[1].trim() },
+        };
+      }
+    }
+
+    const pathMatch = raw.match(/"path"\s*:\s*"([^"]+)"/i);
+    if (pathMatch) {
+      return {
+        name,
+        arguments: { path: pathMatch[1].trim() },
+      };
+    }
+
+    return {
+      name,
+      arguments: {},
+    };
+  }
+
   private parseToolPayload(raw: string): ParsedToolCall | null {
+    const clean = raw
+      .replace(/```(?:json)?/gi, "")
+      .replace(/```/g, "")
+      .replaceAll("\\_", "_")
+      .trim();
+
+    // 1. Thử parse với sanitizer xử lý raw newlines/control characters
     try {
-      const clean = raw
-        .replace(/```(?:json)?/gi, "")
-        .replace(/```/g, "")
-        .replaceAll("\\_", "_")
-        .trim();
+      const sanitized = this.sanitizeJsonControlChars(clean);
+      const parsed = JSON.parse(sanitized);
+      if (parsed && typeof parsed === "object") {
+        const name = typeof parsed.name === "string" ? parsed.name : "read_file";
+        let args = parsed.arguments;
+        if (!args && parsed.path) {
+          args = { path: parsed.path };
+        } else if (typeof args === "string") {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            args = { path: args };
+          }
+        } else if (!args) {
+          args = {};
+        }
+        return {
+          name,
+          arguments: args,
+        };
+      }
+    } catch {}
+
+    // 2. Thử parse nguyên bản nếu clean khác sanitized
+    try {
       const parsed = JSON.parse(clean);
       if (parsed && typeof parsed === "object") {
         const name = typeof parsed.name === "string" ? parsed.name : "read_file";
@@ -258,6 +362,15 @@ export class M365ToolCallDetector {
         };
       }
     } catch {}
+
+    // 3. Fallback: trích xuất regex tự phục hồi nếu JSON bị format lỗi bởi LLM
+    try {
+      const fallback = this.fallbackExtractToolCall(clean);
+      if (fallback) {
+        return fallback;
+      }
+    } catch {}
+
     return null;
   }
 }
