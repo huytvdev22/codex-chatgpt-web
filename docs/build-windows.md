@@ -69,7 +69,45 @@ bun install --cwd launcher --frozen-lockfile
 
 ---
 
-## 5. Các bước thực hiện Build
+## 5. Quy trình phát triển và kiểm thử nhanh khi đang Code
+
+Trong quá trình phát triển tính năng, sửa giao diện hoặc sửa lỗi, **bạn không cần phải đóng gói lại file `.exe` hay gỡ và cài đặt lại**. Bạn có thể dùng 2 phương pháp sau:
+
+### 🌟 Cách A: Chạy trực tiếp để TEST VỚI CODEX THẬT (Khuyên dùng nhất)
+Cách này giúp bạn chạy ngay mã nguồn mới nhất với **Profile thật**, kết nối trực tiếp vào ứng dụng Codex (`~/.codex`) trên máy mà không cần qua trình cài đặt `.exe`:
+
+- **Bước 1: Biên dịch code giao diện mới nhất**
+  ```powershell
+  bun run --cwd launcher build
+  ```
+  *(Chỉ mất ~1 giây để Vite và TypeScript biên dịch giao diện vào `launcher/dist`)*.
+
+- **Bước 2: Khởi chạy Electron từ mã nguồn**
+  ```powershell
+  bun run --cwd launcher start
+  ```
+  *(Ứng dụng sẽ mở lên ngay lập tức, tự động kết nối vào phiên ChatGPT Web và cầu nối Codex thật của bạn y hệt như bản đã cài đặt)*.
+
+---
+
+### ⚡ Cách B: Chế độ Dev UI với Hot Reload (Khi chỉ sửa giao diện React/CSS)
+Nếu bạn chỉ cần tinh chỉnh giao diện, canh chỉnh CSS hay layout mà không cần tương tác với bridge Codex thật:
+
+- *Lưu ý*: Nếu gặp lỗi `Electron failed to install correctly` trong lần đầu, chạy:
+  ```powershell
+  bun run launcher/node_modules/electron/install.js
+  ```
+- Khởi động Dev Server:
+  ```powershell
+  bun run launcher:dev
+  ```
+  *(Có tính năng Hot Module Replacement - HMR, sửa file `.tsx` hay `.css` là giao diện tự động cập nhật ngay trên màn hình)*.
+
+---
+
+## 6. Các bước đóng gói bộ cài đặt (.exe) khi phát hành
+
+Chỉ khi nào bạn đã hoàn thiện code, kiểm thử xong và muốn **tạo file cài đặt hoàn chỉnh để phân phối hoặc dùng lâu dài**, bạn mới cần đóng gói:
 
 ### Lựa chọn 1: Build tự động 1 lệnh (Khuyên dùng)
 
@@ -113,7 +151,7 @@ Lệnh này gọi `electron-builder` để:
 
 ---
 
-## 6. Vị trí file kết quả sau khi build
+## 7. Vị trí file kết quả sau khi build
 
 File cài đặt Windows `.exe` xuất hiện tại:
 
@@ -123,7 +161,7 @@ File cài đặt Windows `.exe` xuất hiện tại:
 
 ---
 
-## 7. Kiểm thử bộ cài đặt (Smoke Testing)
+## 8. Kiểm thử bộ cài đặt (Smoke Testing)
 
 Sau khi tạo xong file `.exe`, bạn có thể chạy smoke test tự động để xác nhận bộ cài hoạt động tốt:
 
@@ -138,7 +176,7 @@ PACKAGED_LAUNCHER_SMOKE_OK win32/x64
 
 ---
 
-## 8. Xử lý các lỗi thường gặp trên Windows
+## 9. Xử lý các lỗi thường gặp trên Windows
 
 ### Lỗi 1: `bun : The term 'bun' is not recognized...`
 - **Nguyên nhân**: Chưa thiết lập đường dẫn chứa `bun.exe` vào biến môi trường `PATH`.
