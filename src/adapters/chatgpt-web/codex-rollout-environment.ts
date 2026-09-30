@@ -7,7 +7,7 @@ let createDatabase: (path: string, options?: { readonly?: boolean; strict?: bool
 if (typeof (globalThis as unknown as { Bun?: unknown }).Bun !== "undefined") {
   // @ts-ignore
   const bunSqlite = await import("bun:sqlite");
-  createDatabase = (path, options) => new bunSqlite.Database(path, options);
+  createDatabase = (path, options) => new bunSqlite.Database(path, options) as unknown as SqliteDb;
 } else {
   // @ts-ignore
   const { DatabaseSync } = await import("node:sqlite");
@@ -148,7 +148,7 @@ function indexedRollout(
     // canonical rollout itself can still prove the exact thread, its lineage, and current turn.
     return { kind: "unavailable" };
   } finally {
-    database?.close();
+    database?.close?.();
   }
 }
 

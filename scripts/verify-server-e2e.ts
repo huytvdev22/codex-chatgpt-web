@@ -1,6 +1,6 @@
 import http from "node:http";
-import { modelsRequest, responseRequest } from "../src/server.ts";
-import { defaultConfig } from "../src/config.ts";
+import { modelsRequest, responseRequest } from "../src/server";
+import { defaultConfig } from "../src/config";
 
 console.log("=================================================");
 console.log("🌐 KIỂM THỬ END-TO-END HTTP SERVER (MULTI-PROVIDER)");

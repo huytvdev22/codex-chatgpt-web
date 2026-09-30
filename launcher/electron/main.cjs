@@ -559,6 +559,8 @@ function registerIpc({ logger, stateStore }) {
     packaged: app.isPackaged,
     version: app.getVersion(),
     smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()),
+    chatgptSmokePassed: stateStore.read().chatgptSmokePassed === true,
+    m365SmokePassed: stateStore.read().m365SmokePassed === true,
     operation: lastOperation,
     update: updateController?.getState() ?? { status: "disabled" },
   }));
@@ -646,7 +648,12 @@ function registerIpc({ logger, stateStore }) {
       throw new Error("Browser smoke testing is disabled in Zero Risk mode");
     }
     const result = await browserHost.smokeTest();
-    stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
+    const isM365 = browserHost.provider === "m365";
+    if (isM365) {
+      stateStore.update({ m365SmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
+    } else {
+      stateStore.update({ chatgptSmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
+    }
     smokePassedThisSession = true;
     return result;
   });

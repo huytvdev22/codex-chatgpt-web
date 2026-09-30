@@ -53,6 +53,10 @@ export interface LauncherBrowserHostDescriptor {
   partition: string;
   idleUrl: string;
   surfaceId: string;
+  chatGptSurfaceId?: string;
+  m365SurfaceId?: string;
+  activeSurfaceId?: string;
+  provider?: "m365" | "chatgpt";
   surfaceTargets: Record<string, string>;
   createdAt: string;
 }
@@ -119,7 +123,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
         "persist:codex-m365-copilot",
         "persist:codex-web-gpt-m365",
       ];
-  if (!allowedPartitions.includes(descriptor.partition)) {
+  if (typeof descriptor.partition !== "string" || !allowedPartitions.includes(descriptor.partition)) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }
   if (descriptor.idleUrl !== LAUNCHER_BROWSER_IDLE_URL) {
@@ -149,6 +153,10 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     partition: descriptor.partition,
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
+    chatGptSurfaceId: descriptor.chatGptSurfaceId,
+    m365SurfaceId: descriptor.m365SurfaceId,
+    activeSurfaceId: descriptor.activeSurfaceId,
+    provider: descriptor.provider,
     surfaceTargets: targets,
     createdAt: descriptor.createdAt,
   };

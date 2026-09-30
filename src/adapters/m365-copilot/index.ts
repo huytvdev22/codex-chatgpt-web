@@ -6,6 +6,7 @@ import { executeM365Turn } from "./browser-worker";
 
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
+  private lastConversationKey?: string;
 
   async runTurn(
     parsed: CodexParsedRequest,
@@ -16,9 +17,30 @@ export class M365CopilotAdapter implements ProviderAdapter {
       throw new DOMException("M365 Copilot turn aborted before start", "AbortError");
     }
 
-    const compiledPrompt = compileM365Prompt(parsed);
+    // 1. Xác định định danh phiên trò chuyện và kiểm tra xem có phải cuộc trò chuyện mới
+    const rawBody = parsed._rawBody as Record<string, any> | undefined;
+    const clientMeta = rawBody?.client_metadata as Record<string, any> | undefined;
+    const turnMeta = clientMeta?.["x-codex-turn-metadata"];
+    const parsedTurnMeta = typeof turnMeta === "string" ? (() => { try { return JSON.parse(turnMeta); } catch { return undefined; } })() : turnMeta;
 
-    // 1. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
+    const conversationKey = incoming.headers.get("x-codex-conversation-key")
+      || parsedTurnMeta?.thread_id
+      || clientMeta?.thread_id
+      || undefined;
+
+    const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
+    const isNewConversation = !hasPriorAssistantReply || (
+      Boolean(conversationKey) && Boolean(this.lastConversationKey) && this.lastConversationKey !== conversationKey
+    );
+
+    if (conversationKey) {
+      this.lastConversationKey = conversationKey;
+    }
+
+    // 2. Biên dịch prompt (chỉ gửi tin nhắn mới nếu đang tiếp tục cuộc trò chuyện)
+    const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
+
+    // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {
       const titleText = generateTitleResponse(compiledPrompt);
       emit({ type: "text_delta", text: titleText });
@@ -33,7 +55,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
+    // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
       const reply = await executeM365Turn(compiledPrompt, {
         onChunk: (delta) => {
@@ -41,7 +63,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         },
         signal: incoming.abortSignal,
         traceId: incoming.headers.get("x-codex-trace-id") || undefined,
-        conversationKey: incoming.headers.get("x-codex-conversation-key") || undefined,
+        conversationKey,
+        isNewConversation,
       });
 
       const inputTokens = Math.ceil(compiledPrompt.length / 4);

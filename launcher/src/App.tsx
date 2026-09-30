@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
@@ -582,15 +583,32 @@ function LauncherShell({
             <nav className="sidebar-nav" aria-label={copy.workspace}>
               <SidebarGroup label={copy.workspace}>
                 <SidebarItem
-                  active={surface === "browser"}
-                  badge={needsBrowser
+                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "chatgpt"}
+                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "chatgpt"
                     ? <ActionDot pulse tone="required" />
-                    : browser?.status === "error"
-                      ? <ActionDot tone="error" />
-                      : null}
+                    : null}
+                  icon="globe"
+                  label="ChatGPT"
+                  onClick={async () => {
+                    await api!.setProvider("chatgpt");
+                    updateState((await api!.snapshot()).state);
+                    navigateSurface("browser");
+                    await api!.setBrowserSurfaceActive(true);
+                  }}
+                />
+                <SidebarItem
+                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"}
+                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"
+                    ? <ActionDot pulse tone="required" />
+                    : null}
                   icon="browser"
-                  label={copy.browser}
-                  onClick={() => navigateSurface("browser")}
+                  label="M365 Copilot"
+                  onClick={async () => {
+                    await api!.setProvider("m365");
+                    updateState((await api!.snapshot()).state);
+                    navigateSurface("browser");
+                    await api!.setBrowserSurfaceActive(true);
+                  }}
                 />
               </SidebarGroup>
               <SidebarGroup label={copy.configuration}>
@@ -669,8 +687,6 @@ function LauncherShell({
                 operation={operation}
                 platform={snapshot.platform}
                 setError={setError}
-                selectedProvider={snapshot.state.selectedProvider || "m365"}
-                onSwitchProvider={(provider) => void api!.setProvider(provider).then(updateState).catch((cause) => setError(messageOf(cause)))}
               />
             ) : null}
             {surface === "setup" ? (
@@ -841,8 +857,6 @@ function BrowserSurface({
   operation,
   platform,
   setError,
-  selectedProvider,
-  onSwitchProvider,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
@@ -851,8 +865,6 @@ function BrowserSurface({
   operation: OperationState | null;
   platform: string;
   setError: (error: string | null) => void;
-  selectedProvider: "m365" | "chatgpt";
-  onSwitchProvider: (provider: "m365" | "chatgpt") => void;
 }) {
   const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
   const visible = browser?.visible === true;
@@ -985,44 +997,6 @@ function BrowserSurface({
           />
           <IconButton disabled={navigationLocked || !visible} icon="reload" label={copy.reload} onClick={() => void navigate("reload")} />
         </div>
-        <div style={{ display: "inline-flex", gap: "2px", background: "rgba(255,255,255,0.08)", borderRadius: "6px", padding: "2px", alignItems: "center" }}>
-          <button
-            type="button"
-            className="toolbar-text-button"
-            style={{
-              padding: "2px 8px",
-              height: "22px",
-              fontSize: "11px",
-              fontWeight: (browser?.provider === "m365" || (!browser?.provider && selectedProvider === "m365")) ? 600 : 400,
-              background: (browser?.provider === "m365" || (!browser?.provider && selectedProvider === "m365")) ? "var(--color-accent, #0078d4)" : "transparent",
-              color: "#fff",
-              borderRadius: "4px",
-              border: "none",
-              cursor: "pointer",
-            }}
-            onClick={() => void onSwitchProvider("m365")}
-          >
-            M365 Copilot
-          </button>
-          <button
-            type="button"
-            className="toolbar-text-button"
-            style={{
-              padding: "2px 8px",
-              height: "22px",
-              fontSize: "11px",
-              fontWeight: browser?.provider === "chatgpt" ? 600 : 400,
-              background: browser?.provider === "chatgpt" ? "var(--color-accent, #10a37f)" : "transparent",
-              color: "#fff",
-              borderRadius: "4px",
-              border: "none",
-              cursor: "pointer",
-            }}
-            onClick={() => void onSwitchProvider("chatgpt")}
-          >
-            ChatGPT
-          </button>
-        </div>
         <div className="browser-address" title={browser?.url || copy.browserAddress}>
           <Icon name="globe" />
           <span>{formatBrowserAddress(browser?.url, copy)}</span>
@@ -1053,7 +1027,9 @@ function BrowserSurface({
           </button>
         ) : null}
         <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
-          {visible ? copy.hideBrowser : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)}
+          {visible
+            ? (browser?.provider === "m365" ? "Hide M365 Copilot" : copy.hideBrowser)
+            : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
@@ -1075,20 +1051,20 @@ function BrowserSurface({
               ? copy.browserReady
               : browser?.authenticated
                 ? copy.noActiveTask
-                : selectedProvider === "m365"
+                : browser?.provider === "m365"
                   ? "Sign in to Microsoft 365 Copilot"
                   : copy.stepAccount}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
               : browser?.authenticated
-              ? (selectedProvider === "m365"
-                ? "ChatGPT will appear here when Codex starts a Web model turn."
+              ? (browser?.provider === "m365"
+                ? "M365 Copilot will appear here when Codex starts a Web model turn."
                 : copy.noActiveTaskBody)
               : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
               <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
                 {manualInteraction || browser?.authenticated
-                  ? (selectedProvider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)
+                  ? (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)
                   : copy.signIn}
               </PrimaryButton>
               {passkeyAvailable ? (
@@ -1184,15 +1160,18 @@ function SetupSurface({
 }) {
   const [localBusy, setLocalBusy] = useState(false);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
-  const busy = localBusy
-    || operation?.status === "running"
-    || (!manualInteraction && (
-      browser?.status === "loading"
-      || browser?.status === "testing"
-      || browser?.status === "running"
-    ));
+
+  const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
+  const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
+  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365));
+
+  const isM365Testing = browser?.status === "testing" && isM365;
+  const isChatGptTesting = browser?.status === "testing" && !isM365;
+  const isRunningTurn = browser?.status === "running";
+  const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
+
   const run = async (action: () => Promise<void>) => {
-    if (busy) return;
+    if (globalActionDisabled) return;
     setLocalBusy(true);
     setError(null);
     try {
@@ -1221,8 +1200,6 @@ function SetupSurface({
     updateState(await api!.setZeroRiskPro(enabled));
   });
 
-  const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
-
   return (
     <ContentSurface
       eyebrow={copy.required}
@@ -1238,12 +1215,12 @@ function SetupSurface({
         <SectionHeading label="M365 Copilot Setup" />
         <div className="setup-list">
           <SetupRow
-            action={browser?.authenticated && isM365
+            action={m365Authed
               ? copy.signedIn
               : browser?.status === "loading" && isM365 ? copy.checkingSignIn : copy.signIn}
-            complete={browser?.authenticated === true && isM365}
+            complete={m365Authed}
             description="Sign in directly in the embedded M365 Copilot browser. Login stays in this launcher's private profile."
-            disabled={busy}
+            disabled={globalActionDisabled}
             index={1}
             onAction={() => run(async () => {
               await api!.setProvider("m365");
@@ -1253,16 +1230,14 @@ function SetupSurface({
             title="Sign in to Microsoft 365 Copilot"
           />
           <SetupRow
-            action={snapshot.smokePassed && isM365 ? "Verify again" : "Run verify"}
-            complete={snapshot.smokePassed && isM365}
-            description="Click the Temporary chat button and verify that the M365 Copilot chat interface is ready and responsive."
-            disabled={busy || !(browser?.authenticated === true)}
+            action={snapshot.m365SmokePassed ? "Verify again" : "Run verify"}
+            complete={Boolean(snapshot.m365SmokePassed)}
+            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to M365 Copilot and verify response."
+            disabled={globalActionDisabled || isM365Testing || !m365Authed}
             index={2}
             onAction={() => run(async () => {
-              if (!isM365) {
-                await api!.setProvider("m365");
-                updateState((await api!.snapshot()).state);
-              }
+              await api!.setProvider("m365");
+              updateState((await api!.snapshot()).state);
               await activateBrowser();
               await api!.smokeTest();
               updateState((await api!.snapshot()).state);
@@ -1276,12 +1251,12 @@ function SetupSurface({
         <SectionHeading label="ChatGPT Setup" spaced />
         <div className="setup-list">
           <SetupRow
-            action={browser?.authenticated && !isM365
+            action={chatGptAuthed
               ? copy.signedIn
               : browser?.status === "loading" && !isM365 ? copy.checkingSignIn : copy.signIn}
-            complete={browser?.authenticated === true && !isM365}
+            complete={chatGptAuthed}
             description={copy.stepAccountBody}
-            disabled={busy}
+            disabled={globalActionDisabled}
             index={1}
             onAction={() => run(async () => {
               await api!.setProvider("chatgpt");
@@ -1291,10 +1266,10 @@ function SetupSurface({
             title={copy.stepAccount}
           />
           <SetupRow
-            action={snapshot.smokePassed && !isM365 ? copy.smokePassed : copy.runSmoke}
-            complete={snapshot.smokePassed && !isM365}
+            action={snapshot.chatgptSmokePassed ? copy.smokePassed : copy.runSmoke}
+            complete={Boolean(snapshot.chatgptSmokePassed)}
             description={copy.stepSmokeBody}
-            disabled={busy || !(browser?.authenticated === true)}
+            disabled={globalActionDisabled || isChatGptTesting || !chatGptAuthed}
             index={2}
             onAction={() => run(async () => {
               if (isM365) {
@@ -1322,14 +1297,14 @@ function SetupSurface({
           description={devProfile
             ? copy.devStepInstallBody
             : "Add Microsoft 365 Copilot and ChatGPT Web models to Codex without replacing native catalog."}
-          disabled={busy || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
+          disabled={globalActionDisabled || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={manualInteraction ? 1 : 3}
           onAction={install}
           repeatable
           title={devProfile ? copy.devStepInstall : copy.stepInstall}
           titleAction={manualInteraction ? (
             <ZeroRiskModelMenu
-              busy={busy || snapshot.state.coreSetupComplete !== true}
+              busy={globalActionDisabled || snapshot.state.coreSetupComplete !== true}
               copy={copy}
               proEnabled={snapshot.state.zeroRiskProEnabled}
               onChange={(enabled) => void setZeroRiskPro(enabled)}
@@ -2522,17 +2497,21 @@ function PrimaryButton({
 
 function SecondaryButton({
   children,
+  className,
   disabled = false,
   icon,
   onClick,
+  style,
 }: {
   children: ReactNode;
+  className?: string;
   disabled?: boolean;
   icon?: IconName;
   onClick: () => void;
+  style?: CSSProperties;
 }) {
   return (
-    <button className="button-secondary" disabled={disabled} onClick={onClick} type="button">
+    <button className={`button-secondary${className ? ` ${className}` : ""}`} disabled={disabled} onClick={onClick} style={style} type="button">
       {icon ? <Icon name={icon} /> : null}
       <span>{children}</span>
     </button>

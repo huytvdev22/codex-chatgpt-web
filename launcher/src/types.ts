@@ -41,6 +41,8 @@ export interface BrowserState {
   url: string;
   title: string;
   authenticated: boolean;
+  chatGptAuthenticated?: boolean;
+  m365Authenticated?: boolean;
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -123,6 +125,8 @@ export interface LauncherSnapshot {
   packaged: boolean;
   version: string;
   smokePassed: boolean;
+  chatgptSmokePassed?: boolean;
+  m365SmokePassed?: boolean;
   operation: OperationState | null;
   update: UpdateState;
 }

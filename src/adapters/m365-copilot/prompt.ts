@@ -19,12 +19,23 @@ function stringifyContent(content: string | CodexContentPart[]): string {
 
 /**
  * Biên dịch CodexParsedRequest thành prompt tối ưu cho Microsoft 365 Copilot
+ * @param isNewConversation true nếu là cuộc trò chuyện mới hoặc cần ngữ cảnh đầy đủ; false nếu đang tiếp tục cuộc trò chuyện hiện tại
  */
-export function compileM365Prompt(parsed: CodexParsedRequest): string {
+export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation = true): string {
   const parts: string[] = [];
 
-  // 1. Thu thập Developer & System Prompts (lọc gọn)
-  if (parsed.context.systemPrompt && parsed.context.systemPrompt.length > 0) {
+  const allMessages = parsed.context.messages || [];
+  let messages = allMessages;
+
+  if (!isNewConversation) {
+    const lastAssistantIdx = allMessages.findLastIndex(msg => msg.role === "assistant");
+    if (lastAssistantIdx >= 0 && lastAssistantIdx < allMessages.length - 1) {
+      messages = allMessages.slice(lastAssistantIdx + 1);
+    }
+  }
+
+  // 1. Thu thập Developer & System Prompts (chỉ gửi đầy đủ khi là New Conversation)
+  if (isNewConversation && parsed.context.systemPrompt && parsed.context.systemPrompt.length > 0) {
     const filteredSystem = parsed.context.systemPrompt
       .map(sp => sp.trim())
       .filter(sp => sp.length > 0 && !sp.startsWith("<environment_context>") && !sp.includes("spawn_agent"))
@@ -35,7 +46,6 @@ export function compileM365Prompt(parsed: CodexParsedRequest): string {
   }
 
   // 2. Thu thập Messages theo thứ tự thời gian
-  const messages = parsed.context.messages || [];
   for (const msg of messages) {
     if (msg.role === "developer") {
       const text = stringifyContent(msg.content);

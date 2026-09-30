@@ -1,7 +1,8 @@
-import { connectLauncherBrowserHost, notifyLauncherTurn } from "../../launcher-browser-host";
+import { connectLauncherBrowserHost, notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 import { getConfigDir } from "../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { m365HtmlToMarkdown } from "./markdown";
 
 export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
@@ -9,7 +10,10 @@ export interface M365BrowserRunOptions {
   descriptorPath?: string;
   traceId?: string;
   conversationKey?: string;
+  isNewConversation?: boolean;
 }
+
+let activeM365ConversationKey: string | null = null;
 
 function resolveDescriptorPath(customPath?: string): string {
   if (customPath && existsSync(customPath)) return customPath;
@@ -42,12 +46,14 @@ export async function executeM365Turn(
         connectorIdentity: "m365-copilot",
         requireRetainedConversation: false,
       }, undefined, options.signal);
-    } catch (e) {
-      // Ignore start error if launcher doesn't respond
+    } catch {
+      // Bỏ qua lỗi start nếu launcher chưa phản hồi
     }
   }
 
-  const connection = await connectLauncherBrowserHost(descriptorPath, 20_000, undefined, options.signal);
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  const m365SurfaceId = (descriptor as any).m365SurfaceId || descriptor.surfaceId;
+  const connection = await connectLauncherBrowserHost(descriptorPath, 20_000, m365SurfaceId, options.signal);
   const { browser, page } = connection;
   let finalStatus: "completed" | "failed" | "aborted" = "failed";
 
@@ -58,24 +64,62 @@ export async function executeM365Turn(
       await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 20_000 });
     }
 
-    // 2. Chờ khung nhập liệu xuất hiện
-    const editorSelector = "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']";
-    await page.waitForSelector(editorSelector, { timeout: 12_000 });
+    // 2. Nếu là cuộc hội thoại mới trên Codex, mở một phiên chat mới trên M365
+    const shouldStartNewChat = options.isNewConversation || (
+      options.conversationKey && activeM365ConversationKey && options.conversationKey !== activeM365ConversationKey
+    );
 
-    // 3. Tùy chọn kích hoạt Temporary Chat nếu có nút và chưa bật
+    if (shouldStartNewChat) {
+      await page.evaluate(() => {
+        // Thử click nút "New chat" / "Cuộc trò chuyện mới"
+        const newChatBtn = document.querySelector(
+          'button[aria-label*="New chat" i], button[aria-label*="Cuộc trò chuyện mới" i], button[aria-label*="New topic" i], button[title*="New chat" i]'
+        ) as HTMLButtonElement | null;
+        if (newChatBtn) {
+          newChatBtn.click();
+          return;
+        }
+
+        // Hoặc tắt rồi bật lại Temporary Chat để làm mới phiên
+        const tempBtn = document.querySelector('button[aria-label="Temporary chat"]') as HTMLButtonElement | null;
+        if (tempBtn) {
+          tempBtn.click();
+          setTimeout(() => {
+            if (tempBtn.getAttribute("aria-pressed") !== "true") {
+              tempBtn.click();
+            }
+          }, 300);
+        }
+      }).catch(() => {});
+
+      // Chờ giao diện ổn định sau khi kích hoạt new chat
+      await new Promise(r => setTimeout(r, 600));
+      activeM365ConversationKey = options.conversationKey || null;
+    } else if (options.conversationKey) {
+      activeM365ConversationKey = options.conversationKey;
+    }
+
+    // 3. Chờ khung nhập liệu xuất hiện
+    const editorSelector = "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']";
+    await page.waitForSelector(editorSelector, { timeout: 15_000 });
+
+    // Đảm bảo Temporary Chat được bật nếu người dùng chưa bật
     await page.evaluate(() => {
-      const tempBtn = document.querySelector('button[aria-label="Temporary chat"]') as HTMLButtonElement;
+      const tempBtn = document.querySelector('button[aria-label="Temporary chat"]') as HTMLButtonElement | null;
       if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
         tempBtn.click();
       }
     }).catch(() => {});
 
-    // Đọc nội dung tin nhắn cuối cùng trước khi gửi
-    const lastContentBefore = await page.evaluate(() => {
-      const messages = Array.from(document.querySelectorAll(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"));
-      if (messages.length === 0) return "";
-      const last = messages[messages.length - 1] as HTMLElement;
-      return last.innerText || "";
+    // Đọc số lượng và nội dung tin nhắn hiện tại trước khi gửi
+    const beforeState = await page.evaluate(() => {
+      const messages = Array.from(document.querySelectorAll(
+        ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
+      ));
+      return {
+        count: messages.length,
+        lastHtml: messages.length > 0 ? (messages[messages.length - 1] as HTMLElement).innerHTML : "",
+      };
     });
 
     // 4. Nhập prompt vào editor và kích hoạt nút Gửi
@@ -109,7 +153,9 @@ export async function executeM365Turn(
     let sent = false;
     for (let i = 0; i < 5; i++) {
       sent = await page.evaluate(() => {
-        const sendBtn = document.querySelector('.fai-SendButton, button[aria-label="Send"], button[aria-label*="Send" i], button[aria-label*="Submit" i]') as HTMLButtonElement;
+        const sendBtn = document.querySelector(
+          '.fai-SendButton, button[aria-label="Send"], button[aria-label*="Send" i], button[aria-label*="Submit" i]'
+        ) as HTMLButtonElement | null;
         if (sendBtn && !sendBtn.disabled) {
           sendBtn.click();
           return true;
@@ -129,13 +175,17 @@ export async function executeM365Turn(
     let previousText = "";
     let seenGenerating = false;
     let attempts = 0;
-    const maxAttempts = 320; // 320 * 250ms = 80 giây tối đa
+    let stableCycles = 0;
+    let lastTextChangeAt = Date.now();
+    const maxAttempts = 480; // 480 * 250ms = 120 giây tối đa
     const pollIntervalMs = 250;
 
     while (attempts < maxAttempts) {
       if (options.signal?.aborted) {
         await page.evaluate(() => {
-          const stopBtn = document.querySelector('button[aria-label*="Stop"], button[aria-label*="Dừng"], button[aria-label="Stop generating"]') as HTMLButtonElement;
+          const stopBtn = document.querySelector(
+            'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+          ) as HTMLButtonElement | null;
           if (stopBtn) stopBtn.click();
         }).catch(() => {});
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
@@ -144,28 +194,116 @@ export async function executeM365Turn(
       await new Promise(r => setTimeout(r, pollIntervalMs));
       attempts++;
 
+      // Trích xuất HTML đã được làm sạch và chuẩn hóa khối code
       const status = await page.evaluate((before) => {
-        const stopBtn = document.querySelector('button[aria-label*="Stop"], button[aria-label*="Dừng"], button[aria-label="Stop generating"]');
-        const isGenerating = Boolean(stopBtn);
-        const messages = Array.from(document.querySelectorAll(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage"));
-        const lastMsg = messages.length > 0 ? (messages[messages.length - 1] as HTMLElement) : null;
-        let reply = "";
-        let isNew = false;
-        if (lastMsg) {
-          const raw = lastMsg.innerText || "";
-          if (raw !== before || isGenerating) {
-            isNew = true;
-            reply = raw.replace(/^Copilot said:\s*/i, "").trim();
-          }
+        const stopBtn = document.querySelector(
+          'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+        );
+        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
+        const editorDisabled = editor?.getAttribute("aria-disabled") === "true";
+
+        const messages = Array.from(document.querySelectorAll(
+          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
+        ));
+        
+        // Nếu số lượng tin nhắn chưa tăng hoặc không có tin nhắn
+        if (messages.length === 0) {
+          return { isGenerating: Boolean(stopBtn), rawHtml: "", isNew: false, hasContent: false };
         }
-        return { isGenerating, reply, isNew };
-      }, lastContentBefore);
+
+        const lastMsg = messages[messages.length - 1] as HTMLElement;
+        const hasShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i], .fai-StatusMessage, .fai-BebopMessageStatus'));
+        const isGenerating = Boolean(stopBtn) || hasShimmer || editorDisabled;
+
+        // Chỉ lấy thẻ content chứa câu trả lời thực sự của Copilot
+        const contentEl = (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
+
+        // 1. Quét các khối code trên LIVE DOM trước khi clone để lấy chính xác text (có newline + indent) và language
+        const codeBlockSelectors = ".scriptor-component-code-block, [class*='scriptor-component-code-block'], div[role='group'][aria-label='Code Preview']";
+        const liveCodeBlocks = Array.from(contentEl.querySelectorAll(codeBlockSelectors));
+        const codeData = liveCodeBlocks.map(block => {
+          const langEl = block.querySelector("[data-testid='one-copilot-code-identity'] span, [class*='code-identity' i] span");
+          let lang = langEl?.textContent?.trim().toLowerCase() || "";
+          if (lang === "plain text" || lang === "text") lang = "plain";
+
+          const findRoot = block.querySelector("[data-virtualized-code-find-root='true']") || block.lastElementChild;
+          const codeText = (findRoot ? (findRoot as HTMLElement).innerText : (block as HTMLElement).innerText || "").replace(/^\n+|\n+$/g, "");
+          return { lang, codeText };
+        });
+
+        // 2. Clone content element để thao tác dọn dẹp
+        const clone = contentEl.cloneNode(true) as HTMLElement;
+
+        // Thay thế các code block trong clone bằng cấu trúc pre/code chuẩn markdown
+        const clonedCodeBlocks = Array.from(clone.querySelectorAll(codeBlockSelectors));
+        clonedCodeBlocks.forEach((block, idx) => {
+          const data = codeData[idx];
+          if (!data) return;
+
+          const pre = document.createElement("pre");
+          const code = document.createElement("code");
+          if (data.lang) {
+            code.className = `language-${data.lang}`;
+          }
+          code.textContent = data.codeText;
+          pre.appendChild(code);
+          block.replaceWith(pre);
+        });
+
+        // Hỗ trợ nếu có thẻ pre thông thường
+        clone.querySelectorAll("pre").forEach(pre => {
+          if (!pre.querySelector("code")) {
+            const code = document.createElement("code");
+            code.textContent = pre.textContent || "";
+            pre.textContent = "";
+            pre.appendChild(code);
+          }
+        });
+
+        // 3. Xoá toàn bộ status, progress, buttons, toolbar, svg và heading Copilot said thừa
+        clone.querySelectorAll(
+          "[role='status'], [role='progressbar'], .fai-Shimmer, [class*='shimmer' i], .fai-StatusMessage, .fai-BebopMessageStatus, [role='toolbar'], .fai-CopilotMessage__actions, .fai-CopilotMessage__accessibleHeading, button, svg"
+        ).forEach(el => el.remove());
+
+        // Loại bỏ các đoạn text status nếu còn sót trong các thẻ div/span
+        const statusPhrases = [
+          "taking a look",
+          "getting things ready",
+          "digging in",
+          "working on it",
+          "searching the web",
+          "searching work data",
+          "searching",
+          "thinking",
+          "generating response",
+          "đang xem xét",
+          "đang chuẩn bị",
+          "đang tìm kiếm",
+          "đang đào sâu",
+          "đang xử lý",
+          "đang suy nghĩ",
+        ];
+        clone.querySelectorAll("div, span, p").forEach(el => {
+          const text = el.textContent?.trim().toLowerCase() || "";
+          for (const phrase of statusPhrases) {
+            if (text.startsWith(phrase) && text.length < phrase.length + 35) {
+              el.remove();
+              break;
+            }
+          }
+        });
+
+        const rawHtml = clone.innerHTML || "";
+        const hasContent = (clone.textContent || "").trim().length > 0;
+        const isNew = (messages.length > before.count) || (rawHtml !== before.lastHtml) || isGenerating;
+        return { isGenerating, rawHtml, isNew, hasContent };
+      }, beforeState);
 
       if (status.isGenerating) {
         seenGenerating = true;
       }
 
-      if (options.traceId && attempts % 40 === 0) { // every 10s
+      if (options.traceId && attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat
         notifyLauncherTurn(descriptorPath, {
           phase: "heartbeat",
           traceId: options.traceId,
@@ -174,18 +312,51 @@ export async function executeM365Turn(
         }, undefined, options.signal).catch(() => {});
       }
 
-      if (status.isNew && status.reply && status.reply !== previousText) {
-        const delta = status.reply.slice(previousText.length);
-        if (delta.length > 0) {
-          options.onChunk(delta);
+      if (status.hasContent && status.rawHtml) {
+        // Chuyển đổi HTML sang Markdown chuẩn bằng logic kế thừa từ ChatGPT
+        const currentMarkdown = m365HtmlToMarkdown(status.rawHtml);
+
+        // Bỏ qua nếu nội dung chỉ là thinking indicator hoặc text rác
+        const isOnlyStatus = /^(?:Taking a look|Getting things ready|Digging in|Working on it|Searching the web|Searching work data|Searching|Thinking|Generating response|Đang xem xét|Đang chuẩn bị|Đang tìm kiếm|Đang đào sâu|Đang xử lý|Đang suy nghĩ|Đang tạo câu trả lời)[.…\s]*$/i.test(currentMarkdown);
+
+        // Chỉ stream khi đã có nội dung trả lời thực sự
+        if (!isOnlyStatus && currentMarkdown) {
+          if (currentMarkdown !== previousText) {
+            lastTextChangeAt = Date.now();
+            stableCycles = 0;
+
+            if (!previousText) {
+              options.onChunk(currentMarkdown);
+              previousText = currentMarkdown;
+            } else if (currentMarkdown.startsWith(previousText)) {
+              const delta = currentMarkdown.slice(previousText.length);
+              if (delta.length > 0) {
+                options.onChunk(delta);
+              }
+              previousText = currentMarkdown;
+            } else if (currentMarkdown.length > previousText.length) {
+              let matchLen = 0;
+              while (matchLen < previousText.length && matchLen < currentMarkdown.length && previousText[matchLen] === currentMarkdown[matchLen]) {
+                matchLen++;
+              }
+              const delta = currentMarkdown.slice(matchLen);
+              if (delta.length > 0) {
+                options.onChunk(delta);
+              }
+              previousText = currentMarkdown;
+            }
+          } else {
+            stableCycles++;
+          }
         }
-        previousText = status.reply;
       }
 
       // Điều kiện kết thúc:
-      // Đã thấy sinh mã (seenGenerating) và nút Stop biến mất, và đã có phản hồi
-      // Hoặc đã qua hơn 10 nhịp kiểm tra (~2.5s) mà không thấy generating và đã có nội dung
-      if ((seenGenerating || attempts > 10) && !status.isGenerating && previousText.length > 0) {
+      // 1. Phải có nội dung trả lời (previousText.length > 0)
+      // 2. Không còn đang sinh (!status.isGenerating)
+      // 3. Nội dung văn bản đã hoàn toàn ổn định (không thay đổi trong ít nhất 1.5 giây = 6 nhịp)
+      const isSettled = stableCycles >= 6 || (Date.now() - lastTextChangeAt >= 1500);
+      if (previousText.length > 0 && !status.isGenerating && isSettled) {
         break;
       }
     }
