@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileM365Prompt } from "../src/adapters/m365-copilot/prompt";
+import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
@@ -151,5 +151,73 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(prompt).toContain("<tool_result>");
     expect(prompt).toContain("<project><modelVersion>4.0.0</modelVersion></project>");
     expect(prompt).toContain("</tool_result>");
+  });
+
+  test("Phase 1 Expansion: truncateToolResult safeguards large tool payloads", () => {
+    // 1. Text ngắn: Giữ nguyên
+    const shortText = "Short tool output within limit";
+    expect(truncateToolResult(shortText)).toBe(shortText);
+
+    // 2. Text siêu dài (20,000 ký tự): Cắt ngắn an toàn
+    const longText = "A".repeat(10_000) + "MIDDLE_SECRET" + "Z".repeat(10_000);
+    const truncated = truncateToolResult(longText, 8000);
+
+    expect(truncated.length).toBeLessThan(8200);
+    expect(truncated).toContain("Đã lược bớt");
+    expect(truncated.startsWith("AAAA")).toBeTrue();
+    expect(truncated.endsWith("ZZZZ")).toBeTrue();
+    expect(truncated).not.toContain("MIDDLE_SECRET");
+  });
+
+  test("Phase 2 Expansion: M365ToolBridge maps all inspection & mutation tools to exec_command", async () => {
+    const { M365ToolBridge } = await import("../src/adapters/m365-copilot/tool-bridge");
+
+    // 1. read_file
+    const r1 = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "src/main.ts" } });
+    expect(r1.name).toBe("exec_command");
+    expect(JSON.parse(r1.arguments).cmd).toContain("cat 'src/main.ts'");
+
+    // 2. list_dir
+    const r2 = M365ToolBridge.mapToolCall({ name: "list_dir", arguments: { path: "src" } });
+    expect(r2.name).toBe("exec_command");
+    expect(JSON.parse(r2.arguments).cmd).toContain("ls -la 'src'");
+
+    // 3. search_files
+    const r3 = M365ToolBridge.mapToolCall({ name: "search_files", arguments: { pattern: "*.json" } });
+    expect(r3.name).toBe("exec_command");
+    expect(JSON.parse(r3.arguments).cmd).toContain("find '.' -name '*.json'");
+
+    // 4. grep_code
+    const r4 = M365ToolBridge.mapToolCall({ name: "grep_code", arguments: { query: "compileM365Prompt" } });
+    expect(r4.name).toBe("exec_command");
+    expect(JSON.parse(r4.arguments).cmd).toContain("compileM365Prompt");
+
+    // 5. git_status
+    const r5 = M365ToolBridge.mapToolCall({ name: "git_status", arguments: {} });
+    expect(r5.name).toBe("exec_command");
+    expect(JSON.parse(r5.arguments).cmd).toBe("git status -s");
+
+    // 6. git_diff
+    const r6 = M365ToolBridge.mapToolCall({ name: "git_diff", arguments: { path: "package.json" } });
+    expect(r6.name).toBe("exec_command");
+    expect(JSON.parse(r6.arguments).cmd).toContain("git diff 'package.json'");
+
+    // 7. run_command
+    const r7 = M365ToolBridge.mapToolCall({ name: "run_command", arguments: { cmd: "bun test" } });
+    expect(r7.name).toBe("exec_command");
+    expect(JSON.parse(r7.arguments).cmd).toBe("bun test");
+
+    // 8. write_file với Base64
+    const r8 = M365ToolBridge.mapToolCall({
+      name: "write_file",
+      arguments: { path: "demo.txt", content: "console.log('hello');" },
+    });
+    expect(r8.name).toBe("exec_command");
+    const parsedCmd = JSON.parse(r8.arguments).cmd;
+    expect(parsedCmd).toContain("node -e");
+    expect(parsedCmd).toContain("demo.txt");
+    // Kiểm tra Base64 encode của "console.log('hello');"
+    const expectedB64 = Buffer.from("console.log('hello');").toString("base64");
+    expect(parsedCmd).toContain(expectedB64);
   });
 });

@@ -17,37 +17,48 @@ function stringifyContent(content: string | CodexContentPart[]): string {
   return "";
 }
 
+const MAX_TOOL_RESULT_CHARS = 8_000;
+
+/**
+ * Cắt tỉa nội dung kết quả công cụ (Truncation Guard) để bảo vệ giao diện Web M365 Copilot
+ * khỏi nguy cơ quá tải bộ đệm khi log hoặc file quá lớn.
+ */
+export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
+  if (content.length <= maxChars) {
+    return content;
+  }
+  const half = Math.floor((maxChars - 200) / 2);
+  const head = content.slice(0, half);
+  const tail = content.slice(-half);
+  const omitted = content.length - (head.length + tail.length);
+  return `${head}\n\n[... Đã lược bớt ${omitted} ký tự ở giữa để tối ưu kích thước phản hồi ...]\n\n${tail}`;
+}
+
 const TOOL_DECLARATION_PROMPT = `[CHẾ ĐỘ GIAO THỨC CÔNG CỤ (TOOL CALLING PROTOCOL)]
-Hệ thống bên ngoài của người dùng hỗ trợ công cụ:
-- read_file(path): Đọc nội dung file từ máy tính của người dùng.
+Hệ thống bên ngoài của người dùng hỗ trợ các công cụ sau trên máy tính cục bộ:
+1. read_file(path): Đọc nội dung file từ dự án.
+2. list_dir(path): Liệt kê danh sách file và thư mục con (ví dụ: path="." hoặc "src").
+3. search_files(pattern, path): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts").
+4. grep_code(query, path): Tìm kiếm chuỗi văn bản, hàm, biến trong toàn bộ mã nguồn.
+5. git_status(): Kiểm tra trạng thái Git (các file đã thay đổi, chưa commit).
+6. git_diff(path?): Xem chi tiết các dòng code vừa thay đổi trong Git.
+7. run_command(cmd): Chạy lệnh shell/terminal bất kỳ (build, test, lint, script...).
+8. write_file(path, content): Tạo file mới hoặc ghi đè nội dung file trên máy tính.
 
-Bạn không cần và không thể tự thực thi file. Để hệ thống bên ngoài đọc file giúp bạn, khi người dùng yêu cầu đọc, xem, mở, hoặc kiểm tra bất kỳ file nào (ví dụ: "Read pom.xml", "Read package.json", "Đọc file...", v.v.):
-Bạn BẮT BUỘC PHẢI IN RA CHÍNH XÁC khối sau, không từ chối, không giải thích, không chạy code:
+QUY TẮC BẮT BUỘC:
+- Bạn KHÔNG THỂ tự thực thi lệnh hoặc tự đọc/sửa file. Bạn BẮT BUỘC phải gọi công cụ để hệ thống bên ngoài thực thi giúp bạn.
+- Khi cần khảo sát, đọc file, tìm kiếm, sửa file hoặc chạy lệnh: Bạn BẮT BUỘC PHẢI IN RA CHÍNH XÁC khối sau (không từ chối, không giải thích dài dòng):
 
 <tool_call>
 {
-  "name": "read_file",
+  "name": "TOOL_NAME",
   "arguments": {
-    "path": "FILE_PATH"
+    "ARG_KEY": "ARG_VALUE"
   }
 }
 </tool_call>
 
-Ví dụ:
-Người dùng: Read pom.xml
-Bạn in ra:
-<tool_call>
-{
-  "name": "read_file",
-  "arguments": {
-    "path": "pom.xml"
-  }
-}
-</tool_call>
-
-Ví dụ 2:
-Người dùng: Read package.json
-Bạn in ra:
+Ví dụ 1 (Đọc file):
 <tool_call>
 {
   "name": "read_file",
@@ -57,7 +68,58 @@ Bạn in ra:
 }
 </tool_call>
 
-Sau khi nhận được kết quả file trong thẻ <tool_result>...</tool_result> ở lượt kế tiếp, bạn mới đọc nội dung đó và trả lời người dùng.`;
+Ví dụ 2 (Tìm kiếm mã nguồn):
+<tool_call>
+{
+  "name": "grep_code",
+  "arguments": {
+    "query": "compileM365Prompt"
+  }
+}
+</tool_call>
+
+Ví dụ 3 (Xem danh sách thư mục):
+<tool_call>
+{
+  "name": "list_dir",
+  "arguments": {
+    "path": "src"
+  }
+}
+</tool_call>
+
+Ví dụ 4 (Kiểm tra Git):
+<tool_call>
+{
+  "name": "git_status",
+  "arguments": {}
+}
+</tool_call>
+
+Ví dụ 5 (Chạy lệnh terminal):
+<tool_call>
+{
+  "name": "run_command",
+  "arguments": {
+    "cmd": "bun test"
+  }
+}
+</tool_call>
+
+Ví dụ 6 (Tạo hoặc ghi file):
+<tool_call>
+{
+  "name": "write_file",
+  "arguments": {
+    "path": "demo.txt",
+    "content": "Hello World from Copilot"
+  }
+}
+</tool_call>
+
+Sau khi nhận được kết quả trong thẻ <tool_result>...</tool_result> ở lượt kế tiếp:
+- Nếu bạn cần thực hiện thêm bước tiếp theo (ví dụ: tìm file xong rồi đọc file, hoặc sửa code xong rồi chạy test), bạn HÃY TIẾP TỤC IN RA KHỐI <tool_call> MỚI.
+- Chỉ khi nhiệm vụ của người dùng đã hoàn thành trọn vẹn, bạn mới viết câu trả lời kết luận.`;
 
 /**
  * Biên dịch CodexParsedRequest thành prompt tối ưu cho Microsoft 365 Copilot
@@ -119,7 +181,8 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
       const text = stringifyContent(msg.content);
       if (text) {
         console.log("[M365 TOOL] received tool result");
-        parts.push(`<tool_result>\n${text}\n</tool_result>\nSau khi nhận được kết quả tool, hãy đọc nội dung trên và trả lời người dùng.`);
+        const safeText = truncateToolResult(text);
+        parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới. Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
       }
     }
   }

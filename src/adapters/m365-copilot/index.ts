@@ -4,6 +4,7 @@ import { isTitleRequest, generateTitleResponse } from "./title-guard";
 import { compileM365Prompt } from "./prompt";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
+import { M365ToolBridge } from "./tool-bridge";
 
 
 export class M365CopilotAdapter implements ProviderAdapter {
@@ -89,34 +90,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
       };
 
       if (detectedToolCall) {
-        let toolName = detectedToolCall.name;
-        let argsStr = typeof detectedToolCall.arguments === "string"
-          ? detectedToolCall.arguments
-          : JSON.stringify(detectedToolCall.arguments ?? {});
-
-        // Ánh xạ sang native tool của Codex (exec_command) nếu client không có read_file
         const clientTools = parsed.context.tools || [];
-        const hasReadFile = clientTools.some(t => t.name === "read_file");
-        const hasExecCommand = clientTools.some(t => t.name === "exec_command");
-
-        if (toolName === "read_file" && (!hasReadFile || hasExecCommand)) {
-          try {
-            const parsedArgs = JSON.parse(argsStr);
-            const targetPath = parsedArgs.path || parsedArgs.file || parsedArgs.filename || "package.json";
-            toolName = "exec_command";
-            argsStr = JSON.stringify({ cmd: `cat ${targetPath}` });
-            console.log(`[M365 TOOL] mapped read_file(${targetPath}) -> exec_command("cat ${targetPath}")`);
-          } catch {}
-        }
-
+        const mapped = M365ToolBridge.mapToolCall(detectedToolCall, clientTools);
         const callId = `call_${Math.random().toString(36).slice(2, 10)}`;
 
         console.log("[M365 TOOL] detected tool call");
-        console.log(`[M365 TOOL] name=${toolName}`);
-        console.log(`[M365 TOOL] arguments=${argsStr}`);
+        console.log(`[M365 TOOL] original name=${detectedToolCall.name}`);
+        console.log(`[M365 TOOL] mapped name=${mapped.name}`);
+        console.log(`[M365 TOOL] arguments=${mapped.arguments}`);
 
-        emit({ type: "tool_call_start", id: callId, name: toolName });
-        emit({ type: "tool_call_delta", arguments: argsStr });
+        emit({ type: "tool_call_start", id: callId, name: mapped.name });
+        emit({ type: "tool_call_delta", arguments: mapped.arguments });
         emit({ type: "tool_call_end" });
         emit({
           type: "done",
