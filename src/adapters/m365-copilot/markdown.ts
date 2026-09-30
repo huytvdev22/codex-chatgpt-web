@@ -1,8 +1,8 @@
 import { chatGptHtmlToMarkdown } from "../chatgpt-web/markdown";
 
 const STATUS_PATTERNS = [
-  /^(?:Taking a look|Checking that now|Getting things ready|Digging in|Working on it|Searching the web|Searching work data|Searching|Thinking|Generating response)[.…\s]*/i,
-  /^(?:Đang xem xét|Đang kiểm tra|Đang chuẩn bị|Đang tìm kiếm|Đang đào sâu|Đang xử lý|Đang suy nghĩ|Đang tạo câu trả lời)[.…\s]*/i,
+  /^(?:Taking a look|Checking that now|Getting things ready|Digging in|Working on it|Searching the web|Searching work data|Searching|Thinking|Generating response|Putting it together|Putting things together|Gathering thoughts|Looking through your files)[.…\s]*/i,
+  /^(?:Đang xem xét|Đang kiểm tra|Đang chuẩn bị|Đang tìm kiếm|Đang đào sâu|Đang xử lý|Đang suy nghĩ|Đang tạo câu trả lời|Đang tổng hợp)[.…\s]*/i,
 ];
 
 /**
@@ -106,6 +106,159 @@ export class M365MarkdownBuffer {
     const delta = `${separator}${cleanMd}`;
     this.markdown += delta;
     return delta;
+  }
+}
+
+export interface ParsedToolCall {
+  name: string;
+  arguments: Record<string, unknown> | string;
+}
+
+/**
+ * M365ToolCallDetector phát hiện cú pháp tool call <tool_call>...</tool_call> từ luồng streaming.
+ * Hỗ trợ nhận diện partial chunks, streaming incremental, unescape Turndown markdown escapes (\_ -> _),
+ * và loại bỏ code fences nếu có.
+ */
+export class M365ToolCallDetector {
+  private buffer = "";
+  private inToolCall = false;
+  private toolContent = "";
+  private detectedToolCall: ParsedToolCall | null = null;
+
+  /**
+   * Đưa chunk mới vào detector.
+   * Trả về text thông thường an toàn để emit text_delta (nếu không thuộc tool_call).
+   */
+  feed(chunk: string): string {
+    if (this.detectedToolCall) return "";
+    this.buffer += chunk;
+
+    let emittedText = "";
+
+    while (this.buffer.length > 0) {
+      if (!this.inToolCall) {
+        // Tìm thẻ mở <tool_call> hoặc <tool\_call>
+        const openMatch = this.buffer.match(/<\s*tool[\\_]*call\s*>/i);
+        if (openMatch && openMatch.index !== undefined) {
+          if (openMatch.index > 0) {
+            const prefix = this.buffer.slice(0, openMatch.index);
+            const cleanPrefix = prefix.replace(/```(?:xml|json)?/gi, "").trim();
+            if (cleanPrefix) {
+              emittedText += cleanPrefix;
+            }
+          }
+          this.inToolCall = true;
+          this.buffer = this.buffer.slice(openMatch.index + openMatch[0].length);
+          continue;
+        }
+
+        // Tạm hoãn emit nếu buffer chỉ là code fence ``` hoặc ```xml để chờ thẻ <tool_call>
+        const trimmed = this.buffer.trim();
+        if (/^```(?:xml|json)?$/i.test(trimmed)) {
+          break;
+        }
+
+        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ mở không
+        const possiblePrefixMatch = this.buffer.match(/<[^>]*$/);
+        if (possiblePrefixMatch && possiblePrefixMatch.index !== undefined) {
+          const prefixCandidate = possiblePrefixMatch[0].toLowerCase();
+          const targetPrefix = "<tool_call>";
+          const targetPrefixAlt = "<tool\\_call>";
+          if (targetPrefix.startsWith(prefixCandidate) || targetPrefixAlt.startsWith(prefixCandidate)) {
+            if (possiblePrefixMatch.index > 0) {
+              emittedText += this.buffer.slice(0, possiblePrefixMatch.index);
+              this.buffer = this.buffer.slice(possiblePrefixMatch.index);
+            }
+            break;
+          }
+        }
+
+        emittedText += this.buffer;
+        this.buffer = "";
+        break;
+      } else {
+        // Đang trong khối tool call, tìm thẻ đóng </tool_call> hoặc </tool\_call>
+        const closeMatch = this.buffer.match(/<\s*\/tool[\\_]*call\s*>/i);
+        if (closeMatch && closeMatch.index !== undefined) {
+          this.toolContent += this.buffer.slice(0, closeMatch.index);
+          this.inToolCall = false;
+          this.buffer = this.buffer.slice(closeMatch.index + closeMatch[0].length);
+
+          const toolCall = this.parseToolPayload(this.toolContent);
+          if (toolCall) {
+            this.detectedToolCall = toolCall;
+            break;
+          }
+          continue;
+        }
+
+        this.toolContent += this.buffer;
+        this.buffer = "";
+        break;
+      }
+    }
+
+    return emittedText;
+  }
+
+  /**
+   * Kết thúc lượt stream: flush các phần còn lại nếu không phải tool call hoặc parse fallback.
+   */
+  finish(): { remainingText: string; toolCall: ParsedToolCall | null } {
+    let remainingText = "";
+    if (!this.inToolCall && !this.detectedToolCall) {
+      remainingText = this.buffer;
+      this.buffer = "";
+    } else if (this.inToolCall && !this.detectedToolCall) {
+      this.toolContent += this.buffer;
+      this.buffer = "";
+      const toolCall = this.parseToolPayload(this.toolContent);
+      if (toolCall) {
+        this.detectedToolCall = toolCall;
+      } else {
+        remainingText = `<tool_call>${this.toolContent}`;
+      }
+    }
+    return { remainingText, toolCall: this.detectedToolCall };
+  }
+
+  hasDetectedToolCall(): boolean {
+    return this.detectedToolCall !== null;
+  }
+
+  getToolCall(): ParsedToolCall | null {
+    return this.detectedToolCall;
+  }
+
+  private parseToolPayload(raw: string): ParsedToolCall | null {
+    try {
+      const clean = raw
+        .replace(/```(?:json)?/gi, "")
+        .replace(/```/g, "")
+        .replaceAll("\\_", "_")
+        .trim();
+      const parsed = JSON.parse(clean);
+      if (parsed && typeof parsed === "object") {
+        const name = typeof parsed.name === "string" ? parsed.name : "read_file";
+        let args = parsed.arguments;
+        if (!args && parsed.path) {
+          args = { path: parsed.path };
+        } else if (typeof args === "string") {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            args = { path: args };
+          }
+        } else if (!args) {
+          args = {};
+        }
+        return {
+          name,
+          arguments: args,
+        };
+      }
+    } catch {}
+    return null;
   }
 }
 

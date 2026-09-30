@@ -17,6 +17,48 @@ function stringifyContent(content: string | CodexContentPart[]): string {
   return "";
 }
 
+const TOOL_DECLARATION_PROMPT = `[CHẾ ĐỘ GIAO THỨC CÔNG CỤ (TOOL CALLING PROTOCOL)]
+Hệ thống bên ngoài của người dùng hỗ trợ công cụ:
+- read_file(path): Đọc nội dung file từ máy tính của người dùng.
+
+Bạn không cần và không thể tự thực thi file. Để hệ thống bên ngoài đọc file giúp bạn, khi người dùng yêu cầu đọc, xem, mở, hoặc kiểm tra bất kỳ file nào (ví dụ: "Read pom.xml", "Read package.json", "Đọc file...", v.v.):
+Bạn BẮT BUỘC PHẢI IN RA CHÍNH XÁC khối sau, không từ chối, không giải thích, không chạy code:
+
+<tool_call>
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "FILE_PATH"
+  }
+}
+</tool_call>
+
+Ví dụ:
+Người dùng: Read pom.xml
+Bạn in ra:
+<tool_call>
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "pom.xml"
+  }
+}
+</tool_call>
+
+Ví dụ 2:
+Người dùng: Read package.json
+Bạn in ra:
+<tool_call>
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "package.json"
+  }
+}
+</tool_call>
+
+Sau khi nhận được kết quả file trong thẻ <tool_result>...</tool_result> ở lượt kế tiếp, bạn mới đọc nội dung đó và trả lời người dùng.`;
+
 /**
  * Biên dịch CodexParsedRequest thành prompt tối ưu cho Microsoft 365 Copilot
  * @param isNewConversation true nếu là cuộc trò chuyện mới hoặc cần ngữ cảnh đầy đủ; false nếu đang tiếp tục cuộc trò chuyện hiện tại
@@ -34,7 +76,7 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     }
   }
 
-  // 1. Thu thập Developer & System Prompts (chỉ gửi đầy đủ khi là New Conversation)
+  // 1. Thu thập Developer & System Prompts và Tool Instructions
   if (isNewConversation && parsed.context.systemPrompt && parsed.context.systemPrompt.length > 0) {
     const filteredSystem = parsed.context.systemPrompt
       .map(sp => sp.trim())
@@ -43,6 +85,12 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     if (filteredSystem) {
       parts.push(`[System Instructions]:\n${filteredSystem}`);
     }
+  }
+
+  // Luôn inject định nghĩa tool nếu lượt này không phải là nhận toolResult
+  const hasToolResultInTurn = messages.some(m => m.role === "toolResult");
+  if (!hasToolResultInTurn) {
+    parts.push(`[Tool Instructions]:\n${TOOL_DECLARATION_PROMPT}`);
   }
 
   // 2. Thu thập Messages theo thứ tự thời gian
@@ -70,7 +118,8 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     } else if (msg.role === "toolResult") {
       const text = stringifyContent(msg.content);
       if (text) {
-        parts.push(`[Kết quả công cụ ${msg.toolName}]:\n${text}`);
+        console.log("[M365 TOOL] received tool result");
+        parts.push(`<tool_result>\n${text}\n</tool_result>\nSau khi nhận được kết quả tool, hãy đọc nội dung trên và trả lời người dùng.`);
       }
     }
   }

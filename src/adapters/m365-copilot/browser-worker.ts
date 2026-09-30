@@ -11,6 +11,7 @@ export interface M365BrowserRunOptions {
   traceId?: string;
   conversationKey?: string;
   isNewConversation?: boolean;
+  shouldStop?: () => boolean;
 }
 
 let activeM365ConversationKey: string | null = null;
@@ -191,6 +192,10 @@ export async function executeM365Turn(
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
       }
 
+      if (options.shouldStop?.()) {
+        break;
+      }
+
       await new Promise(r => setTimeout(r, pollIntervalMs));
       attempts++;
 
@@ -214,8 +219,10 @@ export async function executeM365Turn(
         const hasShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i], .fai-StatusMessage, .fai-BebopMessageStatus'));
         const isGenerating = Boolean(stopBtn) || hasShimmer || editorDisabled;
 
-        // Ưu tiên cao nhất: lấy markdown-reply (nơi chứa toàn bộ nội dung câu trả lời thật sự của Copilot)
-        const replyEl = lastMsg.querySelector('[data-testid="markdown-reply"]') as HTMLElement | null;
+        // Ưu tiên cao nhất: lấy markdown-reply có type="Chat" hoặc có text (bỏ qua thẻ Progress rỗng)
+        const markdownReplies = Array.from(lastMsg.querySelectorAll('[data-testid="markdown-reply"]')) as HTMLElement[];
+        const replyEl = markdownReplies.find(el => el.getAttribute("data-message-type") === "Chat" && el.textContent?.trim())
+          || markdownReplies.reverse().find(el => el.textContent?.trim()) || null;
         const contentEl = replyEl || (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
 
         // 1. Quét các khối code trên LIVE DOM trước khi clone để lấy chính xác text (có newline + indent) và language
@@ -290,6 +297,10 @@ export async function executeM365Turn(
             "searching",
             "thinking",
             "generating response",
+            "putting it together",
+            "putting things together",
+            "gathering thoughts",
+            "looking through your files",
             "đang xem xét",
             "đang kiểm tra",
             "đang chuẩn bị",
@@ -298,6 +309,7 @@ export async function executeM365Turn(
             "đang xử lý",
             "đang suy nghĩ",
             "đang tạo câu trả lời",
+            "đang tổng hợp",
           ];
           clone.querySelectorAll("div, span, p").forEach(el => {
             const text = el.textContent?.trim().toLowerCase() || "";
@@ -321,6 +333,15 @@ export async function executeM365Turn(
         const rawChildren = Array.from(targetRoot.children) as HTMLElement[];
         const hasBlockChildren = rawChildren.some(c => blockTags.has(c.tagName.toLowerCase()));
 
+        const allStatusPhrases = [
+          "checking that now", "taking a look", "getting things ready", "digging in",
+          "working on it", "searching the web", "searching work data", "searching",
+          "thinking", "generating response", "putting it together", "putting things together",
+          "gathering thoughts", "looking through your files",
+          "đang xem xét", "đang kiểm tra", "đang chuẩn bị", "đang tìm kiếm",
+          "đang đào sâu", "đang xử lý", "đang suy nghĩ", "đang tạo câu trả lời", "đang tổng hợp"
+        ];
+
         let blocks: Array<{ key: string; tag: string; html: string; text: string; streamable: boolean }> = [];
         if (hasBlockChildren) {
           blocks = rawChildren.map((child, idx) => {
@@ -332,10 +353,15 @@ export async function executeM365Turn(
               text: child.textContent?.trim() || "",
               streamable: idx < rawChildren.length - 1, // Khối đã hoàn tất vì khối kế tiếp đã xuất hiện
             };
-          }).filter(b => b.text.length > 0 || b.tag === "hr");
+          }).filter(b => {
+            const t = b.text.trim().toLowerCase();
+            const isStatus = allStatusPhrases.some(sp => t.startsWith(sp));
+            return (b.text.length > 0 && !isStatus) || b.tag === "hr";
+          });
         } else {
           const text = targetRoot.textContent?.trim() || "";
-          if (text) {
+          const isStatus = allStatusPhrases.some(sp => text.toLowerCase().startsWith(sp));
+          if (text && !isStatus) {
             blocks = [{
               key: "root-0-div",
               tag: "div",
@@ -388,7 +414,7 @@ export async function executeM365Turn(
 
     // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
     const { delta: finalDelta, markdown: fullMarkdown } = markdownBuffer.finish();
-    if (finalDelta.length > 0) {
+    if (finalDelta.length > 0 && !options.shouldStop?.()) {
       options.onChunk(finalDelta);
     }
 

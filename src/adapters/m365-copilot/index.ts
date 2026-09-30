@@ -3,6 +3,8 @@ import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
 import { compileM365Prompt } from "./prompt";
 import { executeM365Turn } from "./browser-worker";
+import { M365ToolCallDetector } from "./markdown";
+
 
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
@@ -13,6 +15,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
     incoming: IncomingMeta,
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
+
+
     if (incoming.abortSignal?.aborted) {
       throw new DOMException("M365 Copilot turn aborted before start", "AbortError");
     }
@@ -57,26 +61,81 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
     // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
+      const toolDetector = new M365ToolCallDetector();
+
       const reply = await executeM365Turn(compiledPrompt, {
         onChunk: (delta) => {
-          emit({ type: "text_delta", text: delta });
+          const safeText = toolDetector.feed(delta);
+          if (safeText) {
+            emit({ type: "text_delta", text: safeText });
+          }
         },
         signal: incoming.abortSignal,
         traceId: incoming.headers.get("x-codex-trace-id") || undefined,
         conversationKey,
         isNewConversation,
+        shouldStop: () => toolDetector.hasDetectedToolCall(),
       });
 
+      const { remainingText, toolCall } = toolDetector.finish();
+      const detectedToolCall = toolCall || toolDetector.getToolCall();
+
       const inputTokens = Math.ceil(compiledPrompt.length / 4);
-      const outputTokens = Math.ceil(reply.length / 4);
+      const outputTokens = Math.ceil((reply.length || 10) / 4);
+      const usage = {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+      };
+
+      if (detectedToolCall) {
+        let toolName = detectedToolCall.name;
+        let argsStr = typeof detectedToolCall.arguments === "string"
+          ? detectedToolCall.arguments
+          : JSON.stringify(detectedToolCall.arguments ?? {});
+
+        // Ánh xạ sang native tool của Codex (exec_command) nếu client không có read_file
+        const clientTools = parsed.context.tools || [];
+        const hasReadFile = clientTools.some(t => t.name === "read_file");
+        const hasExecCommand = clientTools.some(t => t.name === "exec_command");
+
+        if (toolName === "read_file" && (!hasReadFile || hasExecCommand)) {
+          try {
+            const parsedArgs = JSON.parse(argsStr);
+            const targetPath = parsedArgs.path || parsedArgs.file || parsedArgs.filename || "package.json";
+            toolName = "exec_command";
+            argsStr = JSON.stringify({ cmd: `cat ${targetPath}` });
+            console.log(`[M365 TOOL] mapped read_file(${targetPath}) -> exec_command("cat ${targetPath}")`);
+          } catch {}
+        }
+
+        const callId = `call_${Math.random().toString(36).slice(2, 10)}`;
+
+        console.log("[M365 TOOL] detected tool call");
+        console.log(`[M365 TOOL] name=${toolName}`);
+        console.log(`[M365 TOOL] arguments=${argsStr}`);
+
+        emit({ type: "tool_call_start", id: callId, name: toolName });
+        emit({ type: "tool_call_delta", arguments: argsStr });
+        emit({ type: "tool_call_end" });
+        emit({
+          type: "done",
+          stopReason: "tool_use",
+          endTurn: false,
+          usage,
+        });
+
+        console.log("[M365 TOOL] emitted tool_use");
+        return;
+      }
+
+      if (remainingText) {
+        emit({ type: "text_delta", text: remainingText });
+      }
 
       emit({
         type: "done",
-        usage: {
-          inputTokens,
-          outputTokens,
-          totalTokens: inputTokens + outputTokens,
-        },
+        usage,
       });
     } catch (err: unknown) {
       if (incoming.abortSignal?.aborted) {
