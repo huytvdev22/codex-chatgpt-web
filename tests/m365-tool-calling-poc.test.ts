@@ -7,7 +7,8 @@ import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 describe("M365 Tool Calling PoC Tests", () => {
   test("Phase 3: compileM365Prompt injects read_file declaration on new conversation", () => {
     const parsed: CodexParsedRequest = {
-      model: "m365-copilot/default",
+      modelId: "m365-copilot/default",
+      stream: true,
       context: {
         messages: [{
           role: "user",
@@ -115,7 +116,8 @@ describe("M365 Tool Calling PoC Tests", () => {
 
   test("Phase 6: compileM365Prompt formats toolResult into <tool_result> for next turn", () => {
     const parsed: CodexParsedRequest = {
-      model: "m365-copilot/default",
+      modelId: "m365-copilot/default",
+      stream: true,
       context: {
         messages: [
           {
@@ -139,6 +141,7 @@ describe("M365 Tool Calling PoC Tests", () => {
             toolCallId: "call_test_123",
             toolName: "read_file",
             content: "<project><modelVersion>4.0.0</modelVersion></project>",
+            isError: false,
             timestamp: Date.now(),
           },
         ],
