@@ -325,4 +325,81 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(cmd).toContain('15 45');
     expect(cmd).toContain('lines.slice');
   });
+
+  test("Phase 11: normalizeFileContent eliminates trailing backslashes, empty-line slashes, and unescapes Turndown brackets/braces", () => {
+    // Đoạn code thực tế bị lỗi cú pháp như trong ảnh của người dùng (chứa \\ cuối dòng, dòng rỗng \\, \\[\\] và \\{\\)
+    const buggySource = [
+      "const { EventEmitter } = require('events');\\",
+      "\\",
+      "const TASK_STATUS = {\\",
+      "  PENDING: 'PENDING',\\",
+      "  RUNNING: 'RUNNING',\\",
+      "  COMPLETED: 'COMPLETED',\\",
+      "  FAILED: 'FAILED'\\",
+      "};\\",
+      "\\",
+      "function calculateBackoffDelay(attempt, baseDelay = 500, maxDelay = 30000) {\\",
+      "  const exponentialDelay = Math.min(baseDelay * (2 ** attempt), maxDelay);\\",
+      "  const jitter = Math.floor(Math.random() * (exponentialDelay * 0.2));\\",
+      "  return exponentialDelay + jitter;\\",
+      "}\\",
+      "\\",
+      "class TaskQueue extends EventEmitter {\\",
+      "  constructor(options = {}) {\\",
+      "    super();\\",
+      "    this.concurrency = options.concurrency || 3;\\",
+      "    this.queue = \\[\\];\\",
+      "    this.metrics = \\{\\",
+      "      completed: 0\\",
+      "    };\\",
+      "  }\\",
+      "}\\",
+      "module.exports = { TaskQueue };"
+    ].join("\n");
+
+    const cleaned = normalizeFileContent(buggySource);
+
+    // Không còn dấu gạch chéo ngược ở cuối dòng
+    expect(cleaned).not.toMatch(/\\+\s*(\r?\n|$)/m);
+    // Không còn dấu ngoặc vuông bị escape
+    expect(cleaned).toContain("this.queue = [];");
+    // Không còn dấu ngoặc nhọn bị escape
+    expect(cleaned).toContain("this.metrics = {");
+    // Giữ nguyên dòng trống tự nhiên
+    expect(cleaned).toContain("require('events');\n\nconst TASK_STATUS");
+
+    // Kiểm tra tính hợp lệ cú pháp JavaScript bằng new Function()
+    expect(() => new Function(cleaned)).not.toThrow();
+  });
+
+  test("Phase 11: M365ToolCallDetector parses payload with escaped brackets and trailing backslash", () => {
+    const detector = new M365ToolCallDetector();
+    const rawPayload = `<tool\\_call>
+{
+  "name": "write\\_file",
+  "arguments": {
+    "path": "task-queue.js",
+    "content": "const a = \\[\\];\\
+const b = \\{\\
+  val: 1\\
+};",
+    "unescape_newlines": true
+  }
+}
+</tool\\_call>`;
+
+    detector.feed(rawPayload);
+    const { toolCall } = detector.finish();
+
+    expect(detector.hasDetectedToolCall()).toBeTrue();
+    expect(toolCall).not.toBeNull();
+    expect(toolCall?.name).toBe("write_file");
+    const args = toolCall?.arguments as Record<string, any>;
+    expect(args.path).toBe("task-queue.js");
+
+    const cleanedContent = normalizeFileContent(args.content);
+    expect(cleanedContent).toContain("const a = [];");
+    expect(cleanedContent).toContain("const b = {");
+    expect(() => new Function(cleanedContent)).not.toThrow();
+  });
 });

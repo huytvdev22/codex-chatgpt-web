@@ -23,9 +23,15 @@ type ToolHandler = (args: Record<string, any>) => { name: string; args: Record<s
 
 /**
  * Chuẩn hóa nội dung mã nguồn trước khi ghi file (Tuân thủ Single Responsibility Principle - SOLID):
- * 1. Khôi phục các ký tự bị Turndown Markdown vô tình escape (như phép nhân \* thành *)
- * 2. Khử bỏ dấu gạch chéo thừa ở cuối dòng trước khi xuống dòng (\ + newline, byte 5c 0a)
- * 3. Tự động chuyển đổi các ký tự literal \n, \r, \t thành ký tự điều khiển thực tế khi cần
+ * 1. Khôi phục toàn bộ các ký tự bị Turndown/Markdown vô tình escape trong code:
+ *    - Dấu ngoặc vuông: \[ -> [, \] -> ]
+ *    - Dấu ngoặc nhọn: \{ -> {, \} -> }
+ *    - Phép toán và ký tự đặc biệt: \* -> *, \_ -> _, \~ -> ~
+ * 2. Khử triệt để dấu gạch chéo thừa ở dòng trống (dòng chỉ có khoảng trắng và dấu \)
+ * 3. Khử triệt để dấu gạch chéo thừa ở cuối mỗi dòng (kể cả khi có trailing spaces trước newline)
+ * 4. Khử dấu gạch chéo thừa trước literal \n
+ * 5. Tự động chuyển đổi các ký tự literal \n, \r, \t thành ký tự điều khiển thực tế khi cần
+ * 6. Khử dấu gạch chéo ở cuối file
  */
 export function normalizeFileContent(content: string, unescapeNewlines = true): string {
   if (!unescapeNewlines || typeof content !== "string") {
@@ -34,16 +40,28 @@ export function normalizeFileContent(content: string, unescapeNewlines = true): 
 
   let result = content;
 
-  // 1. Khử Turndown markdown escape cho phép toán hoặc import (* thành \*)
-  result = result.replace(/\\\*/g, "*");
+  // 1. Khôi phục các ký tự bị Turndown/Markdown escape trong mã nguồn (\[, \], \{, \}, \*, \_, \~)
+  result = result.replace(/\\([\[\]{}*_~])/g, "$1");
 
-  // 2. Khử dấu gạch chéo thừa ở cuối dòng trước khi xuống dòng (\ + newline, byte 5c 0a)
-  result = result.replace(/\\+(\r?\n)/g, "$1");
+  // 2. Khử dấu gạch chéo thừa ở dòng trống (dòng chỉ chứa khoảng trắng và dấu \)
+  result = result.replace(/^[ \t]*\\+[ \t]*(\r?\n|$)/gm, "$1");
 
-  // 3. Nếu chuỗi không có dấu xuống dòng thực tế nhưng lại bị escape thành text \n (do LLM double escaping)
-  if (!result.includes("\n") && result.includes("\\n")) {
+  // 3. Khử dấu gạch chéo thừa ở cuối mỗi dòng (cho phép khoảng trắng trước và sau \, hỗ trợ cả CRLF và LF)
+  result = result.replace(/\\+[ \t]*(\r?\n)/g, "$1");
+
+  // 4. Khử dấu gạch chéo thừa trước literal \n
+  result = result.replace(/\\+[ \t]*\\n/g, "\\n");
+
+  // 5. Nếu chuỗi chứa literal \n, chuyển đổi thành ký tự điều khiển thực tế
+  if (result.includes("\\n")) {
     result = result.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
   }
+
+  // 6. Quét lại lần nữa để khử bất kỳ trailing backslash nào sau khi bung literal \n
+  result = result.replace(/\\+[ \t]*(\r?\n)/g, "$1");
+
+  // 7. Khử dấu \ ở cuối file nếu dòng cuối cùng kết thúc bằng \
+  result = result.replace(/\\+[ \t]*$/g, "");
 
   return result;
 }

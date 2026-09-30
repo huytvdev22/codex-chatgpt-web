@@ -233,6 +233,7 @@ export class M365ToolCallDetector {
   /**
    * Tự động chuẩn hóa các ký tự điều khiển thô (raw newline, carriage return, tab)
    * nằm bên trong string literal của JSON để JSON.parse không bị lỗi Bad control character.
+   * Đồng thời tự động khử dấu \ thừa ở cuối dòng trước khi xuống dòng (line continuation).
    */
   private sanitizeJsonControlChars(raw: string): string {
     let inString = false;
@@ -245,9 +246,20 @@ export class M365ToolCallDetector {
         out += ch;
       } else if (inString) {
         if (ch === "\n") {
+          // Khử dấu gạch chéo ngược ở cuối dòng trước khi xuống dòng (line continuation)
+          if (escaped && out.endsWith("\\")) {
+            out = out.slice(0, -1);
+          }
           out += "\\n";
+          escaped = false;
+          continue;
         } else if (ch === "\r") {
+          if (escaped && out.endsWith("\\")) {
+            out = out.slice(0, -1);
+          }
           out += "\\r";
+          escaped = false;
+          continue;
         } else if (ch === "\t") {
           out += "\\t";
         } else {
@@ -259,6 +271,24 @@ export class M365ToolCallDetector {
       escaped = (ch === "\\" && !escaped);
     }
     return out;
+  }
+
+  /**
+   * Chuẩn hóa làm sạch khối tool payload trước khi phân tích cú pháp:
+   * Khôi phục toàn bộ các ký tự bị Turndown / Markdown vô tình escape
+   */
+  private cleanToolPayload(raw: string): string {
+    return raw
+      .replace(/```(?:json)?/gi, "")
+      .replace(/```/g, "")
+      .replaceAll("\\_", "_")
+      .replaceAll("\\*", "*")
+      .replaceAll("\\[", "[")
+      .replaceAll("\\]", "]")
+      .replaceAll("\\{", "{")
+      .replaceAll("\\}", "}")
+      .replaceAll("\\~", "~")
+      .trim();
   }
 
   /**
@@ -308,14 +338,9 @@ export class M365ToolCallDetector {
   }
 
   private parseToolPayload(raw: string): ParsedToolCall | null {
-    const clean = raw
-      .replace(/```(?:json)?/gi, "")
-      .replace(/```/g, "")
-      .replaceAll("\\_", "_")
-      .replaceAll("\\*", "*")
-      .trim();
+    const clean = this.cleanToolPayload(raw);
 
-    // 1. Thử parse với sanitizer xử lý raw newlines/control characters
+    // 1. Thử parse với sanitizer xử lý raw newlines/control characters và trailing backslash
     try {
       const sanitized = this.sanitizeJsonControlChars(clean);
       const parsed = JSON.parse(sanitized);
