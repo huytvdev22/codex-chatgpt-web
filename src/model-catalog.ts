@@ -181,6 +181,7 @@ export function buildM365Model(
     input_modalities: ["text"],
     visibility: "list",
     supported_in_api: true,
+    priority: 100,
     ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
     tool_mode: null,
     upgrade: null,

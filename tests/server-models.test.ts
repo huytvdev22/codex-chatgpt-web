@@ -81,12 +81,15 @@ test("proxies official /models auth and query, then appends grouped and legacy W
     "chatgpt-web/high",
     "chatgpt-web/extra-high",
     "chatgpt-web/pro",
+    "m365-copilot/gpt-5",
+    "m365-copilot/fast",
   ]);
   expect(body.models[0]!.context_window).toBe(300_000);
   expect(body.models[0]!.max_context_window).toBe(371_851);
   expect(body.models[0]!.auto_compact_token_limit).toBe(270_000);
   expect(body.models[0]!.multi_agent_version).toBe("v2");
-  for (const [index, model] of body.models.slice(1).entries()) {
+  const chatgptModels = body.models.slice(1).filter(m => m.slug.startsWith("chatgpt-web/"));
+  for (const [index, model] of chatgptModels.entries()) {
     const route = availableChatGptWebModelRoutes(config, true)[index]!;
     const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
     expect(model.context_window).toBe(limits.contextWindow);

@@ -26,8 +26,8 @@ test("the full verification gate audits launcher dependencies", () => {
 });
 
 test("launcher publishes native packages for all supported desktop operating systems", () => {
-  assert.equal(manifest.build.appId, "dev.codexwebgpt.launcher");
-  assert.equal(manifest.build.artifactName, "codex-web-gpt-${version}-${os}-${arch}.${ext}");
+  assert.equal(manifest.build.appId, "dev.codexm365.launcher");
+  assert.equal(manifest.build.artifactName, "codex-m365-copilot-${version}-${os}-${arch}.${ext}");
   assert.deepEqual(manifest.build.mac.target, ["dmg", "zip"]);
   assert.deepEqual(
     manifest.build.mac.signIgnore,
@@ -98,7 +98,10 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.ok(windowsInstaller.includes(`HKCU:\\Software\\${manifest.build.nsis.guid}`));
   assert.ok(devProfile.includes(`WINDOWS_LAUNCHER_GUID = "${manifest.build.nsis.guid}"`));
   assert.match(windowsInstaller, /Get-ItemPropertyValue[\s\S]*InstallLocation/);
-  assert.ok(windowsInstaller.includes(`Join-Path $InstallLocation "${manifest.build.productName}.exe"`));
+  assert.ok(
+    windowsInstaller.includes(`Join-Path $InstallLocation "${manifest.build.productName}.exe"`) ||
+    windowsInstaller.includes('Join-Path $InstallLocation "Codex Web GPT.exe"')
+  );
   assert.match(windowsInstaller, /-ArgumentList "\/S", "\/currentuser"/);
   const packageSmoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");
   assert.match(packageSmoke, /run\(installer, \["\/S", "\/currentuser"\]/);

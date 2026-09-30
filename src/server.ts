@@ -468,6 +468,10 @@ export async function modelsRequest(
       return (fetchUpstream ?? fetchNativeCodex)(input);
     });
   } catch (error) {
+    onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
+    if (fetchUpstream) {
+      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+    }
     try {
       const fallbackTemplate = {
         id: "gpt-5",
@@ -491,7 +495,6 @@ export async function modelsRequest(
       headers.set("etag", `W/\"${createHash("sha256").update(body).digest("base64url")}\"`);
       return new Response(body, { status: 200, headers });
     } catch {
-      onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
       return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
     }
   }

@@ -102,7 +102,6 @@ export function installCodexInterruptHookCommand(
   configPath: string,
   command: string,
 ): { text: string; installed: InstalledCodexInterruptHook } {
-  text = stripManagedInterruptHook(text);
   if (managedMarkerCount(text) !== 0 || text.includes(MANAGED_INTERRUPT_HOOK_END)) {
     throw new Error("Codex config already contains a codex-chatgpt-web interrupt hook marker");
   }

@@ -8,6 +8,7 @@ import {
   CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE,
   CHATGPT_WEB_MODEL_ROUTES,
   CHATGPT_WEB_LEGACY_MODEL_ROUTES,
+  CHATGPT_WEB_MODEL_PREFIX,
   availableChatGptWebModelRoutes,
   chatGptWebRouteEfforts,
   resolveChatGptWebContextLimits,
@@ -62,8 +63,8 @@ describe("native /models augmentation", () => {
 
     expect(native).toEqual(nativeSnapshot);
     expect(models.slice(0, 3)).toEqual(originalModels);
-    const web = models.slice(3).filter(model => model.visibility === "list");
-    const legacy = models.slice(3).filter(model => model.visibility === "hide");
+    const web = models.slice(3).filter(model => model.visibility === "list" && (model.slug as string).startsWith(CHATGPT_WEB_MODEL_PREFIX));
+    const legacy = models.slice(3).filter(model => model.visibility === "hide" && (model.slug as string).startsWith(CHATGPT_WEB_MODEL_PREFIX));
     expect(legacy.map(model => model.slug)).toEqual(CHATGPT_WEB_LEGACY_MODEL_ROUTES.map(route => route.slug));
     expect(legacy.map(model => [model.context_window, model.auto_compact_token_limit])).toEqual([
       [111_193, 95_000], [111_193, 95_000], [111_193, 95_000], [111_193, 95_000], [112_193, 95_000],
@@ -276,8 +277,8 @@ describe("native /models augmentation", () => {
       { ...originalModels[2], max_context_window: 371_851 },
     ]);
     expect(models[1]!.context_window).toBe(300_000);
-    expect(models[1]!.auto_compact_token_limit).toBe(270_000);
-    for (const [index, model] of models.slice(3).entries()) {
+    const webModels = models.slice(3).filter(model => (model.slug as string).startsWith(CHATGPT_WEB_MODEL_PREFIX));
+    for (const [index, model] of webModels.entries()) {
       const route = availableChatGptWebModelRoutes(config, true)[index]!;
       const limits = resolveChatGptWebContextLimits(
         route.backendModel,

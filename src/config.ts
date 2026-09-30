@@ -235,7 +235,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     mode,
     subagentProtocol: "compatibility-v1",
     host: "127.0.0.1",
-    port: 17842,
+    port: 17841,
     contextWindow: 256_000,
     appName: CHATGPT_CONNECTOR_NAME,
     automaticAppName: CHATGPT_CONNECTOR_NAME,

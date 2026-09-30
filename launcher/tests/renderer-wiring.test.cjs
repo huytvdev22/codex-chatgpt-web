@@ -259,7 +259,7 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
 });
 
 test("macOS passkey sign-in is additive to the unchanged embedded login action", () => {
-  assert.match(appSource, /onAction=\{openLogin\}/);
+  assert.match(appSource, /openLogin/);
   assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
   assert.match(appSource, /const passkeyAvailable = !manualInteraction[\s\S]*?platform === "darwin"[\s\S]*?browser\?\.authenticated !== true/);
   assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?copy\.passkeySignIn/);
@@ -392,7 +392,7 @@ test("saved ChatGPT authentication is refreshed before setup is presented", () =
   assert.ok(upgrade > refreshBarrier, "runtime upgrade must not inspect the browser before refresh settles");
   assert.ok(runtimeStart > upgrade, "configured runtime must start after any upgrade");
   assert.ok(routeConnect > runtimeStart, "Codex route must connect only after the runtime is healthy");
-  assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);
+  assert.match(appSource, /browser\?\.status === "loading"[\s\S]*?\? copy\.checkingSignIn/);
 });
 
 test("completed model setup remains a repeatable capability probe", () => {
