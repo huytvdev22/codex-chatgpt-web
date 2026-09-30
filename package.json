@@ -51,7 +51,8 @@
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
     "launcher:test": "bun run --cwd launcher test",
-    "verify": "bun run scripts/verify.ts"
+    "verify": "bun run scripts/verify.ts",
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
