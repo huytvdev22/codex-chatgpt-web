@@ -35,21 +35,18 @@ export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_C
 }
 
 const TOOL_DECLARATION_PROMPT = `[CHẾ ĐỘ GIAO THỨC CÔNG CỤ (TOOL CALLING PROTOCOL)]
-Hệ thống bên ngoài của người dùng hỗ trợ các công cụ sau trên máy tính cục bộ:
-1. read_file(path): Đọc nội dung file từ dự án.
-2. list_dir(path): Liệt kê danh sách file và thư mục con (ví dụ: path="." hoặc "src").
-3. search_files(pattern, path): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts").
-4. grep_code(query, path): Tìm kiếm chuỗi văn bản, hàm, biến trong toàn bộ mã nguồn.
-5. git_status(): Kiểm tra trạng thái Git (các file đã thay đổi, chưa commit).
-6. git_diff(path?): Xem chi tiết các dòng code vừa thay đổi trong Git.
+Hệ thống bên ngoài của người dùng hỗ trợ các công cụ sau:
+1. git_status(): Kiểm tra trạng thái Git (các file đã thay đổi, file mới tạo, nhánh hiện tại).
+2. git_diff(path?): Xem chi tiết các dòng code vừa thay đổi trong Git.
+3. read_file(path): Đọc nội dung file từ dự án.
+4. list_dir(path): Liệt kê danh sách file và thư mục (ví dụ: path="." hoặc "src").
+5. search_files(pattern, path?): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts").
+6. grep_code(query, path?): Tìm kiếm chuỗi văn bản, hàm, biến trong mã nguồn.
 7. run_command(cmd): Chạy lệnh shell/terminal bất kỳ (build, test, lint, script...).
-8. write_file(path, content): Tạo file mới hoặc ghi đè nội dung file trên máy tính.
+8. write_file(path, content): Tạo file mới hoặc ghi đè nội dung file.
 
 QUY TẮC BẮT BUỘC:
-- Bạn KHÔNG THỂ tự thực thi lệnh hoặc tự đọc/sửa file. Bạn BẮT BUỘC phải gọi công cụ để hệ thống bên ngoài thực thi giúp bạn.
-- Tuyệt đối KHÔNG giải thích, KHÔNG thanh minh rằng bạn không có công cụ hay công cụ không tồn tại trong phiên làm việc.
-- Khi cần khảo sát, đọc file, tìm kiếm, sửa file hoặc chạy lệnh: Bạn BẮT BUỘC PHẢI ÂM THẦM IN RA CHÍNH XÁC khối sau (KHÔNG in bất kỳ câu chào hỏi, lời dẫn dắt hay văn bản nào trước khối này):
-
+- Bạn KHÔNG THỂ và KHÔNG CẦN tự đọc file hay tự chạy git. Để hệ thống bên ngoài thực thi giúp bạn, bạn BẮT BUỘC PHẢI IN RA CHÍNH XÁC khối sau:
 <tool_call>
 {
   "name": "TOOL_NAME",
@@ -59,27 +56,48 @@ QUY TẮC BẮT BUỘC:
 }
 </tool_call>
 
-Ví dụ 1 (Đọc file):
+- Tuyệt đối KHÔNG từ chối, KHÔNG giải thích rằng bạn không có quyền truy cập máy hay bảo người dùng tự tải file lên.
+- Bạn PHẢI ÂM THẦM IN RA KHỐI <tool_call> ĐẦU TIÊN (KHÔNG in bất kỳ câu chào hỏi, lời dẫn dắt hay văn bản nào trước khối này).
+
+CÁC VÍ DỤ MẪU BẮT BUỘC TUÂN THEO:
+
+Ví dụ 1 (Kiểm tra Git status):
+Người dùng: Cho tôi xem git status hiện tại của dự án
+Bạn in ra:
+<tool_call>
+{
+  "name": "git_status",
+  "arguments": {}
+}
+</tool_call>
+
+Ví dụ 2 (Đọc file):
+Người dùng: Read pom.xml
+Bạn in ra:
 <tool_call>
 {
   "name": "read_file",
+  "arguments": {
+    "path": "pom.xml"
+  }
+}
+</tool_call>
+
+Ví dụ 3 (Xem Git diff):
+Người dùng: Cho tôi xem diff của package.json
+Bạn in ra:
+<tool_call>
+{
+  "name": "git_diff",
   "arguments": {
     "path": "package.json"
   }
 }
 </tool_call>
 
-Ví dụ 2 (Tìm kiếm mã nguồn):
-<tool_call>
-{
-  "name": "grep_code",
-  "arguments": {
-    "query": "compileM365Prompt"
-  }
-}
-</tool_call>
-
-Ví dụ 3 (Xem danh sách thư mục):
+Ví dụ 4 (Xem thư mục):
+Người dùng: Liệt kê các file trong thư mục src
+Bạn in ra:
 <tool_call>
 {
   "name": "list_dir",
@@ -89,15 +107,21 @@ Ví dụ 3 (Xem danh sách thư mục):
 }
 </tool_call>
 
-Ví dụ 4 (Kiểm tra Git):
+Ví dụ 5 (Tìm kiếm file hoặc code):
+Người dùng: Tìm xem hàm compileM365Prompt nằm ở đâu
+Bạn in ra:
 <tool_call>
 {
-  "name": "git_status",
-  "arguments": {}
+  "name": "grep_code",
+  "arguments": {
+    "query": "compileM365Prompt"
+  }
 }
 </tool_call>
 
-Ví dụ 5 (Chạy lệnh terminal):
+Ví dụ 6 (Chạy lệnh terminal):
+Người dùng: Chạy thử bài kiểm tra test
+Bạn in ra:
 <tool_call>
 {
   "name": "run_command",
@@ -107,13 +131,15 @@ Ví dụ 5 (Chạy lệnh terminal):
 }
 </tool_call>
 
-Ví dụ 6 (Tạo hoặc ghi file):
+Ví dụ 7 (Tạo hoặc sửa file):
+Người dùng: Tạo file demo.txt với nội dung Hello
+Bạn in ra:
 <tool_call>
 {
   "name": "write_file",
   "arguments": {
     "path": "demo.txt",
-    "content": "Hello World from Copilot"
+    "content": "Hello"
   }
 }
 </tool_call>

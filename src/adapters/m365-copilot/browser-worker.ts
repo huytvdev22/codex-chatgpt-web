@@ -72,12 +72,13 @@ export async function executeM365Turn(
 
     if (shouldStartNewChat) {
       await page.evaluate(() => {
-        // Thử click nút "New chat" / "Cuộc trò chuyện mới"
+        // Thử click nút "New chat" / "Cuộc trò chuyện mới" (hỗ trợ cả thẻ a và button)
         const newChatBtn = document.querySelector(
-          'button[aria-label*="New chat" i], button[aria-label*="Cuộc trò chuyện mới" i], button[aria-label*="New topic" i], button[title*="New chat" i]'
-        ) as HTMLButtonElement | null;
+          'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]'
+        ) as HTMLElement | null;
         if (newChatBtn) {
           newChatBtn.click();
+          newChatBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
           return;
         }
 
