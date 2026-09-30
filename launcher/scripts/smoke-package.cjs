@@ -26,8 +26,17 @@ function run(command, args, options = {}) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
+    let extraLogs = "";
+    try {
+      const logsDir = path.join(scratch, "launcher-data", "logs");
+      if (fs.existsSync(logsDir)) {
+        for (const file of fs.readdirSync(logsDir)) {
+          extraLogs += `\n[DIAGNOSTIC LOG ${file}]:\n` + fs.readFileSync(path.join(logsDir, file), "utf8");
+        }
+      }
+    } catch {}
     throw new Error(
-      `${command} failed with status ${result.status}: ${result.stderr?.trim() || result.stdout?.trim() || "no output"}`,
+      `${command} failed with status ${result.status}: ${result.stderr?.trim() || result.stdout?.trim() || "no output"}${extraLogs}`,
     );
   }
 }
@@ -63,6 +72,7 @@ function artifact(pattern, label) {
 function smokeEnvironment() {
   return {
     ...process.env,
+    ELECTRON_ENABLE_LOGGING: "1",
     TMPDIR: scratch,
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: path.join(scratch, "launcher-data"),
     CODEX_CHATGPT_WEB_HOME: coreHome,
@@ -101,6 +111,9 @@ try {
   } else if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
     run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
+    try {
+      spawnSync("taskkill.exe", ["/F", "/IM", `${launcherManifest.build.productName}.exe`], { windowsHide: true });
+    } catch {}
     executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
     command = executable;
     args = ["--launcher-smoke-test"];
