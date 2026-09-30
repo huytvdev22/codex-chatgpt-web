@@ -220,7 +220,7 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(release, /Verify Linux AppImage ABI on current Arch\s+if: runner\.os == 'Linux' && runner\.arch == 'X64'/);
   assert.match(release, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0/);
   assert.match(release, /codesign --verify --deep --strict --verbose=2/);
-  assert.match(release, /Codex Web GPT\.app/);
+  assert.match(release, /Codex M365 Copilot\.app/);
   assert.doesNotMatch(release, /gh release create[\s\S]*?--draft/);
 });
 
