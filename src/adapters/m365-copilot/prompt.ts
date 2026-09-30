@@ -38,7 +38,7 @@ const TOOL_DECLARATION_PROMPT = `[CHẾ ĐỘ GIAO THỨC CÔNG CỤ (TOOL CALLI
 Hệ thống môi trường hỗ trợ các công cụ sau để thao tác trực tiếp với dự án:
 1. git_status(): Kiểm tra trạng thái Git (các file đã thay đổi, file mới tạo, nhánh hiện tại).
 2. git_diff(path?): Xem chi tiết các dòng code vừa thay đổi trong Git.
-3. read_file(path): Đọc nội dung file từ dự án.
+3. read_file(path, start_line?, end_line?): Đọc nội dung file từ dự án (tự động đánh số dòng; có thể chỉ định khoảng dòng start_line và end_line cho file lớn).
 4. list_dir(path): Liệt kê danh sách file và thư mục (ví dụ: path="." hoặc "src").
 5. search_files(pattern, path?): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts").
 6. grep_code(query, path?): Tìm kiếm chuỗi văn bản, hàm, biến trong mã nguồn.
@@ -76,7 +76,7 @@ Bạn in ra:
 }
 </tool_call>
 
-Ví dụ 2 (Đọc file):
+Ví dụ 2 (Đọc file hoặc phân đoạn dòng):
 Người dùng: Read pom.xml
 Bạn in ra:
 <tool_call>
@@ -84,6 +84,19 @@ Bạn in ra:
   "name": "read_file",
   "arguments": {
     "path": "pom.xml"
+  }
+}
+</tool_call>
+
+Người dùng: Đọc từ dòng 10 đến dòng 40 của server.js
+Bạn in ra:
+<tool_call>
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "server.js",
+    "start_line": 10,
+    "end_line": 40
   }
 }
 </tool_call>

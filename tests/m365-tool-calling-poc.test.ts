@@ -21,7 +21,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     };
 
     const prompt = compileM365Prompt(parsed, true);
-    expect(prompt).toContain("read_file(path)");
+    expect(prompt).toContain("read_file(path");
     expect(prompt).toContain("<tool_call>");
     expect(prompt).toContain("</tool_call>");
     expect(prompt).toContain("Read pom.xml");
@@ -311,5 +311,18 @@ describe("M365 Tool Calling PoC Tests", () => {
     const match = parsedRaw.cmd.match(/node -e "[^"]+"\s+"[^"]+"\s+"([^"]+)"/);
     const decoded = Buffer.from(match[1], "base64").toString("utf8");
     expect(decoded).toBe("raw\\ntext");
+  });
+
+  test("Phase 10: M365ToolBridge maps read_file with start_line and end_line parameters", () => {
+    const mapped = M365ToolBridge.mapToolCall({
+      name: "read_file",
+      arguments: { path: "server.js", start_line: 15, end_line: 45 },
+    });
+
+    expect(mapped.name).toBe("exec_command");
+    const cmd = JSON.parse(mapped.arguments).cmd;
+    expect(cmd).toContain('"server.js"');
+    expect(cmd).toContain('15 45');
+    expect(cmd).toContain('lines.slice');
   });
 });

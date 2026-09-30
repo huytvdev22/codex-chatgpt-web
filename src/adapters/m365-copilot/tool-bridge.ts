@@ -51,11 +51,15 @@ export function normalizeFileContent(content: string, unescapeNewlines = true): 
 const TOOL_HANDLERS: Record<string, ToolHandler> = {
   read_file: (args) => {
     const targetPath = args.path || args.file || args.filename || "package.json";
-    // Universal Node.js reader: tương thích 100% cả Windows (cmd/PowerShell), macOS và Linux
-    const script = `const fs=require('fs');try{process.stdout.write(fs.readFileSync(process.argv[1],'utf8'))}catch(e){console.error('Cannot read file: '+e.message);process.exit(1)}`;
+    const startLine = parseInt(String(args.start_line || args.start || 0), 10) || 0;
+    const endLine = parseInt(String(args.end_line || args.end || 0), 10) || 0;
+
+    // Universal Node.js reader: hỗ trợ phân đoạn dòng (start_line/end_line), đánh số dòng và cross-platform
+    const script = `const fs=require('fs');try{const f=process.argv[1],raw=fs.readFileSync(f,'utf8');const lines=raw.split(/\\r?\\n/),tot=lines.length;const rStart=parseInt(process.argv[2]||'0',10),rEnd=parseInt(process.argv[3]||'0',10);const isPaged=rStart>0||rEnd>0;const s=rStart>0?Math.max(1,rStart):1;const e=rEnd>0?Math.min(tot,rEnd):(isPaged?tot:Math.min(tot,300));const slice=lines.slice(s-1,e);const num=slice.map((l,idx)=>(s+idx)+': '+l).join('\\n');console.log('[File: '+f+' ('+s+'-'+e+'/'+tot+' lines)]\\n'+num)}catch(e){console.error('Cannot read file: '+e.message);process.exit(1)}`;
+    const cmd = `node -e "${script}" ${quoteArg(String(targetPath))} ${startLine} ${endLine}`;
     return {
       name: "exec_command",
-      args: { cmd: `node -e "${script}" ${quoteArg(String(targetPath))}` },
+      args: { cmd },
     };
   },
 
