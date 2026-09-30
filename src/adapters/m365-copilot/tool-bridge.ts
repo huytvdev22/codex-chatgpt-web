@@ -21,6 +21,33 @@ function quoteArg(arg: string): string {
 
 type ToolHandler = (args: Record<string, any>) => { name: string; args: Record<string, any> };
 
+/**
+ * Chuẩn hóa nội dung mã nguồn trước khi ghi file (Tuân thủ Single Responsibility Principle - SOLID):
+ * 1. Khôi phục các ký tự bị Turndown Markdown vô tình escape (như phép nhân \* thành *)
+ * 2. Khử bỏ dấu gạch chéo thừa ở cuối dòng trước khi xuống dòng (\ + newline, byte 5c 0a)
+ * 3. Tự động chuyển đổi các ký tự literal \n, \r, \t thành ký tự điều khiển thực tế khi cần
+ */
+export function normalizeFileContent(content: string, unescapeNewlines = true): string {
+  if (!unescapeNewlines || typeof content !== "string") {
+    return content;
+  }
+
+  let result = content;
+
+  // 1. Khử Turndown markdown escape cho phép toán hoặc import (* thành \*)
+  result = result.replace(/\\\*/g, "*");
+
+  // 2. Khử dấu gạch chéo thừa ở cuối dòng trước khi xuống dòng (\ + newline, byte 5c 0a)
+  result = result.replace(/\\+(\r?\n)/g, "$1");
+
+  // 3. Nếu chuỗi không có dấu xuống dòng thực tế nhưng lại bị escape thành text \n (do LLM double escaping)
+  if (!result.includes("\n") && result.includes("\\n")) {
+    result = result.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
+  }
+
+  return result;
+}
+
 const TOOL_HANDLERS: Record<string, ToolHandler> = {
   read_file: (args) => {
     const targetPath = args.path || args.file || args.filename || "package.json";
@@ -90,11 +117,10 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   write_file: (args) => {
     const targetPath = String(args.path || args.file || "");
-    let content = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "");
-    // Tự động chuẩn hóa nếu nội dung không có dấu xuống dòng thực tế nhưng lại bị double-escaped thành text \n
-    if (!content.includes("\n") && content.includes("\\n")) {
-      content = content.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
-    }
+    const rawContent = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "");
+    // Cho phép AI quyết định khi nào cần unescape ký tự xuống dòng (mặc định là true nếu không bị cấm)
+    const shouldUnescape = args.unescape_newlines !== false && args.unescape !== false;
+    const content = normalizeFileContent(rawContent, shouldUnescape);
     const base64Content = Buffer.from(content, "utf8").toString("base64");
     // Nháy kép bên ngoài, nháy đơn bên trong, truyền path và base64 qua process.argv
     const script = `const fs=require('fs'),p=require('path');fs.mkdirSync(p.dirname(process.argv[1]),{recursive:true});fs.writeFileSync(process.argv[1],Buffer.from(process.argv[2],'base64'));console.log('Successfully wrote '+process.argv[1]);`;

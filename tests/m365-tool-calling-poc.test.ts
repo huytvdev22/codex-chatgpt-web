@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
-import { M365ToolBridge } from "../src/adapters/m365-copilot/tool-bridge";
+import { M365ToolBridge, normalizeFileContent } from "../src/adapters/m365-copilot/tool-bridge";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
@@ -283,5 +283,32 @@ describe("M365 Tool Calling PoC Tests", () => {
     // Phải được unescape thành các dòng mới thực tế
     expect(base64Decoded).toContain("\n");
     expect(base64Decoded.split("\n").length).toBe(3);
+  });
+
+  test("Phase 9: normalizeFileContent handles byte 5c 0a (trailing backslash), Turndown \\*, and unescapeNewlines flag", () => {
+    // 1. Khử trailing backslash trước newline (\ + newline, byte 5c 0a)
+    const trailingSlashCode = "function add(a, b) { return a + b; }\\\nfunction sub(a, b) { return a - b; }";
+    const cleanedSlash = normalizeFileContent(trailingSlashCode);
+    expect(cleanedSlash).toBe("function add(a, b) { return a + b; }\nfunction sub(a, b) { return a - b; }");
+
+    // 2. Khử Turndown markdown escape cho phép toán \*
+    const mathCode = "function multiply(a, b) { return a \\* b; }";
+    const cleanedMath = normalizeFileContent(mathCode);
+    expect(cleanedMath).toBe("function multiply(a, b) { return a * b; }");
+
+    // 3. Tôn trọng cờ unescapeNewlines = false
+    const rawLiteral = "line1\\nline2";
+    const preserved = normalizeFileContent(rawLiteral, false);
+    expect(preserved).toBe("line1\\nline2");
+
+    // 4. M365ToolBridge tôn trọng unescape_newlines: false từ AI
+    const mappedRaw = M365ToolBridge.mapToolCall({
+      name: "write_file",
+      arguments: { path: "raw.txt", content: "raw\\ntext", unescape_newlines: false },
+    });
+    const parsedRaw = JSON.parse(mappedRaw.arguments);
+    const match = parsedRaw.cmd.match(/node -e "[^"]+"\s+"[^"]+"\s+"([^"]+)"/);
+    const decoded = Buffer.from(match[1], "base64").toString("utf8");
+    expect(decoded).toBe("raw\\ntext");
   });
 });

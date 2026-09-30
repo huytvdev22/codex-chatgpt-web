@@ -43,7 +43,7 @@ Hệ thống môi trường hỗ trợ các công cụ sau để thao tác trự
 5. search_files(pattern, path?): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts").
 6. grep_code(query, path?): Tìm kiếm chuỗi văn bản, hàm, biến trong mã nguồn.
 7. run_command(cmd): Chạy lệnh shell/terminal bất kỳ (build, test, lint, script...).
-8. write_file(path, content): Tạo file mới hoặc ghi đè nội dung file.
+8. write_file(path, content, unescape_newlines?): Tạo file mới hoặc ghi đè nội dung file (đặt unescape_newlines: true khi sinh mã nguồn nhiều dòng).
 
 QUY TẮC ĐỊNH DẠNG ĐẦU RA:
 - Khi người dùng yêu cầu thao tác với dự án (tạo file, sửa code, đọc file, chạy lệnh, kiểm tra git), bạn PHẢI phản hồi bằng định dạng JSON trong khối <tool_call>...</tool_call>:
@@ -55,7 +55,8 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA:
   }
 }
 </tool_call>
-- Không viết code dưới dạng block markdown giải thích thủ công khi người dùng yêu cầu tạo hoặc sửa file; hãy sử dụng công cụ write_file để tạo/ghi file vào dự án.
+- BẮT BUỘC sử dụng công cụ write_file để tạo mới hoặc ghi đè file (không dùng các lệnh shell như cat, echo, python, perl hay heredoc để ghi file).
+- Không viết code dưới dạng block markdown giải thích thủ công khi người dùng yêu cầu tạo hoặc sửa file; hãy gọi công cụ write_file.
 - Luôn in khối <tool_call> ở đầu câu trả lời, không chèn câu chào hỏi hay lời dẫn dắt trước khối này.
 
 QUY TẮC YÊU CẦU ĐA BƯỚC (MULTI-STEP):

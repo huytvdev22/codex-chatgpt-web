@@ -312,6 +312,7 @@ export class M365ToolCallDetector {
       .replace(/```(?:json)?/gi, "")
       .replace(/```/g, "")
       .replaceAll("\\_", "_")
+      .replaceAll("\\*", "*")
       .trim();
 
     // 1. Thử parse với sanitizer xử lý raw newlines/control characters
