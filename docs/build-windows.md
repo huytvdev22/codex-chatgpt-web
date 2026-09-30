@@ -20,6 +20,15 @@ Bản cài đặt Windows được đóng gói dưới dạng **NSIS Installer**
   - *Nguồn file thực thi*: Có thể lấy từ phiên bản đã cài trên máy tại:
     `C:\Users\huytv\.codex-m365-copilot\versions\6.1.3-win32-x64\runtime\bun.exe`
   - *Khuyến nghị an toàn*: Nên copy file `bun.exe` này sang một thư mục độc lập (ví dụ `C:\Users\huytv\.bun\bin\bun.exe`) để không bị mất nếu bạn gỡ cài đặt ứng dụng Codex M365 Copilot.
+```PowerShell
+# 1. Tạo thư mục Bun độc lập và copy bun.exe sang
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.bun\bin" -Force | Out-Null
+Copy-Item "C:\Users\huytv\.codex-m365-copilot\versions\6.1.3-win32-x64\runtime\bun.exe" "$env:USERPROFILE\.bun\bin\bun.exe" -Force
+
+# 2. Cập nhật PATH vĩnh viễn trỏ vào thư mục độc lập này
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\.bun\bin", "User")
+
+```
 - **PowerShell**: Khuyến nghị dùng PowerShell 5.1 hoặc PowerShell 7+.
 
 ---
