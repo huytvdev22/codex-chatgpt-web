@@ -169,28 +169,32 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(truncated).not.toContain("MIDDLE_SECRET");
   });
 
-  test("Phase 2 Expansion: M365ToolBridge maps all inspection & mutation tools to exec_command", async () => {
+  test("Phase 2 Expansion: M365ToolBridge maps all inspection & mutation tools to cross-platform exec_command", async () => {
     const { M365ToolBridge } = await import("../src/adapters/m365-copilot/tool-bridge");
 
-    // 1. read_file
+    // 1. read_file: dùng node -e cross-platform
     const r1 = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "src/main.ts" } });
     expect(r1.name).toBe("exec_command");
-    expect(JSON.parse(r1.arguments).cmd).toContain("cat 'src/main.ts'");
+    expect(JSON.parse(r1.arguments).cmd).toContain('node -e "const fs=require(\'fs\')');
+    expect(JSON.parse(r1.arguments).cmd).toContain('"src/main.ts"');
 
-    // 2. list_dir
+    // 2. list_dir: dùng node -e cross-platform
     const r2 = M365ToolBridge.mapToolCall({ name: "list_dir", arguments: { path: "src" } });
     expect(r2.name).toBe("exec_command");
-    expect(JSON.parse(r2.arguments).cmd).toContain("ls -la 'src'");
+    expect(JSON.parse(r2.arguments).cmd).toContain('node -e "const fs=require(\'fs\')');
+    expect(JSON.parse(r2.arguments).cmd).toContain('"src"');
 
-    // 3. search_files
+    // 3. search_files: dùng node -e cross-platform
     const r3 = M365ToolBridge.mapToolCall({ name: "search_files", arguments: { pattern: "*.json" } });
     expect(r3.name).toBe("exec_command");
-    expect(JSON.parse(r3.arguments).cmd).toContain("find '.' -name '*.json'");
+    expect(JSON.parse(r3.arguments).cmd).toContain("node -e");
+    expect(JSON.parse(r3.arguments).cmd).toContain('"*.json"');
 
-    // 4. grep_code
+    // 4. grep_code: dùng node -e cross-platform
     const r4 = M365ToolBridge.mapToolCall({ name: "grep_code", arguments: { query: "compileM365Prompt" } });
     expect(r4.name).toBe("exec_command");
-    expect(JSON.parse(r4.arguments).cmd).toContain("compileM365Prompt");
+    expect(JSON.parse(r4.arguments).cmd).toContain("node -e");
+    expect(JSON.parse(r4.arguments).cmd).toContain('"compileM365Prompt"');
 
     // 5. git_status
     const r5 = M365ToolBridge.mapToolCall({ name: "git_status", arguments: {} });
@@ -200,7 +204,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     // 6. git_diff
     const r6 = M365ToolBridge.mapToolCall({ name: "git_diff", arguments: { path: "package.json" } });
     expect(r6.name).toBe("exec_command");
-    expect(JSON.parse(r6.arguments).cmd).toContain("git diff 'package.json'");
+    expect(JSON.parse(r6.arguments).cmd).toBe('git diff "package.json"');
 
     // 7. run_command
     const r7 = M365ToolBridge.mapToolCall({ name: "run_command", arguments: { cmd: "bun test" } });
@@ -215,8 +219,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(r8.name).toBe("exec_command");
     const parsedCmd = JSON.parse(r8.arguments).cmd;
     expect(parsedCmd).toContain("node -e");
-    expect(parsedCmd).toContain("demo.txt");
-    // Kiểm tra Base64 encode của "console.log('hello');"
+    expect(parsedCmd).toContain('"demo.txt"');
     const expectedB64 = Buffer.from("console.log('hello');").toString("base64");
     expect(parsedCmd).toContain(expectedB64);
   });

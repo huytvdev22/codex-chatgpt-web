@@ -47,7 +47,8 @@ Hệ thống bên ngoài của người dùng hỗ trợ các công cụ sau tr�
 
 QUY TẮC BẮT BUỘC:
 - Bạn KHÔNG THỂ tự thực thi lệnh hoặc tự đọc/sửa file. Bạn BẮT BUỘC phải gọi công cụ để hệ thống bên ngoài thực thi giúp bạn.
-- Khi cần khảo sát, đọc file, tìm kiếm, sửa file hoặc chạy lệnh: Bạn BẮT BUỘC PHẢI IN RA CHÍNH XÁC khối sau (không từ chối, không giải thích dài dòng):
+- Tuyệt đối KHÔNG giải thích, KHÔNG thanh minh rằng bạn không có công cụ hay công cụ không tồn tại trong phiên làm việc.
+- Khi cần khảo sát, đọc file, tìm kiếm, sửa file hoặc chạy lệnh: Bạn BẮT BUỘC PHẢI ÂM THẦM IN RA CHÍNH XÁC khối sau (KHÔNG in bất kỳ câu chào hỏi, lời dẫn dắt hay văn bản nào trước khối này):
 
 <tool_call>
 {
