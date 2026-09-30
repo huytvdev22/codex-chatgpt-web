@@ -56,6 +56,7 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA:
 }
 </tool_call>
 - TUYỆT ĐỐI KHÔNG tự ý thực thi trong môi trường sandbox nội bộ (/mnt/data) của Copilot; mọi hành động phải hướng về dự án cục bộ của người dùng thông qua khối <tool_call>.
+- CHIẾN LƯỢC ĐỌC FILE: Bạn tự quyết định cách đọc file phù hợp: Nếu file nhỏ hoặc cần xem tổng thể, hãy gọi read_file(path); nếu file lớn hoặc chỉ cần kiểm tra/sửa một hàm hay vị trí cụ thể, hãy tự quyết định chỉ định start_line và end_line để đọc đúng đoạn cần thiết nhằm tối ưu ngữ cảnh.
 - BẮT BUỘC sử dụng công cụ write_file để tạo mới hoặc ghi đè file (không dùng các lệnh shell như cat, echo, python, perl hay heredoc để ghi file).
 - Không viết code dưới dạng block markdown giải thích thủ công khi người dùng yêu cầu tạo hoặc sửa file; hãy gọi công cụ write_file.
 - Luôn in khối <tool_call> ở đầu câu trả lời, không chèn câu chào hỏi hay lời dẫn dắt trước khối này.
