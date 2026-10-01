@@ -1,0 +1,36 @@
+import type { FileRange, PlatformCommandStrategy } from "./types";
+
+/**
+ * Lớp cơ sở trừu tượng cho PlatformCommandStrategy (Tuân thủ Liskov Substitution Principle & DRY - SOLID)
+ * Cung cấp cài đặt mặc định cho các công cụ Git và shell chung.
+ */
+export abstract class BasePlatformCommandStrategy implements PlatformCommandStrategy {
+  abstract readonly platformName: string;
+
+  abstract readFile(targetPath: string, range?: FileRange): string;
+  abstract listDir(targetPath: string): string;
+  abstract searchFiles(pattern: string, targetPath?: string): string;
+  abstract grepCode(query: string, targetPath?: string): string;
+  abstract writeFile(targetPath: string, base64Content: string): string;
+
+  gitStatus(): string {
+    return "git status -s";
+  }
+
+  gitDiff(targetPath?: string): string {
+    const file = targetPath ? String(targetPath).trim() : "";
+    return file ? `git diff ${this.quoteArg(file)}` : "git diff";
+  }
+
+  runCommand(cmd: string): string {
+    return String(cmd || "");
+  }
+
+  /**
+   * Bao bọc chuỗi tham số an toàn đa nền tảng bằng nháy kép.
+   */
+  protected quoteArg(arg: string): string {
+    if (!arg) return '""';
+    return `"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+}

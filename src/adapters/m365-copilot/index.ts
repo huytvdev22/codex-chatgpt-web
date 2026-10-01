@@ -7,6 +7,25 @@ import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
 
 
+function extractClientShell(parsed: CodexParsedRequest): string | undefined {
+  // 1. Kiểm tra trong system prompt
+  for (const sp of parsed.context.systemPrompt || []) {
+    const match = sp.match(/<shell>([^<]+)<\/shell>/i);
+    if (match) return match[1].trim();
+  }
+  // 2. Kiểm tra trong messages (user / developer)
+  for (const msg of parsed.context.messages || []) {
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : Array.isArray(msg.content)
+      ? msg.content.map(c => c.type === "text" ? c.text : "").join(" ")
+      : "";
+    const match = text.match(/<shell>([^<]+)<\/shell>/i);
+    if (match) return match[1].trim();
+  }
+  return undefined;
+}
+
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
   private lastConversationKey?: string;
@@ -91,7 +110,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
       if (detectedToolCall) {
         const clientTools = parsed.context.tools || [];
-        const mapped = M365ToolBridge.mapToolCall(detectedToolCall, clientTools);
+        const detectedShell = extractClientShell(parsed);
+        const mapped = M365ToolBridge.mapToolCall(detectedToolCall, clientTools, { shell: detectedShell });
         const callId = `call_${Math.random().toString(36).slice(2, 10)}`;
 
         console.log("[M365 TOOL] detected tool call");

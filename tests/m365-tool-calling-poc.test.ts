@@ -173,45 +173,48 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(truncated).not.toContain("MIDDLE_SECRET");
   });
 
-  test("Phase 2 Expansion: M365ToolBridge maps all inspection & mutation tools to cross-platform exec_command", async () => {
-    const { M365ToolBridge } = await import("../src/adapters/m365-copilot/tool-bridge");
+  test("Phase 2 Expansion: M365ToolBridge maps all inspection & mutation tools with PosixCommandStrategy and PowerShellCommandStrategy", async () => {
+    const { M365ToolBridge, PosixCommandStrategy, PowerShellCommandStrategy, CommandStrategyResolver } = await import("../src/adapters/m365-copilot/tool-bridge");
+    const posix = new PosixCommandStrategy();
+    const ps = new PowerShellCommandStrategy();
 
-    // 1. read_file: dùng node -e cross-platform
-    const r1 = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "src/main.ts" } });
+    // --- KIỂM TRA POSIX / NODE RUNNER (macOS, Linux) ---
+    // 1. read_file: dùng node -e
+    const r1 = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "src/main.ts" } }, [], posix);
     expect(r1.name).toBe("exec_command");
     expect(JSON.parse(r1.arguments).cmd).toContain('node -e "const fs=require(\'fs\')');
     expect(JSON.parse(r1.arguments).cmd).toContain('"src/main.ts"');
 
-    // 2. list_dir: dùng node -e cross-platform
-    const r2 = M365ToolBridge.mapToolCall({ name: "list_dir", arguments: { path: "src" } });
+    // 2. list_dir: dùng node -e
+    const r2 = M365ToolBridge.mapToolCall({ name: "list_dir", arguments: { path: "src" } }, [], posix);
     expect(r2.name).toBe("exec_command");
     expect(JSON.parse(r2.arguments).cmd).toContain('node -e "const fs=require(\'fs\')');
     expect(JSON.parse(r2.arguments).cmd).toContain('"src"');
 
-    // 3. search_files: dùng node -e cross-platform
-    const r3 = M365ToolBridge.mapToolCall({ name: "search_files", arguments: { pattern: "*.json" } });
+    // 3. search_files: dùng node -e
+    const r3 = M365ToolBridge.mapToolCall({ name: "search_files", arguments: { pattern: "*.json" } }, [], posix);
     expect(r3.name).toBe("exec_command");
     expect(JSON.parse(r3.arguments).cmd).toContain("node -e");
     expect(JSON.parse(r3.arguments).cmd).toContain('"*.json"');
 
-    // 4. grep_code: dùng node -e cross-platform
-    const r4 = M365ToolBridge.mapToolCall({ name: "grep_code", arguments: { query: "compileM365Prompt" } });
+    // 4. grep_code: dùng node -e
+    const r4 = M365ToolBridge.mapToolCall({ name: "grep_code", arguments: { query: "compileM365Prompt" } }, [], posix);
     expect(r4.name).toBe("exec_command");
     expect(JSON.parse(r4.arguments).cmd).toContain("node -e");
     expect(JSON.parse(r4.arguments).cmd).toContain('"compileM365Prompt"');
 
     // 5. git_status
-    const r5 = M365ToolBridge.mapToolCall({ name: "git_status", arguments: {} });
+    const r5 = M365ToolBridge.mapToolCall({ name: "git_status", arguments: {} }, [], posix);
     expect(r5.name).toBe("exec_command");
     expect(JSON.parse(r5.arguments).cmd).toBe("git status -s");
 
     // 6. git_diff
-    const r6 = M365ToolBridge.mapToolCall({ name: "git_diff", arguments: { path: "package.json" } });
+    const r6 = M365ToolBridge.mapToolCall({ name: "git_diff", arguments: { path: "package.json" } }, [], posix);
     expect(r6.name).toBe("exec_command");
     expect(JSON.parse(r6.arguments).cmd).toBe('git diff "package.json"');
 
     // 7. run_command
-    const r7 = M365ToolBridge.mapToolCall({ name: "run_command", arguments: { cmd: "bun test" } });
+    const r7 = M365ToolBridge.mapToolCall({ name: "run_command", arguments: { cmd: "bun test" } }, [], posix);
     expect(r7.name).toBe("exec_command");
     expect(JSON.parse(r7.arguments).cmd).toBe("bun test");
 
@@ -219,13 +222,30 @@ describe("M365 Tool Calling PoC Tests", () => {
     const r8 = M365ToolBridge.mapToolCall({
       name: "write_file",
       arguments: { path: "demo.txt", content: "console.log('hello');" },
-    });
+    }, [], posix);
     expect(r8.name).toBe("exec_command");
     const parsedCmd = JSON.parse(r8.arguments).cmd;
     expect(parsedCmd).toContain("node -e");
     expect(parsedCmd).toContain('"demo.txt"');
     const expectedB64 = Buffer.from("console.log('hello');").toString("base64");
     expect(parsedCmd).toContain(expectedB64);
+
+    // --- KIỂM TRA NATIVE POWERSHELL RUNNER (Windows độc lập không cần Node.js) ---
+    const psRead = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "demo.java" } }, [], ps);
+    expect(psRead.name).toBe("exec_command");
+    const psReadCmd = JSON.parse(psRead.arguments).cmd;
+    expect(psReadCmd).toContain("powershell -NoProfile -EncodedCommand ");
+
+    const psWrite = M365ToolBridge.mapToolCall({ name: "write_file", arguments: { path: "demo.txt", content: "Hello PS" } }, [], ps);
+    expect(psWrite.name).toBe("exec_command");
+    const psWriteCmd = JSON.parse(psWrite.arguments).cmd;
+    expect(psWriteCmd).toContain("powershell -NoProfile -EncodedCommand ");
+
+    // --- KIỂM TRA RESOLVER THEO SHELL / PLATFORM ---
+    const resolvedPs = CommandStrategyResolver.resolve({ shell: "powershell" });
+    expect(resolvedPs.platformName).toBe("powershell");
+    const resolvedBash = CommandStrategyResolver.resolve({ shell: "bash" });
+    expect(resolvedBash.platformName).toBe("posix");
   });
 
   test("Phase 7: compileM365Prompt includes neutral protocol specification, multi-step rules, and end-of-prompt formatting directive", () => {
@@ -270,12 +290,13 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(args.content.split("\n").length).toBeGreaterThan(1);
   });
 
-  test("Phase 8: M365ToolBridge automatically unescapes literal \\n in single-line write_file payload", () => {
+  test("Phase 8: M365ToolBridge automatically unescapes literal \\n in single-line write_file payload", async () => {
+    const { PosixCommandStrategy } = await import("../src/adapters/m365-copilot/tool-bridge");
     const singleLineEscaped = "const http = require('http');\\nconst PORT = 3000;\\nconsole.log(PORT);";
     const mapped = M365ToolBridge.mapToolCall({
       name: "write_file",
       arguments: { path: "server.js", content: singleLineEscaped },
-    });
+    }, [], new PosixCommandStrategy());
 
     const parsedArgs = JSON.parse(mapped.arguments);
     const match = parsedArgs.cmd.match(/node -e "[^"]+"\s+"[^"]+"\s+"([^"]+)"/);
@@ -286,7 +307,9 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(base64Decoded.split("\n").length).toBe(3);
   });
 
-  test("Phase 9: normalizeFileContent handles byte 5c 0a (trailing backslash), Turndown \\*, and unescapeNewlines flag", () => {
+  test("Phase 9: normalizeFileContent handles byte 5c 0a (trailing backslash), Turndown \\*, and unescapeNewlines flag", async () => {
+    const { PosixCommandStrategy } = await import("../src/adapters/m365-copilot/tool-bridge");
+
     // 1. Khử trailing backslash trước newline (\ + newline, byte 5c 0a)
     const trailingSlashCode = "function add(a, b) { return a + b; }\\\nfunction sub(a, b) { return a - b; }";
     const cleanedSlash = normalizeFileContent(trailingSlashCode);
@@ -306,18 +329,19 @@ describe("M365 Tool Calling PoC Tests", () => {
     const mappedRaw = M365ToolBridge.mapToolCall({
       name: "write_file",
       arguments: { path: "raw.txt", content: "raw\\ntext", unescape_newlines: false },
-    });
+    }, [], new PosixCommandStrategy());
     const parsedRaw = JSON.parse(mappedRaw.arguments);
     const match = parsedRaw.cmd.match(/node -e "[^"]+"\s+"[^"]+"\s+"([^"]+)"/);
     const decoded = Buffer.from(match[1], "base64").toString("utf8");
     expect(decoded).toBe("raw\\ntext");
   });
 
-  test("Phase 10: M365ToolBridge maps read_file with start_line and end_line parameters", () => {
+  test("Phase 10: M365ToolBridge maps read_file with start_line and end_line parameters", async () => {
+    const { PosixCommandStrategy } = await import("../src/adapters/m365-copilot/tool-bridge");
     const mapped = M365ToolBridge.mapToolCall({
       name: "read_file",
       arguments: { path: "server.js", start_line: 15, end_line: 45 },
-    });
+    }, [], new PosixCommandStrategy());
 
     expect(mapped.name).toBe("exec_command");
     const cmd = JSON.parse(mapped.arguments).cmd;
@@ -402,4 +426,42 @@ const b = \\{\\
     expect(cleanedContent).toContain("const b = {");
     expect(() => new Function(cleanedContent)).not.toThrow();
   });
+
+  test("Phase 12: PlatformCommandStrategy - PowerShellCommandStrategy executes natively on Windows", async () => {
+    const { PowerShellCommandStrategy, CommandStrategyResolver } = await import("../src/adapters/m365-copilot/tool-bridge");
+    const { execSync } = await import("child_process");
+
+    const psStrategy = new PowerShellCommandStrategy();
+    expect(psStrategy.platformName).toBe("powershell");
+
+    // 1. Kiểm tra lệnh đọc file thật trên Windows
+    const readCmd = psStrategy.readFile("package.json", { startLine: 1, endLine: 3 });
+    expect(readCmd).toContain("powershell -NoProfile -EncodedCommand ");
+    
+    // Thực thi thật qua PowerShell
+    const readOutput = execSync(readCmd, { encoding: "utf8" });
+    expect(readOutput).toContain("[File: package.json (1-3/");
+    expect(readOutput).toContain("1: {");
+    expect(readOutput).toContain('"name": "codex-chatgpt-web"');
+
+    // 2. Kiểm tra lệnh liệt kê thư mục thật trên Windows
+    const listCmd = psStrategy.listDir("src/adapters/m365-copilot");
+    const listOutput = execSync(listCmd, { encoding: "utf8" });
+    expect(listOutput).toContain("tool-bridge.ts");
+    expect(listOutput).toContain("strategies/");
+
+    // 3. Kiểm tra Resolver tự động phát hiện đúng strategy
+    const pwshStrategy = CommandStrategyResolver.resolve({ shell: "pwsh" });
+    expect(pwshStrategy.platformName).toBe("powershell");
+
+    const zshStrategy = CommandStrategyResolver.resolve({ shell: "zsh" });
+    expect(zshStrategy.platformName).toBe("posix");
+
+    const winStrategy = CommandStrategyResolver.resolve({ platform: "win32" });
+    expect(winStrategy.platformName).toBe("powershell");
+
+    const macStrategy = CommandStrategyResolver.resolve({ platform: "darwin" });
+    expect(macStrategy.platformName).toBe("posix");
+  });
 });
+

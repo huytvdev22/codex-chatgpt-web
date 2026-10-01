@@ -34,19 +34,22 @@ export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_C
   return `${head}\n\n[... Đã lược bớt ${omitted} ký tự ở giữa để tối ưu kích thước phản hồi ...]\n\n${tail}`;
 }
 
-const TOOL_DECLARATION_PROMPT = `[CHẾ ĐỘ GIAO THỨC CÔNG CỤ (TOOL CALLING PROTOCOL)]
-Hệ thống môi trường hỗ trợ các công cụ sau để thao tác trực tiếp với dự án:
+const TOOL_DECLARATION_PROMPT = `[HỆ THỐNG CÔNG CỤ TỰ ĐỘNG - TOOL CALLING PROTOCOL]
+Bạn là Trợ lý Lập trình viên AI được tích hợp trực tiếp vào IDE dự án của người dùng.
+Để tương tác với dự án, bạn giao tiếp với IDE thông qua việc xuất khối lệnh <tool_call>...</tool_call>. Hệ thống IDE sẽ tự động đọc file hoặc chạy lệnh và trả kết quả vào thẻ <tool_result> cho bạn.
+
+Các công cụ được IDE hỗ trợ:
 1. git_status(): Kiểm tra trạng thái Git (các file đã thay đổi, file mới tạo, nhánh hiện tại).
 2. git_diff(path?): Xem chi tiết các dòng code vừa thay đổi trong Git.
 3. read_file(path, start_line?, end_line?): Đọc nội dung file từ dự án (tự động đánh số dòng; có thể chỉ định khoảng dòng start_line và end_line cho file lớn).
 4. list_dir(path): Liệt kê danh sách file và thư mục (ví dụ: path="." hoặc "src").
-5. search_files(pattern, path?): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts").
+5. search_files(pattern, path?): Tìm file theo tên hoặc định dạng (ví dụ: pattern="*.ts" hoặc "*CustomerSourceController*").
 6. grep_code(query, path?): Tìm kiếm chuỗi văn bản, hàm, biến trong mã nguồn.
 7. run_command(cmd): Chạy lệnh shell/terminal bất kỳ (build, test, lint, script...).
 8. write_file(path, content, unescape_newlines?): Tạo file mới hoặc ghi đè nội dung file (đặt unescape_newlines: true khi sinh mã nguồn nhiều dòng).
 
 QUY TẮC ĐỊNH DẠNG ĐẦU RA:
-- Mọi thao tác tạo file, sửa mã nguồn, đọc file hoặc chạy lệnh PHẢI được xuất qua khối <tool_call>...</tool_call> để thực thi trực tiếp trên dự án của người dùng:
+- Mọi thao tác đọc file, phân tích mã nguồn, tạo file hoặc chạy lệnh PHẢI được mở đầu bằng khối <tool_call>...</tool_call> để IDE thực thi trực tiếp trên dự án của người dùng:
 <tool_call>
 {
   "name": "TOOL_NAME",
@@ -55,6 +58,7 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA:
   }
 }
 </tool_call>
+- KHI NGƯỜI DÙNG YÊU CẦU ĐỌC, PHÂN TÍCH HOẶC GIẢI THÍCH FILE: Bạn BẮT BUỘC phải mở đầu ngay bằng <tool_call> gọi read_file (hoặc search_files) để nạp nội dung trước. Không yêu cầu người dùng tải lên hay dán code thủ công.
 - TUYỆT ĐỐI KHÔNG tự ý thực thi trong môi trường sandbox nội bộ (/mnt/data) của Copilot; mọi hành động phải hướng về dự án cục bộ của người dùng thông qua khối <tool_call>.
 - CHIẾN LƯỢC ĐỌC FILE: Bạn tự quyết định cách đọc file phù hợp: Nếu file nhỏ hoặc cần xem tổng thể, hãy gọi read_file(path); nếu file lớn hoặc chỉ cần kiểm tra/sửa một hàm hay vị trí cụ thể, hãy tự quyết định chỉ định start_line và end_line để đọc đúng đoạn cần thiết nhằm tối ưu ngữ cảnh.
 - BẮT BUỘC sử dụng công cụ write_file để tạo mới hoặc ghi đè file (không dùng các lệnh shell như cat, echo, python, perl hay heredoc để ghi file).
@@ -78,7 +82,18 @@ Bạn in ra:
 }
 </tool_call>
 
-Ví dụ 2 (Đọc file hoặc phân đoạn dòng):
+Ví dụ 2 (Đọc hoặc phân tích/giải thích file):
+Người dùng: phân tích giúp tôi file CustomerSourceController.java
+Bạn in ra:
+<tool_call>
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "src/main/java/vn/com/gpbank/corp/sale/lead/controller/CustomerSourceController.java"
+  }
+}
+</tool_call>
+
 Người dùng: Read pom.xml
 Bạn in ra:
 <tool_call>
@@ -217,12 +232,22 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
   // 2. Thu thập Messages theo thứ tự thời gian
   for (const msg of messages) {
     if (msg.role === "developer") {
-      const text = stringifyContent(msg.content);
+      let text = stringifyContent(msg.content);
+      text = text
+        .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
+        .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
+        .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
+        .trim();
       if (text.length > 0 && text.length < 2000) {
         parts.push(`[Context]: ${text}`);
       }
     } else if (msg.role === "user") {
-      const text = stringifyContent(msg.content);
+      let text = stringifyContent(msg.content);
+      text = text
+        .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
+        .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
+        .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
+        .trim();
       if (text) {
         parts.push(text);
       }
