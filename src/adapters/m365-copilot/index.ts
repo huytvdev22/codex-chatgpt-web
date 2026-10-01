@@ -81,24 +81,29 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
     // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
-      const toolDetector = new M365ToolCallDetector();
+      const isCodexToolMode = !parsed._openAICompat && Boolean(parsed.context.tools && parsed.context.tools.length > 0);
+      const toolDetector = isCodexToolMode ? new M365ToolCallDetector() : undefined;
 
       const reply = await executeM365Turn(compiledPrompt, {
         onChunk: (delta) => {
-          const safeText = toolDetector.feed(delta);
-          if (safeText) {
-            emit({ type: "text_delta", text: safeText });
+          if (toolDetector) {
+            const safeText = toolDetector.feed(delta);
+            if (safeText) {
+              emit({ type: "text_delta", text: safeText });
+            }
+          } else {
+            emit({ type: "text_delta", text: delta });
           }
         },
         signal: incoming.abortSignal,
         traceId: incoming.headers.get("x-codex-trace-id") || undefined,
         conversationKey,
         isNewConversation,
-        shouldStop: () => toolDetector.hasDetectedToolCall(),
+        shouldStop: () => toolDetector?.hasDetectedToolCall() ?? false,
       });
 
-      const { remainingText, toolCall } = toolDetector.finish();
-      const detectedToolCall = toolCall || toolDetector.getToolCall();
+      const { remainingText, toolCall } = toolDetector ? toolDetector.finish() : { remainingText: "", toolCall: null };
+      const detectedToolCall = toolDetector ? (toolCall || toolDetector.getToolCall()) : null;
 
       const inputTokens = Math.ceil(compiledPrompt.length / 4);
       const outputTokens = Math.ceil((reply.length || 10) / 4);

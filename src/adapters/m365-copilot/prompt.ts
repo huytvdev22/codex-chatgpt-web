@@ -223,9 +223,10 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     }
   }
 
-  // Luôn inject định nghĩa tool nếu lượt này không phải là nhận toolResult
+  // Chỉ inject định nghĩa tool của Codex nếu là Codex tool mode (không phải OpenAI-compatible client như Cline/Cursor)
+  const isCodexToolMode = !parsed._openAICompat && Boolean(parsed.context.tools && parsed.context.tools.length > 0);
   const hasToolResultInTurn = messages.some(m => m.role === "toolResult");
-  if (!hasToolResultInTurn) {
+  if (isCodexToolMode && !hasToolResultInTurn) {
     parts.push(`[Tool Instructions]:\n${TOOL_DECLARATION_PROMPT}`);
   }
 
@@ -271,9 +272,9 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     }
   }
 
-  // Nếu lượt này là yêu cầu của người dùng (không phải nhận toolResult),
-  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình xuất khối <tool_call> thay vì viết code tĩnh hay tự chạy sandbox /mnt/data
-  if (!hasToolResultInTurn && parts.length > 0) {
+  // Nếu lượt này là yêu cầu của người dùng trong Codex tool mode (không phải nhận toolResult),
+  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình xuất khối <tool_call>
+  if (isCodexToolMode && !hasToolResultInTurn && parts.length > 0) {
     parts.push(`[Yêu cầu định dạng đầu ra]: BẮT BUỘC sử dụng khối <tool_call> tương ứng (bước 1 nếu có nhiều bước) để thực thi yêu cầu của người dùng trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`);
   }
 

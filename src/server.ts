@@ -92,6 +92,11 @@ import {
 } from "./chatgpt-web-models";
 import { isM365ModelSlug } from "./m365-models";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
+import {
+  handleOpenAIChatCompletions,
+  buildOpenAIModelCatalog,
+  isOpenAIModelsRequest,
+} from "./openai-compat";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
 import {
@@ -1162,6 +1167,9 @@ export function startServer(
             "codex-chatgpt-web is draining for a requested service operation",
           );
         }
+        if (isOpenAIModelsRequest(req)) {
+          return Response.json(buildOpenAIModelCatalog());
+        }
         return httpTurns.track(async signal => {
           const request = ++modelCatalogRequests;
           const started = Date.now();
@@ -1203,6 +1211,15 @@ export function startServer(
           }
           return recordResult(response, failure);
         }, req.signal, process.platform, "models");
+      }
+      if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        return httpTurns.track(
+          signal => handleOpenAIChatCompletions(new Request(req, { signal })),
+          req.signal,
+          process.platform,
+          "unspecified",
+        );
       }
       if (req.method === "GET" && url.pathname === "/v1/responses") {
         return new Response("Responses WebSocket transport is not enabled on this local route", {

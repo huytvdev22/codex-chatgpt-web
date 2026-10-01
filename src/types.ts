@@ -22,6 +22,8 @@ export interface CodexParsedRequest {
    * before constructing the browser adapter.
    */
   _opaqueMultiAgentV2Payload?: boolean;
+  /** True when request originates from the OpenAI Chat Completions compatibility layer. */
+  _openAICompat?: boolean;
 }
 
 export interface CodexContext {
