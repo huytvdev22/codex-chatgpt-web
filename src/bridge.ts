@@ -159,6 +159,7 @@ export function bridgeToResponsesSSE(
   const reportTerminal = (status: ResponsesTerminalStatus) => {
     if (terminalReported || clientCancelled || closed) return;
     terminalReported = true;
+    console.log(`[bridge-stream] [terminal] responseId=${responseId} model=${modelId} status=${status} emittedFrames=${emittedFrames}`);
     options?.onTerminal?.(status);
   };
   // RC3 keep-alive: Codex's idle timer is timeout(idle_timeout, stream.next()) over an
@@ -728,16 +729,18 @@ export function bridgeToResponsesSSE(
       } catch {
         /* already closed (e.g. client cancelled) */
       }
+      console.log(`[bridge-stream] [closed] responseId=${responseId} model=${modelId} emittedFrames=${emittedFrames}`);
       closed = true;
       gated = true;
       stepping = false;
       };
 
       const startStream = () => {
+        console.log(`[bridge-stream] [open] responseId=${responseId} model=${modelId}`);
         emit("response.created", { response: responseSnapshot("in_progress", []) });
         gated = true;
         beat = setInterval(() => {
-          if (closed || gated) return;
+          if (closed) return;
           const checkedAt = now();
           const silenceMs = checkedAt - lastAdapterEventAt;
           if (silenceMs >= stallTimeoutMs / 2 && !stallWarned) {
@@ -781,6 +784,7 @@ export function bridgeToResponsesSSE(
             closed = true;
             return;
           }
+          if (gated) return;
           try {
             controller.enqueue(heartbeatFrame);
             emittedFrames++;
@@ -807,6 +811,7 @@ export function bridgeToResponsesSSE(
   const cancelStream = () => {
     // Client (Codex) disconnected. Stop emitting and let the caller abort the upstream fetch so a
     // cancelled turn does not leak the upstream stream or keep draining tokens (RC2).
+    console.log(`[bridge-stream] [client_cancel] responseId=${responseId} model=${modelId} emittedFrames=${emittedFrames}`);
     clientCancelled = true;
     closed = true;
     if (beat) clearInterval(beat);

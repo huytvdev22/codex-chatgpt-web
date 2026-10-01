@@ -540,16 +540,36 @@ async function handleM365ResponseRequest(
   requestedModel: string,
   options: ResponseRequestOptions = {},
 ): Promise<Response> {
+  const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as { previous_response_id?: unknown }).previous_response_id
+    : undefined;
+  const expanded = expandPreviousResponseInput(raw);
+  if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
+    return formatErrorResponse(
+      409,
+      "invalid_request_error",
+      "Local continuation state for previous_response_id is unavailable; refusing to run M365 Copilot with partial Codex context. Compact the Codex task or start a new task before retrying.",
+    );
+  }
+
   let parsed: CodexParsedRequest;
+  const rawObj = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
+  const requestId = typeof rawObj.id === "string" ? rawObj.id : `req_${createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 12)}`;
+
   try {
-    parsed = parseRequest(raw);
-    const identity = extractCodexTurnIdentityFromBody(raw);
+    parsed = parseRequest(expanded);
+    const identity = extractCodexTurnIdentityFromBody(expanded);
     if (identity.threadId && identity.turnId) {
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
     }
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
+
+  const identity = extractCodexTurnIdentityFromBody(expanded);
+  const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
+
+  console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
 
   const adapter = createM365CopilotAdapter();
   const queue = new AsyncEventQueue<AdapterEvent>();
@@ -558,24 +578,35 @@ async function handleM365ResponseRequest(
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
   const run = async () => {
+    console.log(`[m365-turn] [busy] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
     try {
       await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
         options.onAdapterEvent?.(event);
         queue.push(event);
       });
+      console.log(`[m365-turn] [completed] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
     } catch (error) {
+      console.error(`[m365-turn] [error] requestId=${requestId} conversationId=${conversationId} error=${error instanceof Error ? error.message : String(error)}`);
       const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
       options.onAdapterEvent?.(event);
       queue.push(event);
     } finally {
       queue.close();
+      console.log(`[m365-turn] [idle] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()} closed=true`);
     }
   };
 
   const maps = toolBridgeMaps(parsed);
   const responseModel = requestedModel;
 
+  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+    if (options.rememberState !== false) {
+      rememberResponseState(parsed._rawBody, response, { force: true });
+    }
+  };
+
   if (parsed.stream) {
+    console.log(`[m365-stream] [open] requestId=${requestId} conversationId=${conversationId}`);
     void run();
     const stream = bridgeToResponsesSSE(
       queue,
@@ -583,10 +614,17 @@ async function handleM365ResponseRequest(
       maps.toolNsMap,
       maps.freeformToolNames,
       maps.toolSearchToolNames,
-      () => abort.abort(),
+      () => {
+        console.log(`[m365-stream] [abort] requestId=${requestId} conversationId=${conversationId}`);
+        abort.abort();
+      },
       2_000,
       {
         hideThinkingSummary: parsed.options.hideThinkingSummary,
+        onCompletedResponse: rememberCompletedResponse,
+        onTerminal: status => {
+          console.log(`[m365-stream] [terminal] requestId=${requestId} conversationId=${conversationId} status=${status}`);
+        },
       },
     );
     return new Response(stream, {
@@ -605,6 +643,7 @@ async function handleM365ResponseRequest(
     hideThinkingSummary: parsed.options.hideThinkingSummary,
     toolNsMap: maps.toolNsMap,
   });
+  rememberCompletedResponse(json);
   return new Response(JSON.stringify(json), {
     headers: { "Content-Type": "application/json" },
   });

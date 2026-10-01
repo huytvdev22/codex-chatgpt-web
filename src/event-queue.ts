@@ -5,6 +5,19 @@ export class AsyncEventQueue<T> implements AsyncIterable<T> {
 
   constructor(private readonly maxBuffered = 10_000) {}
 
+  size(): number {
+    return this.buffered.length;
+  }
+
+  waiterCount(): number {
+    return this.waiters.length;
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+
   push(value: T): void {
     if (this.closed) return;
     const waiter = this.waiters.shift();

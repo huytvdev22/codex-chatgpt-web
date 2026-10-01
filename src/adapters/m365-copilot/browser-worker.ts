@@ -217,8 +217,10 @@ export async function executeM365Turn(
         }
 
         const lastMsg = messages[messages.length - 1] as HTMLElement;
-        const hasShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i], .fai-StatusMessage, .fai-BebopMessageStatus'));
-        const isGenerating = Boolean(stopBtn) || hasShimmer || editorDisabled;
+        // Chú ý: KHÔNG dùng .fai-StatusMessage hay .fai-BebopMessageStatus vì đây là status card tồn tại vĩnh viễn trong DOM sau khi Copilot tìm kiếm xong!
+        // Chỉ dùng shimmer thực sự (đang animate loading) hoặc role="progressbar"
+        const hasActiveShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i]:not(.fai-StatusMessage):not(.fai-BebopMessageStatus), [role="progressbar"]'));
+        const isGenerating = Boolean(stopBtn) || editorDisabled || hasActiveShimmer;
 
         // Ưu tiên cao nhất: lấy markdown-reply có type="Chat" hoặc có text (bỏ qua thẻ Progress rỗng)
         const markdownReplies = Array.from(lastMsg.querySelectorAll('[data-testid="markdown-reply"]')) as HTMLElement[];
@@ -406,9 +408,10 @@ export async function executeM365Turn(
       // Điều kiện kết thúc:
       // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
-      // 3. Nội dung văn bản đã hoàn toàn ổn định (không thay đổi trong ít nhất 1.5 giây = 6 nhịp)
-      const isSettled = stableCycles >= 6 || (Date.now() - lastTextChangeAt >= 1500);
+      // 3. Nội dung văn bản đã ổn định (ít nhất 4 nhịp = 1.0 giây không đổi text)
+      const isSettled = stableCycles >= 4 || (Date.now() - lastTextChangeAt >= 1000);
       if (status.hasContent && !status.isGenerating && isSettled) {
+        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs}`);
         break;
       }
     }
@@ -420,20 +423,39 @@ export async function executeM365Turn(
     }
 
     finalStatus = "completed";
+    console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus}`);
     return fullMarkdown;
   } catch (err) {
-    if (options.signal?.aborted) finalStatus = "aborted";
+    if (options.signal?.aborted) {
+      finalStatus = "aborted";
+      console.log(`[m365-worker] [aborted] turn aborted by client`);
+    } else {
+      console.error(`[m365-worker] [error]`, err);
+    }
     throw err;
   } finally {
     if (options.traceId) {
-      notifyLauncherTurn(descriptorPath, {
+      const notifyPromise = notifyLauncherTurn(descriptorPath, {
         phase: "end",
         traceId: options.traceId,
         helperPid: process.pid,
         status: finalStatus,
         retain: true,
       }).catch(() => {});
+      await withTimeout(notifyPromise, 2000, undefined);
     }
-    await browser.close().catch(() => {});
+    console.log(`[m365-worker] [cleanup] closing browser connection (timeout 3000ms)...`);
+    await withTimeout(browser.close().catch(() => {}), 3000, undefined);
+    console.log(`[m365-worker] [cleanup] browser closed`);
   }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }

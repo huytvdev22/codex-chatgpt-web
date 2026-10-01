@@ -158,19 +158,28 @@ export class M365CopilotAdapter implements ProviderAdapter {
         return;
       }
 
-      if (remainingText && !streamedAnyText) {
+      if (remainingText) {
         emit({ type: "text_delta", text: remainingText });
+        streamedAnyText = true;
       }
 
+      // Đảm bảo Responses stream có ít nhất 1 chunk text nếu không có tool calls
+      if (!streamedAnyText) {
+        emit({ type: "text_delta", text: "" });
+      }
+
+      console.log(`[m365-adapter] [done] conversationKey=${conversationKey} streamedAnyText=${streamedAnyText}`);
       emit({
         type: "done",
         usage,
       });
     } catch (err: unknown) {
       if (incoming.abortSignal?.aborted) {
+        console.log(`[m365-adapter] [aborted] turn aborted by incoming signal`);
         throw new DOMException("M365 Copilot turn aborted", "AbortError");
       }
       const message = err instanceof Error ? err.message : String(err);
+      console.error(`[m365-adapter] [error] ${message}`);
       emit({
         type: "error",
         message: `[M365 Copilot] ${message}`,
