@@ -81,6 +81,11 @@ test("proxies official /models auth and query, then appends grouped and legacy W
     "chatgpt-web/high",
     "chatgpt-web/extra-high",
     "chatgpt-web/pro",
+    "m365-copilot/auto",
+    "m365-copilot/gpt-5.6-think",
+    "m365-copilot/gpt-5.6-quick",
+    "m365-copilot/think",
+    "m365-copilot/quick",
     "m365-copilot/gpt-5",
     "m365-copilot/fast",
   ]);
