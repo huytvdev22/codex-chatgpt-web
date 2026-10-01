@@ -313,7 +313,7 @@ export async function executeM365Turn(
         }
 
         // 4. Phân rã thành các Semantic Blocks bảo toàn 100% Text Nodes và thẻ <br>
-        const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "ul", "ol", "hr", "blockquote", "table"]);
+        const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code", "ul", "ol", "hr", "blockquote", "table"]);
         const rawBlocks: Array<{ tag: string; html: string; text: string }> = [];
         const inlineNodes: Node[] = [];
 
@@ -342,9 +342,11 @@ export async function executeM365Turn(
               flushInline();
               const text = el.textContent?.trim() || "";
               if (text.length > 0 || tag === "hr") {
+                // Bảo toàn thẻ code độc lập để parser nhận diện chính xác
+                const html = tag === "code" ? `<pre>${el.outerHTML}</pre>` : el.outerHTML;
                 rawBlocks.push({
-                  tag,
-                  html: el.outerHTML,
+                  tag: tag === "code" ? "pre" : tag,
+                  html,
                   text,
                 });
               }
@@ -381,13 +383,23 @@ export async function executeM365Turn(
           return (b.text.length > 0 && !isStatus) || b.tag === "hr";
         });
 
-        const blocks = filteredBlocks.map((b, idx) => ({
-          key: `block-${idx}-${b.tag}`,
-          tag: b.tag,
-          html: b.html,
-          text: b.text,
-          streamable: idx < filteredBlocks.length - 1, // Khối đã hoàn tất vì đã xuất hiện khối kế tiếp
-        }));
+        // Sinh khóa Block ổn định (Semantic Signature Key) chống nhảy lệch offset và chống lặp tiêu đề
+        const signatureOccurrences = new Map<string, number>();
+        const blocks = filteredBlocks.map((b, idx) => {
+          const snippet = b.text.trim().slice(0, 50).replace(/\s+/g, " ");
+          const signature = `${b.tag}::${snippet}`;
+          const occurrence = (signatureOccurrences.get(signature) || 0) + 1;
+          signatureOccurrences.set(signature, occurrence);
+          const stableKey = `${signature}#${occurrence}`;
+
+          return {
+            key: stableKey,
+            tag: b.tag,
+            html: b.html,
+            text: b.text,
+            streamable: idx < filteredBlocks.length - 1, // Khối đã hoàn tất vì đã xuất hiện khối kế tiếp
+          };
+        });
 
         const rawHtml = clone.innerHTML || "";
         const hasContent = blocks.length > 0;

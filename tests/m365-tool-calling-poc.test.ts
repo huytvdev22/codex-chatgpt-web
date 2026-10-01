@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
-import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
+import { M365ToolCallDetector, M365MarkdownBuffer, normalizeMarkdownFences } from "../src/adapters/m365-copilot/markdown";
 import { M365ToolBridge, normalizeFileContent } from "../src/adapters/m365-copilot/tool-bridge";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
@@ -476,5 +476,52 @@ const b = \\{\\
     const macStrategy = CommandStrategyResolver.resolve({ platform: "darwin" });
     expect(macStrategy.platformName).toBe("posix");
   });
-});
+  test("Phase 13: M365 Output Stream Hardening - Fixes drop token, duplicate headings, and malformed fences", () => {
+    // 1. Kiểm tra normalizeMarkdownFences sửa chữa các code fence bị cụt 2 backtick hoặc lẻ 1 backtick
+    const malformed1 = ["split_tabs_meta_*", "``"].join("\n");
+    expect(normalizeMarkdownFences(malformed1)).toBe("split_tabs_meta_*\n```");
 
+    const malformed2 = ["``javascript", "schemaVersion", "migration", "``"].join("\n");
+    expect(normalizeMarkdownFences(malformed2)).toBe("```javascript\nschemaVersion\nmigration\n```");
+
+    const malformed3 = ["Launch next task", "`"].join("\n");
+    expect(normalizeMarkdownFences(malformed3)).toBe("Launch next task\n```");
+
+    // 2. Kiểm tra M365MarkdownBuffer không bị lặp tiêu đề dù index thay đổi giữa các nhịp stream
+    const buffer = new M365MarkdownBuffer();
+
+    // Nhịp 1: Stream block 0 (intro) và block 1 (heading)
+    const nhip1 = [
+      { key: "p::Intro#1", tag: "p", html: "<p>Intro</p>", text: "Intro", streamable: true },
+      { key: "h1::Parallel_Engine#1", tag: "h1", html: "<h1>Parallel Engine</h1>", text: "Parallel Engine", streamable: true },
+      { key: "p::Loading#1", tag: "p", html: "<p>Loading...</p>", text: "Loading...", streamable: false }
+    ];
+    const delta1 = buffer.observe(nhip1);
+    expect(delta1).toContain("Intro");
+    expect(delta1).toContain("# Parallel Engine");
+
+    // Nhịp 2: Block Intro bị DOM dọn rác, heading bị đẩy lên đầu (nhưng cùng key signature)
+    const nhip2 = [
+      { key: "h1::Parallel_Engine#1", tag: "h1", html: "<h1>Parallel Engine</h1>", text: "Parallel Engine", streamable: true },
+      { key: "p::Subsystem#1", tag: "p", html: "<p>Subsystem info</p>", text: "Subsystem info", streamable: true },
+      { key: "p::Next#1", tag: "p", html: "<p>Next...</p>", text: "Next...", streamable: false }
+    ];
+    const delta2 = buffer.observe(nhip2);
+    // Tuyệt đối KHÔNG được lặp lại "# Parallel Engine"
+    expect(delta2).not.toContain("Parallel Engine");
+    expect(delta2).toContain("Subsystem info");
+
+    // 3. Kiểm tra M365MarkdownBuffer không bị nuốt token ngắn khi mảng block bị co lại
+    const nhip3 = [
+      { key: "h1::Parallel_Engine#1", tag: "h1", html: "<h1>Parallel Engine</h1>", text: "Parallel Engine", streamable: true },
+      { key: "p::Subsystem#1", tag: "p", html: "<p>Subsystem info</p>", text: "Subsystem info", streamable: true },
+      { key: "p::Wrapper#1", tag: "p", html: "<p>Wrapper cho:</p>", text: "Wrapper cho:", streamable: true },
+      { key: "code::chrome.storage.local#1", tag: "pre", html: "<pre><code>chrome.storage.local</code></pre>", text: "chrome.storage.local", streamable: true },
+      { key: "p::Correct#1", tag: "p", html: "<p>Đúng hướng.</p>", text: "Đúng hướng.", streamable: true }
+    ];
+    const finalResult = buffer.finish(nhip3);
+    expect(finalResult.markdown).toContain("chrome.storage.local");
+    expect(finalResult.markdown).toContain("Đúng hướng.");
+    expect(finalResult.delta).toContain("chrome.storage.local");
+  });
+});

@@ -9,6 +9,24 @@ const STATUS_PATTERNS = [
  * Chuyển đổi HTML của tin nhắn Microsoft 365 Copilot thành Markdown chuẩn
  * Kế thừa và tái sử dụng toàn bộ logic markdown (preservation tags, file paths, wiki links) từ chatGptHtmlToMarkdown
  */
+/**
+ * Tự động chuẩn hóa các code fence bị lỗi định dạng Markdown (như cụt 2 backtick hoặc lẻ loi 1 backtick)
+ */
+export function normalizeMarkdownFences(md: string): string {
+  if (!md) return "";
+
+  // Sửa các dòng chỉ chứa đúng 2 dấu backtick thành 3 dấu backtick chuẩn
+  let fixed = md.replace(/^([ \t]*)``([ \t]*)$/gm, "$1```$2");
+
+  // Sửa các code fence bị cụt 2 backtick có kèm tên ngôn ngữ (ví dụ ``plain -> ```plain)
+  fixed = fixed.replace(/^([ \t]*)``([a-zA-Z0-9_-]+[ \t]*)$/gm, "$1```$2");
+
+  // Sửa dòng kết thúc bằng 1 backtick lẻ loi đứng riêng sau nội dung
+  fixed = fixed.replace(/^([ \t]*)`([ \t]*)$/gm, "$1```$2");
+
+  return fixed;
+}
+
 export function m365HtmlToMarkdown(html: string): string {
   if (!html || !html.trim()) return "";
   let md = chatGptHtmlToMarkdown(html).trim();
@@ -24,6 +42,7 @@ export function m365HtmlToMarkdown(html: string): string {
   // Dọn dẹp lại lần nữa nếu tiền tố Copilot said nằm trước status hoặc ngược lại
   md = md.replace(/^Copilot(?: said)?:\s*/i, "").trim();
 
+  md = normalizeMarkdownFences(md);
   return md;
 }
 
@@ -45,7 +64,6 @@ export interface M365MarkdownBlock {
  */
 export class M365MarkdownBuffer {
   private readonly committedKeys = new Set<string>();
-  private committedIndex = 0;
   private markdown = "";
   private pendingBlocks: M365MarkdownBlock[] = [];
 
@@ -55,19 +73,17 @@ export class M365MarkdownBuffer {
 
   /**
    * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
-   * Tuân thủ thứ tự tuần tự tuyệt đối (Strict Sequential In-Order Commit):
-   * Chỉ commit khối kế tiếp khi khối đó đã streamable (đã hoàn thành vì có khối sau).
-   * Nếu gặp khối chưa streamable -> DỪNG LẠI và chờ nhịp sau, tuyệt đối không nhảy cóc qua khối sau!
+   * Duyệt tuần tự an toàn tuyệt đối theo Semantic Key:
+   * Bỏ qua các block đã commit; khi gặp block chưa streamable thì dừng lại chờ;
+   * Không phụ thuộc vào committedIndex đơn điệu để tránh nhảy cóc khi danh sách block bị co giãn.
    */
   observe(blocks: M365MarkdownBlock[]): string {
     this.pendingBlocks = blocks;
     let delta = "";
 
-    while (this.committedIndex < blocks.length) {
-      const block = blocks[this.committedIndex];
-      // Nếu đã commit key này rồi, bỏ qua và tiến lên
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
       if (this.committedKeys.has(block.key)) {
-        this.committedIndex++;
         continue;
       }
 
@@ -80,7 +96,6 @@ export class M365MarkdownBuffer {
       if (blockDelta) {
         delta += blockDelta;
       }
-      this.committedIndex++;
     }
 
     return delta;
@@ -88,21 +103,20 @@ export class M365MarkdownBuffer {
 
   /**
    * Kết thúc lượt sinh phản hồi từ Copilot.
-   * Commit và emit toàn bộ các khối còn lại theo đúng thứ tự tuần tự từ committedIndex.
+   * Commit toàn bộ các khối còn lại chưa từng được commit.
    */
   finish(finalBlocks?: M365MarkdownBlock[]): { markdown: string; delta: string } {
     const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
     let delta = "";
 
-    while (this.committedIndex < blocks.length) {
-      const block = blocks[this.committedIndex];
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
       if (!this.committedKeys.has(block.key)) {
         const blockDelta = this.commitBlock(block);
         if (blockDelta) {
           delta += blockDelta;
         }
       }
-      this.committedIndex++;
     }
 
     this.pendingBlocks = [];
@@ -115,7 +129,7 @@ export class M365MarkdownBuffer {
 
   private commitBlock(block: M365MarkdownBlock): string {
     const rawMd = m365HtmlToMarkdown(block.html).trim();
-    const cleanMd = this.transform(rawMd).trim();
+    const cleanMd = normalizeMarkdownFences(this.transform(rawMd).trim());
     this.committedKeys.add(block.key);
 
     if (!cleanMd) return "";
