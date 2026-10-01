@@ -9,11 +9,17 @@ describe("M365 Conversation Lifecycle & Queue State Cleanup", () => {
     const queue = new AsyncEventQueue<AdapterEvent>();
     let cancelled = false;
 
-    const stream = bridgeToResponsesSSE(queue, "chatgpt-web/pro", {
-      onCancel: () => {
+    const stream = bridgeToResponsesSSE(
+      queue,
+      "chatgpt-web/pro",
+      undefined,
+      undefined,
+      undefined,
+      () => {
         cancelled = true;
       },
-    });
+      15_000
+    );
 
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -39,7 +45,8 @@ describe("M365 Conversation Lifecycle & Queue State Cleanup", () => {
     expect(accumulated).toContain("data: [DONE]");
     expect(queue.isClosed()).toBe(true);
     expect(queue.size()).toBe(0);
-    expect(cancelled).toBe(false);
+    // Bridge luôn gọi onCancel hook khi gặp terminal event để đảm bảo adapter cleanup tài nguyên
+    expect(cancelled).toBe(true);
   });
 
   it("handles previous_response_id continuation state persistence", () => {
