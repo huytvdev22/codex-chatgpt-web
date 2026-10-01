@@ -155,11 +155,13 @@ export class M365ToolCallDetector {
   private buffer = "";
   private inToolCall = false;
   private toolContent = "";
+  private inPatch = false;
+  private patchContent = "";
   private detectedToolCall: ParsedToolCall | null = null;
 
   /**
    * Đưa chunk mới vào detector.
-   * Trả về text thông thường an toàn để emit text_delta (nếu không thuộc tool_call).
+   * Trả về text thông thường an toàn để emit text_delta (nếu không thuộc tool_call hay patch).
    */
   feed(chunk: string): string {
     if (this.detectedToolCall) return "";
@@ -168,8 +170,8 @@ export class M365ToolCallDetector {
     let emittedText = "";
 
     while (this.buffer.length > 0) {
-      if (!this.inToolCall) {
-        // Tìm thẻ mở <tool_call> hoặc <tool\_call>
+      if (!this.inToolCall && !this.inPatch) {
+        // 1. Ưu tiên tìm thẻ mở <tool_call> hoặc <tool\_call> trước
         const openMatch = this.buffer.match(/<\s*tool[\\_]*call\s*>/i);
         if (openMatch && openMatch.index !== undefined) {
           if (openMatch.index > 0) {
@@ -184,9 +186,24 @@ export class M365ToolCallDetector {
           continue;
         }
 
-        // Tạm hoãn emit nếu buffer chỉ là code fence ``` hoặc ```xml để chờ thẻ <tool_call>
+        // 2. Tìm khối patch Codex độc lập: *** Begin Patch hoặc \*\*\* Begin Patch
+        const patchOpenMatch = this.buffer.match(/(?:\\?\*){3}\s*Begin Patch/i);
+        if (patchOpenMatch && patchOpenMatch.index !== undefined) {
+          if (patchOpenMatch.index > 0) {
+            const prefix = this.buffer.slice(0, patchOpenMatch.index);
+            const cleanPrefix = prefix.replace(/```(?:patch|diff)?/gi, "").trim();
+            if (cleanPrefix) {
+              emittedText += cleanPrefix;
+            }
+          }
+          this.inPatch = true;
+          this.buffer = this.buffer.slice(patchOpenMatch.index);
+          continue;
+        }
+
+        // Tạm hoãn emit nếu buffer chỉ là code fence ``` hoặc ```patch/xml để chờ thẻ mở
         const trimmed = this.buffer.trim();
-        if (/^```(?:xml|json)?$/i.test(trimmed)) {
+        if (/^```(?:xml|json|patch|diff)?$/i.test(trimmed)) {
           break;
         }
 
@@ -205,7 +222,48 @@ export class M365ToolCallDetector {
           }
         }
 
+        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của *** Begin Patch không
+        const patchPrefixCandidateMatch = this.buffer.match(/(?:\\?\*)+[ \t]*(?:B(?:e(?:g(?:i(?:n)?)?)?)?)?$/i);
+        if (patchPrefixCandidateMatch && patchPrefixCandidateMatch.index !== undefined) {
+          if (patchPrefixCandidateMatch[0].length >= 3) {
+            if (patchPrefixCandidateMatch.index > 0) {
+              emittedText += this.buffer.slice(0, patchPrefixCandidateMatch.index);
+              this.buffer = this.buffer.slice(patchPrefixCandidateMatch.index);
+            }
+            break;
+          }
+        }
+
         emittedText += this.buffer;
+        this.buffer = "";
+        break;
+      } else if (this.inPatch) {
+        // Đang trong khối patch, tìm *** End Patch hoặc \*\*\* End Patch
+        const patchCloseMatch = this.buffer.match(/(?:\\?\*){3}\s*End Patch/i);
+        if (patchCloseMatch && patchCloseMatch.index !== undefined) {
+          const patchEndIndex = patchCloseMatch.index + patchCloseMatch[0].length;
+          this.patchContent += this.buffer.slice(0, patchEndIndex);
+          this.inPatch = false;
+          this.buffer = this.buffer.slice(patchEndIndex);
+
+          let cleanPatch = this.patchContent
+            .replaceAll("\\*", "*")
+            .replaceAll("\\_", "_")
+            .replaceAll("\\[", "[")
+            .replaceAll("\\]", "]")
+            .replaceAll("\\{", "{")
+            .replaceAll("\\}", "}");
+          const beginIdx = cleanPatch.indexOf("*** Begin Patch");
+          if (beginIdx >= 0) cleanPatch = cleanPatch.slice(beginIdx);
+
+          this.detectedToolCall = {
+            name: "apply_patch",
+            arguments: { input: cleanPatch.trim() },
+          };
+          break;
+        }
+
+        this.patchContent += this.buffer;
         this.buffer = "";
         break;
       } else {
@@ -238,7 +296,7 @@ export class M365ToolCallDetector {
    */
   finish(): { remainingText: string; toolCall: ParsedToolCall | null } {
     let remainingText = "";
-    if (!this.inToolCall && !this.detectedToolCall) {
+    if (!this.inToolCall && !this.inPatch && !this.detectedToolCall) {
       remainingText = this.buffer;
       this.buffer = "";
     } else if (this.inToolCall && !this.detectedToolCall) {
@@ -249,6 +307,29 @@ export class M365ToolCallDetector {
         this.detectedToolCall = toolCall;
       } else {
         remainingText = `<tool_call>${this.toolContent}`;
+      }
+    } else if (this.inPatch && !this.detectedToolCall) {
+      this.patchContent += this.buffer;
+      this.buffer = "";
+      let cleanPatch = this.patchContent
+        .replaceAll("\\*", "*")
+        .replaceAll("\\_", "_")
+        .replaceAll("\\[", "[")
+        .replaceAll("\\]", "]")
+        .replaceAll("\\{", "{")
+        .replaceAll("\\}", "}");
+      const beginIdx = cleanPatch.indexOf("*** Begin Patch");
+      if (beginIdx >= 0) {
+        cleanPatch = cleanPatch.slice(beginIdx);
+        if (!cleanPatch.endsWith("*** End Patch")) {
+          cleanPatch = `${cleanPatch}\n*** End Patch`;
+        }
+        this.detectedToolCall = {
+          name: "apply_patch",
+          arguments: { input: cleanPatch.trim() },
+        };
+      } else {
+        remainingText = this.patchContent;
       }
     }
     return { remainingText, toolCall: this.detectedToolCall };
@@ -351,6 +432,16 @@ export class M365ToolCallDetector {
         return {
           name,
           arguments: { cmd: cmdMatch[1].trim() },
+        };
+      }
+    }
+
+    if (name === "apply_patch") {
+      const patchMatch = raw.match(/"(?:input|patch)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*\}|\}\s*$)/);
+      if (patchMatch) {
+        return {
+          name,
+          arguments: { input: patchMatch[1].trim() },
         };
       }
     }

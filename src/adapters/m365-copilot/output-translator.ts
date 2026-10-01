@@ -64,6 +64,84 @@ function cleanJsonPayload(raw: string): string {
 }
 
 /**
+ * Chuẩn hóa khối patch Codex (khôi phục các ký tự bị escape bởi Markdown/Turndown)
+ */
+export function normalizePatchEnvelope(raw: string): string {
+  let cleaned = raw
+    .replaceAll("\\*", "*")
+    .replaceAll("\\_", "_")
+    .replaceAll("\\[", "[")
+    .replaceAll("\\]", "]")
+    .replaceAll("\\{", "{")
+    .replaceAll("\\}", "}")
+    .replaceAll("\\~", "~");
+
+  if (cleaned.includes("\\n") && !cleaned.includes("\n")) {
+    cleaned = cleaned.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
+  }
+
+  // Khử dấu gạch chéo ngược ở cuối dòng
+  cleaned = cleaned.replace(/\\+[ \t]*(\r?\n)/g, "$1");
+
+  return cleaned.trim();
+}
+
+/**
+ * Bộ phát hiện Codex Patch Tool Call (Ưu tiên 0)
+ * Phát hiện các khối patch:
+ * *** Begin Patch
+ * ...
+ * *** End Patch
+ * Hỗ trợ nằm trong code block ```patch ... ```, ```diff ... ``` hoặc văn bản trần
+ */
+export class PatchToolCallDetector implements IToolCallDetector {
+  readonly priority = 0;
+  readonly name = "PatchToolCallDetector";
+
+  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    if (!rawResponse || !rawResponse.trim()) return null;
+
+    // Chuẩn hóa ký tự * bị escape bởi Turndown trước khi tìm kiếm
+    const unescaped = rawResponse.replaceAll("\\*", "*");
+
+    // Tìm tất cả các khối hoàn chỉnh: *** Begin Patch ... *** End Patch
+    const matches = [...unescaped.matchAll(/\*{3}\s*Begin Patch([\s\S]*?)\*{3}\s*End Patch/gi)];
+    if (matches.length > 0) {
+      const calls: DetectedToolCall[] = [];
+      for (const m of matches) {
+        const normalized = normalizePatchEnvelope(m[0]);
+        let patch = normalized;
+        const beginIdx = patch.indexOf("*** Begin Patch");
+        if (beginIdx >= 0) patch = patch.slice(beginIdx);
+        const endIdx = patch.lastIndexOf("*** End Patch");
+        if (endIdx >= 0) patch = patch.slice(0, endIdx + "*** End Patch".length);
+
+        calls.push({
+          name: "apply_patch",
+          arguments: { input: patch },
+        });
+      }
+      return calls.length === 1 ? calls[0] : calls;
+    }
+
+    // Trường hợp khối patch mở ở cuối phản hồi nhưng chưa kịp đóng *** End Patch
+    const openMatch = unescaped.match(/\*{3}\s*Begin Patch([\s\S]*)$/i);
+    if (openMatch) {
+      let patch = normalizePatchEnvelope(openMatch[0]);
+      if (!patch.endsWith("*** End Patch")) {
+        patch = `${patch}\n*** End Patch`;
+      }
+      return {
+        name: "apply_patch",
+        arguments: { input: patch },
+      };
+    }
+
+    return null;
+  }
+}
+
+/**
  * Bộ phát hiện JSON Tool Call (Ưu tiên A)
  * Hỗ trợ các định dạng:
  * 1. {"action": "tool_call", "tool": "read_file", "arguments": {"path": "pom.xml"}}
@@ -158,13 +236,15 @@ export class JsonToolCallDetector implements IToolCallDetector {
     }
 
     // TH2: { "name": "read_file", "arguments": { ... } }
-    if (typeof obj.name === "string" && (obj.arguments !== undefined || obj.path !== undefined || obj.cmd !== undefined)) {
+    if (typeof obj.name === "string" && (obj.arguments !== undefined || obj.path !== undefined || obj.cmd !== undefined || obj.input !== undefined || obj.patch !== undefined)) {
       let args = obj.arguments || {};
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch { args = { path: args }; }
       } else if (Object.keys(args).length === 0) {
         if (obj.path) args = { path: obj.path };
         else if (obj.cmd) args = { cmd: obj.cmd };
+        else if (obj.input) args = { input: obj.input };
+        else if (obj.patch) args = { input: obj.patch };
       }
       return { name: obj.name, arguments: args };
     }
@@ -224,8 +304,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
         let args = parsed.arguments || parsed.args || {};
         if (typeof args === "string") {
           try { args = JSON.parse(args); } catch { args = { path: args }; }
-        } else if (Object.keys(args).length === 0 && parsed.path) {
-          args = { path: parsed.path };
+        } else if (Object.keys(args).length === 0) {
+          if (parsed.path) args = { path: parsed.path };
+          else if (parsed.cmd) args = { cmd: parsed.cmd };
+          else if (parsed.input) args = { input: parsed.input };
+          else if (parsed.patch) args = { input: parsed.patch };
         }
         return { name, arguments: args };
       }
@@ -234,11 +317,13 @@ export class XmlToolCallDetector implements IToolCallDetector {
       const nameMatch = clean.match(/"name"\s*:\s*"([^"]+)"/i) || clean.match(/"tool"\s*:\s*"([^"]+)"/i);
       const pathMatch = clean.match(/"path"\s*:\s*"([^"]+)"/i);
       const cmdMatch = clean.match(/"cmd"\s*:\s*"([^"]+)"/i);
+      const patchMatch = clean.match(/"(?:input|patch)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*$)/);
 
       if (nameMatch) {
         const name = nameMatch[1];
         if (pathMatch) return { name, arguments: { path: pathMatch[1] } };
         if (cmdMatch) return { name, arguments: { cmd: cmdMatch[1] } };
+        if (patchMatch) return { name, arguments: { input: patchMatch[1] } };
         return { name, arguments: {} };
       }
     }
@@ -275,8 +360,9 @@ export class M365OutputTranslator {
     if (customDetectors && customDetectors.length > 0) {
       this.detectors = [...customDetectors].sort((a, b) => a.priority - b.priority);
     } else {
-      // Đăng ký theo thứ tự ưu tiên chuẩn: A (JSON) -> B (XML) -> C (Bash)
+      // Đăng ký theo thứ tự ưu tiên chuẩn: Patch (0) -> JSON (1) -> XML (2) -> Bash (3)
       this.detectors = [
+        new PatchToolCallDetector(),
         new JsonToolCallDetector(),
         new XmlToolCallDetector(),
         new BashCommandDetector(),

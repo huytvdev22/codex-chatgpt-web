@@ -150,6 +150,15 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
       args: { cmd },
     };
   },
+
+  apply_patch: (args) => {
+    const rawPatch = typeof args === "string" ? args : (args.input || args.patch || args.content || "");
+    const base64Patch = Buffer.from(String(rawPatch), "utf8").toString("base64");
+    return {
+      name: "exec_command",
+      args: { cmd: `echo ${base64Patch} | base64 -d | git apply --whitespace=nowarn - || true` },
+    };
+  },
 };
 
 /**
@@ -180,8 +189,42 @@ export class M365ToolBridge {
 
     const hasExactTool = clientTools.some((t) => t.name === toolName);
 
-    // Nếu client đã có sẵn công cụ trùng tên (và không phải read_file), giữ nguyên
-    if (hasExactTool && toolName !== "read_file") {
+    // Xử lý riêng biệt cho apply_patch (công cụ native của Codex để hiển thị diff +X -Y và Undo)
+    if (toolName === "apply_patch") {
+      const rawPatch = typeof parsedArgs === "string"
+        ? parsedArgs
+        : (parsedArgs.input || parsedArgs.patch || parsedArgs.content || "");
+      let patch = String(rawPatch)
+        .replaceAll("\\*", "*")
+        .replaceAll("\\_", "_")
+        .replaceAll("\\[", "[")
+        .replaceAll("\\]", "]")
+        .replaceAll("\\{", "{")
+        .replaceAll("\\}", "}");
+
+      // Nếu chứa literal \n thì chuyển sang ký tự xuống dòng thực tế
+      if (patch.includes("\\n") && !patch.includes("\n")) {
+        patch = patch.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
+      }
+      patch = patch.replace(/\\+[ \t]*(\r?\n)/g, "$1").trim();
+
+      const beginIdx = patch.indexOf("*** Begin Patch");
+      if (beginIdx >= 0) patch = patch.slice(beginIdx);
+      const endIdx = patch.lastIndexOf("*** End Patch");
+      if (endIdx >= 0) patch = patch.slice(0, endIdx + "*** End Patch".length);
+      else if (!patch.endsWith("*** End Patch")) patch = `${patch}\n*** End Patch`;
+
+      if (hasExactTool) {
+        console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);
+        return {
+          name: "apply_patch",
+          arguments: JSON.stringify({ input: patch }),
+        };
+      }
+    }
+
+    // Nếu client đã có sẵn công cụ trùng tên (và không phải read_file hay apply_patch), giữ nguyên
+    if (hasExactTool && toolName !== "read_file" && toolName !== "apply_patch") {
       return {
         name: toolName,
         arguments: JSON.stringify(parsedArgs),
