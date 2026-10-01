@@ -179,7 +179,7 @@ export function buildM365Model(
     display_name: route.displayName,
     description: route.description,
     input_modalities: ["text"],
-    visibility: "list",
+    visibility: route.legacy ? "hide" : "list",
     supported_in_api: true,
     priority: 100,
     ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),

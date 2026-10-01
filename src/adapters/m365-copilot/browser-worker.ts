@@ -3,6 +3,8 @@ import { getConfigDir } from "../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "./markdown";
+import { ensureM365CapabilityMode } from "./capability-picker";
+import { resolveM365CapabilityMode } from "../../m365-models";
 
 export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
@@ -12,6 +14,7 @@ export interface M365BrowserRunOptions {
   conversationKey?: string;
   isNewConversation?: boolean;
   shouldStop?: () => boolean;
+  modelSlug?: string;
 }
 
 let activeM365ConversationKey: string | null = null;
@@ -112,6 +115,14 @@ export async function executeM365Turn(
         tempBtn.click();
       }
     }).catch(() => {});
+
+    // 3.1. Đảm bảo model mong muốn (Capability Mode) được chọn trên giao diện M365 Copilot
+    if (options.modelSlug) {
+      const targetMode = resolveM365CapabilityMode(options.modelSlug);
+      await ensureM365CapabilityMode(page, targetMode).catch(err => {
+        console.warn(`[m365-worker] Warning: Failed to ensure capability mode '${targetMode}':`, err);
+      });
+    }
 
     // Đọc số lượng và nội dung tin nhắn hiện tại trước khi gửi
     const beforeState = await page.evaluate(() => {

@@ -11,6 +11,7 @@ export * from "./bash-translator";
 export * from "./output-translator";
 export * from "./agent-loop";
 export * from "./tool-bridge";
+export * from "./capability-picker";
 
 function extractClientShell(parsed: CodexParsedRequest): string | undefined {
   // 1. Kiểm tra trong system prompt
@@ -101,6 +102,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         conversationKey,
         isNewConversation,
         shouldStop: () => toolDetector.hasDetectedToolCall(),
+        modelSlug: parsed.modelId,
       });
 
       const { remainingText, toolCall } = toolDetector.finish();
