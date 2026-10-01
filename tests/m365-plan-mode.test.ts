@@ -173,6 +173,7 @@ describe("M365 Plan Mode Support", () => {
             toolCallId: "call_123",
             toolName: "read_file",
             content: "const add = (a, b) => a + b;",
+            isError: false,
             timestamp: Date.now(),
           },
         ],
@@ -208,4 +209,67 @@ node math.test.js
       expect(result.content).toContain("node math.test.js");
     }
   });
+
+  test("compileM365Prompt injects TOOL_REMINDER_PROMPT during toolResult turns to prevent Copilot refusal", () => {
+    const parsed: CodexParsedRequest = {
+      modelId: "m365-copilot/gpt-5",
+      stream: false,
+      options: {},
+      context: {
+        messages: [
+          {
+            role: "user",
+            content: "Tạo một web app mới",
+            timestamp: Date.now(),
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_abc",
+            toolName: "run_command",
+            content: "Chunk ID: 01cb56\nProcess exited with code 0\nOutput:\n",
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    };
+
+    const prompt = compileM365Prompt(parsed, false);
+    // Khi có toolResult, BẮT BUỘC phải có TOOL_REMINDER_PROMPT để Copilot không bị mất ngữ cảnh tool
+    expect(prompt).toContain("[CHẾ ĐỘ THỰC THI CÔNG CỤ QUA IDE - TOOL EXECUTION REMINDER]");
+    expect(prompt).toContain("TUYỆT ĐỐI KHÔNG từ chối với lý do không có công cụ IDE");
+    expect(prompt).toContain("mã thoát 0 (Process exited with code 0) hoặc output rỗng");
+    expect(prompt).toContain("write_file");
+  });
+
+  test("compileM365Prompt provides greenfield and write_file guidance when implementing approved plan", () => {
+    const parsed: CodexParsedRequest = {
+      modelId: "m365-copilot/gpt-5",
+      stream: false,
+      options: {},
+      context: {
+        messages: [
+          {
+            role: "user",
+            content: "PLEASE IMPLEMENT THIS PLAN:\n## Plan\n1. Tạo server.js",
+            timestamp: Date.now(),
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_def",
+            toolName: "run_command",
+            content: "fatal: not a git repository\nCannot read file: ENOENT package.json",
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    };
+
+    const prompt = compileM365Prompt(parsed, false);
+    expect(prompt).toContain("[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]");
+    expect(prompt).toContain("Nếu là dự án mới hoặc tạo file mới: Dùng write_file");
+    expect(prompt).toContain("[CHẾ ĐỘ THỰC THI CÔNG CỤ QUA IDE - TOOL EXECUTION REMINDER]");
+  });
 });
+

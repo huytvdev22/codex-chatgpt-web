@@ -265,9 +265,20 @@ BẠN BẮT BUỘC PHẢI TUÂN THỦ CÁC QUY TẮC SAU:
 export const IMPLEMENT_PLAN_PROMPT = `[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]
 Người dùng ĐÃ PHÊ DUYỆT bản kế hoạch và yêu cầu bắt đầu thực thi code ngay!
 BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
-1. Hãy bắt đầu ngay bằng cách xuất câu lệnh hoặc khối <tool_call> chỉnh sửa code (ƯU TIÊN công cụ apply_patch với khối *** Update File hoặc write_file nếu tạo file mới).
-2. Sau khi sửa file xong và nhận kết quả toolResult, tiếp tục chạy test (run_command) để kiểm tra tính đúng đắn.
-3. TUYỆT ĐỐI KHÔNG xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt. Hãy bắt tay vào sửa code ngay!`;
+1. Hãy bắt đầu ngay bằng cách xuất câu lệnh terminal hoặc khối <tool_call> cho bước đầu tiên:
+   - Nếu là dự án mới hoặc tạo file mới: Dùng write_file để tạo các file ban đầu (như package.json, server.js, index.html) hoặc chạy lệnh khởi tạo (ví dụ: npm init -y, git init).
+   - Nếu sửa đổi file đã có: Dùng apply_patch với khối *** Update File.
+2. Sau khi file được tạo/sửa và nhận kết quả toolResult, tiếp tục các bước kế tiếp hoặc chạy test (run_command) để kiểm tra tính đúng đắn.
+3. TUYỆT ĐỐI KHÔNG xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt.
+4. TUYỆT ĐỐI KHÔNG từ chối hoặc nói rằng bạn không có công cụ IDE; IDE của người dùng đang tự động bắt các khối <tool_call> hoặc lệnh terminal của bạn để thực thi trực tiếp trên máy tính. Hãy bắt tay vào thực hiện bước 1 ngay!`;
+
+export const TOOL_REMINDER_PROMPT = `[CHẾ ĐỘ THỰC THI CÔNG CỤ QUA IDE - TOOL EXECUTION REMINDER]
+LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE của người dùng. Môi trường IDE sẽ tự động bắt các khối <tool_call>...</tool_call>, các khối lệnh terminal hoặc khối apply_patch mà bạn in ra để thực thi trực tiếp trên máy tính cục bộ.
+- BẮT BUỘC tiếp tục thực hiện bước kế tiếp bằng khối <tool_call> hoặc câu lệnh shell tương ứng.
+- TUYỆT ĐỐI KHÔNG từ chối với lý do không có công cụ IDE hoặc không có quyền truy cập máy tính; không yêu cầu người dùng tự gõ lệnh hay tải file thủ công.
+- Đối với dự án mới hoặc tạo file mới: Sử dụng công cụ write_file hoặc câu lệnh khởi tạo (ví dụ: npm init -y, git init).
+- Đối với sửa đổi file hiện có: Sử dụng công cụ apply_patch với khối *** Update File.
+- Khi kết quả tool_result có mã thoát 0 (Process exited with code 0) hoặc output rỗng: Thao tác trước đó đã THÀNH CÔNG (lệnh thực thi không sinh output ra stdout hoặc file đã được tạo). Hãy tự tin tiếp tục ngay bước tiếp theo!`;
 
 /**
  * Kiểm tra xem người dùng có vừa bấm xác nhận triển khai kế hoạch hay không
@@ -399,10 +410,13 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     parts.push(IMPLEMENT_PLAN_PROMPT);
   }
 
-  // Luôn inject định nghĩa tool nếu lượt này không phải là nhận toolResult
+  // Luôn inject định nghĩa tool hoặc lời nhắc thực thi công cụ
   const hasToolResultInTurn = messages.some(m => m.role === "toolResult");
   if (!hasToolResultInTurn) {
     parts.push(`[Tool Instructions]:\n${TOOL_DECLARATION_PROMPT}`);
+  } else {
+    // Khi có toolResult trong lượt hiện tại, vẫn nhắc lại cơ chế tool calling để Copilot không bao giờ "thoát vai" hay từ chối
+    parts.push(`[Tool Instructions]:\n${TOOL_REMINDER_PROMPT}`);
   }
 
   // 2. Thu thập Messages theo thứ tự thời gian
@@ -446,9 +460,9 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
         if (isPlanMode) {
           parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy phân tích kỹ lưỡng. LƯU Ý QUAN TRỌNG: Bạn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE). TUYỆT ĐỐI KHÔNG ĐƯỢC gọi công cụ chỉnh sửa code (apply_patch, write_file). Nếu đã đủ thông tin khảo sát, bạn HÃY XUẤT NGAY BẢN KẾ HOẠCH ĐƯỢC BỌC TRONG THẺ <proposed_plan>...</proposed_plan> bằng tiếng Việt để người dùng duyệt. Nếu cần đọc thêm file khác để lập kế hoạch, hãy tiếp tục in câu lệnh hoặc khối <tool_call> đọc file.`);
         } else if (isImplementingPlan) {
-          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <tool_call> mới (apply_patch, run_command kiểm tra test). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
+          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <tool_call> mới (write_file nếu tạo file mới, apply_patch nếu sửa file, hoặc run_command để chạy test/lệnh). Tuyệt đối không từ chối, hãy xuất ngay khối <tool_call> tiếp theo hoặc trả lời kết quả nếu đã hoàn thành toàn bộ.`);
         } else {
-          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới. Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
+          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới (write_file, apply_patch, run_command). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
         }
       }
     }

@@ -102,8 +102,9 @@ describe("M365 Native apply_patch Tests", () => {
     expect(detector.hasDetectedToolCall()).toBeTrue();
     expect(toolCall).not.toBeNull();
     expect(toolCall?.name).toBe("apply_patch");
-    expect(toolCall?.arguments.input).toContain("*** Begin Patch");
-    expect(toolCall?.arguments.input).toContain("*** End Patch");
+    const args = toolCall?.arguments as Record<string, any>;
+    expect(args?.input).toContain("*** Begin Patch");
+    expect(args?.input).toContain("*** End Patch");
 
     const fullEmitted = emitted.join("");
     expect(fullEmitted).not.toContain("*** Begin Patch");
