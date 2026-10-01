@@ -127,4 +127,92 @@ describe("M365MarkdownBuffer", () => {
     expect(fullMd).toBe(emittedChunks.join(""));
     expect(fullMd).not.toContain("```;");
   });
+
+  it("strictly preserves in-order blocks without omitting text or duplicating sections", () => {
+    const buffer = new M365MarkdownBuffer();
+    const emittedChunks: string[] = [];
+
+    // Mô phỏng lượt sinh phức tạp gồm nhiều section có <br>, code block và danh sách
+    // Nhịp 1: Section 5 với Entities và AssignData (chưa có AssignHistory)
+    const step1Blocks: M365MarkdownBlock[] = [
+      {
+        key: "block-0-p",
+        tag: "p",
+        html: "<p>Pool Lead Domain<br>Entities:<br>PoolLead<br>PoolConfig<br>PoolUploadDataNote<br>AssignData<br>AssignHistory</p>",
+        text: "Pool Lead Domain Entities: PoolLead PoolConfig PoolUploadDataNote AssignData AssignHistory",
+        streamable: true,
+      },
+      {
+        key: "block-1-p",
+        tag: "p",
+        html: "<p>Suy luận kiến trúc:<br>HTTP Request<br>      ↓<br>UserContextFilter<br>      ↓<br>CurrentUserInfo<br>      ↓<br>Business Service</p>",
+        text: "Suy luận kiến trúc: HTTP Request ↓ UserContextFilter ↓ CurrentUserInfo ↓ Business Service",
+        streamable: false, // Đang sinh dở dang
+      },
+    ];
+
+    const chunk1 = buffer.observe(step1Blocks);
+    if (chunk1) emittedChunks.push(chunk1);
+    expect(chunk1).toContain("PoolLead");
+    expect(chunk1).toContain("AssignHistory");
+    expect(chunk1).not.toContain("Business Service"); // Khối 1 chưa streamable
+
+    // Nhịp 2: Section 9 hoàn tất với Business Service và khối tiếp theo xuất hiện
+    const step2Blocks: M365MarkdownBlock[] = [
+      ...step1Blocks.slice(0, 1),
+      {
+        ...step1Blocks[1],
+        streamable: true,
+      },
+      {
+        key: "block-2-pre",
+        tag: "pre",
+        html: "<pre><code class=\"language-java\">log.info(\"request: {}\", request);</code></pre>",
+        text: "log.info(\"request: {}\", request);",
+        streamable: false,
+      },
+    ];
+
+    const chunk2 = buffer.observe(step2Blocks);
+    if (chunk2) emittedChunks.push(chunk2);
+    expect(chunk2).toContain("Business Service");
+    expect(chunk2).not.toContain("log.info"); // Khối code chưa streamable
+
+    // Nhịp 3: Khối code hoàn tất, khối kết luận xuất hiện
+    const step3Blocks: M365MarkdownBlock[] = [
+      step2Blocks[0],
+      step2Blocks[1],
+      {
+        ...step2Blocks[2],
+        streamable: true,
+      },
+      {
+        key: "block-3-p",
+        tag: "p",
+        html: "<p>16. Kiến trúc suy luận cuối cùng<br>Kết luận: monolithic domain service.</p>",
+        text: "16. Kiến trúc suy luận cuối cùng Kết luận: monolithic domain service.",
+        streamable: false,
+      },
+    ];
+
+    const chunk3 = buffer.observe(step3Blocks);
+    if (chunk3) emittedChunks.push(chunk3);
+    expect(chunk3).toContain('log.info("request: {}", request);');
+
+    // Nhịp 4: Kết thúc lượt
+    const { delta: finalDelta, markdown: fullMd } = buffer.finish(step3Blocks);
+    if (finalDelta) emittedChunks.push(finalDelta);
+
+    expect(finalDelta).toContain("Kiến trúc suy luận cuối cùng");
+    expect(fullMd).toContain("AssignHistory");
+    expect(fullMd).toContain("Business Service");
+    expect(fullMd).toContain('log.info("request: {}", request);');
+
+    // Kiểm tra không bị duplicate khối code hay section 16 ở đuôi
+    const occurrencesOfSection16 = (fullMd.match(/16[\\.]+\s*Kiến trúc suy luận cuối cùng/g) || []).length;
+    expect(occurrencesOfSection16).toBe(1);
+
+    const occurrencesOfAssignHistory = (fullMd.match(/AssignHistory/g) || []).length;
+    expect(occurrencesOfAssignHistory).toBe(1);
+  });
 });

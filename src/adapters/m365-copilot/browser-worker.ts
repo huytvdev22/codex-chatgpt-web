@@ -179,6 +179,7 @@ export async function executeM365Turn(
     let attempts = 0;
     let stableCycles = 0;
     let lastTextChangeAt = Date.now();
+    let lastBlocks: M365MarkdownBlock[] = [];
     const maxAttempts = 480; // 480 * 250ms = 120 giây tối đa
     const pollIntervalMs = 250;
 
@@ -229,8 +230,11 @@ export async function executeM365Turn(
         const contentEl = replyEl || (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
 
         // 1. Quét các khối code trên LIVE DOM trước khi clone để lấy chính xác text (có newline + indent) và language
-        const codeBlockSelectors = ".scriptor-component-code-block, [class*='scriptor-component-code-block'], div[role='group'][aria-label='Code Preview']";
-        const liveCodeBlocks = Array.from(contentEl.querySelectorAll(codeBlockSelectors));
+        // Chỉ chọn container ngoài cùng của mỗi khối code (tránh lặp cả div[role='group'] lẫn thẻ con .scriptor-component-code-block)
+        const codeBlockQuery = "div[role='group'][aria-label='Code Preview'], .scriptor-component-code-block, [class*='scriptor-component-code-block']";
+        const allLiveCodeElements = Array.from(contentEl.querySelectorAll(codeBlockQuery)) as HTMLElement[];
+        const liveCodeBlocks = allLiveCodeElements.filter((el, _, all) => !all.some(other => other !== el && other.contains(el)));
+
         const codeData = liveCodeBlocks.map(block => {
           const langEl = block.querySelector("[data-testid='one-copilot-code-identity'] span, [class*='code-identity' i] span");
           let lang = langEl?.textContent?.trim().toLowerCase() || "";
@@ -253,7 +257,9 @@ export async function executeM365Turn(
         const clone = contentEl.cloneNode(true) as HTMLElement;
 
         // Thay thế các code block trong clone bằng cấu trúc pre/code chuẩn markdown
-        const clonedCodeBlocks = Array.from(clone.querySelectorAll(codeBlockSelectors));
+        const allClonedCodeElements = Array.from(clone.querySelectorAll(codeBlockQuery)) as HTMLElement[];
+        const clonedCodeBlocks = allClonedCodeElements.filter((el, _, all) => !all.some(other => other !== el && other.contains(el)));
+
         clonedCodeBlocks.forEach((block, idx) => {
           const data = codeData[idx];
           if (!data) return;
@@ -266,10 +272,8 @@ export async function executeM365Turn(
           code.textContent = data.codeText;
           pre.appendChild(code);
 
-          // Tìm container của khối code (thường là div có role='group' hoặc div.___hy8ozz0 cha của nó)
-          const previewGroup = block.closest("div[role='group'][aria-label='Code Preview']");
-          const container = previewGroup?.parentElement || previewGroup || block;
-          container.replaceWith(pre);
+          // Chỉ thay thế đúng chính phần tử container khối code, TUYỆT ĐỐI không thay thế parentElement!
+          block.replaceWith(pre);
         });
 
         // Hỗ trợ nếu có thẻ pre thông thường
@@ -290,29 +294,12 @@ export async function executeM365Turn(
         // Nếu không có replyEl (fallback), lọc các cụm từ status nếu còn sót trong các thẻ div/span
         if (!replyEl) {
           const statusPhrases = [
-            "checking that now",
-            "taking a look",
-            "getting things ready",
-            "digging in",
-            "working on it",
-            "searching the web",
-            "searching work data",
-            "searching",
-            "thinking",
-            "generating response",
-            "putting it together",
-            "putting things together",
-            "gathering thoughts",
-            "looking through your files",
-            "đang xem xét",
-            "đang kiểm tra",
-            "đang chuẩn bị",
-            "đang tìm kiếm",
-            "đang đào sâu",
-            "đang xử lý",
-            "đang suy nghĩ",
-            "đang tạo câu trả lời",
-            "đang tổng hợp",
+            "checking that now", "taking a look", "getting things ready", "digging in",
+            "working on it", "searching the web", "searching work data", "searching",
+            "thinking", "generating response", "putting it together", "putting things together",
+            "gathering thoughts", "looking through your files",
+            "đang xem xét", "đang kiểm tra", "đang chuẩn bị", "đang tìm kiếm",
+            "đang đào sâu", "đang xử lý", "đang suy nghĩ", "đang tạo câu trả lời", "đang tổng hợp"
           ];
           clone.querySelectorAll("div, span, p").forEach(el => {
             const text = el.textContent?.trim().toLowerCase() || "";
@@ -325,16 +312,59 @@ export async function executeM365Turn(
           });
         }
 
-        // 4. Phân rã thành các Semantic Blocks (paragraphs, headings, code blocks, lists, hr...)
+        // 4. Phân rã thành các Semantic Blocks bảo toàn 100% Text Nodes và thẻ <br>
         const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "ul", "ol", "hr", "blockquote", "table"]);
-        let targetRoot: HTMLElement = clone;
-        // Bóc lớp div wrapper trung gian nếu có
-        while (targetRoot.children.length === 1 && targetRoot.firstElementChild && !blockTags.has(targetRoot.firstElementChild.tagName.toLowerCase())) {
-          targetRoot = targetRoot.firstElementChild as HTMLElement;
+        const rawBlocks: Array<{ tag: string; html: string; text: string }> = [];
+        const inlineNodes: Node[] = [];
+
+        function flushInline() {
+          if (inlineNodes.length === 0) return;
+          const temp = document.createElement("p");
+          for (const n of inlineNodes) {
+            temp.appendChild(n.cloneNode(true));
+          }
+          inlineNodes.length = 0;
+          const text = temp.textContent?.trim() || "";
+          if (text.length > 0) {
+            rawBlocks.push({
+              tag: "p",
+              html: temp.outerHTML,
+              text,
+            });
+          }
         }
 
-        const rawChildren = Array.from(targetRoot.children) as HTMLElement[];
-        const hasBlockChildren = rawChildren.some(c => blockTags.has(c.tagName.toLowerCase()));
+        function processNode(node: Node) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            const el = node as HTMLElement;
+            const tag = el.tagName.toLowerCase();
+            if (blockTags.has(tag)) {
+              flushInline();
+              const text = el.textContent?.trim() || "";
+              if (text.length > 0 || tag === "hr") {
+                rawBlocks.push({
+                  tag,
+                  html: el.outerHTML,
+                  text,
+                });
+              }
+              return;
+            }
+            // Nếu là thẻ div/section chứa các block con, duyệt sâu vào các con
+            const hasNestedBlocks = Boolean(el.querySelector(Array.from(blockTags).join(",")));
+            if (hasNestedBlocks) {
+              flushInline();
+              Array.from(el.childNodes).forEach(child => processNode(child));
+              flushInline();
+              return;
+            }
+          }
+          // Mọi node khác (Text node, <br>, <span>, <strong>, <a>...) gom vào inlineNodes
+          inlineNodes.push(node);
+        }
+
+        Array.from(clone.childNodes).forEach(child => processNode(child));
+        flushInline();
 
         const allStatusPhrases = [
           "checking that now", "taking a look", "getting things ready", "digging in",
@@ -345,39 +375,24 @@ export async function executeM365Turn(
           "đang đào sâu", "đang xử lý", "đang suy nghĩ", "đang tạo câu trả lời", "đang tổng hợp"
         ];
 
-        let blocks: Array<{ key: string; tag: string; html: string; text: string; streamable: boolean }> = [];
-        if (hasBlockChildren) {
-          blocks = rawChildren.map((child, idx) => {
-            const tag = child.tagName.toLowerCase();
-            return {
-              key: `block-${idx}-${tag}`,
-              tag,
-              html: child.outerHTML,
-              text: child.textContent?.trim() || "",
-              streamable: idx < rawChildren.length - 1, // Khối đã hoàn tất vì khối kế tiếp đã xuất hiện
-            };
-          }).filter(b => {
-            const t = b.text.trim().toLowerCase();
-            const isStatus = allStatusPhrases.some(sp => t.startsWith(sp));
-            return (b.text.length > 0 && !isStatus) || b.tag === "hr";
-          });
-        } else {
-          const text = targetRoot.textContent?.trim() || "";
-          const isStatus = allStatusPhrases.some(sp => text.toLowerCase().startsWith(sp));
-          if (text && !isStatus) {
-            blocks = [{
-              key: "root-0-div",
-              tag: "div",
-              html: targetRoot.innerHTML,
-              text,
-              streamable: false,
-            }];
-          }
-        }
+        const filteredBlocks = rawBlocks.filter(b => {
+          const t = b.text.trim().toLowerCase();
+          const isStatus = allStatusPhrases.some(sp => t.startsWith(sp) && t.length < sp.length + 35);
+          return (b.text.length > 0 && !isStatus) || b.tag === "hr";
+        });
 
+        const blocks = filteredBlocks.map((b, idx) => ({
+          key: `block-${idx}-${b.tag}`,
+          tag: b.tag,
+          html: b.html,
+          text: b.text,
+          streamable: idx < filteredBlocks.length - 1, // Khối đã hoàn tất vì đã xuất hiện khối kế tiếp
+        }));
+
+        const rawHtml = clone.innerHTML || "";
         const hasContent = blocks.length > 0;
         const isNew = (messages.length > before.count) || isGenerating;
-        return { isGenerating, blocks, isNew, hasContent };
+        return { isGenerating, blocks, rawHtml, isNew, hasContent };
       }, beforeState);
 
       if (status.isGenerating) {
@@ -395,7 +410,8 @@ export async function executeM365Turn(
 
       // Stream các khối đã hoàn thành thông qua M365MarkdownBuffer
       if (status.blocks && status.blocks.length > 0) {
-        const delta = markdownBuffer.observe(status.blocks as M365MarkdownBlock[]);
+        lastBlocks = status.blocks as M365MarkdownBlock[];
+        const delta = markdownBuffer.observe(lastBlocks);
         if (delta.length > 0) {
           options.onChunk(delta);
           lastTextChangeAt = Date.now();
@@ -417,7 +433,7 @@ export async function executeM365Turn(
     }
 
     // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
-    const { delta: finalDelta, markdown: fullMarkdown } = markdownBuffer.finish();
+    const { delta: finalDelta, markdown: fullMarkdown } = markdownBuffer.finish(lastBlocks);
     if (finalDelta.length > 0 && !options.shouldStop?.()) {
       options.onChunk(finalDelta);
     }

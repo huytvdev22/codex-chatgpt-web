@@ -45,6 +45,7 @@ export interface M365MarkdownBlock {
  */
 export class M365MarkdownBuffer {
   private readonly committedKeys = new Set<string>();
+  private committedIndex = 0;
   private markdown = "";
   private pendingBlocks: M365MarkdownBlock[] = [];
 
@@ -54,20 +55,32 @@ export class M365MarkdownBuffer {
 
   /**
    * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
-   * Chỉ commit các khối đã hoàn tất (streamable = true) và chưa từng commit.
+   * Tuân thủ thứ tự tuần tự tuyệt đối (Strict Sequential In-Order Commit):
+   * Chỉ commit khối kế tiếp khi khối đó đã streamable (đã hoàn thành vì có khối sau).
+   * Nếu gặp khối chưa streamable -> DỪNG LẠI và chờ nhịp sau, tuyệt đối không nhảy cóc qua khối sau!
    */
   observe(blocks: M365MarkdownBlock[]): string {
     this.pendingBlocks = blocks;
     let delta = "";
 
-    for (const block of blocks) {
-      if (!block.streamable) continue;
-      if (this.committedKeys.has(block.key)) continue;
+    while (this.committedIndex < blocks.length) {
+      const block = blocks[this.committedIndex];
+      // Nếu đã commit key này rồi, bỏ qua và tiến lên
+      if (this.committedKeys.has(block.key)) {
+        this.committedIndex++;
+        continue;
+      }
+
+      // Khối hiện tại chưa hoàn thành (đang là khối cuối cùng hoặc đang sinh) -> dừng lại chờ
+      if (!block.streamable) {
+        break;
+      }
 
       const blockDelta = this.commitBlock(block);
       if (blockDelta) {
         delta += blockDelta;
       }
+      this.committedIndex++;
     }
 
     return delta;
@@ -75,18 +88,23 @@ export class M365MarkdownBuffer {
 
   /**
    * Kết thúc lượt sinh phản hồi từ Copilot.
-   * Commit và emit toàn bộ các khối còn lại trong buffer (bao gồm khối cuối cùng).
+   * Commit và emit toàn bộ các khối còn lại theo đúng thứ tự tuần tự từ committedIndex.
    */
-  finish(): { markdown: string; delta: string } {
+  finish(finalBlocks?: M365MarkdownBlock[]): { markdown: string; delta: string } {
+    const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
     let delta = "";
-    for (const block of this.pendingBlocks) {
+
+    while (this.committedIndex < blocks.length) {
+      const block = blocks[this.committedIndex];
       if (!this.committedKeys.has(block.key)) {
         const blockDelta = this.commitBlock(block);
         if (blockDelta) {
           delta += blockDelta;
         }
       }
+      this.committedIndex++;
     }
+
     this.pendingBlocks = [];
     return { markdown: this.markdown, delta };
   }
