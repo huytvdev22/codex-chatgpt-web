@@ -378,6 +378,15 @@ export class M365OutputTranslator {
     console.log("\n[M365 RAW RESPONSE]");
     console.log(rawResponse);
 
+    // Nếu phản hồi chứa thẻ <proposed_plan>, đây là bản kế hoạch hoàn chỉnh cho Codex UI duyệt (Final Answer)
+    if (/<proposed[\\_]*plan>[\s\S]*?<\/proposed[\\_]*plan>/i.test(rawResponse)) {
+      return {
+        type: "final_answer",
+        content: rawResponse.trim(),
+        rawResponse,
+      };
+    }
+
     // Duyệt qua các detector theo thứ tự ưu tiên
     for (const detector of this.detectors) {
       const detected = detector.detect(rawResponse);

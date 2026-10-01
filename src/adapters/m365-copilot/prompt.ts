@@ -237,12 +237,139 @@ Sau khi nhận được kết quả trong thẻ <tool_result>...</tool_result> �
 - Nếu bạn cần thực hiện thêm bước tiếp theo (ví dụ: tìm file xong rồi đọc file, hoặc sửa code xong rồi chạy test), bạn HÃY TIẾP TỤC IN RA KHỐI <tool_call> MỚI.
 - Chỉ khi nhiệm vụ của người dùng đã hoàn thành trọn vẹn, bạn mới viết câu trả lời kết luận.`;
 
+export const PLAN_MODE_PROMPT = `[CHẾ ĐỘ LẬP KẾ HOẠCH - CODEX PLAN MODE ĐANG BẬT]
+Người dùng đang bật chế độ Plan Mode (/plan).
+BẠN BẮT BUỘC PHẢI TUÂN THỦ CÁC QUY TẮC SAU:
+1. TUYỆT ĐỐI KHÔNG CHỈNH SỬA CODE, KHÔNG TẠO FILE VÀ KHÔNG SỬA FILE:
+   - NGHIÊM CẤM gọi công cụ apply_patch hoặc write_file.
+   - NGHIÊM CẤM chạy bất kỳ lệnh terminal nào gây thay đổi trạng thái file của dự án.
+2. CÁC HÀNH ĐỘNG ĐƯỢC PHÉP (KHẢO SÁT KHÔNG ĐỔI TRẠNG THÁI):
+   - Đọc và tìm kiếm file để hiểu cấu trúc: read_file, list_dir, grep_code, search_files, git_status, git_diff.
+   - Nếu bạn cần khảo sát thêm file trước khi lên kế hoạch, hãy xuất câu lệnh đọc (ví dụ "cat math.js") hoặc khối <tool_call> đọc file (ví dụ read_file).
+3. ĐỊNH DẠNG ĐẦU RA BẮT BUỘC KHI ĐƯA RA KẾ HOẠCH:
+   - Khi đã có đủ thông tin, bạn BẮT BUỘC phải đóng gói toàn bộ bản kế hoạch trong cặp thẻ <proposed_plan>...</proposed_plan> để giao diện Codex trong IDE hiển thị widget tương tác cho người dùng:
+<proposed_plan>
+## Tóm tắt kế hoạch (Summary)
+...
+## Các thay đổi chính (Key Changes)
+...
+## Kế hoạch kiểm thử (Test Plan)
+...
+## Giả định và lưu ý (Assumptions)
+...
+</proposed_plan>
+   - Thẻ mở <proposed_plan> và thẻ đóng </proposed_plan> phải nằm trên từng dòng riêng biệt.
+   - Nội dung kế hoạch viết bằng tiếng Việt rõ ràng, súc tích.
+   - TUYỆT ĐỐI KHÔNG hỏi "Tôi có nên tiếp tục không?" ("Should I proceed?"), vì client Codex sẽ tự động hiển thị nút phê duyệt "Implement this plan?" cho người dùng!`;
+
+export const IMPLEMENT_PLAN_PROMPT = `[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]
+Người dùng ĐÃ PHÊ DUYỆT bản kế hoạch và yêu cầu bắt đầu thực thi code ngay!
+BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
+1. Hãy bắt đầu ngay bằng cách xuất câu lệnh hoặc khối <tool_call> chỉnh sửa code (ƯU TIÊN công cụ apply_patch với khối *** Update File hoặc write_file nếu tạo file mới).
+2. Sau khi sửa file xong và nhận kết quả toolResult, tiếp tục chạy test (run_command) để kiểm tra tính đúng đắn.
+3. TUYỆT ĐỐI KHÔNG xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt. Hãy bắt tay vào sửa code ngay!`;
+
+/**
+ * Kiểm tra xem người dùng có vừa bấm xác nhận triển khai kế hoạch hay không
+ * (Ví dụ: "PLEASE IMPLEMENT THIS PLAN", "Yes, implement this plan")
+ */
+export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
+  const messages = parsed.context.messages || [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      const text = typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+        ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
+        : "";
+      if (/PLEASE IMPLEMENT THIS PLAN/i.test(text) || /Yes, implement this plan/i.test(text)) {
+        return true;
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+/**
+ * Kiểm tra xem yêu cầu hiện tại có đang ở chế độ Plan Mode (/plan) hay không.
+ * Quan trọng: Chỉ dựa trên trạng thái hợp tác MỚI NHẤT (LATEST collaboration mode),
+ * không được lấy trạng thái cũ trong lịch sử khi người dùng đã chuyển sang Default mode hoặc phê duyệt triển khai.
+ */
+export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
+  // 1. Nếu đang là lượt phê duyệt triển khai kế hoạch -> chắc chắn không phải Plan mode
+  if (isImplementingPlanRequest(parsed)) {
+    return false;
+  }
+
+  // 2. Kiểm tra raw body nếu có collaboration_mode hoặc collaboration_mode_kind
+  const raw = parsed._rawBody as Record<string, any> | undefined;
+  if (raw) {
+    if (raw.collaboration_mode_kind === "default" || raw.collaboration_mode?.mode === "default") {
+      return false;
+    }
+    if (raw.collaboration_mode_kind === "plan" || raw.collaboration_mode?.mode === "plan") {
+      return true;
+    }
+    if (raw.client_metadata) {
+      const cm = raw.client_metadata;
+      if (cm.collaboration_mode?.mode === "default" || cm.collaboration_mode_kind === "default") return false;
+      if (cm.collaboration_mode?.mode === "plan" || cm.collaboration_mode_kind === "plan") return true;
+      if (typeof cm["x-codex-turn-metadata"] === "string") {
+        try {
+          const tm = JSON.parse(cm["x-codex-turn-metadata"]);
+          if (tm.collaboration_mode?.mode === "default" || tm.collaboration_mode_kind === "default") return false;
+          if (tm.collaboration_mode?.mode === "plan" || tm.collaboration_mode_kind === "plan") return true;
+        } catch {}
+      }
+    }
+  }
+
+  const messages = parsed.context.messages || [];
+
+  // 3. Tìm khối <collaboration_mode> MỚI NHẤT (duyệt ngược từ tin nhắn cuối về đầu)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : Array.isArray(msg.content)
+      ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
+      : "";
+
+    if (text.includes("<collaboration_mode") || text.includes("# Collaboration Mode")) {
+      if (text.includes("Mode: Default") || text.includes('mode="default"') || text.includes("now in Default mode")) {
+        return false;
+      }
+      if (text.includes("Mode: Plan") || text.includes("# Plan Mode") || text.includes('mode="plan"')) {
+        return true;
+      }
+    }
+  }
+
+  // 4. Kiểm tra trong systemPrompt mới nhất
+  for (const sp of parsed.context.systemPrompt || []) {
+    if (sp.includes("<collaboration_mode") || sp.includes("# Collaboration Mode")) {
+      if (sp.includes("Mode: Default") || sp.includes('mode="default"') || sp.includes("now in Default mode")) {
+        return false;
+      }
+      if (sp.includes("Mode: Plan") || sp.includes("# Plan Mode") || sp.includes('mode="plan"')) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * Biên dịch CodexParsedRequest thành prompt tối ưu cho Microsoft 365 Copilot
  * @param isNewConversation true nếu là cuộc trò chuyện mới hoặc cần ngữ cảnh đầy đủ; false nếu đang tiếp tục cuộc trò chuyện hiện tại
  */
 export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation = true): string {
   const parts: string[] = [];
+  const isImplementingPlan = isImplementingPlanRequest(parsed);
+  const isPlanMode = !isImplementingPlan && isPlanModeRequest(parsed);
 
   const allMessages = parsed.context.messages || [];
   let messages = allMessages;
@@ -265,6 +392,13 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     }
   }
 
+  // Bổ sung chỉ dẫn chế độ Plan Mode hoặc Triển khai kế hoạch
+  if (isPlanMode) {
+    parts.push(PLAN_MODE_PROMPT);
+  } else if (isImplementingPlan) {
+    parts.push(IMPLEMENT_PLAN_PROMPT);
+  }
+
   // Luôn inject định nghĩa tool nếu lượt này không phải là nhận toolResult
   const hasToolResultInTurn = messages.some(m => m.role === "toolResult");
   if (!hasToolResultInTurn) {
@@ -280,7 +414,8 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
         .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
         .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
         .trim();
-      if (text.length > 0 && text.length < 2000) {
+      // Bỏ qua skills_instructions dài nếu > 2000 ký tự để bảo vệ token budget
+      if (text.length > 0 && text.length < 2000 && !text.includes("<skills_instructions>")) {
         parts.push(`[Context]: ${text}`);
       }
     } else if (msg.role === "user") {
@@ -308,15 +443,27 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
       if (text) {
         console.log("[M365 TOOL] received tool result");
         const safeText = truncateToolResult(text);
-        parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới. Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
+        if (isPlanMode) {
+          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy phân tích kỹ lưỡng. LƯU Ý QUAN TRỌNG: Bạn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE). TUYỆT ĐỐI KHÔNG ĐƯỢC gọi công cụ chỉnh sửa code (apply_patch, write_file). Nếu đã đủ thông tin khảo sát, bạn HÃY XUẤT NGAY BẢN KẾ HOẠCH ĐƯỢC BỌC TRONG THẺ <proposed_plan>...</proposed_plan> bằng tiếng Việt để người dùng duyệt. Nếu cần đọc thêm file khác để lập kế hoạch, hãy tiếp tục in câu lệnh hoặc khối <tool_call> đọc file.`);
+        } else if (isImplementingPlan) {
+          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <tool_call> mới (apply_patch, run_command kiểm tra test). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
+        } else {
+          parts.push(`<tool_result>\n${safeText}\n</tool_result>\nSau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng. Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới. Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`);
+        }
       }
     }
   }
 
   // Nếu lượt này là yêu cầu của người dùng (không phải nhận toolResult),
-  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình xuất câu lệnh terminal hoặc khối <tool_call>
+  // bổ sung chỉ dẫn định dạng ở cuối để định hướng mô hình
   if (!hasToolResultInTurn && parts.length > 0) {
-    parts.push(`[Yêu cầu định dạng đầu ra]: Hãy xuất ngay câu lệnh terminal tương ứng (ví dụ: ls, cat, grep, git status) hoặc khối <tool_call> tương ứng (bước 1 nếu là yêu cầu MULTI-STEP) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`);
+    if (isPlanMode) {
+      parts.push(`[Yêu cầu định dạng đầu ra]: Đang ở chế độ Plan Mode. Nếu bạn cần đọc file hoặc kiểm tra cấu trúc mã nguồn trước khi lên kế hoạch, hãy xuất ngay câu lệnh đọc file (ví dụ: cat <file>, ls) hoặc khối <tool_call> tương ứng (read_file, list_dir). Nếu đã có đủ ngữ cảnh, bạn PHẢI XUẤT NGAY bản kế hoạch hoàn chỉnh được bọc trong thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt. TUYỆT ĐỐI KHÔNG gọi công cụ sửa file (apply_patch, write_file).`);
+    } else if (isImplementingPlan) {
+      parts.push(`[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay câu lệnh terminal hoặc khối <tool_call> chỉnh sửa file (apply_patch hoặc write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn.`);
+    } else {
+      parts.push(`[Yêu cầu định dạng đầu ra]: Hãy xuất ngay câu lệnh terminal tương ứng (ví dụ: ls, cat, grep, git status) hoặc khối <tool_call> tương ứng (bước 1 nếu là yêu cầu MULTI-STEP) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`);
+    }
   }
 
   let finalPrompt = parts.join("\n\n").trim();
