@@ -5,7 +5,12 @@ import { compileM365Prompt } from "./prompt";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
+import { M365OutputTranslator } from "./output-translator";
 
+export * from "./bash-translator";
+export * from "./output-translator";
+export * from "./agent-loop";
+export * from "./tool-bridge";
 
 function extractClientShell(parsed: CodexParsedRequest): string | undefined {
   // 1. Kiểm tra trong system prompt
@@ -29,14 +34,13 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
   private lastConversationKey?: string;
+  private readonly translator = new M365OutputTranslator();
 
   async runTurn(
     parsed: CodexParsedRequest,
     incoming: IncomingMeta,
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
-
-
     if (incoming.abortSignal?.aborted) {
       throw new DOMException("M365 Copilot turn aborted before start", "AbortError");
     }
@@ -82,11 +86,13 @@ export class M365CopilotAdapter implements ProviderAdapter {
     // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
       const toolDetector = new M365ToolCallDetector();
+      let streamedAnyText = false;
 
       const reply = await executeM365Turn(compiledPrompt, {
         onChunk: (delta) => {
           const safeText = toolDetector.feed(delta);
           if (safeText) {
+            streamedAnyText = true;
             emit({ type: "text_delta", text: safeText });
           }
         },
@@ -98,7 +104,24 @@ export class M365CopilotAdapter implements ProviderAdapter {
       });
 
       const { remainingText, toolCall } = toolDetector.finish();
-      const detectedToolCall = toolCall || toolDetector.getToolCall();
+      let detectedToolCalls: Array<{ id?: string; name: string; arguments: any }> = [];
+
+      // Ưu tiên kiểm tra qua M365OutputTranslator để hỗ trợ đầy đủ JSON, XML, Bash và Parallel Tool Calls
+      const fullContent = reply || remainingText;
+      const translated = this.translator.translate(fullContent);
+      if (translated.type === "tool_call" && translated.tool_calls.length > 0) {
+        detectedToolCalls = translated.tool_calls.map(tc => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: tc.function.arguments,
+        }));
+      } else if (toolCall || toolDetector.getToolCall()) {
+        const single = (toolCall || toolDetector.getToolCall())!;
+        detectedToolCalls = [{
+          name: single.name,
+          arguments: single.arguments,
+        }];
+      }
 
       const inputTokens = Math.ceil(compiledPrompt.length / 4);
       const outputTokens = Math.ceil((reply.length || 10) / 4);
@@ -108,20 +131,22 @@ export class M365CopilotAdapter implements ProviderAdapter {
         totalTokens: inputTokens + outputTokens,
       };
 
-      if (detectedToolCall) {
+      if (detectedToolCalls.length > 0) {
         const clientTools = parsed.context.tools || [];
         const detectedShell = extractClientShell(parsed);
-        const mapped = M365ToolBridge.mapToolCall(detectedToolCall, clientTools, { shell: detectedShell });
-        const callId = `call_${Math.random().toString(36).slice(2, 10)}`;
 
-        console.log("[M365 TOOL] detected tool call");
-        console.log(`[M365 TOOL] original name=${detectedToolCall.name}`);
-        console.log(`[M365 TOOL] mapped name=${mapped.name}`);
-        console.log(`[M365 TOOL] arguments=${mapped.arguments}`);
+        for (const rawCall of detectedToolCalls) {
+          const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools, { shell: detectedShell });
+          const callId = rawCall.id || `call_${Math.random().toString(36).slice(2, 10)}`;
 
-        emit({ type: "tool_call_start", id: callId, name: mapped.name });
-        emit({ type: "tool_call_delta", arguments: mapped.arguments });
-        emit({ type: "tool_call_end" });
+          console.log(`[M365 TOOL] emit tool call: ${mapped.name} (${callId})`);
+          console.log(`[M365 TOOL] arguments=${mapped.arguments}`);
+
+          emit({ type: "tool_call_start", id: callId, name: mapped.name });
+          emit({ type: "tool_call_delta", arguments: mapped.arguments });
+          emit({ type: "tool_call_end" });
+        }
+
         emit({
           type: "done",
           stopReason: "tool_use",
@@ -129,11 +154,11 @@ export class M365CopilotAdapter implements ProviderAdapter {
           usage,
         });
 
-        console.log("[M365 TOOL] emitted tool_use");
+        console.log(`[M365 TOOL] emitted ${detectedToolCalls.length} tool(s) with stopReason=tool_use`);
         return;
       }
 
-      if (remainingText) {
+      if (remainingText && !streamedAnyText) {
         emit({ type: "text_delta", text: remainingText });
       }
 
@@ -157,3 +182,4 @@ export class M365CopilotAdapter implements ProviderAdapter {
 export function createM365CopilotAdapter(): ProviderAdapter {
   return new M365CopilotAdapter();
 }
+

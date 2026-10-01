@@ -438,17 +438,30 @@ const b = \\{\\
     const readCmd = psStrategy.readFile("package.json", { startLine: 1, endLine: 3 });
     expect(readCmd).toContain("powershell -NoProfile -EncodedCommand ");
     
-    // Thực thi thật qua PowerShell
-    const readOutput = execSync(readCmd, { encoding: "utf8" });
-    expect(readOutput).toContain("[File: package.json (1-3/");
-    expect(readOutput).toContain("1: {");
-    expect(readOutput).toContain('"name": "codex-chatgpt-web"');
+    // Thực thi qua PowerShell nếu môi trường có powershell (ví dụ Windows hoặc máy có pwsh)
+    if (process.platform === "win32") {
+      const readOutput = execSync(readCmd, { encoding: "utf8" });
+      expect(readOutput).toContain("[File: package.json (1-3/");
+      expect(readOutput).toContain("1: {");
+      expect(readOutput).toContain('"name": "codex-chatgpt-web"');
 
-    // 2. Kiểm tra lệnh liệt kê thư mục thật trên Windows
-    const listCmd = psStrategy.listDir("src/adapters/m365-copilot");
-    const listOutput = execSync(listCmd, { encoding: "utf8" });
-    expect(listOutput).toContain("tool-bridge.ts");
-    expect(listOutput).toContain("strategies/");
+      // 2. Kiểm tra lệnh liệt kê thư mục thật trên Windows
+      const listCmd = psStrategy.listDir("src/adapters/m365-copilot");
+      const listOutput = execSync(listCmd, { encoding: "utf8" });
+      expect(listOutput).toContain("tool-bridge.ts");
+      expect(listOutput).toContain("strategies/");
+    } else {
+      // Trên POSIX (mac/linux), kiểm tra định dạng base64 EncodedCommand
+      const base64Part = readCmd.split("-EncodedCommand ")[1].trim();
+      const decodedScript = Buffer.from(base64Part, "base64").toString("utf16le");
+      expect(decodedScript).toContain("$lines = [System.IO.File]::ReadAllLines");
+      expect(decodedScript).toContain("cGFja2FnZS5qc29u");
+
+      const listCmd = psStrategy.listDir("src/adapters/m365-copilot");
+      const listBase64 = listCmd.split("-EncodedCommand ")[1].trim();
+      const decodedListScript = Buffer.from(listBase64, "base64").toString("utf16le");
+      expect(decodedListScript).toContain("Get-ChildItem -LiteralPath");
+    }
 
     // 3. Kiểm tra Resolver tự động phát hiện đúng strategy
     const pwshStrategy = CommandStrategyResolver.resolve({ shell: "pwsh" });
