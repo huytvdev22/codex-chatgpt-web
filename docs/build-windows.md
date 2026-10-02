@@ -41,7 +41,7 @@ Hệ thống cần nhận diện lệnh `bun`. Bạn có thể cấu hình theo 
 Mở PowerShell tại thư mục gốc của dự án (`d:\HUYTVDEV\codex-chatgpt-web`) và chạy:
 
 ```powershell
-$env:PATH = "C:\Users\huytv\.codex-m365-copilot\versions\6.1.4-win32-x64\runtime;$env:PATH"
+$env:PATH = "C:\Users\huytv\.bun\bin;$env:PATH"
 ```
 
 ### Cách 2: Thiết lập vĩnh viễn vào biến môi trường người dùng (Khuyên dùng)
