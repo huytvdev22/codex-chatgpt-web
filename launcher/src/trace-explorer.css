@@ -1035,3 +1035,118 @@
   word-break: break-all;
 }
 
+/* Sidebar Resizer */
+.te-resizer {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 15;
+}
+
+.te-resizer:hover,
+.te-resizer.is-resizing {
+  background: var(--color-text-accent);
+}
+
+/* Popover Backdrop */
+.te-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+}
+
+/* Dropdown Menu Popover */
+.te-menu-wrapper {
+  position: relative;
+}
+
+.te-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 220px;
+  background: var(--gray-800);
+  border: 1px solid var(--color-border-heavy);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 120;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.te-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  user-select: none;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  transition: background var(--duration-micro) ease;
+}
+
+.te-menu-item:hover {
+  background: var(--color-background-control-hover);
+  color: var(--color-text-accent);
+}
+
+.te-menu-item-subtitle {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* Group Mode Toggle */
+.te-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--color-background-control);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-light);
+}
+
+/* Toast Feedback */
+.te-feedback-toast {
+  position: absolute;
+  bottom: 24px;
+  right: 28px;
+  background: var(--gray-800);
+  border: 1px solid var(--color-text-accent);
+  color: var(--color-text-accent);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: te-toast-in 0.2s ease-out;
+}
+
+@keyframes te-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+

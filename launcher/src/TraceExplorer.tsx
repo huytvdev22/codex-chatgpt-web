@@ -2,7 +2,69 @@ import { Fragment, useMemo, useState } from "react";
 import type { LogRecord, Language } from "./types";
 import type { Copy } from "./i18n";
 import { Icon } from "./icons";
+import {
+  formatLogsAsPrettyJson,
+  formatLogsAsJsonl,
+  formatLogsAsSummary,
+  downloadFile,
+  generateExportFilename,
+} from "./export-utils";
 import "./trace-explorer.css";
+
+/**
+ * Trích xuất metadata thông minh từ log record
+ * Nhận diện conversationId, traceId, turnId, modelSlug từ cả top-level detail và raw line
+ */
+function extractRecordMetadata(record: LogRecord) {
+  const detail = record.detail || {};
+  let conversationId = typeof detail.conversationId === "string" ? detail.conversationId : null;
+  let traceId = typeof detail.traceId === "string" ? detail.traceId : null;
+  const rootSpanId = typeof detail.rootSpanId === "string" ? detail.rootSpanId : undefined;
+  const spanId = typeof detail.spanId === "string" ? detail.spanId : undefined;
+  let requestId = typeof detail.requestId === "string" ? detail.requestId : undefined;
+  let modelSlug = typeof detail.modelSlug === "string" ? detail.modelSlug : undefined;
+
+  const rawLine = typeof detail.line === "string" ? detail.line : "";
+  const rawMsg = typeof detail.message === "string" ? detail.message : "";
+  const rawText = `${rawLine} ${rawMsg}`;
+
+  if (!conversationId && rawText) {
+    const matchConv = rawText.match(/\bconversationId=([a-zA-Z0-9_-]+)/);
+    if (matchConv) conversationId = matchConv[1];
+  }
+
+  if (!traceId && rawText) {
+    const matchTrace = rawText.match(/\btraceId=([a-zA-Z0-9_-]+)/);
+    if (matchTrace) {
+      traceId = matchTrace[1];
+    } else {
+      const matchTurn = rawText.match(/\bturnId=([a-zA-Z0-9_-]+)/);
+      if (matchTurn) {
+        traceId = matchTurn[1];
+      } else {
+        const matchReq = rawText.match(/\brequestId=([a-zA-Z0-9_-]+)/);
+        if (matchReq) traceId = matchReq[1];
+      }
+    }
+  }
+
+  if (!modelSlug && rawText) {
+    const matchModel = rawText.match(/\bmodel=([a-zA-Z0-9/_.-]+)/);
+    if (matchModel) modelSlug = matchModel[1];
+  }
+
+  if (!requestId && rawText) {
+    const matchReq = rawText.match(/\brequestId=([a-zA-Z0-9_-]+)/);
+    if (matchReq) requestId = matchReq[1];
+  }
+
+  // Nếu có conversationId nhưng chưa có traceId cụ thể, gán traceId đại diện cho conversation
+  if (conversationId && !traceId) {
+    traceId = `conv_${conversationId}`;
+  }
+
+  return { conversationId, traceId, rootSpanId, spanId, requestId, modelSlug };
+}
 
 export interface TraceSpan {
   spanId: string;
@@ -61,6 +123,7 @@ export function TraceExplorer({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterLevel, setFilterLevel] = useState<"all" | "error" | "warning" | "tools">("all");
+  const [groupByMode, setGroupByMode] = useState<"conversation" | "trace">("conversation");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [selectedTurnTraceId, setSelectedTurnTraceId] = useState<string | null>(null);
   const [expandedConvIds, setExpandedConvIds] = useState<Set<string>>(new Set());
@@ -68,6 +131,43 @@ export function TraceExplorer({
   const [isPaused, setIsPaused] = useState(false);
   const [frozenLogs, setFrozenLogs] = useState<LogRecord[]>([]);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  // Sidebar Resize & Collapse
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Menu Copy & Download
+  const [isCopyMenuOpen, setIsCopyMenuOpen] = useState(false);
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
+  const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setFeedbackToast(msg);
+    setTimeout(() => setFeedbackToast(null), 2500);
+  };
+
+  const handleMouseDownResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.max(200, Math.min(600, startWidth + delta));
+      setSidebarWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setIsResizing(false);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   // Kibana Table Column Customization & Time Sort
   const [timeSortOrder, setTimeSortOrder] = useState<"asc" | "desc">("asc");
@@ -110,8 +210,8 @@ export function TraceExplorer({
     const systemRecords: LogRecord[] = [];
 
     for (const record of activeLogs) {
-      const detail = record.detail || {};
-      const traceId = typeof detail.traceId === "string" ? detail.traceId : null;
+      const meta = extractRecordMetadata(record);
+      const traceId = meta.traceId;
 
       if (!traceId) {
         systemRecords.push(record);
@@ -124,13 +224,13 @@ export function TraceExplorer({
       if (!group) {
         group = {
           traceId,
-          rootSpanId: typeof detail.rootSpanId === "string" ? detail.rootSpanId : undefined,
-          conversationId: typeof detail.conversationId === "string" ? detail.conversationId : undefined,
+          rootSpanId: meta.rootSpanId,
+          conversationId: meta.conversationId || undefined,
           startTime: recordTime,
           endTime: recordTime,
           durationMs: 0,
           status: "running",
-          modelSlug: typeof detail.modelSlug === "string" ? detail.modelSlug : undefined,
+          modelSlug: meta.modelSlug,
           toolNames: [],
           records: [],
           spans: [],
@@ -143,7 +243,16 @@ export function TraceExplorer({
       if (recordTime > group.endTime) group.endTime = recordTime;
       group.durationMs = Math.max(group.durationMs, group.endTime - group.startTime);
 
-      // Trích xuất metadata
+      // Cập nhật conversationId hoặc modelSlug nếu mới xuất hiện
+      if (!group.conversationId && meta.conversationId) {
+        group.conversationId = meta.conversationId;
+      }
+      if (!group.modelSlug && meta.modelSlug) {
+        group.modelSlug = meta.modelSlug;
+      }
+
+      // Trích xuất metadata bổ sung từ safeDetails
+      const detail = record.detail || {};
       const safeDetails = (detail.safeDetails as Record<string, unknown>) || {};
       if (safeDetails.modelSlug && typeof safeDetails.modelSlug === "string") {
         group.modelSlug = safeDetails.modelSlug;
@@ -197,7 +306,7 @@ export function TraceExplorer({
         startTime: firstTime,
         endTime: lastTime,
         durationMs: Math.max(0, lastTime - firstTime),
-        status: systemRecords.some(r => r.level === "error") ? "failed" : "completed",
+        status: systemRecords.some((r) => r.level === "error") ? "failed" : "completed",
         modelSlug: "Runtime & Daemon Logs",
         toolNames: [],
         records: systemRecords,
@@ -224,7 +333,7 @@ export function TraceExplorer({
 
     for (const trace of traces) {
       const isSystem = trace.traceId === "_system";
-      const convId = isSystem ? "_system" : (trace.conversationId || `conv_${trace.traceId}`);
+      const convId = isSystem ? "_system" : trace.conversationId || `conv_${trace.traceId}`;
 
       let group = convMap.get(convId);
       if (!group) {
@@ -284,8 +393,8 @@ export function TraceExplorer({
   // Lọc Conversations & Traces theo search query và filter pills
   const filteredConversations = useMemo(() => {
     return conversations
-      .map(conv => {
-        const matchingTraces = conv.traces.filter(trace => {
+      .map((conv) => {
+        const matchingTraces = conv.traces.filter((trace) => {
           if (filterLevel === "error" && trace.status !== "failed") return false;
           if (filterLevel === "warning" && trace.status !== "warning") return false;
           if (filterLevel === "tools" && trace.toolNames.length === 0) return false;
@@ -295,15 +404,22 @@ export function TraceExplorer({
             const matchesTraceId = trace.traceId.toLowerCase().includes(query);
             const matchesConvId = trace.conversationId?.toLowerCase().includes(query);
             const matchesModel = trace.modelSlug?.toLowerCase().includes(query);
-            const matchesTool = trace.toolNames.some(t => t.toLowerCase().includes(query));
-            const matchesEvent = trace.records.some(r => r.event.toLowerCase().includes(query));
-            const matchesMessage = trace.records.some(r => {
+            const matchesTool = trace.toolNames.some((t) => t.toLowerCase().includes(query));
+            const matchesEvent = trace.records.some((r) => r.event.toLowerCase().includes(query));
+            const matchesMessage = trace.records.some((r) => {
               const detail = r.detail || {};
               const msg = typeof detail.message === "string" ? detail.message : "";
               const line = typeof detail.line === "string" ? detail.line : "";
               return msg.toLowerCase().includes(query) || line.toLowerCase().includes(query);
             });
-            return matchesTraceId || matchesConvId || matchesModel || matchesTool || matchesEvent || matchesMessage;
+            return (
+              matchesTraceId ||
+              matchesConvId ||
+              matchesModel ||
+              matchesTool ||
+              matchesEvent ||
+              matchesMessage
+            );
           }
 
           return true;
@@ -314,35 +430,111 @@ export function TraceExplorer({
         return {
           ...conv,
           traces: matchingTraces,
-          records: matchingTraces.flatMap(t => t.records),
-          spans: matchingTraces.flatMap(t => t.spans),
+          records: matchingTraces.flatMap((t) => t.records),
+          spans: matchingTraces.flatMap((t) => t.spans),
         };
       })
       .filter((c): c is ConversationGroup => c !== null);
   }, [conversations, filterLevel, searchQuery]);
 
-  // Xác định Conversation và Turn đang active
+  // Lọc danh sách phẳng các Traces khi chọn chế độ groupByMode === "trace"
+  const filteredTraces = useMemo(() => {
+    return traces.filter((trace) => {
+      if (filterLevel === "error" && trace.status !== "failed") return false;
+      if (filterLevel === "warning" && trace.status !== "warning") return false;
+      if (filterLevel === "tools" && trace.toolNames.length === 0) return false;
+
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase().trim();
+        const matchesTraceId = trace.traceId.toLowerCase().includes(query);
+        const matchesConvId = trace.conversationId?.toLowerCase().includes(query);
+        const matchesModel = trace.modelSlug?.toLowerCase().includes(query);
+        const matchesTool = trace.toolNames.some((t) => t.toLowerCase().includes(query));
+        const matchesEvent = trace.records.some((r) => r.event.toLowerCase().includes(query));
+        const matchesMessage = trace.records.some((r) => {
+          const detail = r.detail || {};
+          const msg = typeof detail.message === "string" ? detail.message : "";
+          const line = typeof detail.line === "string" ? detail.line : "";
+          return msg.toLowerCase().includes(query) || line.toLowerCase().includes(query);
+        });
+        return (
+          matchesTraceId ||
+          matchesConvId ||
+          matchesModel ||
+          matchesTool ||
+          matchesEvent ||
+          matchesMessage
+        );
+      }
+
+      return true;
+    });
+  }, [traces, filterLevel, searchQuery]);
+
+  // Xác định Conversation và Turn đang active theo chế độ groupByMode
   const activeSelection = useMemo(() => {
-    if (filteredConversations.length === 0) return null;
+    if (groupByMode === "conversation") {
+      if (filteredConversations.length === 0) return null;
 
-    let targetConv = filteredConversations.find(c => c.conversationId === selectedConversationId);
-    if (!targetConv) {
-      targetConv = filteredConversations[0];
+      let targetConv = filteredConversations.find(
+        (c) => c.conversationId === selectedConversationId
+      );
+      if (!targetConv) {
+        targetConv = filteredConversations[0];
+      }
+
+      let targetTrace: TraceGroup | null = null;
+      if (selectedTurnTraceId) {
+        targetTrace = targetConv.traces.find((t) => t.traceId === selectedTurnTraceId) || null;
+      }
+
+      return {
+        conversation: targetConv,
+        trace: targetTrace,
+        isAllTurns: targetTrace === null,
+        spans: targetTrace ? targetTrace.spans : targetConv.spans,
+        records: targetTrace ? targetTrace.records : targetConv.records,
+      };
+    } else {
+      // groupByMode === "trace"
+      if (filteredTraces.length === 0) return null;
+
+      let targetTrace = filteredTraces.find((t) => t.traceId === selectedTurnTraceId);
+      if (!targetTrace) {
+        targetTrace = filteredTraces[0];
+      }
+
+      const targetConv =
+        conversations.find((c) => c.conversationId === targetTrace.conversationId) || {
+          conversationId: targetTrace.conversationId || targetTrace.traceId,
+          title: `Trace: ${targetTrace.traceId.slice(0, 8)}...`,
+          isSystem: targetTrace.traceId === "_system",
+          startTime: targetTrace.startTime,
+          endTime: targetTrace.endTime,
+          durationMs: targetTrace.durationMs,
+          status: targetTrace.status,
+          modelSlug: targetTrace.modelSlug,
+          traces: [targetTrace],
+          records: targetTrace.records,
+          spans: targetTrace.spans,
+        };
+
+      return {
+        conversation: targetConv,
+        trace: targetTrace,
+        isAllTurns: false,
+        spans: targetTrace.spans,
+        records: targetTrace.records,
+      };
     }
-
-    let targetTrace: TraceGroup | null = null;
-    if (selectedTurnTraceId) {
-      targetTrace = targetConv.traces.find(t => t.traceId === selectedTurnTraceId) || null;
-    }
-
-    return {
-      conversation: targetConv,
-      trace: targetTrace,
-      isAllTurns: targetTrace === null,
-      spans: targetTrace ? targetTrace.spans : targetConv.spans,
-      records: targetTrace ? targetTrace.records : targetConv.records,
-    };
-  }, [filteredConversations, selectedConversationId, selectedTurnTraceId]);
+  }, [
+    groupByMode,
+    filteredConversations,
+    filteredTraces,
+    conversations,
+    selectedConversationId,
+    selectedTurnTraceId,
+  ]);
 
   const toggleConvExpanded = (convId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -414,6 +606,17 @@ export function TraceExplorer({
       {/* Thanh công cụ đỉnh */}
       <div className="te-toolbar">
         <div className="te-toolbar-left">
+          {/* Nút Thu hẹp / Mở rộng Sidebar */}
+          <button
+            className={`te-btn ${isSidebarCollapsed ? "active" : ""}`}
+            style={{ height: 30, padding: "0 9px" }}
+            onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+            title={isSidebarCollapsed ? "Mở rộng Sidebar" : "Thu hẹp Sidebar"}
+          >
+            <Icon name="sidebar" width={14} height={14} />
+            {isSidebarCollapsed ? <span style={{ fontSize: 11, marginLeft: 4 }}>Show Sidebar</span> : null}
+          </button>
+
           <div className="te-search-wrapper">
             <input
               type="text"
@@ -434,7 +637,7 @@ export function TraceExplorer({
               className={`te-pill ${filterLevel === "all" ? "active" : ""}`}
               onClick={() => setFilterLevel("all")}
             >
-              All ({filteredConversations.length})
+              All ({groupByMode === "conversation" ? filteredConversations.length : filteredTraces.length})
             </button>
             <button
               className={`te-pill te-pill-error ${filterLevel === "error" ? "active" : ""}`}
@@ -453,6 +656,24 @@ export function TraceExplorer({
               onClick={() => setFilterLevel("tools")}
             >
               Tools
+            </button>
+          </div>
+
+          {/* Toggle Chế độ Nhóm: By Conversation vs Flat Traces */}
+          <div className="te-group-toggle" title="Chế độ phân nhóm danh sách">
+            <button
+              className={`te-pill ${groupByMode === "conversation" ? "active" : ""}`}
+              onClick={() => setGroupByMode("conversation")}
+              title="Nhóm theo Cuộc hội thoại (cây 2 tầng: Conversation > Turns)"
+            >
+              💬 By Conversation
+            </button>
+            <button
+              className={`te-pill ${groupByMode === "trace" ? "active" : ""}`}
+              onClick={() => setGroupByMode("trace")}
+              title="Xem danh sách phẳng tất cả các Traces đơn lẻ"
+            >
+              ⚡ Flat Traces
             </button>
           </div>
         </div>
@@ -493,145 +714,221 @@ export function TraceExplorer({
 
       {/* Split View */}
       <div className="te-split-view">
-        {/* Cột trái: Cây thư mục Conversations & Turns */}
-        <div className="te-trace-list-panel">
-          {filteredConversations.length === 0 ? (
-            <div className="te-empty-state">
-              <Icon name="logs" width={28} height={28} />
-              <span>{copy.noLogs || "Không có cuộc hội thoại nào phù hợp"}</span>
-            </div>
-          ) : (
-            filteredConversations.map((conv) => {
-              const isConvSelected =
-                activeSelection?.conversation.conversationId === conv.conversationId &&
-                activeSelection.isAllTurns;
-              const isExpanded = !expandedConvIds.has(conv.conversationId);
-
-              return (
-                <div key={conv.conversationId} className="te-conv-group">
-                  {/* Header Conversation */}
-                  <div
-                    className={`te-conv-header ${isConvSelected ? "selected" : ""}`}
-                    onClick={() => {
-                      setSelectedConversationId(conv.conversationId);
-                      setSelectedTurnTraceId(null);
-                    }}
-                    title={`Conversation ID: ${conv.conversationId}`}
-                  >
-                    <div className="te-conv-header-left">
-                      <span
-                        className="te-conv-expand-icon"
-                        onClick={(e) => toggleConvExpanded(conv.conversationId, e)}
-                        title={isExpanded ? "Gập lại" : "Mở rộng"}
-                      >
-                        {conv.traces.length > 1 ? (isExpanded ? "▼" : "▶") : "•"}
-                      </span>
-                      <span className="te-conv-icon">{conv.isSystem ? "⚙️" : "💬"}</span>
-                      <div className="te-conv-title-col">
-                        <span className="te-conv-title">{conv.title}</span>
-                        <span className="te-conv-subtitle">
-                          {conv.isSystem ? `${conv.records.length} logs` : `${conv.traces.length} turn(s)`}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="te-conv-header-right">
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          backgroundColor:
-                            conv.status === "failed"
-                              ? "var(--red-300)"
-                              : conv.status === "warning"
-                              ? "var(--orange-300)"
-                              : "var(--green-300)",
-                        }}
-                      />
-                      <span className="te-trace-time">
-                        {new Date(conv.endTime).toLocaleTimeString(undefined, {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
+        {/* Cột trái: Cây thư mục Conversations & Turns hoặc Flat Traces (có thể thu hẹp) */}
+        {!isSidebarCollapsed && (
+          <>
+            <div className="te-trace-list-panel" style={{ width: sidebarWidth }}>
+              {groupByMode === "conversation" ? (
+                /* CHẾ ĐỘ 1: NHÓM THEO CONVERSATION */
+                filteredConversations.length === 0 ? (
+                  <div className="te-empty-state">
+                    <Icon name="logs" width={28} height={28} />
+                    <span>{copy.noLogs || "Không có cuộc hội thoại nào phù hợp"}</span>
                   </div>
+                ) : (
+                  filteredConversations.map((conv) => {
+                    const isConvSelected =
+                      activeSelection?.conversation.conversationId === conv.conversationId &&
+                      activeSelection.isAllTurns;
+                    const isExpanded = !expandedConvIds.has(conv.conversationId);
 
-                  {/* Danh sách các Turn con */}
-                  {isExpanded && !conv.isSystem && (
-                    <div className="te-turn-list">
-                      {/* Mục "All Turns" */}
-                      <div
-                        className={`te-turn-item ${isConvSelected ? "selected" : ""}`}
-                        onClick={() => {
-                          setSelectedConversationId(conv.conversationId);
-                          setSelectedTurnTraceId(null);
-                        }}
-                      >
-                        <div className="te-turn-item-left">
-                          <span className="te-turn-label">All Turns ({conv.traces.length})</span>
-                        </div>
-                        <div className="te-turn-item-right">
-                          <span className="te-badge te-badge-duration">{formatDuration(conv.durationMs)}</span>
-                        </div>
-                      </div>
-
-                      {/* Từng Turn riêng lẻ */}
-                      {conv.traces.map((trace, tIdx) => {
-                        const isTurnSelected =
-                          activeSelection?.conversation.conversationId === conv.conversationId &&
-                          activeSelection.trace?.traceId === trace.traceId;
-
-                        return (
-                          <div
-                            key={trace.traceId}
-                            className={`te-turn-item ${isTurnSelected ? "selected" : ""}`}
-                            onClick={() => {
-                              setSelectedConversationId(conv.conversationId);
-                              setSelectedTurnTraceId(trace.traceId);
-                            }}
-                            title={`Turn #${tIdx + 1} • Trace ID: ${trace.traceId}`}
-                          >
-                            <div className="te-turn-item-left">
-                              <span
-                                style={{
-                                  width: 6,
-                                  height: 6,
-                                  borderRadius: "50%",
-                                  backgroundColor:
-                                    trace.status === "failed"
-                                      ? "var(--red-300)"
-                                      : trace.status === "warning"
-                                      ? "var(--orange-300)"
-                                      : "var(--green-300)",
-                                }}
-                              />
-                              <span className="te-turn-label">Turn {tIdx + 1}</span>
-                              <span className="te-turn-model">{trace.modelSlug || "inference"}</span>
-                            </div>
-                            <div className="te-turn-item-right">
-                              {trace.durationMs > 0 ? (
-                                <span className="te-badge te-badge-duration">{formatDuration(trace.durationMs)}</span>
-                              ) : null}
-                              <span className="te-turn-time">
-                                {new Date(trace.startTime).toLocaleTimeString(undefined, {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                  second: "2-digit",
-                                })}
+                    return (
+                      <div key={conv.conversationId} className="te-conv-group">
+                        {/* Header Conversation */}
+                        <div
+                          className={`te-conv-header ${isConvSelected ? "selected" : ""}`}
+                          onClick={() => {
+                            setSelectedConversationId(conv.conversationId);
+                            setSelectedTurnTraceId(null);
+                          }}
+                          title={`Conversation ID: ${conv.conversationId}`}
+                        >
+                          <div className="te-conv-header-left">
+                            <span
+                              className="te-conv-expand-icon"
+                              onClick={(e) => toggleConvExpanded(conv.conversationId, e)}
+                              title={isExpanded ? "Gập lại" : "Mở rộng"}
+                            >
+                              {conv.traces.length > 1 ? (isExpanded ? "▼" : "▶") : "•"}
+                            </span>
+                            <span className="te-conv-icon">{conv.isSystem ? "⚙️" : "💬"}</span>
+                            <div className="te-conv-title-col">
+                              <span className="te-conv-title">{conv.title}</span>
+                              <span className="te-conv-subtitle">
+                                {conv.isSystem ? `${conv.records.length} logs` : `${conv.traces.length} turn(s)`}
                               </span>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
+
+                          <div className="te-conv-header-right">
+                            <span
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: "50%",
+                                backgroundColor:
+                                  conv.status === "failed"
+                                    ? "var(--red-300)"
+                                    : conv.status === "warning"
+                                    ? "var(--orange-300)"
+                                    : "var(--green-300)",
+                              }}
+                            />
+                            <span className="te-trace-time">
+                              {new Date(conv.endTime).toLocaleTimeString(undefined, {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Danh sách các Turn con */}
+                        {isExpanded && !conv.isSystem && (
+                          <div className="te-turn-list">
+                            {/* Mục "All Turns" */}
+                            <div
+                              className={`te-turn-item ${isConvSelected ? "selected" : ""}`}
+                              onClick={() => {
+                                setSelectedConversationId(conv.conversationId);
+                                setSelectedTurnTraceId(null);
+                              }}
+                            >
+                              <div className="te-turn-item-left">
+                                <span className="te-turn-label">All Turns ({conv.traces.length})</span>
+                              </div>
+                              <div className="te-turn-item-right">
+                                <span className="te-badge te-badge-duration">{formatDuration(conv.durationMs)}</span>
+                              </div>
+                            </div>
+
+                            {/* Từng Turn riêng lẻ */}
+                            {conv.traces.map((trace, tIdx) => {
+                              const isTurnSelected =
+                                activeSelection?.conversation.conversationId === conv.conversationId &&
+                                activeSelection.trace?.traceId === trace.traceId;
+
+                              return (
+                                <div
+                                  key={trace.traceId}
+                                  className={`te-turn-item ${isTurnSelected ? "selected" : ""}`}
+                                  onClick={() => {
+                                    setSelectedConversationId(conv.conversationId);
+                                    setSelectedTurnTraceId(trace.traceId);
+                                  }}
+                                  title={`Turn #${tIdx + 1} • Trace ID: ${trace.traceId}`}
+                                >
+                                  <div className="te-turn-item-left">
+                                    <span
+                                      style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: "50%",
+                                        backgroundColor:
+                                          trace.status === "failed"
+                                            ? "var(--red-300)"
+                                            : trace.status === "warning"
+                                            ? "var(--orange-300)"
+                                            : "var(--green-300)",
+                                      }}
+                                    />
+                                    <span className="te-turn-label">Turn {tIdx + 1}</span>
+                                    <span className="te-turn-model">{trace.modelSlug || "inference"}</span>
+                                  </div>
+                                  <div className="te-turn-item-right">
+                                    {trace.durationMs > 0 ? (
+                                      <span className="te-badge te-badge-duration">{formatDuration(trace.durationMs)}</span>
+                                    ) : null}
+                                    <span className="te-turn-time">
+                                      {new Date(trace.startTime).toLocaleTimeString(undefined, {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                        second: "2-digit",
+                                      })}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )
+              ) : (
+                /* CHẾ ĐỘ 2: DANH SÁCH PHẲNG TẤT CẢ TRACES */
+                filteredTraces.length === 0 ? (
+                  <div className="te-empty-state">
+                    <Icon name="logs" width={28} height={28} />
+                    <span>{copy.noLogs || "Không có trace nào phù hợp"}</span>
+                  </div>
+                ) : (
+                  filteredTraces.map((trace) => {
+                    const isSelected = activeSelection?.trace?.traceId === trace.traceId;
+                    return (
+                      <div
+                        key={trace.traceId}
+                        className={`te-trace-card ${isSelected ? "selected" : ""}`}
+                        onClick={() => {
+                          setSelectedTurnTraceId(trace.traceId);
+                          if (trace.conversationId) setSelectedConversationId(trace.conversationId);
+                        }}
+                        title={`Trace ID: ${trace.traceId}`}
+                      >
+                        <div className="te-trace-card-header">
+                          <div className="te-trace-status-group">
+                            <span
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: "50%",
+                                backgroundColor:
+                                  trace.status === "failed"
+                                    ? "var(--red-300)"
+                                    : trace.status === "warning"
+                                    ? "var(--orange-300)"
+                                    : "var(--green-300)",
+                              }}
+                            />
+                            <span className="te-trace-id">
+                              {trace.traceId === "_system" ? "SYSTEM" : trace.traceId.slice(0, 16)}
+                            </span>
+                          </div>
+                          <span className="te-trace-time">
+                            {new Date(trace.endTime).toLocaleTimeString(undefined, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                        <div className="te-trace-card-body">
+                          <span className="te-trace-model">
+                            {trace.modelSlug || (trace.traceId === "_system" ? "Runtime & Daemon" : "inference")}
+                          </span>
+                          <div className="te-trace-meta-tags">
+                            {trace.toolNames.length > 0 ? (
+                              <span className="te-badge te-badge-tool">{trace.toolNames.length} tools</span>
+                            ) : null}
+                            <span className="te-badge te-badge-duration">{formatDuration(trace.durationMs)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )
+              )}
+            </div>
+
+            {/* Thanh kéo thay đổi độ rộng Sidebar */}
+            <div
+              className={`te-resizer ${isResizing ? "is-resizing" : ""}`}
+              onMouseDown={handleMouseDownResize}
+              title="Kéo sang trái/phải để chỉnh độ rộng cột"
+            />
+          </>
+        )}
 
         {/* Cột giữa: Chi tiết Trace / Conversation */}
         <div className="te-trace-detail-panel">
@@ -722,114 +1019,267 @@ export function TraceExplorer({
                 </div>
               </div>
 
-              {/* Kibana Action Bar: Time Sort, Column Picker */}
-              <div className="te-action-bar">
-                <div className="te-action-bar-left">
-                  <button
-                    className="te-btn"
-                    style={{ height: 28, fontSize: 11, padding: "0 10px" }}
-                    onClick={() => setTimeSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
-                    title={
-                      timeSortOrder === "asc"
-                        ? "Đang xếp Cũ nhất trước. Click để đổi sang Mới nhất trước"
-                        : "Đang xếp Mới nhất trước. Click để đổi sang Cũ nhất trước"
-                    }
-                  >
-                    <span>Time: {timeSortOrder === "asc" ? "Oldest First ↑" : "Newest First ↓"}</span>
-                  </button>
+              {/* Kibana Action Bar: Time Sort, Column Picker, Copy Logs & Download Logs */}
+              {(() => {
+                const targetRecords = activeSelection.isAllTurns
+                  ? activeSelection.conversation.records
+                  : activeSelection.trace
+                  ? activeSelection.trace.records
+                  : activeSelection.conversation.records;
+                const targetPrefix = activeSelection.isAllTurns ? "conversation" : "turn";
+                const targetId = activeSelection.isAllTurns
+                  ? activeSelection.conversation.conversationId
+                  : activeSelection.trace?.traceId || activeSelection.conversation.conversationId;
+                const targetTitle = activeSelection.isAllTurns
+                  ? activeSelection.conversation.title
+                  : activeSelection.trace?.modelSlug || activeSelection.conversation.title;
+                const targetDuration = activeSelection.isAllTurns
+                  ? activeSelection.conversation.durationMs
+                  : activeSelection.trace?.durationMs || activeSelection.conversation.durationMs;
 
-                  <div className="te-col-picker-wrapper">
-                    <button
-                      className="te-btn"
-                      style={{ height: 28, fontSize: 11, padding: "0 10px" }}
-                      onClick={() => setIsColumnPickerOpen((prev) => !prev)}
-                      title="Chọn các cột hiển thị"
-                    >
-                      <span>Columns ({activeColumnCount}/7) ▾</span>
-                    </button>
+                return (
+                  <div className="te-action-bar">
+                    <div className="te-action-bar-left">
+                      <button
+                        className="te-btn"
+                        style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                        onClick={() => setTimeSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
+                        title={
+                          timeSortOrder === "asc"
+                            ? "Đang xếp Cũ nhất trước. Click để đổi sang Mới nhất trước"
+                            : "Đang xếp Mới nhất trước. Click để đổi sang Cũ nhất trước"
+                        }
+                      >
+                        <span>Time: {timeSortOrder === "asc" ? "Oldest First ↑" : "Newest First ↓"}</span>
+                      </button>
 
-                    {isColumnPickerOpen ? (
-                      <>
-                        <div
-                          style={{ position: "fixed", inset: 0, zIndex: 110 }}
-                          onClick={() => setIsColumnPickerOpen(false)}
-                        />
-                        <div className="te-col-picker-popover">
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.time}
-                              onChange={() => toggleColumn("time")}
+                      <div className="te-col-picker-wrapper">
+                        <button
+                          className="te-btn"
+                          style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                          onClick={() => {
+                            setIsColumnPickerOpen((prev) => !prev);
+                            setIsCopyMenuOpen(false);
+                            setIsDownloadMenuOpen(false);
+                          }}
+                          title="Chọn các cột hiển thị"
+                        >
+                          <span>Columns ({activeColumnCount}/7) ▾</span>
+                        </button>
+
+                        {isColumnPickerOpen ? (
+                          <>
+                            <div
+                              className="te-popover-backdrop"
+                              onClick={() => setIsColumnPickerOpen(false)}
                             />
-                            <span>Time (@timestamp)</span>
-                          </label>
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.level}
-                              onChange={() => toggleColumn("level")}
+                            <div className="te-col-picker-popover">
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.time}
+                                  onChange={() => toggleColumn("time")}
+                                />
+                                <span>Time (@timestamp)</span>
+                              </label>
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.level}
+                                  onChange={() => toggleColumn("level")}
+                                />
+                                <span>Level (log.level)</span>
+                              </label>
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.event}
+                                  onChange={() => toggleColumn("event")}
+                                />
+                                <span>Event (event.action)</span>
+                              </label>
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.message}
+                                  onChange={() => toggleColumn("message")}
+                                />
+                                <span>Message (detail)</span>
+                              </label>
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.duration}
+                                  onChange={() => toggleColumn("duration")}
+                                />
+                                <span>Duration (ms)</span>
+                              </label>
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.spanId}
+                                  onChange={() => toggleColumn("spanId")}
+                                />
+                                <span>Span ID</span>
+                              </label>
+                              <label className="te-col-item">
+                                <input
+                                  type="checkbox"
+                                  className="te-col-checkbox"
+                                  checked={visibleColumns.requestId}
+                                  onChange={() => toggleColumn("requestId")}
+                                />
+                                <span>Request ID</span>
+                              </label>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+
+                      {/* Dropdown Menu: Copy Log ▾ */}
+                      <div className="te-menu-wrapper">
+                        <button
+                          className="te-btn"
+                          style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                          onClick={() => {
+                            setIsCopyMenuOpen((prev) => !prev);
+                            setIsDownloadMenuOpen(false);
+                            setIsColumnPickerOpen(false);
+                          }}
+                          title={`Sao chép ${targetRecords.length} log records vào Clipboard`}
+                        >
+                          <span>📋 Copy Log ({targetRecords.length}) ▾</span>
+                        </button>
+
+                        {isCopyMenuOpen ? (
+                          <>
+                            <div
+                              className="te-popover-backdrop"
+                              onClick={() => setIsCopyMenuOpen(false)}
                             />
-                            <span>Level (log.level)</span>
-                          </label>
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.event}
-                              onChange={() => toggleColumn("event")}
+                            <div className="te-menu-popover">
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatLogsAsPrettyJson(targetRecords);
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép ${targetRecords.length} log (Pretty JSON)`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Pretty JSON</span>
+                                <span className="te-menu-item-subtitle">.json</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatLogsAsJsonl(targetRecords);
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép ${targetRecords.length} log (JSONL)`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>JSON Lines</span>
+                                <span className="te-menu-item-subtitle">.jsonl</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatLogsAsSummary(targetRecords, targetTitle, targetDuration);
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép tóm tắt ${targetRecords.length} log`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Text Summary</span>
+                                <span className="te-menu-item-subtitle">.txt</span>
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+
+                      {/* Dropdown Menu: Download Log ▾ */}
+                      <div className="te-menu-wrapper">
+                        <button
+                          className="te-btn"
+                          style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                          onClick={() => {
+                            setIsDownloadMenuOpen((prev) => !prev);
+                            setIsCopyMenuOpen(false);
+                            setIsColumnPickerOpen(false);
+                          }}
+                          title={`Tải xuống ${targetRecords.length} log records`}
+                        >
+                          <span>⬇️ Download ▾</span>
+                        </button>
+
+                        {isDownloadMenuOpen ? (
+                          <>
+                            <div
+                              className="te-popover-backdrop"
+                              onClick={() => setIsDownloadMenuOpen(false)}
                             />
-                            <span>Event (event.action)</span>
-                          </label>
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.message}
-                              onChange={() => toggleColumn("message")}
-                            />
-                            <span>Message (detail)</span>
-                          </label>
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.duration}
-                              onChange={() => toggleColumn("duration")}
-                            />
-                            <span>Duration (ms)</span>
-                          </label>
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.spanId}
-                              onChange={() => toggleColumn("spanId")}
-                            />
-                            <span>Span ID</span>
-                          </label>
-                          <label className="te-col-item">
-                            <input
-                              type="checkbox"
-                              className="te-col-checkbox"
-                              checked={visibleColumns.requestId}
-                              onChange={() => toggleColumn("requestId")}
-                            />
-                            <span>Request ID</span>
-                          </label>
-                        </div>
-                      </>
-                    ) : null}
+                            <div className="te-menu-popover">
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatLogsAsPrettyJson(targetRecords);
+                                  const filename = generateExportFilename(targetPrefix, targetId, "json");
+                                  downloadFile(text, filename, "application/json");
+                                  showToast(`✓ Đã tải xuống ${filename}`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Pretty JSON File</span>
+                                <span className="te-menu-item-subtitle">.json</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatLogsAsJsonl(targetRecords);
+                                  const filename = generateExportFilename(targetPrefix, targetId, "jsonl");
+                                  downloadFile(text, filename, "application/x-ndjson");
+                                  showToast(`✓ Đã tải xuống ${filename}`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>JSONL File</span>
+                                <span className="te-menu-item-subtitle">.jsonl</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatLogsAsSummary(targetRecords, targetTitle, targetDuration);
+                                  const filename = generateExportFilename(targetPrefix, targetId, "txt");
+                                  downloadFile(text, filename, "text/plain");
+                                  showToast(`✓ Đã tải xuống ${filename}`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Text Summary File</span>
+                                <span className="te-menu-item-subtitle">.txt</span>
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="te-action-bar-right">
+                      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                        {sortedSpans.length} events
+                      </span>
+                    </div>
                   </div>
-                </div>
-
-                <div className="te-action-bar-right">
-                  <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
-                    {sortedSpans.length} events
-                  </span>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Kibana Table */}
               <div className="te-kibana-container">
@@ -1250,6 +1700,14 @@ export function TraceExplorer({
           </div>
         ) : null}
       </div>
+
+      {/* Toast Feedback Notification */}
+      {feedbackToast ? (
+        <div className="te-feedback-toast">
+          <Icon name="check" width={16} height={16} />
+          <span>{feedbackToast}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
