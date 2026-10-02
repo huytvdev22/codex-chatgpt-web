@@ -575,13 +575,13 @@ export function TraceExplorer({
         <div className="te-toolbar-left">
           {/* Nút Thu hẹp / Mở rộng Sidebar */}
           <button
-            className={`te-btn ${isSidebarCollapsed ? "active" : ""}`}
-            style={{ height: 30, padding: "0 9px" }}
+            className={`te-btn te-btn-sidebar-toggle ${isSidebarCollapsed ? "active" : ""}`}
             onClick={() => setIsSidebarCollapsed((prev) => !prev)}
-            title={isSidebarCollapsed ? "Mở rộng Sidebar" : "Thu hẹp Sidebar"}
+            title={isSidebarCollapsed ? "Mở rộng Sidebar (Click để mở lại)" : "Thu hẹp Sidebar (Click để ẩn)"}
+            aria-label={isSidebarCollapsed ? "Mở rộng Sidebar" : "Thu hẹp Sidebar"}
+            aria-pressed={isSidebarCollapsed}
           >
-            <Icon name="sidebar" width={14} height={14} />
-            {isSidebarCollapsed ? <span style={{ fontSize: 11, marginLeft: 4 }}>Show Sidebar</span> : null}
+            <Icon name="sidebar" width={16} height={16} />
           </button>
 
           <div className="te-search-wrapper">
