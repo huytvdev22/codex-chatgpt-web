@@ -296,7 +296,7 @@ export class M365ToolCallDetector {
    * Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG thực thi tool call khi thẻ mở chưa có thẻ đóng
    * hoặc khi JSON arguments chưa hoàn chỉnh!
    */
-  finish(): { remainingText: string; toolCall: ParsedToolCall | null } {
+  finish(): { remainingText: string; toolCall: ParsedToolCall | null; detectedToolCall?: ParsedToolCall } {
     let remainingText = "";
     if (!this.inToolCall && !this.inPatch && !this.detectedToolCall) {
       remainingText = this.buffer;

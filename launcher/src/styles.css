@@ -924,6 +924,14 @@ code {
   width: min(var(--settings-width), calc(100% - 64px));
 }
 
+.content-scroll.is-full {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding-left: 20px !important;
+  padding-right: 20px !important;
+}
+
 .content-scroll.is-fit {
   display: flex;
   overflow: hidden;

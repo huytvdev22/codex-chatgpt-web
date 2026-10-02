@@ -1,6 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { renameAtomicFile, writePrivateFileAtomic } = require("./atomic-file.cjs");
+const {
+  STRUCTURED_DETAIL_EXPORT_ALLOWLIST,
+  filterSafeDetailsForExport,
+} = require("./observability-policy.cjs");
 
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_MEMORY_RECORDS = 300;
@@ -82,13 +86,27 @@ function exportSanitizedLogs({ filePath, destinationPath }) {
           || typeof record.at !== "string"
           || !["debug", "info", "warning", "error"].includes(record.level)
           || typeof record.event !== "string") continue;
+        let sanitizedDetail;
+        if (record.detail && typeof record.detail === "object" && typeof record.detail.traceId === "string") {
+          const exportedDetail = {};
+          for (const key of STRUCTURED_DETAIL_EXPORT_ALLOWLIST) {
+            if (key === "safeDetails") {
+              exportedDetail.safeDetails = filterSafeDetailsForExport(record.event, record.detail.safeDetails);
+            } else if (key in record.detail && record.detail[key] !== undefined) {
+              exportedDetail[key] = record.detail[key];
+            }
+          }
+          sanitizedDetail = sanitizeForExport(exportedDetail);
+        } else {
+          sanitizedDetail = record.detail && typeof record.detail === "object"
+            ? sanitizeForExport(record.detail)
+            : {};
+        }
         records.push({
           at: record.at,
           level: record.level,
           event: record.event,
-          detail: record.detail && typeof record.detail === "object"
-            ? sanitizeForExport(record.detail)
-            : {},
+          detail: sanitizedDetail,
         });
       } catch {}
     }
@@ -182,6 +200,15 @@ function createLogger({ filePath, publish }) {
     warn: (event, detail) => append("warning", event, detail),
     error: (event, detail) => append("error", event, detail),
     recent: (limit = 150) => records.slice(-Math.max(1, Math.min(300, limit))),
+    clear: () => {
+      records.length = 0;
+      try {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(filePath, "", { mode: 0o600 });
+        fs.rmSync(`${filePath}.1`, { force: true });
+      } catch {}
+      return true;
+    },
     filePath,
   };
 }

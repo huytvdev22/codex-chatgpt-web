@@ -4,6 +4,8 @@ import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 import { usageDisplayTotalTokens } from "./usage/totals";
+import { emitStructuredEvent } from "./observability/emitter";
+import type { TraceContext } from "./observability/types";
 
 function uuid(): string {
   return crypto.randomUUID().replace(/-/g, "");
@@ -107,6 +109,7 @@ export function bridgeToResponsesSSE(
     streamPlatform?: NodeJS.Platform;
     /** Test seam for the monotonic upstream-silence clock. */
     now?: () => number;
+    traceContext?: TraceContext;
   },
 ): ReadableStream<Uint8Array> {
   // Freeform/custom tools (apply_patch) carry their body in `input`; the model is given a
@@ -161,6 +164,22 @@ export function bridgeToResponsesSSE(
     terminalReported = true;
     console.log(`[bridge-stream] [terminal] responseId=${responseId} model=${modelId} status=${status} emittedFrames=${emittedFrames}`);
     options?.onTerminal?.(status);
+
+    const level = status === "completed" ? "info" : "error";
+    emitStructuredEvent({
+      event: "bridge.sse.completed",
+      level,
+      message: `Bridge SSE stream completed with status ${status}`,
+      source: "bridge",
+      responseId,
+      status: status === "completed" ? "completed" : "failed",
+      durationMs: Date.now() - (createdAt * 1000),
+      safeDetails: {
+        emittedFrames,
+        terminalStatus: status,
+        durationMs: Date.now() - (createdAt * 1000),
+      },
+    });
   };
   // RC3 keep-alive: Codex's idle timer is timeout(idle_timeout, stream.next()) over an
   // eventsource_stream; ANY received event re-arms it, while an unknown type is ignored

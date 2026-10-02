@@ -107,7 +107,9 @@ import {
   extractCompactUserMessages,
 } from "./responses/compaction";
 import { parseRequest } from "./responses/parser";
-import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
+import { expandPreviousResponseInput, flushResponseState, rememberResponseState, getStoredResponseTraceState } from "./responses/state";
+import { resolveTraceContext, traceStorage } from "./observability/trace-context";
+import { emitStructuredEvent } from "./observability/emitter";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
@@ -563,109 +565,185 @@ async function handleM365ResponseRequest(
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
-  const expanded = expandPreviousResponseInput(raw);
-  if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
-    return formatErrorResponse(
-      409,
-      "invalid_request_error",
-      "Local continuation state for previous_response_id is unavailable; refusing to run M365 Copilot with partial Codex context. Compact the Codex task or start a new task before retrying.",
-    );
-  }
+  const previousResponseId = typeof requestedPreviousResponseId === "string" ? requestedPreviousResponseId : undefined;
+  const previousTraceState = previousResponseId ? getStoredResponseTraceState(previousResponseId) : undefined;
 
-  let parsed: CodexParsedRequest;
   const rawObj = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
   const requestId = typeof rawObj.id === "string" ? rawObj.id : `req_${createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 12)}`;
 
-  try {
-    parsed = parseRequest(expanded);
-    const identity = extractCodexTurnIdentityFromBody(expanded);
-    if (identity.threadId && identity.turnId) {
-      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-    }
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
+  // 1. Phân giải Trace Context trước khi phát bất kỳ sự kiện nào
+  const { context: traceContext, isContinuation, correlationRecovered } = resolveTraceContext({
+    rawBody: raw,
+    headers: req.headers,
+    requestId,
+    previousResponseId,
+    cachedTraceState: previousTraceState,
+  });
 
-  const identity = extractCodexTurnIdentityFromBody(expanded);
-  const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
-
-  console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
-
-  const adapter = createM365CopilotAdapter();
-  const queue = new AsyncEventQueue<AdapterEvent>();
-  const abort = new AbortController();
-  if (req.signal.aborted) abort.abort();
-  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
-
-  const run = async () => {
-    console.log(`[m365-turn] [busy] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
-    try {
-      await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
-        options.onAdapterEvent?.(event);
-        queue.push(event);
-      });
-      console.log(`[m365-turn] [completed] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
-    } catch (error) {
-      console.error(`[m365-turn] [error] requestId=${requestId} conversationId=${conversationId} error=${error instanceof Error ? error.message : String(error)}`);
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
-      options.onAdapterEvent?.(event);
-      queue.push(event);
-    } finally {
-      queue.close();
-      console.log(`[m365-turn] [idle] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()} closed=true`);
-    }
-  };
-
-  const maps = toolBridgeMaps(parsed);
-  const responseModel = requestedModel;
-
-  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
-    if (options.rememberState !== false) {
-      rememberResponseState(parsed._rawBody, response, { force: true });
-    }
-  };
-
-  if (parsed.stream) {
-    console.log(`[m365-stream] [open] requestId=${requestId} conversationId=${conversationId}`);
-    void run();
-    const stream = bridgeToResponsesSSE(
-      queue,
-      responseModel,
-      maps.toolNsMap,
-      maps.freeformToolNames,
-      maps.toolSearchToolNames,
-      () => {
-        console.log(`[m365-stream] [abort] requestId=${requestId} conversationId=${conversationId}`);
-        abort.abort();
-      },
-      2_000,
-      {
-        hideThinkingSummary: parsed.options.hideThinkingSummary,
-        onCompletedResponse: rememberCompletedResponse,
-        onTerminal: status => {
-          console.log(`[m365-stream] [terminal] requestId=${requestId} conversationId=${conversationId} status=${status}`);
-        },
-      },
-    );
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
+  // 2. Bọc toàn bộ trong traceStorage.run
+  return traceStorage.run(traceContext, async () => {
+    // 3. Emit codex.request.received
+    emitStructuredEvent({
+      event: "codex.request.received",
+      level: "info",
+      message: `Codex request received for model ${requestedModel}`,
+      source: "server",
+      safeDetails: {
+        method: req.method,
+        model: requestedModel,
+        stream: (raw as Record<string, unknown>)?.stream ?? true,
+        hasPreviousResponse: Boolean(previousResponseId),
       },
     });
-  }
 
-  await run();
-  const events = await queue.collect();
-  const json = buildResponseJSON(events, responseModel, {
-    hideThinkingSummary: parsed.options.hideThinkingSummary,
-    toolNsMap: maps.toolNsMap,
-  });
-  rememberCompletedResponse(json);
-  return new Response(JSON.stringify(json), {
-    headers: { "Content-Type": "application/json" },
+    // 4. Emit trace.context.resolved
+    emitStructuredEvent({
+      event: "trace.context.resolved",
+      level: "info",
+      message: isContinuation
+        ? (correlationRecovered ? "Restored trace context from previous response" : "Started new trace (previous trace unavailable)")
+        : "Initialized root trace context for new turn",
+      source: "server",
+      safeDetails: {
+        isContinuation,
+        correlationRecovered,
+        providerCallIndex: traceContext.providerCallIndex,
+      },
+    });
+
+    // 5. Ingress detection: Emit codex.tool_result.received nếu input chứa function_call_output
+    const inputArr = Array.isArray((raw as Record<string, unknown>)?.input) ? (raw as Record<string, unknown>).input as unknown[] : [];
+    for (const item of inputArr) {
+      if (item && typeof item === "object" && (item as Record<string, unknown>).type === "function_call_output") {
+        const itemObj = item as Record<string, unknown>;
+        const callId = typeof itemObj.call_id === "string" ? itemObj.call_id : typeof itemObj.id === "string" ? itemObj.id : "call_unknown";
+        const outputStr = typeof itemObj.output === "string" ? itemObj.output : JSON.stringify(itemObj.output || "");
+        emitStructuredEvent({
+          event: "codex.tool_result.received",
+          level: "info",
+          message: `Received tool execution result for call ${callId}`,
+          source: "server",
+          toolCallId: callId,
+          safeDetails: {
+            toolCallId: callId,
+            resultBytes: Buffer.byteLength(outputStr, "utf8"),
+            isError: itemObj.is_error === true,
+            previousResponseId,
+          },
+        });
+      }
+    }
+
+    const expanded = expandPreviousResponseInput(raw);
+    if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
+      return formatErrorResponse(
+        409,
+        "invalid_request_error",
+        "Local continuation state for previous_response_id is unavailable; refusing to run M365 Copilot with partial Codex context. Compact the Codex task or start a new task before retrying.",
+      );
+    }
+
+    let parsed: CodexParsedRequest;
+    try {
+      parsed = parseRequest(expanded);
+      const identity = extractCodexTurnIdentityFromBody(expanded);
+      if (identity.threadId && identity.turnId) {
+        options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+      }
+    } catch (error) {
+      return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+    }
+
+    const identity = extractCodexTurnIdentityFromBody(expanded);
+    const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
+
+    console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
+
+    const adapter = createM365CopilotAdapter();
+    const queue = new AsyncEventQueue<AdapterEvent>();
+    const abort = new AbortController();
+    if (req.signal.aborted) abort.abort();
+    else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+
+    const run = async () => {
+      console.log(`[m365-turn] [busy] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
+      try {
+        await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal, traceContext }, event => {
+          options.onAdapterEvent?.(event);
+          queue.push(event);
+        });
+        console.log(`[m365-turn] [completed] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
+      } catch (error) {
+        console.error(`[m365-turn] [error] requestId=${requestId} conversationId=${conversationId} error=${error instanceof Error ? error.message : String(error)}`);
+        const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+        options.onAdapterEvent?.(event);
+        queue.push(event);
+      } finally {
+        queue.close();
+        console.log(`[m365-turn] [idle] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()} closed=true`);
+      }
+    };
+
+    const maps = toolBridgeMaps(parsed);
+    const responseModel = requestedModel;
+
+    const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+      if (options.rememberState !== false) {
+        rememberResponseState(parsed._rawBody, response, {
+          force: true,
+          traceState: {
+            traceId: traceContext.traceId,
+            rootSpanId: traceContext.rootSpanId,
+            turnId: traceContext.clientTurnId,
+            conversationId: traceContext.conversationId,
+            providerCallIndex: traceContext.providerCallIndex,
+            toolIteration: traceContext.toolIteration,
+          },
+        });
+      }
+    };
+
+    if (parsed.stream) {
+      console.log(`[m365-stream] [open] requestId=${requestId} conversationId=${conversationId}`);
+      void run();
+      const stream = bridgeToResponsesSSE(
+        queue,
+        responseModel,
+        maps.toolNsMap,
+        maps.freeformToolNames,
+        maps.toolSearchToolNames,
+        () => {
+          console.log(`[m365-stream] [abort] requestId=${requestId} conversationId=${conversationId}`);
+          abort.abort();
+        },
+        2_000,
+        {
+          hideThinkingSummary: parsed.options.hideThinkingSummary,
+          onCompletedResponse: rememberCompletedResponse,
+          onTerminal: status => {
+            console.log(`[m365-stream] [terminal] requestId=${requestId} conversationId=${conversationId} status=${status}`);
+          },
+          traceContext,
+        },
+      );
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+
+    await run();
+    const events = await queue.collect();
+    const json = buildResponseJSON(events, responseModel, {
+      hideThinkingSummary: parsed.options.hideThinkingSummary,
+      toolNsMap: maps.toolNsMap,
+    });
+    rememberCompletedResponse(json);
+    return Response.json(json);
   });
 }
 

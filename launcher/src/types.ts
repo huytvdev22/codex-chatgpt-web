@@ -186,6 +186,7 @@ export interface LauncherApi {
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   logs(limit?: number): Promise<LogRecord[]>;
+  clearLogs(): Promise<boolean>;
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
@@ -196,6 +197,7 @@ export interface LauncherApi {
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
   onLog(listener: (record: LogRecord) => void): () => void;
+  onLogsCleared(listener: () => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
 }
 

@@ -165,12 +165,13 @@ Không ghi log chứa thông tin nhạy cảm.
         expect(result.toolCalls.length).toBe(1);
         detectedCallsCount += result.toolCalls.length;
         const call = result.toolCalls[0];
+        const callArgs = call.arguments as Record<string, any>;
         expect(call.name).toBe("write_file");
-        expect(call.arguments.path).toBe("architecture/ARCHITECTURE_SPEC.md");
-        expect(call.arguments.content).toBe(fullContent);
-        expect(call.arguments.content.startsWith("# BEGIN_FILE")).toBe(true);
-        expect(call.arguments.content.endsWith("# END_FILE\n")).toBe(true);
-        expect(AtomicFileWriter.computeSha256(call.arguments.content)).toBe(
+        expect(callArgs.path).toBe("architecture/ARCHITECTURE_SPEC.md");
+        expect(callArgs.content).toBe(fullContent);
+        expect(callArgs.content.startsWith("# BEGIN_FILE")).toBe(true);
+        expect(callArgs.content.endsWith("# END_FILE\n")).toBe(true);
+        expect(AtomicFileWriter.computeSha256(callArgs.content)).toBe(
           AtomicFileWriter.computeSha256(fullContent)
         );
       } else {
@@ -311,7 +312,7 @@ Dòng kết thúc bằng backslash \\
       },
     ];
 
-    const mapped = M365ToolBridge.mapToolCall(rawToolCall, clientTools, { shell: "bash" });
+    const mapped = M365ToolBridge.mapToolCall(rawToolCall, clientTools as any, { shell: "bash" });
 
     expect(mapped.name).toBe("exec_command");
     const args = JSON.parse(mapped.arguments);

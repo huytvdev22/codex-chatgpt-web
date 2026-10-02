@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ensureCodexModelCatalogConfig,
   removeCodexModelCatalogConfig,
   syncCodexModelCatalogConfig,
 } from "../src/codex-integration";

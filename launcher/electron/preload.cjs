@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setPreference: (key, value) => ipcRenderer.invoke("launcher:set-preference", key, value),
   setSidebarState: (state) => ipcRenderer.invoke("launcher:sidebar-state", state),
   logs: (limit) => ipcRenderer.invoke("launcher:logs", limit),
+  clearLogs: () => ipcRenderer.invoke("launcher:clear-logs"),
   exportLogs: () => ipcRenderer.invoke("launcher:export-logs"),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
   windowState: () => ipcRenderer.invoke("launcher:window-state"),
@@ -63,5 +64,6 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   onBrowserState: (listener) => subscription("launcher:browser-state", listener),
   onOperation: (listener) => subscription("launcher:operation", listener),
   onLog: (listener) => subscription("launcher:log", listener),
+  onLogsCleared: (listener) => subscription("launcher:logs-cleared", listener),
   onUpdateState: (listener) => subscription("launcher:update-state", listener),
 });

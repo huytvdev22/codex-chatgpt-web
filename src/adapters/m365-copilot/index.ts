@@ -6,6 +6,9 @@ import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
 import { M365OutputTranslator, maskArgumentsForLog } from "./output-translator";
+import { emitStructuredEvent } from "../../observability/emitter";
+import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
+import type { TraceContext } from "../../observability/types";
 
 export * from "./bash-translator";
 export * from "./output-translator";
@@ -138,7 +141,20 @@ export class M365CopilotAdapter implements ProviderAdapter {
     incoming: IncomingMeta,
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
+    const traceContext: TraceContext | undefined = incoming.traceContext || traceStorage.getStore() || undefined;
+
     if (incoming.abortSignal?.aborted) {
+      emitStructuredEvent({
+        level: "warning",
+        event: "m365.turn.completed",
+        traceContext,
+        safeDetails: {
+          completionType: "aborted",
+          toolCount: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      });
       throw new DOMException("M365 Copilot turn aborted before start", "AbortError");
     }
 
@@ -171,6 +187,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
       }
+      emitStructuredEvent({
+        level: "info",
+        event: "m365.turn.completed",
+        traceContext,
+        safeDetails: {
+          completionType: "final_answer",
+          toolCount: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      });
       emit({
         type: "done",
         stopReason: "stop",
@@ -186,16 +213,28 @@ export class M365CopilotAdapter implements ProviderAdapter {
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {
       const titleText = generateTitleResponse(compiledPrompt);
+      const usage = {
+        inputTokens: Math.ceil(compiledPrompt.length / 4),
+        outputTokens: Math.ceil(titleText.length / 4),
+        totalTokens: Math.ceil((compiledPrompt.length + titleText.length) / 4),
+      };
+      emitStructuredEvent({
+        level: "info",
+        event: "m365.turn.completed",
+        traceContext,
+        safeDetails: {
+          completionType: "title_response",
+          toolCount: 0,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        },
+      });
       emit({ type: "text_delta", text: titleText });
       emit({
         type: "done",
         stopReason: "stop",
         endTurn: true,
-        usage: {
-          inputTokens: Math.ceil(compiledPrompt.length / 4),
-          outputTokens: Math.ceil(titleText.length / 4),
-          totalTokens: Math.ceil((compiledPrompt.length + titleText.length) / 4),
-        },
+        usage,
       });
       return;
     }
@@ -219,6 +258,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         isNewConversation,
         shouldStop: () => toolDetector.hasDetectedToolCall(),
         modelSlug: parsed.modelId,
+        traceContext,
       });
 
       const { remainingText, toolCall } = toolDetector.finish();
@@ -258,6 +298,23 @@ export class M365CopilotAdapter implements ProviderAdapter {
           callId: rawCall.id || `call_${Math.random().toString(36).slice(2, 10)}`,
         }));
 
+        for (const { mapped, callId } of mappedCalls) {
+          emitStructuredEvent({
+            level: "info",
+            event: "m365.tool.detected",
+            traceContext,
+            safeDetails: {
+              toolName: mapped.name,
+              callId,
+              argKeys: mapped.arguments && typeof mapped.arguments === "object" ? Object.keys(mapped.arguments) : [],
+            },
+            diagnosticDetails: {
+              toolFingerprint: secureToolFingerprint(mapped.name, mapped.arguments),
+              argsBytes: Buffer.byteLength(JSON.stringify(mapped.arguments || {}), "utf8"),
+            },
+          });
+        }
+
         // Loop Guard: Kiểm tra giới hạn số vòng lặp và lặp lại công cụ liên tiếp
         cleanExpiredConversationGuards();
         const cKey = conversationKey || `transient_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
@@ -283,10 +340,41 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
         conversationGuard.set(cKey, guardState);
 
+        emitStructuredEvent({
+          level: "info",
+          event: "m365.loop.updated",
+          traceContext,
+          safeDetails: {
+            toolIterations: guardState.toolIterations,
+            identicalToolCount: guardState.identicalToolCount,
+          },
+        });
+
         // 1. Kiểm tra lặp lại cùng một tool call quá 3 lần liên tiếp
         if (guardState.identicalToolCount >= MAX_IDENTICAL_TOOL_CALLS) {
           console.warn(`[m365-guard] Ngắt vòng lặp: Công cụ bị gọi lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp.`);
           conversationGuard.delete(cKey);
+          emitStructuredEvent({
+            level: "error",
+            event: "m365.loop.blocked",
+            traceContext,
+            safeDetails: {
+              reason: "repeated_tool_call",
+              toolName: mappedCalls[0]?.mapped.name,
+              identicalCount: guardState.identicalToolCount,
+            },
+          });
+          emitStructuredEvent({
+            level: "error",
+            event: "m365.turn.completed",
+            traceContext,
+            safeDetails: {
+              completionType: "loop_blocked",
+              toolCount: 0,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+            },
+          });
           emit({
             type: "text_delta",
             text: `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${mappedCalls[0].mapped.name}\` đã được yêu cầu lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
@@ -304,6 +392,26 @@ export class M365CopilotAdapter implements ProviderAdapter {
         if (guardState.toolIterations > MAX_TOOL_ITERATIONS) {
           console.warn(`[m365-guard] Ngắt vòng lặp: Vượt quá giới hạn tối đa ${MAX_TOOL_ITERATIONS} lượt gọi công cụ trong phiên.`);
           conversationGuard.delete(cKey);
+          emitStructuredEvent({
+            level: "error",
+            event: "m365.loop.blocked",
+            traceContext,
+            safeDetails: {
+              reason: "max_iterations_exceeded",
+              toolIterations: guardState.toolIterations,
+            },
+          });
+          emitStructuredEvent({
+            level: "error",
+            event: "m365.turn.completed",
+            traceContext,
+            safeDetails: {
+              completionType: "loop_blocked",
+              toolCount: 0,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+            },
+          });
           emit({
             type: "text_delta",
             text: `\n\n> [!WARNING]\n> **Giới hạn an toàn (Max Tool Iterations Exceeded):** Đã chạm ngưỡng tối đa ${MAX_TOOL_ITERATIONS} lượt thực thi công cụ liên tiếp trong phiên. Hệ thống tự động kết thúc để bảo vệ tài nguyên.`,
@@ -325,6 +433,18 @@ export class M365CopilotAdapter implements ProviderAdapter {
           emit({ type: "tool_call_delta", arguments: mapped.arguments });
           emit({ type: "tool_call_end" });
         }
+
+        emitStructuredEvent({
+          level: "info",
+          event: "m365.turn.completed",
+          traceContext,
+          safeDetails: {
+            completionType: "tool_call",
+            toolCount: detectedToolCalls.length,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+          },
+        });
 
         emit({
           type: "done",
@@ -351,6 +471,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
       }
+      emitStructuredEvent({
+        level: "info",
+        event: "m365.turn.completed",
+        traceContext,
+        safeDetails: {
+          completionType: "final_answer",
+          toolCount: 0,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        },
+      });
       emit({
         type: "done",
         stopReason: "stop",
@@ -363,10 +494,35 @@ export class M365CopilotAdapter implements ProviderAdapter {
       }
       if (incoming.abortSignal?.aborted) {
         console.log(`[m365-adapter] [aborted] turn aborted by incoming signal`);
+        emitStructuredEvent({
+          level: "warning",
+          event: "m365.turn.completed",
+          traceContext,
+          safeDetails: {
+            completionType: "aborted",
+            toolCount: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        });
         throw new DOMException("M365 Copilot turn aborted", "AbortError");
       }
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[m365-adapter] [error] ${message}`);
+      emitStructuredEvent({
+        level: "error",
+        event: "m365.turn.completed",
+        traceContext,
+        safeDetails: {
+          completionType: "error",
+          toolCount: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+        diagnosticDetails: {
+          errorMessage: message,
+        },
+      });
       emit({
         type: "error",
         message: `[M365 Copilot] ${message}`,

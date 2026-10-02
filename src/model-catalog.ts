@@ -121,7 +121,7 @@ export function getFallbackNativeCatalog(): { models: JsonObject[] } {
   const modelsMap = new Map<string, JsonObject>();
   // Ưu tiên các native models mặc định chuẩn của Codex
   for (const model of DEFAULT_NATIVE_FALLBACK_MODELS) {
-    modelsMap.set(model.slug, structuredClone(model));
+    modelsMap.set(String(model.slug), structuredClone(model));
   }
   try {
     const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");

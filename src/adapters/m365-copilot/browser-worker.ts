@@ -5,6 +5,8 @@ import { existsSync } from "node:fs";
 import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "./markdown";
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../m365-models";
+import { emitStructuredEvent } from "../../observability/emitter";
+import type { TraceContext } from "../../observability/types";
 
 export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
@@ -15,6 +17,7 @@ export interface M365BrowserRunOptions {
   isNewConversation?: boolean;
   shouldStop?: () => boolean;
   modelSlug?: string;
+  traceContext?: TraceContext;
 }
 
 let activeM365ConversationKey: string | null = null;
@@ -60,6 +63,21 @@ export async function executeM365Turn(
   const connection = await connectLauncherBrowserHost(descriptorPath, 20_000, m365SurfaceId, options.signal);
   const { browser, page } = connection;
   let finalStatus: "completed" | "failed" | "aborted" = "failed";
+  const startTime = Date.now();
+
+  emitStructuredEvent({
+    level: "info",
+    event: "m365.provider.started",
+    traceContext: options.traceContext,
+    safeDetails: {
+      provider: "m365-copilot",
+      modelSlug: options.modelSlug,
+      isNewConversation: Boolean(options.isNewConversation),
+    },
+    diagnosticDetails: {
+      promptBytes: Buffer.byteLength(promptText, "utf8"),
+    },
+  });
 
   try {
     // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
@@ -467,13 +485,53 @@ export async function executeM365Turn(
     }
 
     finalStatus = "completed";
+    emitStructuredEvent({
+      level: "info",
+      event: "m365.provider.finished",
+      traceContext: options.traceContext,
+      safeDetails: {
+        provider: "m365-copilot",
+        status: finalStatus,
+        durationMs: Date.now() - startTime,
+        outputChars: fullMarkdown.length,
+      },
+      diagnosticDetails: {
+        outputBytes: Buffer.byteLength(fullMarkdown, "utf8"),
+      },
+    });
     console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus}`);
     return fullMarkdown;
   } catch (err) {
     if (options.signal?.aborted) {
       finalStatus = "aborted";
+      emitStructuredEvent({
+        level: "warning",
+        event: "m365.provider.finished",
+        traceContext: options.traceContext,
+        safeDetails: {
+          provider: "m365-copilot",
+          status: finalStatus,
+          durationMs: Date.now() - startTime,
+          outputChars: 0,
+        },
+      });
       console.log(`[m365-worker] [aborted] turn aborted by client`);
     } else {
+      finalStatus = "failed";
+      emitStructuredEvent({
+        level: "error",
+        event: "m365.provider.finished",
+        traceContext: options.traceContext,
+        safeDetails: {
+          provider: "m365-copilot",
+          status: finalStatus,
+          durationMs: Date.now() - startTime,
+          outputChars: 0,
+        },
+        diagnosticDetails: {
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       console.error(`[m365-worker] [error]`, err);
     }
     throw err;

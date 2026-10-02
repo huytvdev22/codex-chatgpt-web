@@ -1007,6 +1007,11 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
+  handle("launcher:clear-logs", () => {
+    logger.clear();
+    send("launcher:logs-cleared");
+    return true;
+  });
   handle("launcher:export-logs", async () => {
     const date = new Date().toISOString().slice(0, 10);
     const copy = nativeCopyFor(stateStore.read().language);

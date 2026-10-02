@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { LimitsSurface } from "./LimitsSurface";
+import { TraceExplorer } from "./TraceExplorer";
 import { limitsCopyFor } from "./limits-copy";
 import { useLimits } from "./useLimits";
 import type {
@@ -82,6 +83,7 @@ export function App() {
       if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
     });
     const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-299), record]));
+    const unsubscribeLogsCleared = api.onLogsCleared?.(() => setLogs([]));
     const unsubscribeUpdate = api.onUpdateState((update) => {
       setSnapshot((current) => current ? { ...current, update } : current);
     });
@@ -92,6 +94,7 @@ export function App() {
       unsubscribeBrowser();
       unsubscribeOperation();
       unsubscribeLog();
+      unsubscribeLogsCleared?.();
       unsubscribeUpdate();
     };
   }, []);
@@ -1621,33 +1624,31 @@ function ActivitySurface({
   setError: (error: string | null) => void;
 }) {
   return (
-    <ContentSurface subtitle={copy.activitySubtitle} title={copy.activityTitle}>
-      <div className="section-heading activity-heading">
-        <span>{copy.recentActivity}</span>
-        <SecondaryButton
-          icon="external"
-          onClick={() => void api!.exportLogs().catch((cause) => setError(messageOf(cause)))}
-        >
-          {copy.exportSafeLog}
-        </SecondaryButton>
-      </div>
-      <div className="activity-table">
-        {logs.length === 0 ? (
-          <div className="surface-empty">
-            <Icon name="logs" />
-            <span>{copy.noLogs}</span>
-          </div>
-        ) : null}
-        {[...logs].reverse().map((record, index) => (
-          <div className="activity-row" key={`${record.at}-${record.event}-${index}`}>
-            <StateDot state={record.level === "error" ? "error" : record.level === "warning" ? "busy" : "ready"} />
-            <div>
-              <strong>{humanEvent(record.event)}</strong>
-              <span>{logDetail(record.detail)}</span>
-            </div>
-            <time>{formatTime(record.at, language)}</time>
-          </div>
-        ))}
+    <ContentSurface full fit subtitle={copy.activitySubtitle} title={copy.activityTitle}>
+      <div style={{ flex: 1, minHeight: 480, height: "100%", marginTop: 8, marginBottom: 8, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--color-border)" }}>
+        <TraceExplorer
+          logs={logs}
+          copy={copy}
+          language={language}
+          onClearLogs={async () => {
+            try {
+              if (api?.clearLogs) {
+                await api.clearLogs();
+              }
+            } catch (cause) {
+              setError(messageOf(cause));
+            }
+          }}
+          onExportLogs={async () => {
+            try {
+              if (api?.exportLogs) {
+                await api.exportLogs();
+              }
+            } catch (cause) {
+              setError(messageOf(cause));
+            }
+          }}
+        />
       </div>
     </ContentSurface>
   );
@@ -1975,6 +1976,7 @@ function ContentSurface({
   children,
   eyebrow,
   fit = false,
+  full = false,
   narrow = false,
   subtitle,
   title,
@@ -1982,13 +1984,14 @@ function ContentSurface({
   children: ReactNode;
   eyebrow?: string;
   fit?: boolean;
+  full?: boolean;
   narrow?: boolean;
   subtitle?: string;
   title: string;
 }) {
   return (
     <section className="content-surface">
-      <div className={`content-scroll${narrow ? " is-narrow" : ""}${fit ? " is-fit" : ""}`}>
+      <div className={`content-scroll${full ? " is-full" : ""}${narrow ? " is-narrow" : ""}${fit ? " is-fit" : ""}`}>
         <header className="surface-header">
           {eyebrow ? <span>{eyebrow}</span> : null}
           <h1>{title}</h1>

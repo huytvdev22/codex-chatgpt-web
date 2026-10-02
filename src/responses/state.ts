@@ -14,11 +14,21 @@ const MAX_STORED_RESPONSE_BYTES = 64 * 1024 * 1024;
 const SNAPSHOT_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
 
-interface StoredResponseState {
+export interface StoredResponseTraceState {
+  traceId?: string;
+  rootSpanId?: string;
+  turnId?: string;
+  conversationId?: string;
+  providerCallIndex?: number;
+  toolIteration?: number;
+}
+
+export interface StoredResponseState extends StoredResponseTraceState {
   createdAt: number;
   items: unknown[];
   /** Approximate in-memory size, computed locally at insert time (never trusted from disk). */
   sizeBytes?: number;
+  schemaVersion?: number;
 }
 
 const states = new Map<string, StoredResponseState>();
@@ -93,6 +103,13 @@ function ensureLoaded(): void {
       setEntry(id, {
         createdAt: rec.createdAt,
         items: rec.items,
+        traceId: typeof rec.traceId === "string" ? rec.traceId : undefined,
+        rootSpanId: typeof rec.rootSpanId === "string" ? rec.rootSpanId : undefined,
+        turnId: typeof rec.turnId === "string" ? rec.turnId : undefined,
+        conversationId: typeof rec.conversationId === "string" ? rec.conversationId : undefined,
+        providerCallIndex: typeof rec.providerCallIndex === "number" ? rec.providerCallIndex : undefined,
+        toolIteration: typeof rec.toolIteration === "number" ? rec.toolIteration : undefined,
+        schemaVersion: typeof rec.schemaVersion === "number" ? rec.schemaVersion : undefined,
       });
     }
     pruneResponses();
@@ -197,6 +214,22 @@ export function previousResponseReplayPrefixLength(body: unknown): number {
   return replayedInputPrefixLengths.get(body) ?? 0;
 }
 
+/** Get trace metadata stored with previous_response_id, without affecting the protocol items payload. */
+export function getStoredResponseTraceState(responseId: string): StoredResponseTraceState | undefined {
+  if (!responseId) return undefined;
+  ensureLoaded();
+  const entry = states.get(responseId);
+  if (!entry) return undefined;
+  return {
+    traceId: entry.traceId,
+    rootSpanId: entry.rootSpanId,
+    turnId: entry.turnId,
+    conversationId: entry.conversationId,
+    providerCallIndex: entry.providerCallIndex,
+    toolIteration: entry.toolIteration,
+  };
+}
+
 /**
  * Cache completed output and max_output_tokens partial output for previous_response_id replay.
  * Content-filtered incomplete and failed output are not authoritative replay history.
@@ -204,7 +237,7 @@ export function previousResponseReplayPrefixLength(body: unknown): number {
 export function rememberResponseState(
   requestBody: unknown,
   response: { id?: unknown; output?: unknown; status?: unknown; incomplete_details?: unknown },
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; traceState?: StoredResponseTraceState },
 ): void {
   if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) return;
   const request = requestBody as Record<string, unknown>;
@@ -224,6 +257,13 @@ export function rememberResponseState(
   setEntry(response.id, {
     createdAt: now(),
     items: [...inputItems(request.input), ...response.output],
+    traceId: opts?.traceState?.traceId,
+    rootSpanId: opts?.traceState?.rootSpanId,
+    turnId: opts?.traceState?.turnId,
+    conversationId: opts?.traceState?.conversationId,
+    providerCallIndex: opts?.traceState?.providerCallIndex,
+    toolIteration: opts?.traceState?.toolIteration,
+    schemaVersion: 2,
   });
   pruneResponses();
   schedulePersist();
