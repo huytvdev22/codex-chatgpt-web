@@ -35,11 +35,11 @@ const STRUCTURED_DETAIL_EXPORT_ALLOWLIST = Object.freeze([
 // Allowlist các thuộc tính bên trong safeDetails theo từng sự kiện cụ thể
 // Bất kỳ thuộc tính nào không nằm trong danh sách này sẽ bị loại bỏ hoàn toàn khi Safe Export
 const EVENT_SAFE_DETAILS_ALLOWLIST = Object.freeze({
-  "codex.request.received": Object.freeze(["method", "model", "stream", "hasPreviousResponse", "modelSlug"]),
+  "codex.request.received": Object.freeze(["method", "model", "stream", "hasPreviousResponse", "modelSlug", "promptPreview", "userMessage"]),
   "trace.context.resolved": Object.freeze(["isContinuation", "correlationRecovered", "providerCallIndex", "restoredFromResponseId"]),
   "codex.tool_result.received": Object.freeze(["toolCallId", "resultBytes", "isError", "previousResponseId"]),
-  "m365.provider.started": Object.freeze(["provider", "modelSlug", "isNewConversation", "capabilityMode", "attempt"]),
-  "m365.provider.finished": Object.freeze(["provider", "status", "durationMs", "outputChars", "totalChars", "errorType"]),
+  "m365.provider.started": Object.freeze(["provider", "modelSlug", "isNewConversation", "capabilityMode", "attempt", "injectedPromptPreview", "promptBytes"]),
+  "m365.provider.finished": Object.freeze(["provider", "status", "durationMs", "outputChars", "totalChars", "errorType", "responsePreview"]),
   "m365.tool.detected": Object.freeze(["toolName", "callId", "argKeys", "argBytes", "argHmac"]),
   "m365.loop.updated": Object.freeze(["toolIterations", "identicalToolCount", "toolIteration", "identicalCount", "fingerprintHmac"]),
   "m365.loop.blocked": Object.freeze(["reason", "toolName", "identicalCount", "toolIterations", "limitType", "count", "blockedTool"]),

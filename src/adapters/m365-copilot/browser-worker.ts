@@ -73,6 +73,8 @@ export async function executeM365Turn(
       provider: "m365-copilot",
       modelSlug: options.modelSlug,
       isNewConversation: Boolean(options.isNewConversation),
+      injectedPromptPreview: promptText.slice(0, 500),
+      promptBytes: Buffer.byteLength(promptText, "utf8"),
     },
     diagnosticDetails: {
       promptBytes: Buffer.byteLength(promptText, "utf8"),
@@ -494,6 +496,7 @@ export async function executeM365Turn(
         status: finalStatus,
         durationMs: Date.now() - startTime,
         outputChars: fullMarkdown.length,
+        responsePreview: fullMarkdown.slice(0, 500),
       },
       diagnosticDetails: {
         outputBytes: Buffer.byteLength(fullMarkdown, "utf8"),

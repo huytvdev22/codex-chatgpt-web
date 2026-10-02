@@ -77,6 +77,48 @@ export interface LogRecord {
   detail: Record<string, unknown>;
 }
 
+export interface TraceSpan {
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  event: string;
+  category: "request" | "provider" | "tool" | "loop" | "bridge" | "turn" | "generic";
+  startTime: number;
+  durationMs: number;
+  status: "completed" | "failed" | "warning" | "running";
+  record: LogRecord;
+  turnIndex?: number;
+  traceId?: string;
+}
+
+export interface TraceGroup {
+  traceId: string;
+  rootSpanId?: string;
+  conversationId?: string;
+  startTime: number;
+  endTime: number;
+  durationMs: number;
+  status: "completed" | "failed" | "warning" | "running";
+  modelSlug?: string;
+  toolNames: string[];
+  records: LogRecord[];
+  spans: TraceSpan[];
+}
+
+export interface ConversationGroup {
+  conversationId: string;
+  title: string;
+  isSystem: boolean;
+  startTime: number;
+  endTime: number;
+  durationMs: number;
+  status: "completed" | "failed" | "warning" | "running";
+  modelSlug?: string;
+  traces: TraceGroup[];
+  records: LogRecord[];
+  spans: TraceSpan[];
+}
+
 export interface DoctorCheck {
   id: string;
   status: "ok" | "warning" | "error";

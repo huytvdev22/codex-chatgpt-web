@@ -1,15 +1,19 @@
 import { Fragment, useMemo, useState } from "react";
-import type { LogRecord, Language } from "./types";
+import type { LogRecord, Language, TraceSpan, TraceGroup, ConversationGroup } from "./types";
 import type { Copy } from "./i18n";
 import { Icon } from "./icons";
 import {
   formatLogsAsPrettyJson,
   formatLogsAsJsonl,
   formatLogsAsSummary,
+  formatFlowPayloadReport,
   downloadFile,
   generateExportFilename,
 } from "./export-utils";
+import { getEventTranslation, translateDaemonLine } from "./event-translations";
 import "./trace-explorer.css";
+
+export type { TraceSpan, TraceGroup, ConversationGroup };
 
 /**
  * Trích xuất metadata thông minh từ log record
@@ -66,48 +70,6 @@ function extractRecordMetadata(record: LogRecord) {
   return { conversationId, traceId, rootSpanId, spanId, requestId, modelSlug };
 }
 
-export interface TraceSpan {
-  spanId: string;
-  parentSpanId?: string;
-  name: string;
-  event: string;
-  category: "request" | "provider" | "tool" | "loop" | "bridge" | "turn" | "generic";
-  startTime: number;
-  durationMs: number;
-  status: "completed" | "failed" | "warning" | "running";
-  record: LogRecord;
-  turnIndex?: number;
-  traceId?: string;
-}
-
-export interface TraceGroup {
-  traceId: string;
-  rootSpanId?: string;
-  conversationId?: string;
-  startTime: number;
-  endTime: number;
-  durationMs: number;
-  status: "completed" | "failed" | "warning" | "running";
-  modelSlug?: string;
-  toolNames: string[];
-  records: LogRecord[];
-  spans: TraceSpan[];
-}
-
-export interface ConversationGroup {
-  conversationId: string;
-  title: string;
-  isSystem: boolean;
-  startTime: number;
-  endTime: number;
-  durationMs: number;
-  status: "completed" | "failed" | "warning" | "running";
-  modelSlug?: string;
-  traces: TraceGroup[];
-  records: LogRecord[];
-  spans: TraceSpan[];
-}
-
 export function TraceExplorer({
   logs,
   copy,
@@ -141,6 +103,9 @@ export function TraceExplorer({
   const [isCopyMenuOpen, setIsCopyMenuOpen] = useState(false);
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
+
+  // Cờ bật tắt hiển thị sự kiện tiếng Việt trực quan
+  const [isVietnameseEvents, setIsVietnameseEvents] = useState(true);
 
   const showToast = (msg: string) => {
     setFeedbackToast(msg);
@@ -1142,6 +1107,34 @@ export function TraceExplorer({
                         ) : null}
                       </div>
 
+                      {/* Nút xuất Báo cáo Flow & Payload Markdown độc lập */}
+                      <button
+                        className="te-btn"
+                        style={{
+                          height: 28,
+                          fontSize: 11,
+                          padding: "0 10px",
+                          gap: 5,
+                          background: "var(--color-bg-secondary, rgba(255,255,255,0.06))",
+                          borderColor: "var(--color-accent, #3b82f6)",
+                          color: "var(--color-accent, #60a5fa)",
+                          fontWeight: 500,
+                        }}
+                        onClick={() => {
+                          const report = formatFlowPayloadReport(activeSelection.conversation, activeSelection.trace);
+                          const filename = generateExportFilename(
+                            activeSelection.isAllTurns ? "flow_report_conv" : "flow_report_turn",
+                            targetId,
+                            "md"
+                          );
+                          downloadFile(report, filename, "text/markdown");
+                          showToast(`✓ Đã tải báo cáo Flow: ${filename}`);
+                        }}
+                        title="Tải báo cáo chi tiết Flow và nội dung Message Payload thực tế (Markdown)"
+                      >
+                        <span>📑 Flow Report (.md)</span>
+                      </button>
+
                       {/* Dropdown Menu: Copy Log ▾ */}
                       <div className="te-menu-wrapper">
                         <button
@@ -1164,6 +1157,18 @@ export function TraceExplorer({
                               onClick={() => setIsCopyMenuOpen(false)}
                             />
                             <div className="te-menu-popover">
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatFlowPayloadReport(activeSelection.conversation, activeSelection.trace);
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép Báo cáo Flow & Payload (.md)`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Flow & Payload Report</span>
+                                <span className="te-menu-item-subtitle">.md</span>
+                              </button>
                               <button
                                 className="te-menu-item"
                                 onClick={() => {
@@ -1230,6 +1235,23 @@ export function TraceExplorer({
                               <button
                                 className="te-menu-item"
                                 onClick={() => {
+                                  const text = formatFlowPayloadReport(activeSelection.conversation, activeSelection.trace);
+                                  const filename = generateExportFilename(
+                                    activeSelection.isAllTurns ? "flow_report_conv" : "flow_report_turn",
+                                    targetId,
+                                    "md"
+                                  );
+                                  downloadFile(text, filename, "text/markdown");
+                                  showToast(`✓ Đã tải xuống ${filename}`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Flow & Payload Report</span>
+                                <span className="te-menu-item-subtitle">.md</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
                                   const text = formatLogsAsPrettyJson(targetRecords);
                                   const filename = generateExportFilename(targetPrefix, targetId, "json");
                                   downloadFile(text, filename, "application/json");
@@ -1272,7 +1294,28 @@ export function TraceExplorer({
                       </div>
                     </div>
 
-                    <div className="te-action-bar-right">
+                    <div className="te-action-bar-right" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button
+                        className={`te-btn ${isVietnameseEvents ? "active" : ""}`}
+                        style={{
+                          height: 26,
+                          fontSize: 11,
+                          padding: "0 8px",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          background: isVietnameseEvents ? "rgba(59, 130, 246, 0.15)" : "transparent",
+                          borderColor: isVietnameseEvents ? "var(--color-accent, #3b82f6)" : "var(--color-border-subtle, #333)",
+                          color: isVietnameseEvents ? "var(--color-accent, #60a5fa)" : "var(--color-text-secondary, #aaa)",
+                        }}
+                        onClick={() => setIsVietnameseEvents((prev) => !prev)}
+                        title="Bật/Tắt chế độ hiển thị sự kiện tiếng Việt và giải nghĩa dòng chảy hệ thống"
+                      >
+                        <span>🇻🇳 {isVietnameseEvents ? "Việt hóa: BẬT" : "Việt hóa: TẮT"}</span>
+                      </button>
+
                       <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
                         {sortedSpans.length} events
                       </span>
@@ -1317,12 +1360,20 @@ export function TraceExplorer({
                       const isExpanded = expandedSpanIds.has(span.spanId);
                       const detail = span.record.detail || {};
                       const safe = (detail.safeDetails as Record<string, unknown>) || {};
+                      const daemonVi =
+                        isVietnameseEvents && typeof detail.line === "string"
+                          ? translateDaemonLine(detail.line)
+                          : null;
                       const previewText =
+                        (daemonVi && `${daemonVi} | ${detail.line}`) ||
+                        (typeof safe.userMessage === "string" && `[User]: ${safe.userMessage.trim()}`) ||
+                        (typeof safe.injectedPromptPreview === "string" && `[Prompt M365]: ${safe.injectedPromptPreview.trim()}`) ||
+                        (typeof safe.responsePreview === "string" && `[Phản hồi M365]: ${safe.responsePreview.trim()}`) ||
+                        (typeof safe.promptPreview === "string" && `[Prompt]: ${safe.promptPreview.trim()}`) ||
                         (typeof detail.line === "string" && detail.line.trim()) ||
                         (typeof detail.message === "string" && detail.message.trim()) ||
                         (typeof detail.command === "string" && `$ ${detail.command.trim()}`) ||
                         (typeof safe.preview === "string" && safe.preview.trim()) ||
-                        (typeof safe.promptPreview === "string" && safe.promptPreview.trim()) ||
                         (typeof safe.outputPreview === "string" && safe.outputPreview.trim()) ||
                         (typeof safe.url === "string" && safe.url.trim()) ||
                         (typeof safe.method === "string" &&
@@ -1379,21 +1430,38 @@ export function TraceExplorer({
                                 </span>
                               </td>
                             )}
-                            {visibleColumns.event && (
-                              <td className="te-td-event" title={span.name}>
-                                {activeSelection.isAllTurns &&
-                                activeSelection.conversation.traces.length > 1 &&
-                                span.turnIndex ? (
-                                  <span
-                                    className="te-turn-badge-tag"
-                                    title={`Thuộc Turn #${span.turnIndex} (Trace: ${span.traceId || ""})`}
-                                  >
-                                    T{span.turnIndex}
-                                  </span>
-                                ) : null}
-                                <span>{span.name}</span>
-                              </td>
-                            )}
+                            {visibleColumns.event && (() => {
+                              const translation = isVietnameseEvents ? getEventTranslation(span.name) : null;
+                              return (
+                                <td
+                                  className="te-td-event"
+                                  title={
+                                    translation
+                                      ? `${translation.phase}\n${translation.descVi}\n(Mã gốc: ${span.name})`
+                                      : span.name
+                                  }
+                                >
+                                  {activeSelection.isAllTurns &&
+                                  activeSelection.conversation.traces.length > 1 &&
+                                  span.turnIndex ? (
+                                    <span
+                                      className="te-turn-badge-tag"
+                                      title={`Thuộc Turn #${span.turnIndex} (Trace: ${span.traceId || ""})`}
+                                    >
+                                      T{span.turnIndex}
+                                    </span>
+                                  ) : null}
+                                  {translation ? (
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                      <span style={{ fontSize: 13, lineHeight: 1 }}>{translation.icon}</span>
+                                      <span style={{ fontWeight: 500 }}>{translation.labelVi}</span>
+                                    </span>
+                                  ) : (
+                                    <span>{span.name}</span>
+                                  )}
+                                </td>
+                              );
+                            })()}
                             {visibleColumns.message && (
                               <td className="te-td-message" title={previewText}>
                                 {previewText}
@@ -1492,7 +1560,20 @@ export function TraceExplorer({
                                         </tr>
                                         <tr>
                                           <td className="te-doc-field-name">event.action</td>
-                                          <td className="te-doc-field-value">{span.record.event}</td>
+                                          <td className="te-doc-field-value">
+                                            <code>{span.record.event}</code>
+                                            {isVietnameseEvents && (() => {
+                                              const trans = getEventTranslation(span.record.event);
+                                              return (
+                                                <div style={{ marginTop: 4, fontSize: 12, color: "var(--color-accent, #60a5fa)" }}>
+                                                  {trans.icon} <strong>{trans.labelVi}</strong> ({trans.phase})
+                                                  <div style={{ color: "var(--color-text-secondary, #94a3b8)", fontSize: 11 }}>
+                                                    {trans.descVi}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })()}
+                                          </td>
                                         </tr>
                                         {detail.traceId ? (
                                           <tr>
@@ -1547,6 +1628,11 @@ export function TraceExplorer({
                                             <td className="te-doc-field-name">process.stdout.line</td>
                                             <td className="te-doc-field-value">
                                               {String(detail.line)}
+                                              {isVietnameseEvents && translateDaemonLine(String(detail.line)) ? (
+                                                <div style={{ marginTop: 2, fontSize: 11, color: "var(--color-accent, #60a5fa)" }}>
+                                                  {translateDaemonLine(String(detail.line))}
+                                                </div>
+                                              ) : null}
                                             </td>
                                           </tr>
                                         ) : null}
@@ -1558,16 +1644,38 @@ export function TraceExplorer({
                                             </td>
                                           </tr>
                                         ) : null}
-                                        {Object.entries(safe).map(([k, v]) => (
-                                          <tr key={k}>
-                                            <td className="te-doc-field-name">safeDetails.{k}</td>
-                                            <td className="te-doc-field-value">
-                                              {typeof v === "object"
-                                                ? JSON.stringify(v)
-                                                : String(v)}
-                                            </td>
-                                          </tr>
-                                        ))}
+                                        {Object.entries(safe).map(([k, v]) => {
+                                          const isLongText = typeof v === "string" && (v.length > 80 || v.includes("\n"));
+                                          return (
+                                            <tr key={k}>
+                                              <td className="te-doc-field-name">safeDetails.{k}</td>
+                                              <td className="te-doc-field-value">
+                                                {isLongText ? (
+                                                  <pre
+                                                    style={{
+                                                      margin: 0,
+                                                      padding: "6px 10px",
+                                                      background: "rgba(0, 0, 0, 0.25)",
+                                                      borderRadius: 4,
+                                                      maxHeight: 200,
+                                                      overflow: "auto",
+                                                      whiteSpace: "pre-wrap",
+                                                      wordBreak: "break-word",
+                                                      fontFamily: "var(--font-mono)",
+                                                      fontSize: 12,
+                                                    }}
+                                                  >
+                                                    {String(v)}
+                                                  </pre>
+                                                ) : typeof v === "object" ? (
+                                                  JSON.stringify(v)
+                                                ) : (
+                                                  String(v)
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
                                       </tbody>
                                     </table>
                                   ) : (

@@ -582,17 +582,37 @@ async function handleM365ResponseRequest(
 
   // 2. Bọc toàn bộ trong traceStorage.run
   return traceStorage.run(traceContext, async () => {
+    // Trích xuất tin nhắn người dùng phục vụ Message Flow & Payload Inspection
+    let userMessagePreview = "";
+    const rawRecord = raw as Record<string, unknown> | null;
+    if (rawRecord && Array.isArray(rawRecord.messages)) {
+      const lastUserMsg = [...rawRecord.messages].reverse().find((m: any) => m && m.role === "user");
+      if (lastUserMsg && typeof lastUserMsg.content === "string") {
+        userMessagePreview = lastUserMsg.content.slice(0, 500);
+      } else if (lastUserMsg && Array.isArray(lastUserMsg.content)) {
+        userMessagePreview = lastUserMsg.content.map((c: any) => c.text || "").join(" ").slice(0, 500);
+      }
+    } else if (rawRecord && Array.isArray(rawRecord.input)) {
+      const lastInput = [...rawRecord.input].reverse().find((i: any) => i && typeof i.text === "string");
+      if (lastInput) {
+        userMessagePreview = (lastInput as { text: string }).text.slice(0, 500);
+      }
+    }
+
     // 3. Emit codex.request.received
     emitStructuredEvent({
       event: "codex.request.received",
       level: "info",
-      message: `Codex request received for model ${requestedModel}`,
+      message: userMessagePreview
+        ? `Nhận câu hỏi từ Codex: "${userMessagePreview.slice(0, 80)}${userMessagePreview.length > 80 ? "..." : ""}"`
+        : `Codex request received for model ${requestedModel}`,
       source: "server",
       safeDetails: {
         method: req.method,
         model: requestedModel,
         stream: (raw as Record<string, unknown>)?.stream ?? true,
         hasPreviousResponse: Boolean(previousResponseId),
+        ...(userMessagePreview ? { userMessage: userMessagePreview, promptPreview: userMessagePreview.slice(0, 160) } : {}),
       },
     });
 
