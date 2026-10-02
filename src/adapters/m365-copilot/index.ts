@@ -27,8 +27,8 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
     const text = typeof msg.content === "string"
       ? msg.content
       : Array.isArray(msg.content)
-      ? msg.content.map(c => c.type === "text" ? c.text : "").join(" ")
-      : "";
+        ? msg.content.map(c => c.type === "text" ? c.text : "").join(" ")
+        : "";
     const match = text.match(/<shell>([^<]+)<\/shell>/i);
     if (match) return match[1].trim();
   }
@@ -110,8 +110,8 @@ interface ConversationGuardState {
   updatedAt: number;
 }
 
-export const MAX_TOOL_ITERATIONS = 20;
-export const MAX_IDENTICAL_TOOL_CALLS = 3;
+export const MAX_TOOL_ITERATIONS = 100;
+export const MAX_IDENTICAL_TOOL_CALLS = 10;
 const GUARD_TTL_MS = 15 * 60 * 1000; // 15 phút
 
 export const conversationGuard = new Map<string, ConversationGuardState>();
@@ -225,6 +225,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         safeDetails: {
           completionType: "title_response",
           toolCount: 0,
+          finalAnswer: titleText,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
         },
@@ -306,6 +307,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
             safeDetails: {
               toolName: mapped.name,
               callId,
+              arguments: mapped.arguments,
               argKeys: mapped.arguments && typeof mapped.arguments === "object" ? Object.keys(mapped.arguments) : [],
             },
             diagnosticDetails: {
@@ -441,6 +443,11 @@ export class M365CopilotAdapter implements ProviderAdapter {
           safeDetails: {
             completionType: "tool_call",
             toolCount: detectedToolCalls.length,
+            toolCalls: mappedCalls.map(c => ({
+              id: c.callId,
+              name: c.mapped.name,
+              arguments: c.mapped.arguments,
+            })),
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,
           },
@@ -478,6 +485,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         safeDetails: {
           completionType: "final_answer",
           toolCount: 0,
+          finalAnswer: remainingText || reply || "",
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
         },

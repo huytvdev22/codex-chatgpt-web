@@ -582,20 +582,56 @@ async function handleM365ResponseRequest(
 
   // 2. Bọc toàn bộ trong traceStorage.run
   return traceStorage.run(traceContext, async () => {
-    // Trích xuất tin nhắn người dùng phục vụ Message Flow & Payload Inspection
+    // Trích xuất tin nhắn người dùng hoặc kết quả công cụ phục vụ Message Flow & Payload Inspection
     let userMessagePreview = "";
+    let actualCodexMessage = "";
     const rawRecord = raw as Record<string, unknown> | null;
     if (rawRecord && Array.isArray(rawRecord.messages)) {
       const lastUserMsg = [...rawRecord.messages].reverse().find((m: any) => m && m.role === "user");
-      if (lastUserMsg && typeof lastUserMsg.content === "string") {
-        userMessagePreview = lastUserMsg.content.slice(0, 500);
-      } else if (lastUserMsg && Array.isArray(lastUserMsg.content)) {
-        userMessagePreview = lastUserMsg.content.map((c: any) => c.text || "").join(" ").slice(0, 500);
+      if (lastUserMsg) {
+        if (typeof lastUserMsg.content === "string") {
+          userMessagePreview = lastUserMsg.content;
+        } else if (Array.isArray(lastUserMsg.content)) {
+          userMessagePreview = lastUserMsg.content
+            .map((c: any) => (typeof c === "string" ? c : c.text || ""))
+            .filter(Boolean)
+            .join(" ");
+        }
       }
+      actualCodexMessage = userMessagePreview;
     } else if (rawRecord && Array.isArray(rawRecord.input)) {
-      const lastInput = [...rawRecord.input].reverse().find((i: any) => i && typeof i.text === "string");
-      if (lastInput) {
-        userMessagePreview = (lastInput as { text: string }).text.slice(0, 500);
+      // Codex Responses API (mảng input chứa các message hoặc function_call_output)
+      const textParts: string[] = [];
+      const toolParts: string[] = [];
+      for (const item of rawRecord.input as any[]) {
+        if (!item || typeof item !== "object") continue;
+        if (item.type === "message" && item.role === "user") {
+          if (Array.isArray(item.content)) {
+            for (const c of item.content) {
+              if (c && typeof c === "object" && typeof c.text === "string") textParts.push(c.text);
+              else if (typeof c === "string") textParts.push(c);
+            }
+          } else if (typeof item.content === "string") {
+            textParts.push(item.content);
+          }
+        } else if (item.type === "function_call_output") {
+          const callId = item.call_id || item.id || "call";
+          const out = typeof item.output === "string" ? item.output : JSON.stringify(item.output || "");
+          toolParts.push(`[Tool Result: ${callId}]\n${out}`);
+        } else if (typeof item.text === "string") {
+          textParts.push(item.text);
+        }
+      }
+      if (textParts.length > 0) {
+        userMessagePreview = textParts.join("\n\n");
+      }
+      if (toolParts.length > 0) {
+        actualCodexMessage = toolParts.join("\n\n");
+        if (!userMessagePreview) {
+          userMessagePreview = `Tool Result (${toolParts.length} kết quả)`;
+        }
+      } else {
+        actualCodexMessage = userMessagePreview;
       }
     }
 
@@ -612,7 +648,9 @@ async function handleM365ResponseRequest(
         model: requestedModel,
         stream: (raw as Record<string, unknown>)?.stream ?? true,
         hasPreviousResponse: Boolean(previousResponseId),
-        ...(userMessagePreview ? { userMessage: userMessagePreview, promptPreview: userMessagePreview.slice(0, 160) } : {}),
+        ...(userMessagePreview ? { userMessage: userMessagePreview, promptPreview: userMessagePreview } : {}),
+        actualMessage: actualCodexMessage || userMessagePreview || undefined,
+        rawMessages: rawRecord?.messages || rawRecord?.input || [],
       },
     });
 
@@ -649,6 +687,8 @@ async function handleM365ResponseRequest(
             resultBytes: Buffer.byteLength(outputStr, "utf8"),
             isError: itemObj.is_error === true,
             previousResponseId,
+            output: outputStr,
+            outputPreview: outputStr.slice(0, 160),
           },
         });
       }

@@ -9,6 +9,8 @@ import {
   formatDisplayedLogsSummary,
   extractSpanMessage,
   formatFlowPayloadReport,
+  formatDebugConversationReport,
+  extractDebugInspectionFromTrace,
   downloadFile,
   generateExportFilename,
 } from "./export-utils";
@@ -135,6 +137,11 @@ export function TraceExplorer({
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
   };
+
+  // View Mode: Bảng log Kibana hoặc Soi Pipeline (Debug Flow)
+  const [viewMode, setViewMode] = useState<"kibana" | "debug_flow">("kibana");
+  const [copiedStationKey, setCopiedStationKey] = useState<string | null>(null);
+  const [collapsedStationKeys, setCollapsedStationKeys] = useState<Set<string>>(new Set());
 
   // Kibana Table Column Customization & Time Sort
   const [timeSortOrder, setTimeSortOrder] = useState<"asc" | "desc">("asc");
@@ -1007,107 +1014,147 @@ export function TraceExplorer({
                 return (
                   <div className="te-action-bar">
                     <div className="te-action-bar-left">
-                      <button
-                        className="te-btn"
-                        style={{ height: 28, fontSize: 11, padding: "0 10px" }}
-                        onClick={() => setTimeSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
-                        title={
-                          timeSortOrder === "asc"
-                            ? "Đang xếp Cũ nhất trước. Click để đổi sang Mới nhất trước"
-                            : "Đang xếp Mới nhất trước. Click để đổi sang Cũ nhất trước"
-                        }
-                      >
-                        <span>Time: {timeSortOrder === "asc" ? "Oldest First ↑" : "Newest First ↓"}</span>
-                      </button>
-
-                      <div className="te-col-picker-wrapper">
+                      {/* Toggle giữa Kibana Log Table và Debug Pipeline Flow */}
+                      <div className="te-group-toggle" style={{ marginRight: 4 }}>
                         <button
-                          className="te-btn"
-                          style={{ height: 28, fontSize: 11, padding: "0 10px" }}
-                          onClick={() => {
-                            setIsColumnPickerOpen((prev) => !prev);
-                            setIsCopyMenuOpen(false);
-                            setIsDownloadMenuOpen(false);
+                          className={`te-pill ${viewMode === "kibana" ? "active" : ""}`}
+                          style={{
+                            height: 24,
+                            fontSize: 11,
+                            padding: "0 8px",
+                            cursor: "pointer",
+                            background: viewMode === "kibana" ? "var(--color-bg-active, rgba(255,255,255,0.12))" : "transparent",
+                            color: viewMode === "kibana" ? "var(--color-text-primary, #fff)" : "var(--color-text-secondary, #94a3b8)",
+                            fontWeight: viewMode === "kibana" ? 600 : 400,
                           }}
-                          title="Chọn các cột hiển thị"
+                          onClick={() => setViewMode("kibana")}
+                          title="Xem log dạng bảng sự kiện Kibana chuẩn"
                         >
-                          <span>Columns ({activeColumnCount}/7) ▾</span>
+                          <span>📊 Bảng Log (Kibana)</span>
                         </button>
-
-                        {isColumnPickerOpen ? (
-                          <>
-                            <div
-                              className="te-popover-backdrop"
-                              onClick={() => setIsColumnPickerOpen(false)}
-                            />
-                            <div className="te-col-picker-popover">
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.time}
-                                  onChange={() => toggleColumn("time")}
-                                />
-                                <span>Time (@timestamp)</span>
-                              </label>
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.level}
-                                  onChange={() => toggleColumn("level")}
-                                />
-                                <span>Level (log.level)</span>
-                              </label>
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.event}
-                                  onChange={() => toggleColumn("event")}
-                                />
-                                <span>Event (event.action)</span>
-                              </label>
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.message}
-                                  onChange={() => toggleColumn("message")}
-                                />
-                                <span>Message (detail)</span>
-                              </label>
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.duration}
-                                  onChange={() => toggleColumn("duration")}
-                                />
-                                <span>Duration (ms)</span>
-                              </label>
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.spanId}
-                                  onChange={() => toggleColumn("spanId")}
-                                />
-                                <span>Span ID</span>
-                              </label>
-                              <label className="te-col-item">
-                                <input
-                                  type="checkbox"
-                                  className="te-col-checkbox"
-                                  checked={visibleColumns.requestId}
-                                  onChange={() => toggleColumn("requestId")}
-                                />
-                                <span>Request ID</span>
-                              </label>
-                            </div>
-                          </>
-                        ) : null}
+                        <button
+                          className={`te-pill ${viewMode === "debug_flow" ? "active" : ""}`}
+                          style={{
+                            height: 24,
+                            fontSize: 11,
+                            padding: "0 8px",
+                            cursor: "pointer",
+                            background: viewMode === "debug_flow" ? "rgba(99, 102, 241, 0.25)" : "transparent",
+                            color: viewMode === "debug_flow" ? "#a5b4fc" : "var(--color-text-secondary, #94a3b8)",
+                            fontWeight: viewMode === "debug_flow" ? 600 : 400,
+                          }}
+                          onClick={() => setViewMode("debug_flow")}
+                          title="Soi dữ liệu Message thực tế tại 4 điểm chạm: Codex ➜ Bridge ➜ M365 ➜ Codex"
+                        >
+                          <span>🔍 Soi Pipeline (Debug Flow)</span>
+                        </button>
                       </div>
+
+                      {viewMode === "kibana" && (
+                        <>
+                          <button
+                            className="te-btn"
+                            style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                            onClick={() => setTimeSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
+                            title={
+                              timeSortOrder === "asc"
+                                ? "Đang xếp Cũ nhất trước. Click để đổi sang Mới nhất trước"
+                                : "Đang xếp Mới nhất trước. Click để đổi sang Cũ nhất trước"
+                            }
+                          >
+                            <span>Time: {timeSortOrder === "asc" ? "Oldest First ↑" : "Newest First ↓"}</span>
+                          </button>
+
+                          <div className="te-col-picker-wrapper">
+                            <button
+                              className="te-btn"
+                              style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                              onClick={() => {
+                                setIsColumnPickerOpen((prev) => !prev);
+                                setIsCopyMenuOpen(false);
+                                setIsDownloadMenuOpen(false);
+                              }}
+                              title="Chọn các cột hiển thị"
+                            >
+                              <span>Columns ({activeColumnCount}/7) ▾</span>
+                            </button>
+
+                            {isColumnPickerOpen ? (
+                              <>
+                                <div
+                                  className="te-popover-backdrop"
+                                  onClick={() => setIsColumnPickerOpen(false)}
+                                />
+                                <div className="te-col-picker-popover">
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.time}
+                                      onChange={() => toggleColumn("time")}
+                                    />
+                                    <span>Time (@timestamp)</span>
+                                  </label>
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.level}
+                                      onChange={() => toggleColumn("level")}
+                                    />
+                                    <span>Level (log.level)</span>
+                                  </label>
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.event}
+                                      onChange={() => toggleColumn("event")}
+                                    />
+                                    <span>Event (event.action)</span>
+                                  </label>
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.message}
+                                      onChange={() => toggleColumn("message")}
+                                    />
+                                    <span>Message (detail)</span>
+                                  </label>
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.duration}
+                                      onChange={() => toggleColumn("duration")}
+                                    />
+                                    <span>Duration (ms)</span>
+                                  </label>
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.spanId}
+                                      onChange={() => toggleColumn("spanId")}
+                                    />
+                                    <span>Span ID</span>
+                                  </label>
+                                  <label className="te-col-item">
+                                    <input
+                                      type="checkbox"
+                                      className="te-col-checkbox"
+                                      checked={visibleColumns.requestId}
+                                      onChange={() => toggleColumn("requestId")}
+                                    />
+                                    <span>Request ID</span>
+                                  </label>
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        </>
+                      )}
 
                       {/* Nút xuất Báo cáo Flow & Payload Markdown độc lập */}
                       <button
@@ -1137,6 +1184,34 @@ export function TraceExplorer({
                         <span>📑 Flow (.md)</span>
                       </button>
 
+                      {/* Nút xuất Báo cáo Debug Pipeline Data Raw Markdown */}
+                      <button
+                        className="te-btn"
+                        style={{
+                          height: 28,
+                          fontSize: 11,
+                          padding: "0 8px",
+                          gap: 4,
+                          background: "rgba(99, 102, 241, 0.15)",
+                          borderColor: "#6366f1",
+                          color: "#a5b4fc",
+                          fontWeight: 500,
+                        }}
+                        onClick={() => {
+                          const report = formatDebugConversationReport(activeSelection.conversation, activeSelection.trace);
+                          const filename = generateExportFilename(
+                            activeSelection.isAllTurns ? "debug_pipeline_conv" : "debug_pipeline_turn",
+                            targetId,
+                            "md"
+                          );
+                          downloadFile(report, filename, "text/markdown");
+                          showToast(`✓ Đã tải báo cáo Debug Pipeline: ${filename}`);
+                        }}
+                        title="Tải báo cáo phân tích dữ liệu Message thực tế qua 4 điểm chạm của toàn bộ cuộc trò chuyện (Markdown)"
+                      >
+                        <span>🔍 Debug (.md)</span>
+                      </button>
+
                       {/* Dropdown Menu: Copy Log ▾ */}
                       <div className="te-menu-wrapper">
                         <button
@@ -1147,9 +1222,9 @@ export function TraceExplorer({
                             setIsDownloadMenuOpen(false);
                             setIsColumnPickerOpen(false);
                           }}
-                          title={`Sao chép ${sortedSpans.length} dòng hiển thị vào Clipboard`}
+                          title={`Sao chép các nội dung và báo cáo`}
                         >
-                          <span>📋 Copy ({sortedSpans.length}) ▾</span>
+                          <span>📋 Copy ▾</span>
                         </button>
 
                         {isCopyMenuOpen ? (
@@ -1159,6 +1234,18 @@ export function TraceExplorer({
                               onClick={() => setIsCopyMenuOpen(false)}
                             />
                             <div className="te-menu-popover">
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatDebugConversationReport(activeSelection.conversation, activeSelection.trace);
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép Debug Pipeline Report (.md)`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Debug Pipeline Report (4 Điểm Chạm Raw)</span>
+                                <span className="te-menu-item-subtitle">.md</span>
+                              </button>
                               <button
                                 className="te-menu-item"
                                 onClick={() => {
@@ -1291,6 +1378,23 @@ export function TraceExplorer({
                               onClick={() => setIsDownloadMenuOpen(false)}
                             />
                             <div className="te-menu-popover">
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatDebugConversationReport(activeSelection.conversation, activeSelection.trace);
+                                  const filename = generateExportFilename(
+                                    activeSelection.isAllTurns ? "debug_pipeline_conv" : "debug_pipeline_turn",
+                                    targetId,
+                                    "md"
+                                  );
+                                  downloadFile(text, filename, "text/markdown");
+                                  showToast(`✓ Đã tải xuống ${filename}`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Debug Pipeline Report (4 Điểm Chạm Raw)</span>
+                                <span className="te-menu-item-subtitle">.md</span>
+                              </button>
                               <button
                                 className="te-menu-item"
                                 onClick={() => {
@@ -1442,8 +1546,9 @@ export function TraceExplorer({
                 );
               })()}
 
-              {/* Kibana Table */}
-              <div className="te-kibana-container">
+              {/* Kibana Table hoặc Debug Pipeline Flow */}
+              {viewMode === "kibana" ? (
+                <div className="te-kibana-container">
                 <table className="te-kibana-table">
                   <thead>
                     <tr>
@@ -1833,6 +1938,184 @@ export function TraceExplorer({
                   </tbody>
                 </table>
               </div>
+            ) : (
+              <div className="te-debug-flow-container">
+                {(() => {
+                  const targetTraces = activeSelection.isAllTurns
+                    ? activeSelection.conversation.traces
+                    : activeSelection.trace
+                    ? [activeSelection.trace]
+                    : [];
+
+                  if (targetTraces.length === 0) {
+                    return (
+                      <div className="te-empty-state">
+                        <Icon name="activity" width={32} height={32} />
+                        <span>Không có trace nào để soi dữ liệu pipeline</span>
+                      </div>
+                    );
+                  }
+
+                  return targetTraces.map((trace, traceIdx) => {
+                    const turnIdx = activeSelection.isAllTurns
+                      ? traceIdx + 1
+                      : activeSelection.conversation.traces.findIndex((t) => t.traceId === trace.traceId) + 1 || 1;
+                    const inspection = extractDebugInspectionFromTrace(trace, turnIdx);
+
+                    return (
+                      <div key={trace.traceId} className="te-debug-turn-card">
+                        {/* Header của Turn */}
+                        <div className="te-debug-turn-header">
+                          <div className="te-debug-turn-title">
+                            <span className="te-turn-badge">Turn #{inspection.turnIndex}</span>
+                            <span className="te-turn-model">{inspection.model}</span>
+                            <span className="te-turn-duration">{inspection.durationMs}ms</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div
+                              className="te-turn-status-badge"
+                              style={{
+                                background:
+                                  inspection.completionType === "tool_call"
+                                    ? "rgba(245, 158, 11, 0.15)"
+                                    : "rgba(16, 185, 129, 0.15)",
+                                color:
+                                  inspection.completionType === "tool_call"
+                                    ? "#fbbf24"
+                                    : "#34d399",
+                                borderColor:
+                                  inspection.completionType === "tool_call"
+                                    ? "rgba(245, 158, 11, 0.3)"
+                                    : "rgba(16, 185, 129, 0.3)",
+                              }}
+                            >
+                              {inspection.completionType === "tool_call"
+                                ? "⚡ Phát hiện Tool Call (Vòng lặp công cụ)"
+                                : "✅ Trả lời kết luận (Final Answer)"}
+                            </div>
+                            <button
+                              className="te-btn"
+                              style={{ height: 24, fontSize: 11, padding: "0 8px" }}
+                              onClick={() => {
+                                const allKeys = inspection.stations.map((s) => `${inspection.turnIndex}_${s.stationIndex}`);
+                                const isAllCollapsed = allKeys.every((k) => collapsedStationKeys.has(k));
+                                setCollapsedStationKeys((prev) => {
+                                  const next = new Set(prev);
+                                  if (isAllCollapsed) {
+                                    allKeys.forEach((k) => next.delete(k));
+                                  } else {
+                                    allKeys.forEach((k) => next.add(k));
+                                  }
+                                  return next;
+                                });
+                              }}
+                              title="Thu gọn hoặc mở rộng tất cả các trạm của Turn này"
+                            >
+                              <span>
+                                {inspection.stations.every((s) => collapsedStationKeys.has(`${inspection.turnIndex}_${s.stationIndex}`))
+                                  ? "▼ Mở tất cả"
+                                  : "▶ Thu gọn"}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Diễn giải bước tiếp theo của Codex */}
+                        {inspection.nextActionExplanation ? (
+                          <div className="te-next-action-box">
+                            <span className="te-next-action-icon">💡</span>
+                            <div className="te-next-action-text">
+                              <strong>Dự kiến Codex xử lý:</strong> {inspection.nextActionExplanation}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {/* 4 Điểm chạm dữ liệu message thực tế */}
+                        <div className="te-stations-list">
+                          {inspection.stations.map((st) => {
+                            const stationKey = `${inspection.turnIndex}_${st.stationIndex}`;
+                            const isCopied = copiedStationKey === stationKey;
+                            const isCollapsed = collapsedStationKeys.has(stationKey);
+
+                            return (
+                              <div key={st.stationIndex} className="te-station-card">
+                                <div
+                                  className="te-station-header"
+                                  onClick={() => {
+                                    setCollapsedStationKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(stationKey)) next.delete(stationKey);
+                                      else next.add(stationKey);
+                                      return next;
+                                    });
+                                  }}
+                                  title={isCollapsed ? "Click để mở rộng xem dữ liệu thô" : "Click để thu gọn trạm"}
+                                >
+                                  <div className="te-station-header-left">
+                                    <span className="te-station-toggle-icon">
+                                      {isCollapsed ? "▶" : "▼"}
+                                    </span>
+                                    <span className="te-station-icon">{st.stationIcon}</span>
+                                    <div className="te-station-title-group">
+                                      <div className="te-station-name-row">
+                                        <span className="te-station-name">{st.stationName}</span>
+                                        <span className={`te-station-status-pill te-status-${st.status}`}>
+                                          {st.status.toUpperCase()}
+                                        </span>
+                                      </div>
+                                      <div className="te-station-summary">{st.summary}</div>
+                                    </div>
+                                  </div>
+
+                                  <div className="te-station-header-right">
+                                    {st.metadata && (
+                                      <div className="te-station-meta-tags">
+                                        {Object.entries(st.metadata).map(([k, v]) => (
+                                          <span key={k} className="te-meta-tag">
+                                            <strong>{k}:</strong> {String(v)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <button
+                                      className="te-copy-raw-btn"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigator.clipboard.writeText(st.rawContent);
+                                        setCopiedStationKey(stationKey);
+                                        showToast(`✓ Đã sao chép Raw ${st.stationName}`);
+                                        setTimeout(() => setCopiedStationKey(null), 2000);
+                                      }}
+                                      title="Sao chép toàn bộ văn bản RAW 100% của trạm này vào Clipboard"
+                                    >
+                                      {isCopied ? "✓ Đã chép!" : "📋 Copy Raw"}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {!isCollapsed && (
+                                  <div className="te-station-body">
+                                    <div className="te-raw-header-strip">
+                                      <span className="te-raw-title-text">{st.rawTitle}</span>
+                                      <span className="te-raw-char-count">
+                                        {st.rawContent.length.toLocaleString()} ký tự ({st.rawFormat.toUpperCase()})
+                                      </span>
+                                    </div>
+                                    <pre className="te-raw-code-box">
+                                      <code>{st.rawContent}</code>
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
             </>
           ) : (
             <div className="te-empty-state">

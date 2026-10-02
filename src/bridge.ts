@@ -159,6 +159,8 @@ export function bridgeToResponsesSSE(
   let closed = false;
   let clientCancelled = false;
   let terminalReported = false;
+  const createdAt = Math.floor(Date.now() / 1000);
+  const finishedItems: OutputItem[] = [];
   const reportTerminal = (status: ResponsesTerminalStatus) => {
     if (terminalReported || clientCancelled || closed) return;
     terminalReported = true;
@@ -178,6 +180,30 @@ export function bridgeToResponsesSSE(
         emittedFrames,
         terminalStatus: status,
         durationMs: Date.now() - (createdAt * 1000),
+        outgoingItems: finishedItems.map((item: any) => {
+          if (item && item.type === "function_call") {
+            let parsedArgs = item.arguments;
+            if (typeof item.arguments === "string") {
+              try { parsedArgs = JSON.parse(item.arguments); } catch {}
+            }
+            return {
+              type: "function_call",
+              name: item.name,
+              call_id: item.call_id,
+              arguments: parsedArgs,
+            };
+          }
+          if (item && item.type === "message") {
+            const contentList = Array.isArray(item.content) ? item.content : [];
+            const textContent = contentList.map((c: any) => c.text || "").join("");
+            return {
+              type: "message",
+              role: item.role,
+              text: textContent,
+            };
+          }
+          return { type: item?.type, id: item?.id };
+        }),
       },
     });
   };
@@ -209,9 +235,7 @@ export function bridgeToResponsesSSE(
         }
       };
 
-      const createdAt = Math.floor(Date.now() / 1000);
       let outputIndex = 0;
-      const finishedItems: OutputItem[] = [];
 
       const responseSnapshot = (status: string, output: OutputItem[], endTurn?: boolean) => ({
         id: responseId, object: "response", created_at: createdAt,
