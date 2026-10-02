@@ -14,6 +14,8 @@ export interface TraceSpan {
   durationMs: number;
   status: "completed" | "failed" | "warning" | "running";
   record: LogRecord;
+  turnIndex?: number;
+  traceId?: string;
 }
 
 export interface TraceGroup {
@@ -26,6 +28,20 @@ export interface TraceGroup {
   status: "completed" | "failed" | "warning" | "running";
   modelSlug?: string;
   toolNames: string[];
+  records: LogRecord[];
+  spans: TraceSpan[];
+}
+
+export interface ConversationGroup {
+  conversationId: string;
+  title: string;
+  isSystem: boolean;
+  startTime: number;
+  endTime: number;
+  durationMs: number;
+  status: "completed" | "failed" | "warning" | "running";
+  modelSlug?: string;
+  traces: TraceGroup[];
   records: LogRecord[];
   spans: TraceSpan[];
 }
@@ -45,7 +61,9 @@ export function TraceExplorer({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterLevel, setFilterLevel] = useState<"all" | "error" | "warning" | "tools">("all");
-  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [selectedTurnTraceId, setSelectedTurnTraceId] = useState<string | null>(null);
+  const [expandedConvIds, setExpandedConvIds] = useState<Set<string>>(new Set());
   const [selectedRecord, setSelectedRecord] = useState<LogRecord | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [frozenLogs, setFrozenLogs] = useState<LogRecord[]>([]);
@@ -199,43 +217,142 @@ export function TraceExplorer({
     return Array.from(traceMap.values()).reverse();
   }, [activeLogs]);
 
-  // Lọc Traces theo search query và filter pills
-  const filteredTraces = useMemo(() => {
-    return traces.filter(trace => {
-      // 1. Lọc theo Level
-      if (filterLevel === "error" && trace.status !== "failed") return false;
-      if (filterLevel === "warning" && trace.status !== "warning") return false;
-      if (filterLevel === "tools" && trace.toolNames.length === 0) return false;
+  // Gom nhóm Traces thành Conversations
+  const conversations = useMemo(() => {
+    const convMap = new Map<string, ConversationGroup>();
+    let unnamedCount = 1;
 
-      // 2. Lọc theo Search Query
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        const matchesTraceId = trace.traceId.toLowerCase().includes(query);
-        const matchesModel = trace.modelSlug?.toLowerCase().includes(query);
-        const matchesTool = trace.toolNames.some(t => t.toLowerCase().includes(query));
-        const matchesEvent = trace.records.some(r => r.event.toLowerCase().includes(query));
-        const matchesMessage = trace.records.some(r => {
-          const detail = r.detail || {};
-          const msg = typeof detail.message === "string" ? detail.message : "";
-          const line = typeof detail.line === "string" ? detail.line : "";
-          return msg.toLowerCase().includes(query) || line.toLowerCase().includes(query);
-        });
+    for (const trace of traces) {
+      const isSystem = trace.traceId === "_system";
+      const convId = isSystem ? "_system" : (trace.conversationId || `conv_${trace.traceId}`);
 
-        return matchesTraceId || matchesModel || matchesTool || matchesEvent || matchesMessage;
+      let group = convMap.get(convId);
+      if (!group) {
+        let title = isSystem ? "System & Daemon Logs" : `Conversation #${unnamedCount++}`;
+        if (!isSystem && trace.conversationId) {
+          title = `Chat: ${trace.conversationId.slice(0, 8)}...`;
+        }
+
+        group = {
+          conversationId: convId,
+          title,
+          isSystem,
+          startTime: trace.startTime,
+          endTime: trace.endTime,
+          durationMs: trace.durationMs,
+          status: trace.status,
+          modelSlug: trace.modelSlug,
+          traces: [],
+          records: [],
+          spans: [],
+        };
+        convMap.set(convId, group);
       }
 
-      return true;
-    });
-  }, [traces, filterLevel, searchQuery]);
+      group.traces.push(trace);
+      group.records.push(...trace.records);
+      group.spans.push(...trace.spans);
+      if (trace.startTime < group.startTime) group.startTime = trace.startTime;
+      if (trace.endTime > group.endTime) group.endTime = trace.endTime;
+      group.durationMs = Math.max(group.durationMs, group.endTime - group.startTime);
 
-  // Trace đang được chọn
-  const activeTrace = useMemo(() => {
-    if (selectedTraceId) {
-      const found = traces.find(t => t.traceId === selectedTraceId);
-      if (found) return found;
+      if (trace.status === "failed") group.status = "failed";
+      else if (trace.status === "warning" && group.status !== "failed") group.status = "warning";
+      if (!group.modelSlug && trace.modelSlug) group.modelSlug = trace.modelSlug;
     }
-    return filteredTraces[0] || null;
-  }, [traces, selectedTraceId, filteredTraces]);
+
+    // Đánh số thứ tự Turn (Turn 1, Turn 2...) theo thời gian tăng dần và gán vào spans
+    for (const group of convMap.values()) {
+      group.traces.sort((a, b) => a.startTime - b.startTime);
+      for (let i = 0; i < group.traces.length; i++) {
+        const tr = group.traces[i];
+        for (const span of tr.spans) {
+          span.turnIndex = i + 1;
+          span.traceId = tr.traceId;
+        }
+      }
+    }
+
+    // Sắp xếp conversations theo thời gian kết thúc gần nhất (mới nhất lên đầu)
+    return Array.from(convMap.values()).sort((a, b) => {
+      if (a.isSystem) return 1;
+      if (b.isSystem) return -1;
+      return b.endTime - a.endTime;
+    });
+  }, [traces]);
+
+  // Lọc Conversations & Traces theo search query và filter pills
+  const filteredConversations = useMemo(() => {
+    return conversations
+      .map(conv => {
+        const matchingTraces = conv.traces.filter(trace => {
+          if (filterLevel === "error" && trace.status !== "failed") return false;
+          if (filterLevel === "warning" && trace.status !== "warning") return false;
+          if (filterLevel === "tools" && trace.toolNames.length === 0) return false;
+
+          if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase().trim();
+            const matchesTraceId = trace.traceId.toLowerCase().includes(query);
+            const matchesConvId = trace.conversationId?.toLowerCase().includes(query);
+            const matchesModel = trace.modelSlug?.toLowerCase().includes(query);
+            const matchesTool = trace.toolNames.some(t => t.toLowerCase().includes(query));
+            const matchesEvent = trace.records.some(r => r.event.toLowerCase().includes(query));
+            const matchesMessage = trace.records.some(r => {
+              const detail = r.detail || {};
+              const msg = typeof detail.message === "string" ? detail.message : "";
+              const line = typeof detail.line === "string" ? detail.line : "";
+              return msg.toLowerCase().includes(query) || line.toLowerCase().includes(query);
+            });
+            return matchesTraceId || matchesConvId || matchesModel || matchesTool || matchesEvent || matchesMessage;
+          }
+
+          return true;
+        });
+
+        if (matchingTraces.length === 0) return null;
+
+        return {
+          ...conv,
+          traces: matchingTraces,
+          records: matchingTraces.flatMap(t => t.records),
+          spans: matchingTraces.flatMap(t => t.spans),
+        };
+      })
+      .filter((c): c is ConversationGroup => c !== null);
+  }, [conversations, filterLevel, searchQuery]);
+
+  // Xác định Conversation và Turn đang active
+  const activeSelection = useMemo(() => {
+    if (filteredConversations.length === 0) return null;
+
+    let targetConv = filteredConversations.find(c => c.conversationId === selectedConversationId);
+    if (!targetConv) {
+      targetConv = filteredConversations[0];
+    }
+
+    let targetTrace: TraceGroup | null = null;
+    if (selectedTurnTraceId) {
+      targetTrace = targetConv.traces.find(t => t.traceId === selectedTurnTraceId) || null;
+    }
+
+    return {
+      conversation: targetConv,
+      trace: targetTrace,
+      isAllTurns: targetTrace === null,
+      spans: targetTrace ? targetTrace.spans : targetConv.spans,
+      records: targetTrace ? targetTrace.records : targetConv.records,
+    };
+  }, [filteredConversations, selectedConversationId, selectedTurnTraceId]);
+
+  const toggleConvExpanded = (convId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedConvIds(prev => {
+      const next = new Set(prev);
+      if (next.has(convId)) next.delete(convId);
+      else next.add(convId);
+      return next;
+    });
+  };
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -281,14 +398,14 @@ export function TraceExplorer({
   };
 
   const sortedSpans = useMemo(() => {
-    if (!activeTrace) return [];
-    const list = [...activeTrace.spans];
+    if (!activeSelection) return [];
+    const list = [...activeSelection.spans];
     list.sort((a, b) => {
       const diff = a.startTime - b.startTime;
       return timeSortOrder === "asc" ? diff : -diff;
     });
     return list;
-  }, [activeTrace, timeSortOrder]);
+  }, [activeSelection, timeSortOrder]);
 
   const activeColumnCount = Object.values(visibleColumns).filter(Boolean).length;
 
@@ -317,7 +434,7 @@ export function TraceExplorer({
               className={`te-pill ${filterLevel === "all" ? "active" : ""}`}
               onClick={() => setFilterLevel("all")}
             >
-              All ({traces.length})
+              All ({filteredConversations.length})
             </button>
             <button
               className={`te-pill te-pill-error ${filterLevel === "error" ? "active" : ""}`}
@@ -376,106 +493,231 @@ export function TraceExplorer({
 
       {/* Split View */}
       <div className="te-split-view">
-        {/* Cột trái: Danh sách Traces */}
+        {/* Cột trái: Cây thư mục Conversations & Turns */}
         <div className="te-trace-list-panel">
-          {filteredTraces.length === 0 ? (
+          {filteredConversations.length === 0 ? (
             <div className="te-empty-state">
               <Icon name="logs" width={28} height={28} />
-              <span>{copy.noLogs || "Không có trace nào phù hợp"}</span>
+              <span>{copy.noLogs || "Không có cuộc hội thoại nào phù hợp"}</span>
             </div>
           ) : (
-            filteredTraces.map((trace) => {
-              const isSelected = activeTrace?.traceId === trace.traceId;
-              const isSystem = trace.traceId === "_system";
+            filteredConversations.map((conv) => {
+              const isConvSelected =
+                activeSelection?.conversation.conversationId === conv.conversationId &&
+                activeSelection.isAllTurns;
+              const isExpanded = !expandedConvIds.has(conv.conversationId);
+
               return (
-                <div
-                  key={trace.traceId}
-                  className={`te-trace-card ${isSelected ? "selected" : ""}`}
-                  onClick={() => setSelectedTraceId(trace.traceId)}
-                >
-                  <div className="te-trace-card-header">
-                    <div className="te-trace-status-group">
+                <div key={conv.conversationId} className="te-conv-group">
+                  {/* Header Conversation */}
+                  <div
+                    className={`te-conv-header ${isConvSelected ? "selected" : ""}`}
+                    onClick={() => {
+                      setSelectedConversationId(conv.conversationId);
+                      setSelectedTurnTraceId(null);
+                    }}
+                    title={`Conversation ID: ${conv.conversationId}`}
+                  >
+                    <div className="te-conv-header-left">
+                      <span
+                        className="te-conv-expand-icon"
+                        onClick={(e) => toggleConvExpanded(conv.conversationId, e)}
+                        title={isExpanded ? "Gập lại" : "Mở rộng"}
+                      >
+                        {conv.traces.length > 1 ? (isExpanded ? "▼" : "▶") : "•"}
+                      </span>
+                      <span className="te-conv-icon">{conv.isSystem ? "⚙️" : "💬"}</span>
+                      <div className="te-conv-title-col">
+                        <span className="te-conv-title">{conv.title}</span>
+                        <span className="te-conv-subtitle">
+                          {conv.isSystem ? `${conv.records.length} logs` : `${conv.traces.length} turn(s)`}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="te-conv-header-right">
                       <span
                         style={{
                           width: 8,
                           height: 8,
                           borderRadius: "50%",
                           backgroundColor:
-                            trace.status === "failed"
+                            conv.status === "failed"
                               ? "var(--red-300)"
-                              : trace.status === "warning"
+                              : conv.status === "warning"
                               ? "var(--orange-300)"
                               : "var(--green-300)",
                         }}
                       />
-                      <span className="te-trace-id">
-                        {isSystem ? "System Logs" : trace.traceId.length > 20 ? `${trace.traceId.slice(0, 16)}...` : trace.traceId}
+                      <span className="te-trace-time">
+                        {new Date(conv.endTime).toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </span>
                     </div>
-                    <span className="te-trace-time">
-                      {new Date(trace.startTime).toLocaleTimeString(undefined, {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </span>
                   </div>
 
-                  <div className="te-trace-card-body">
-                    <span className="te-trace-model">{trace.modelSlug || "Unknown Model"}</span>
-                    <div className="te-trace-meta-tags">
-                      {trace.toolNames.length > 0 ? (
-                        <span className="te-badge te-badge-tool">{trace.toolNames.length} tool(s)</span>
-                      ) : null}
-                      {trace.durationMs > 0 ? (
-                        <span className="te-badge te-badge-duration">{formatDuration(trace.durationMs)}</span>
-                      ) : null}
+                  {/* Danh sách các Turn con */}
+                  {isExpanded && !conv.isSystem && (
+                    <div className="te-turn-list">
+                      {/* Mục "All Turns" */}
+                      <div
+                        className={`te-turn-item ${isConvSelected ? "selected" : ""}`}
+                        onClick={() => {
+                          setSelectedConversationId(conv.conversationId);
+                          setSelectedTurnTraceId(null);
+                        }}
+                      >
+                        <div className="te-turn-item-left">
+                          <span className="te-turn-label">All Turns ({conv.traces.length})</span>
+                        </div>
+                        <div className="te-turn-item-right">
+                          <span className="te-badge te-badge-duration">{formatDuration(conv.durationMs)}</span>
+                        </div>
+                      </div>
+
+                      {/* Từng Turn riêng lẻ */}
+                      {conv.traces.map((trace, tIdx) => {
+                        const isTurnSelected =
+                          activeSelection?.conversation.conversationId === conv.conversationId &&
+                          activeSelection.trace?.traceId === trace.traceId;
+
+                        return (
+                          <div
+                            key={trace.traceId}
+                            className={`te-turn-item ${isTurnSelected ? "selected" : ""}`}
+                            onClick={() => {
+                              setSelectedConversationId(conv.conversationId);
+                              setSelectedTurnTraceId(trace.traceId);
+                            }}
+                            title={`Turn #${tIdx + 1} • Trace ID: ${trace.traceId}`}
+                          >
+                            <div className="te-turn-item-left">
+                              <span
+                                style={{
+                                  width: 6,
+                                  height: 6,
+                                  borderRadius: "50%",
+                                  backgroundColor:
+                                    trace.status === "failed"
+                                      ? "var(--red-300)"
+                                      : trace.status === "warning"
+                                      ? "var(--orange-300)"
+                                      : "var(--green-300)",
+                                }}
+                              />
+                              <span className="te-turn-label">Turn {tIdx + 1}</span>
+                              <span className="te-turn-model">{trace.modelSlug || "inference"}</span>
+                            </div>
+                            <div className="te-turn-item-right">
+                              {trace.durationMs > 0 ? (
+                                <span className="te-badge te-badge-duration">{formatDuration(trace.durationMs)}</span>
+                              ) : null}
+                              <span className="te-turn-time">
+                                {new Date(trace.startTime).toLocaleTimeString(undefined, {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })
           )}
         </div>
 
-        {/* Cột giữa: Cây Spans & Waterfall Timeline */}
+        {/* Cột giữa: Chi tiết Trace / Conversation */}
         <div className="te-trace-detail-panel">
-          {activeTrace ? (
+          {activeSelection ? (
             <>
               <div className="te-detail-header">
                 <div className="te-detail-title-group">
                   <div className="te-detail-title">
-                    <span>{activeTrace.modelSlug || "Trace Overview"}</span>
+                    <span>
+                      {activeSelection.isAllTurns
+                        ? activeSelection.conversation.title
+                        : `Turn: ${activeSelection.trace?.modelSlug || "Model inference"}`}
+                    </span>
                     <span
                       className="te-badge"
                       style={{
                         backgroundColor:
-                          activeTrace.status === "failed"
+                          (activeSelection.trace?.status || activeSelection.conversation.status) === "failed"
                             ? "var(--color-background-status-error)"
                             : "var(--color-background-status-success)",
                         color:
-                          activeTrace.status === "failed"
+                          (activeSelection.trace?.status || activeSelection.conversation.status) === "failed"
                             ? "var(--color-text-error)"
                             : "var(--color-text-success)",
                       }}
                     >
-                      {activeTrace.status.toUpperCase()}
+                      {(activeSelection.trace?.status || activeSelection.conversation.status).toUpperCase()}
                     </span>
                   </div>
                   <div className="te-detail-subtitle">
-                    <span>
-                      Trace ID: <code style={{ fontFamily: "var(--font-mono)" }}>{activeTrace.traceId}</code>
-                    </span>
-                    <button
-                      className="te-copy-btn"
-                      onClick={() => copyToClipboard(activeTrace.traceId, "Trace ID copied!")}
-                      title="Copy Trace ID"
-                    >
-                      {copyFeedback === "Trace ID copied!" ? "✓ Copied" : "Copy"}
-                    </button>
-                    {activeTrace.durationMs > 0 ? (
-                      <span>Total Time: {formatDuration(activeTrace.durationMs)}</span>
-                    ) : null}
+                    {activeSelection.isAllTurns ? (
+                      <>
+                        <span>
+                          Conversation:{" "}
+                          <code style={{ fontFamily: "var(--font-mono)" }}>
+                            {activeSelection.conversation.conversationId}
+                          </code>
+                        </span>
+                        <button
+                          className="te-copy-btn"
+                          onClick={() =>
+                            copyToClipboard(
+                              activeSelection.conversation.conversationId,
+                              "Conversation ID copied!"
+                            )
+                          }
+                          title="Copy Conversation ID"
+                        >
+                          {copyFeedback === "Conversation ID copied!" ? "✓ Copied" : "Copy"}
+                        </button>
+                        <span>
+                          {activeSelection.conversation.traces.length} Turn(s) • Total Time:{" "}
+                          {formatDuration(activeSelection.conversation.durationMs)}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span>
+                          Trace ID:{" "}
+                          <code style={{ fontFamily: "var(--font-mono)" }}>
+                            {activeSelection.trace?.traceId}
+                          </code>
+                        </span>
+                        <button
+                          className="te-copy-btn"
+                          onClick={() =>
+                            copyToClipboard(
+                              activeSelection.trace?.traceId || "",
+                              "Trace ID copied!"
+                            )
+                          }
+                          title="Copy Trace ID"
+                        >
+                          {copyFeedback === "Trace ID copied!" ? "✓ Copied" : "Copy"}
+                        </button>
+                        {activeSelection.trace && activeSelection.trace.durationMs > 0 ? (
+                          <span>Total Time: {formatDuration(activeSelection.trace.durationMs)}</span>
+                        ) : null}
+                        <span>
+                          Session:{" "}
+                          <code style={{ fontFamily: "var(--font-mono)" }}>
+                            {activeSelection.conversation.conversationId.slice(0, 8)}...
+                          </code>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -689,7 +931,17 @@ export function TraceExplorer({
                             )}
                             {visibleColumns.event && (
                               <td className="te-td-event" title={span.name}>
-                                {span.name}
+                                {activeSelection.isAllTurns &&
+                                activeSelection.conversation.traces.length > 1 &&
+                                span.turnIndex ? (
+                                  <span
+                                    className="te-turn-badge-tag"
+                                    title={`Thuộc Turn #${span.turnIndex} (Trace: ${span.traceId || ""})`}
+                                  >
+                                    T{span.turnIndex}
+                                  </span>
+                                ) : null}
+                                <span>{span.name}</span>
                               </td>
                             )}
                             {visibleColumns.message && (
@@ -829,6 +1081,14 @@ export function TraceExplorer({
                                             <td className="te-doc-field-name">conversation.id</td>
                                             <td className="te-doc-field-value">
                                               {String(detail.conversationId)}
+                                            </td>
+                                          </tr>
+                                        ) : null}
+                                        {span.turnIndex ? (
+                                          <tr>
+                                            <td className="te-doc-field-name">turn.index</td>
+                                            <td className="te-doc-field-value">
+                                              Turn #{span.turnIndex}
                                             </td>
                                           </tr>
                                         ) : null}
