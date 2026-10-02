@@ -205,3 +205,32 @@ test("ChatGPT-only native catalog rows do not turn model discovery into a 502", 
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/"))
     .every(model => model.supported_in_api === true)).toBe(true);
 });
+
+test("API Key auth returns augmented model catalog with M365 models without calling upstream", async () => {
+  const config = defaultConfig("full");
+  let upstreamCalled = false;
+  const response = await modelsRequest(
+    new Request("http://127.0.0.1:17842/v1/models", {
+      headers: { authorization: "Bearer sk-dummy-key-for-offline-m365" },
+    }),
+    config,
+    async () => {
+      upstreamCalled = true;
+      throw new Error("Upstream should not be called with API Key in offline mode");
+    },
+  );
+
+  expect(upstreamCalled).toBe(false);
+  expect(response.status).toBe(200);
+  const body = await response.json() as { models: Array<{ slug: string }> };
+  const slugs = body.models.map(m => m.slug);
+  expect(slugs).toContain("m365-copilot/auto");
+  expect(slugs).toContain("m365-copilot/gpt-5.6-think");
+  expect(slugs).toContain("m365-copilot/gpt-5.6-quick");
+  expect(slugs).toContain("m365-copilot/think");
+  expect(slugs).toContain("m365-copilot/quick");
+  expect(slugs).toContain("m365-copilot/gpt-5");
+  expect(slugs).toContain("m365-copilot/fast");
+  expect(slugs).toContain("gpt-5.6-sol");
+});
+

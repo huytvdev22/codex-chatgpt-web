@@ -78,10 +78,16 @@ function serveUniversal(options: {
     },
   };
 }
-import { augmentNativeModelCatalog } from "./model-catalog";
+import {
+  augmentNativeModelCatalog,
+  ensureManagedModelCatalogFile,
+  getFallbackNativeCatalog,
+  syncManagedModelCatalogFile,
+} from "./model-catalog";
 import {
   readCodexModelContextOverride,
   readCodexSubagentProtocol,
+  syncCodexModelCatalogConfig,
   type CodexModelContextOverride,
 } from "./codex-integration";
 import {
@@ -460,6 +466,20 @@ export async function modelsRequest(
   contextOverride?: () => CodexModelContextOverride | undefined,
   onFailure?: (failure: ModelCatalogFailure) => void,
 ): Promise<Response> {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (authHeader.startsWith("Bearer sk-")) {
+    const fallback = getFallbackNativeCatalog();
+    const catalog = augmentNativeModelCatalog(fallback, config, contextOverride?.());
+    const body = JSON.stringify(catalog);
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "etag": `W/\"${createHash("sha256").update(body).digest("base64url")}\"`,
+      },
+    });
+  }
+
   let upstream: Response;
   let sent = false;
   try {
@@ -1001,6 +1021,12 @@ export function startServer(
 ): UniversalServer {
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
+  }
+  try {
+    ensureManagedModelCatalogFile(config);
+    syncCodexModelCatalogConfig();
+  } catch (error) {
+    console.warn(`[codex-chatgpt-web] could not sync model catalog: ${error instanceof Error ? error.message : String(error)}`);
   }
   const startedAt = Date.now();
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;

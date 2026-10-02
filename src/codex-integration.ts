@@ -32,10 +32,16 @@ import type {
 import { assertJournalTargetsConfig, readJournal } from "./codex-integration-journal";
 import {
   findTopLevelAssignment,
+  firstTableIndex,
+  insertDocumentLine,
   installCompatibilityV1Features,
+  parseDocument,
+  removeDocumentLine,
+  renderDocument,
   splitLines,
   textFormat,
 } from "./codex-integration-document";
+import { getManagedModelCatalogPath } from "./model-catalog";
 import {
   assertBuiltinModelProvider,
   assertPreservedPreviousAssignments,
@@ -532,4 +538,56 @@ export function inspectCodexIntegration(): {
     ...(journal ? { journal } : {}),
     errors,
   };
+}
+
+export function syncCodexModelCatalogConfig(
+  catalogPath: string = getManagedModelCatalogPath(),
+): boolean {
+  const configPath = getCodexConfigPath();
+  if (!existsSync(configPath)) return false;
+  try {
+    const text = readFileSync(configPath, "utf8");
+    const document = parseDocument(text);
+    const existing = findTopLevelAssignment(document.lines, "model_catalog_json");
+    if (existing.present && existing.value === catalogPath) {
+      return false;
+    }
+    const managedLine = `model_catalog_json = ${JSON.stringify(catalogPath)}`;
+    if (existing.present && existing.index !== undefined) {
+      document.lines[existing.index] = managedLine;
+    } else {
+      const baseUrl = findTopLevelAssignment(document.lines, "openai_base_url");
+      const insertIndex = baseUrl.present && baseUrl.index !== undefined
+        ? baseUrl.index + 1
+        : firstTableIndex(document.lines);
+      insertDocumentLine(document, insertIndex, managedLine);
+    }
+    const snapshot = snapshotFile(configPath, { followSymlink: true });
+    writeFileSnapshot(snapshot, renderDocument(document));
+    return true;
+  } catch (error) {
+    console.warn(`[codex-chatgpt-web] could not sync model_catalog_json in config.toml: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+export function removeCodexModelCatalogConfig(
+  catalogPath: string = getManagedModelCatalogPath(),
+): boolean {
+  const configPath = getCodexConfigPath();
+  if (!existsSync(configPath)) return false;
+  try {
+    const text = readFileSync(configPath, "utf8");
+    const document = parseDocument(text);
+    const existing = findTopLevelAssignment(document.lines, "model_catalog_json");
+    if (existing.present && existing.value === catalogPath && existing.index !== undefined) {
+      removeDocumentLine(document, existing.index);
+      const snapshot = snapshotFile(configPath, { followSymlink: true });
+      writeFileSnapshot(snapshot, renderDocument(document));
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }

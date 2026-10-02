@@ -1,5 +1,9 @@
 import type { AppConfig } from "./config";
+import { atomicWriteFile, getConfigDir } from "./config";
 import type { CodexModelContextOverride } from "./codex-integration";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import {
   availableChatGptWebModelRoutes,
   chatGptWebRouteEfforts,
@@ -14,6 +18,184 @@ import {
 } from "./m365-models";
 
 type JsonObject = Record<string, unknown>;
+
+export const DEFAULT_BASE_INSTRUCTIONS =
+  "You are Codex, a coding assistant. Answer the user's questions and help them solve tasks.";
+
+export const CANONICAL_MODEL_DEFAULTS: JsonObject = {
+  base_instructions: DEFAULT_BASE_INSTRUCTIONS,
+  shell_type: "unified_exec",
+  visibility: "list",
+  supported_in_api: true,
+  priority: 10,
+  additional_speed_tiers: [],
+  service_tiers: [],
+  available_access_programs: {
+    cyber: ["standard"],
+  },
+  availability_nux: null,
+  upgrade: null,
+  model_messages: null,
+  include_skills_usage_instructions: false,
+  include_plugin_usage_instructions: false,
+  include_apps_usage_instructions: false,
+  default_reasoning_summary: "none",
+  support_verbosity: true,
+  default_verbosity: "low",
+  apply_patch_tool_type: "freeform",
+  web_search_tool_type: "text_and_image",
+  truncation_policy: {
+    mode: "tokens",
+    limit: 10000,
+  },
+  supports_image_detail_original: true,
+  supports_search_tool: true,
+  supports_experimental_context: false,
+  use_responses_lite: true,
+  supports_reasoning_effort_updates: true,
+  node_repl_auto_review_required: false,
+  node_repl_disabled: false,
+  tool_mode: null,
+  comp_hash: "3000",
+  experimental_supported_tools: [],
+  multi_agent_version: "v1",
+};
+
+export const DEFAULT_NATIVE_FALLBACK_MODELS: JsonObject[] = [
+  {
+    slug: "gpt-5.6-sol",
+    display_name: "GPT-5.6 Sol",
+    description: "OpenAI GPT-5.6 Sol",
+    default_reasoning_level: "medium",
+    supported_reasoning_levels: [
+      { effort: "low", description: "Low" },
+      { effort: "medium", description: "Medium" },
+      { effort: "high", description: "High" },
+      { effort: "xhigh", description: "Extra high" },
+    ],
+    shell_type: "unified_exec",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 2,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    availability_nux: null,
+    upgrade: null,
+    tool_mode: "code_mode_only",
+    multi_agent_version: "v2",
+    context_window: 300_000,
+    max_context_window: 320_000,
+    effective_context_window_percent: 90,
+    auto_compact_token_limit: 270_000,
+    input_modalities: ["text", "image"],
+    support_verbosity: true,
+  },
+  {
+    slug: "gpt-5.5",
+    display_name: "GPT-5.5",
+    description: "OpenAI GPT-5.5",
+    default_reasoning_level: "low",
+    supported_reasoning_levels: [
+      { effort: "low", description: "Low" },
+    ],
+    shell_type: "unified_exec",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 3,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    availability_nux: null,
+    upgrade: null,
+    tool_mode: null,
+    multi_agent_version: "disabled",
+    context_window: 200_000,
+    max_context_window: 200_000,
+    effective_context_window_percent: 90,
+    auto_compact_token_limit: 180_000,
+    input_modalities: ["text", "image"],
+    support_verbosity: true,
+  },
+];
+
+export function getFallbackNativeCatalog(): { models: JsonObject[] } {
+  const modelsMap = new Map<string, JsonObject>();
+  // Ưu tiên các native models mặc định chuẩn của Codex
+  for (const model of DEFAULT_NATIVE_FALLBACK_MODELS) {
+    modelsMap.set(model.slug, structuredClone(model));
+  }
+  try {
+    const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");
+    const cachePath = join(codexHome, "models_cache.json");
+    if (existsSync(cachePath)) {
+      const raw = JSON.parse(readFileSync(cachePath, "utf8"));
+      if (Array.isArray(raw.models)) {
+        for (const m of raw.models) {
+          const s = typeof m?.slug === "string" ? m.slug : "";
+          if (s && !s.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s.startsWith(M365_COPILOT_MODEL_PREFIX)) {
+            modelsMap.set(s, m);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore cache read failure
+  }
+  return { models: [...modelsMap.values()] };
+}
+
+export function getManagedModelCatalogPath(home = getConfigDir()): string {
+  return join(home, "catalog.json");
+}
+
+export function syncManagedModelCatalogFile(
+  catalog: unknown,
+  catalogPath = getManagedModelCatalogPath(),
+): void {
+  try {
+    let payload = catalog;
+    if (catalog && typeof catalog === "object" && Array.isArray((catalog as any).models)) {
+      payload = {
+        ...(catalog as any),
+        models: (catalog as any).models.map((m: any) => ({
+          ...structuredClone(CANONICAL_MODEL_DEFAULTS),
+          ...m,
+        })),
+      };
+    }
+    const data = JSON.stringify(payload, null, 2) + "\n";
+    atomicWriteFile(catalogPath, data);
+  } catch {
+    // non-fatal if cannot write
+  }
+}
+
+export function ensureManagedModelCatalogFile(
+  config: AppConfig,
+  catalogPath = getManagedModelCatalogPath(),
+  force = false,
+): string {
+  try {
+    let shouldWrite = force || !existsSync(catalogPath);
+    if (!shouldWrite && existsSync(catalogPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(catalogPath, "utf8"));
+        if (!Array.isArray(raw.models) || !raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX))) {
+          shouldWrite = true;
+        }
+      } catch {
+        shouldWrite = true;
+      }
+    }
+    if (shouldWrite) {
+      const fallback = getFallbackNativeCatalog();
+      const catalog = augmentNativeModelCatalog(fallback, config);
+      syncManagedModelCatalogFile(catalog, catalogPath);
+    }
+  } catch {
+    // non-fatal
+  }
+  return catalogPath;
+}
 
 function object(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -194,6 +376,7 @@ export function buildM365Model(
     additional_speed_tiers: [],
     service_tiers: [],
     default_service_tier: null,
+    support_verbosity: true,
   };
   delete model.comp_hash;
   delete model.availability_nux;
@@ -222,12 +405,15 @@ export function augmentNativeModelCatalog(
       }
     }
   }
-  const template = selectNativeTemplate(nativeModels, config);
+  const effectiveNative = nativeModels.length > 0
+    ? nativeModels
+    : structuredClone(getFallbackNativeCatalog().models);
+  const template = selectNativeTemplate(effectiveNative, config);
   if (contextOverride) {
     // model_context_window is a single top-level Codex setting, not a per-model one. Apply its
     // advertised maximum to every native row so switching native models cannot silently clamp the
     // effective override. Codex itself applies context_window and auto-compaction configuration.
-    for (const candidate of nativeModels) {
+    for (const candidate of effectiveNative) {
       const modelSlug = slug(candidate);
       if (!modelSlug) continue;
       const model = object(candidate, `native ${modelSlug} model`);
@@ -245,8 +431,36 @@ export function augmentNativeModelCatalog(
     .map(route => buildChatGptWebModel(template, route, config));
   const m365Models = availableM365ModelRoutes()
     .map(route => buildM365Model(template, route, config));
-  return {
+
+  const seen = new Set<string>();
+  const deduplicatedModels: JsonObject[] = [];
+  for (const model of effectiveNative) {
+    const s = slug(model);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      deduplicatedModels.push(model);
+    }
+  }
+  for (const model of webModels) {
+    const s = slug(model);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      deduplicatedModels.push(model);
+    }
+  }
+  for (const model of m365Models) {
+    const s = slug(model);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      deduplicatedModels.push(model);
+    }
+  }
+
+  const result = {
     ...structuredClone(catalog),
-    models: [...nativeModels, ...webModels, ...m365Models],
+    models: deduplicatedModels,
   };
+  syncManagedModelCatalogFile(result);
+  return result;
 }
+
