@@ -43,11 +43,16 @@ export interface AgentLoopResult {
   status: "completed" | "max_turns_exceeded" | "failed";
 }
 
+import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "./atomic-file-writer";
+
 /**
  * Tool Executor mặc định hỗ trợ chạy các công cụ read_file, list_dir, grep_code, git_status, git_diff, run_command, write_file
  */
 export class LocalToolExecutor implements IToolExecutor {
-  constructor(private readonly workingDir: string = process.cwd()) {}
+  constructor(
+    private readonly workingDir: string = process.cwd(),
+    private readonly fileWriter: IAtomicFileWriter = defaultAtomicFileWriter
+  ) {}
 
   async execute(name: string, args: Record<string, any>): Promise<string> {
     try {
@@ -116,10 +121,14 @@ export class LocalToolExecutor implements IToolExecutor {
         }
 
         case "write_file": {
-          const filePath = path.resolve(this.workingDir, String(args.path || args.file || ""));
-          fs.mkdirSync(path.dirname(filePath), { recursive: true });
-          fs.writeFileSync(filePath, String(args.content ?? ""), "utf8");
-          return `Ghi file thành công: ${filePath}`;
+          const rawPath = String(args.path || args.file || "");
+          if (!rawPath.trim()) {
+            return `Lỗi: Đường dẫn file không hợp lệ (path bị trống).`;
+          }
+          const filePath = path.resolve(this.workingDir, rawPath);
+          const content = String(args.content ?? "");
+          const result = this.fileWriter.writeFile(filePath, content);
+          return `Ghi file thành công: ${filePath} (${result.bytesWritten} bytes, sha256: ${result.sha256})`;
         }
 
         case "run_command": {

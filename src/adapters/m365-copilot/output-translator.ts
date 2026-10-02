@@ -1,4 +1,6 @@
 import { BashCommandTranslator } from "./bash-translator";
+import { sanitizeJsonControlChars } from "./markdown";
+import { AtomicFileWriter } from "./atomic-file-writer";
 
 /**
  * Cấu trúc OpenAI Tool Call chuẩn hóa
@@ -47,20 +49,31 @@ function generateToolCallId(): string {
 }
 
 /**
- * Chuẩn hóa và làm sạch chuỗi JSON thoát ký tự
+ * Bóc tách code fence ở rìa ngoài cùng (outer boundary) của khối JSON/XML.
+ * TUYỆT ĐỐI BẢO TOÀN toàn bộ code fences (```text, ```mermaid) bên trong nội dung!
  */
-function cleanJsonPayload(raw: string): string {
-  return raw
-    .replace(/```(?:json)?/gi, "")
-    .replace(/```/g, "")
-    .replaceAll("\\_", "_")
-    .replaceAll("\\*", "*")
-    .replaceAll("\\[", "[")
-    .replaceAll("\\]", "]")
-    .replaceAll("\\{", "{")
-    .replaceAll("\\}", "}")
-    .replaceAll("\\~", "~")
-    .trim();
+export function stripOuterCodeFence(raw: string): string {
+  let trimmed = raw.trim();
+  const openMatch = trimmed.match(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n/);
+  if (openMatch) {
+    trimmed = trimmed.slice(openMatch[0].length);
+  }
+  const closeMatch = trimmed.match(/\r?\n```[ \t]*$/);
+  if (closeMatch) {
+    trimmed = trimmed.slice(0, trimmed.length - closeMatch[0].length);
+  }
+  return trimmed.trim();
+}
+
+/**
+ * Chuẩn hóa và làm sạch chuỗi JSON payload:
+ * 1. Bóc outer code fence mà không xâm phạm code fence bên trong.
+ * 2. Khôi phục các định danh JSON property bị Turndown escape (ví dụ "read\_file" -> "read_file").
+ */
+export function cleanJsonPayload(raw: string): string {
+  const stripped = stripOuterCodeFence(raw);
+  // Khôi phục các định danh JSON property/value bị Turndown escape: \_ -> _
+  return stripped.replace(/\\_/g, "_");
 }
 
 /**
@@ -93,6 +106,7 @@ export function normalizePatchEnvelope(raw: string): string {
  * ...
  * *** End Patch
  * Hỗ trợ nằm trong code block ```patch ... ```, ```diff ... ``` hoặc văn bản trần
+ * TUYỆT ĐỐI KHÔNG thực thi khi khối patch chưa hoàn chỉnh (Yêu cầu 4 & 5).
  */
 export class PatchToolCallDetector implements IToolCallDetector {
   readonly priority = 0;
@@ -124,9 +138,10 @@ export class PatchToolCallDetector implements IToolCallDetector {
       return calls.length === 1 ? calls[0] : calls;
     }
 
-    // Trường hợp khối patch mở ở cuối phản hồi nhưng chưa kịp đóng *** End Patch
+    // Nếu khối patch có Begin Patch và chứa header File (Update/Add/Delete),
+    // cho phép auto-close *** End Patch khi stream đã kết thúc
     const openMatch = unescaped.match(/\*{3}\s*Begin Patch([\s\S]*)$/i);
-    if (openMatch) {
+    if (openMatch && /\*{3}\s*(?:Update|Add|Delete)\s*File:/i.test(openMatch[1])) {
       let patch = normalizePatchEnvelope(openMatch[0]);
       if (!patch.endsWith("*** End Patch")) {
         patch = `${patch}\n*** End Patch`;
@@ -265,6 +280,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
 /**
  * Bộ phát hiện XML Tool Call (Ưu tiên B)
  * Hỗ trợ nhiều thẻ <tool_call>...</tool_call> và <tool\_call>...</tool\_call>
+ * TUYỆT ĐỐI KHÔNG thực thi khi chưa có thẻ đóng hợp lệ (Yêu cầu 4 & 5).
  */
 export class XmlToolCallDetector implements IToolCallDetector {
   readonly priority = 2;
@@ -273,7 +289,7 @@ export class XmlToolCallDetector implements IToolCallDetector {
   detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     if (!rawResponse || !rawResponse.trim()) return null;
 
-    // Tìm tất cả các cặp thẻ <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
+    // Tìm tất cả các cặp thẻ HOÀN CHỈNH: <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
     const matches = [...rawResponse.matchAll(/<\s*tool[\\_]*call\s*>([\s\S]*?)<\s*\/tool[\\_]*call\s*>/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
@@ -284,19 +300,41 @@ export class XmlToolCallDetector implements IToolCallDetector {
       if (calls.length > 0) return calls;
     }
 
-    // Trường hợp chỉ có 1 thẻ mở chưa đóng
-    const openOnlyMatch = rawResponse.match(/<\s*tool[\\_]*call\s*>([\s\S]*)$/i);
-    if (openOnlyMatch) {
-      return this.parseInnerXml(openOnlyMatch[1]);
-    }
-
+    // Nếu không có thẻ đóng, tool call chưa hoàn chỉnh -> Không được thực thi
     return null;
   }
 
   private parseInnerXml(innerContent: string): DetectedToolCall | null {
     const clean = cleanJsonPayload(innerContent);
 
-    // Thử parse JSON bên trong thẻ
+    // 1. Thử parse với sanitizer xử lý raw newlines/control characters
+    try {
+      const sanitized = sanitizeJsonControlChars(clean);
+      const parsed = JSON.parse(sanitized);
+      if (parsed && typeof parsed === "object") {
+        const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        let args = parsed.arguments || parsed.args || {};
+        if (typeof args === "string") {
+          try { args = JSON.parse(args); } catch { args = { path: args }; }
+        } else if (Object.keys(args).length === 0) {
+          if (parsed.path) args = { path: parsed.path };
+          else if (parsed.cmd) args = { cmd: parsed.cmd };
+          else if (parsed.input) args = { input: parsed.input };
+          else if (parsed.patch) args = { input: parsed.patch };
+        }
+
+        // Yêu cầu 4 & 5: Kiểm tra tính hoàn chỉnh bắt buộc cho write_file
+        if (name === "write_file") {
+          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
+            return null;
+          }
+        }
+
+        return { name, arguments: args };
+      }
+    } catch {}
+
+    // 2. Thử parse nguyên bản
     try {
       const parsed = JSON.parse(clean);
       if (parsed && typeof parsed === "object") {
@@ -310,24 +348,18 @@ export class XmlToolCallDetector implements IToolCallDetector {
           else if (parsed.input) args = { input: parsed.input };
           else if (parsed.patch) args = { input: parsed.patch };
         }
+
+        if (name === "write_file") {
+          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
+            return null;
+          }
+        }
+
         return { name, arguments: args };
       }
-    } catch {
-      // Fallback bằng regex nếu JSON bên trong bị lỗi formatting bởi LLM
-      const nameMatch = clean.match(/"name"\s*:\s*"([^"]+)"/i) || clean.match(/"tool"\s*:\s*"([^"]+)"/i);
-      const pathMatch = clean.match(/"path"\s*:\s*"([^"]+)"/i);
-      const cmdMatch = clean.match(/"cmd"\s*:\s*"([^"]+)"/i);
-      const patchMatch = clean.match(/"(?:input|patch)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*$)/);
+    } catch {}
 
-      if (nameMatch) {
-        const name = nameMatch[1];
-        if (pathMatch) return { name, arguments: { path: pathMatch[1] } };
-        if (cmdMatch) return { name, arguments: { cmd: cmdMatch[1] } };
-        if (patchMatch) return { name, arguments: { input: patchMatch[1] } };
-        return { name, arguments: {} };
-      }
-    }
-
+    // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
     return null;
   }
 }
@@ -347,6 +379,67 @@ export class BashCommandDetector implements IToolCallDetector {
     if (all.length === 0) return null;
     return all.length === 1 ? all[0] : all;
   }
+}
+
+/**
+ * Mask arguments string cho log console để giấu secret / dữ liệu lớn
+ */
+export function maskArgumentsForLog(argsStr: string): string {
+  try {
+    const parsed = JSON.parse(argsStr);
+    if (parsed && typeof parsed === "object") {
+      const masked = { ...parsed };
+      if (typeof masked.content === "string") {
+        const sha = AtomicFileWriter.computeSha256(masked.content);
+        const byteLen = Buffer.byteLength(masked.content, "utf8");
+        masked.content = `[PROTECTED: ${byteLen} bytes, sha256: ${sha}]`;
+      }
+      if (typeof masked.patch === "string" && masked.patch.length > 200) {
+        masked.patch = `[PROTECTED: ${Buffer.byteLength(masked.patch, "utf8")} bytes]`;
+      }
+      if (typeof masked.input === "string" && masked.input.length > 200) {
+        masked.input = `[PROTECTED: ${Buffer.byteLength(masked.input, "utf8")} bytes]`;
+      }
+      return JSON.stringify(masked);
+    }
+  } catch {}
+  if (argsStr.length > 300) {
+    return `${argsStr.slice(0, 150)}... [TRUNCATED ${argsStr.length - 250} chars] ...${argsStr.slice(-100)}`;
+  }
+  return argsStr;
+}
+
+/**
+ * Che giấu secret và dữ liệu lớn khi in log ra console (Yêu cầu 10)
+ */
+export function maskToolCallsForLog(toolCalls: OpenAIToolCall[]): any[] {
+  return toolCalls.map(tc => {
+    try {
+      const parsedArgs = JSON.parse(tc.function.arguments);
+      if (parsedArgs && typeof parsedArgs === "object") {
+        const masked = { ...parsedArgs };
+        if (typeof masked.content === "string") {
+          const sha = AtomicFileWriter.computeSha256(masked.content);
+          const byteLen = Buffer.byteLength(masked.content, "utf8");
+          masked.content = `[PROTECTED: ${byteLen} bytes, sha256: ${sha}]`;
+        }
+        if (typeof masked.patch === "string" && masked.patch.length > 200) {
+          masked.patch = `[PROTECTED: ${Buffer.byteLength(masked.patch, "utf8")} bytes]`;
+        }
+        if (typeof masked.input === "string" && masked.input.length > 200) {
+          masked.input = `[PROTECTED: ${Buffer.byteLength(masked.input, "utf8")} bytes]`;
+        }
+        return {
+          ...tc,
+          function: {
+            ...tc.function,
+            arguments: masked,
+          },
+        };
+      }
+    } catch {}
+    return tc;
+  });
 }
 
 /**
@@ -375,8 +468,11 @@ export class M365OutputTranslator {
    * Hỗ trợ dịch đồng thời nhiều tool call (Parallel / Multi-tool calls)
    */
   translate(rawResponse: string): TranslationResult {
+    const rawPreview = rawResponse.length > 2000
+      ? `${rawResponse.slice(0, 1000)}\n... [TRUNCATED ${rawResponse.length - 1500} chars for privacy] ...\n${rawResponse.slice(-500)}`
+      : rawResponse;
     console.log("\n[M365 RAW RESPONSE]");
-    console.log(rawResponse);
+    console.log(rawPreview);
 
     // Nếu phản hồi chứa thẻ <proposed_plan>, đây là bản kế hoạch hoàn chỉnh cho Codex UI duyệt (Final Answer)
     if (/<proposed[\\_]*plan>[\s\S]*?<\/proposed[\\_]*plan>/i.test(rawResponse)) {
@@ -402,7 +498,7 @@ export class M365OutputTranslator {
         }));
 
         console.log("\n[TRANSLATED TOOL CALL]");
-        console.log(JSON.stringify({ tool_calls: toolCalls }, null, 2));
+        console.log(JSON.stringify({ tool_calls: maskToolCallsForLog(toolCalls) }, null, 2));
 
         return {
           type: "tool_call",

@@ -292,7 +292,9 @@ export class M365ToolCallDetector {
   }
 
   /**
-   * Kết thúc lượt stream: flush các phần còn lại nếu không phải tool call hoặc parse fallback.
+   * Kết thúc lượt stream: flush các phần còn lại.
+   * Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG thực thi tool call khi thẻ mở chưa có thẻ đóng
+   * hoặc khi JSON arguments chưa hoàn chỉnh!
    */
   finish(): { remainingText: string; toolCall: ParsedToolCall | null } {
     let remainingText = "";
@@ -300,39 +302,34 @@ export class M365ToolCallDetector {
       remainingText = this.buffer;
       this.buffer = "";
     } else if (this.inToolCall && !this.detectedToolCall) {
-      this.toolContent += this.buffer;
+      // Thẻ <tool_call> chưa đóng -> Stream bị ngắt giữa JSON arguments.
+      // Không được tự sửa hay thực thi dở dang!
+      remainingText = `<tool_call>${this.toolContent}${this.buffer}`;
+      this.toolContent = "";
       this.buffer = "";
-      const toolCall = this.parseToolPayload(this.toolContent);
-      if (toolCall) {
-        this.detectedToolCall = toolCall;
-      } else {
-        remainingText = `<tool_call>${this.toolContent}`;
-      }
     } else if (this.inPatch && !this.detectedToolCall) {
-      this.patchContent += this.buffer;
+      // Khối patch chưa có *** End Patch -> Dở dang, không thực thi.
+      remainingText = `${this.patchContent}${this.buffer}`;
+      this.patchContent = "";
       this.buffer = "";
-      let cleanPatch = this.patchContent
-        .replaceAll("\\*", "*")
-        .replaceAll("\\_", "_")
-        .replaceAll("\\[", "[")
-        .replaceAll("\\]", "]")
-        .replaceAll("\\{", "{")
-        .replaceAll("\\}", "}");
-      const beginIdx = cleanPatch.indexOf("*** Begin Patch");
-      if (beginIdx >= 0) {
-        cleanPatch = cleanPatch.slice(beginIdx);
-        if (!cleanPatch.endsWith("*** End Patch")) {
-          cleanPatch = `${cleanPatch}\n*** End Patch`;
-        }
-        this.detectedToolCall = {
-          name: "apply_patch",
-          arguments: { input: cleanPatch.trim() },
-        };
-      } else {
-        remainingText = this.patchContent;
-      }
     }
-    return { remainingText, toolCall: this.detectedToolCall };
+    return {
+      remainingText,
+      toolCall: this.detectedToolCall,
+      detectedToolCall: this.detectedToolCall ?? undefined,
+    };
+  }
+
+  /**
+   * Helper xử lý chunk và trả về kết quả ngay lập tức
+   */
+  processChunk(chunk: string): { emittedText: string; toolCalls: ParsedToolCall[] } {
+    const emittedText = this.feed(chunk);
+    const toolCall = this.getToolCall();
+    return {
+      emittedText,
+      toolCalls: toolCall ? [toolCall] : [],
+    };
   }
 
   hasDetectedToolCall(): boolean {
@@ -348,116 +345,9 @@ export class M365ToolCallDetector {
    * nằm bên trong string literal của JSON để JSON.parse không bị lỗi Bad control character.
    * Đồng thời tự động khử dấu \ thừa ở cuối dòng trước khi xuống dòng (line continuation).
    */
-  private sanitizeJsonControlChars(raw: string): string {
-    let inString = false;
-    let escaped = false;
-    let out = "";
-    for (let i = 0; i < raw.length; i++) {
-      const ch = raw[i];
-      if (ch === '"' && !escaped) {
-        inString = !inString;
-        out += ch;
-      } else if (inString) {
-        if (ch === "\n") {
-          // Khử dấu gạch chéo ngược ở cuối dòng trước khi xuống dòng (line continuation)
-          if (escaped && out.endsWith("\\")) {
-            out = out.slice(0, -1);
-          }
-          out += "\\n";
-          escaped = false;
-          continue;
-        } else if (ch === "\r") {
-          if (escaped && out.endsWith("\\")) {
-            out = out.slice(0, -1);
-          }
-          out += "\\r";
-          escaped = false;
-          continue;
-        } else if (ch === "\t") {
-          out += "\\t";
-        } else {
-          out += ch;
-        }
-      } else {
-        out += ch;
-      }
-      escaped = (ch === "\\" && !escaped);
-    }
-    return out;
-  }
-
-  /**
-   * Chuẩn hóa làm sạch khối tool payload trước khi phân tích cú pháp:
-   * Khôi phục toàn bộ các ký tự bị Turndown / Markdown vô tình escape
-   */
   private cleanToolPayload(raw: string): string {
-    return raw
-      .replace(/```(?:json)?/gi, "")
-      .replace(/```/g, "")
-      .replaceAll("\\_", "_")
-      .replaceAll("\\*", "*")
-      .replaceAll("\\[", "[")
-      .replaceAll("\\]", "]")
-      .replaceAll("\\{", "{")
-      .replaceAll("\\}", "}")
-      .replaceAll("\\~", "~")
-      .trim();
-  }
-
-  /**
-   * Fallback trích xuất tool call bằng Regex nếu JSON.parse vẫn thất bại
-   */
-  private fallbackExtractToolCall(raw: string): ParsedToolCall | null {
-    const nameMatch = raw.match(/"name"\s*:\s*"([^"]+)"/i);
-    if (!nameMatch) return null;
-    const name = nameMatch[1].trim();
-
-    if (name === "write_file") {
-      const pathMatch = raw.match(/"path"\s*:\s*"([^"]+)"/i);
-      const contentMatch = raw.match(/"content"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*\}|\}\s*$)/);
-      if (pathMatch) {
-        return {
-          name,
-          arguments: {
-            path: pathMatch[1].trim(),
-            content: contentMatch ? contentMatch[1] : "",
-          },
-        };
-      }
-    }
-
-    if (name === "run_command") {
-      const cmdMatch = raw.match(/"cmd"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*\}|\}\s*$)/i);
-      if (cmdMatch) {
-        return {
-          name,
-          arguments: { cmd: cmdMatch[1].trim() },
-        };
-      }
-    }
-
-    if (name === "apply_patch") {
-      const patchMatch = raw.match(/"(?:input|patch)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*\}|\}\s*$)/);
-      if (patchMatch) {
-        return {
-          name,
-          arguments: { input: patchMatch[1].trim() },
-        };
-      }
-    }
-
-    const pathMatch = raw.match(/"path"\s*:\s*"([^"]+)"/i);
-    if (pathMatch) {
-      return {
-        name,
-        arguments: { path: pathMatch[1].trim() },
-      };
-    }
-
-    return {
-      name,
-      arguments: {},
-    };
+    const stripped = stripOuterCodeFence(raw);
+    return stripped.replace(/\\_/g, "_");
   }
 
   private parseToolPayload(raw: string): ParsedToolCall | null {
@@ -465,7 +355,7 @@ export class M365ToolCallDetector {
 
     // 1. Thử parse với sanitizer xử lý raw newlines/control characters và trailing backslash
     try {
-      const sanitized = this.sanitizeJsonControlChars(clean);
+      const sanitized = sanitizeJsonControlChars(clean);
       const parsed = JSON.parse(sanitized);
       if (parsed && typeof parsed === "object") {
         const name = typeof parsed.name === "string" ? parsed.name : "read_file";
@@ -481,6 +371,14 @@ export class M365ToolCallDetector {
         } else if (!args) {
           args = {};
         }
+
+        // Yêu cầu 4 & 5: Kiểm tra tính hoàn chỉnh bắt buộc cho write_file
+        if (name === "write_file") {
+          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
+            return null;
+          }
+        }
+
         return {
           name,
           arguments: args,
@@ -505,6 +403,13 @@ export class M365ToolCallDetector {
         } else if (!args) {
           args = {};
         }
+
+        if (name === "write_file") {
+          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
+            return null;
+          }
+        }
+
         return {
           name,
           arguments: args,
@@ -512,16 +417,78 @@ export class M365ToolCallDetector {
       }
     } catch {}
 
-    // 3. Fallback: trích xuất regex tự phục hồi nếu JSON bị format lỗi bởi LLM
-    try {
-      const fallback = this.fallbackExtractToolCall(clean);
-      if (fallback) {
-        return fallback;
-      }
-    } catch {}
-
+    // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
     return null;
   }
+}
+
+/**
+ * Tự động chuẩn hóa các ký tự điều khiển thô (raw newline, carriage return, tab)
+ * nằm bên trong string literal của JSON để JSON.parse không bị lỗi Bad control character.
+ * Đồng thời tự động khử dấu \ thừa ở cuối dòng trước khi xuống dòng (line continuation).
+ */
+export function sanitizeJsonControlChars(raw: string): string {
+  let inString = false;
+  let escaped = false;
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"' && !escaped) {
+      inString = !inString;
+      out += ch;
+    } else if (inString) {
+      if (ch === "\n") {
+        // Khử dấu gạch chéo ngược ở cuối dòng trước khi xuống dòng (line continuation)
+        if (escaped && out.endsWith("\\")) {
+          out = out.slice(0, -1);
+        }
+        out += "\\n";
+        escaped = false;
+        continue;
+      } else if (ch === "\r") {
+        if (escaped && out.endsWith("\\")) {
+          out = out.slice(0, -1);
+        }
+        out += "\\r";
+        escaped = false;
+        continue;
+      } else if (ch === "\t") {
+        out += "\\t";
+      } else {
+        // Nếu ký tự trước là '\' nhưng ký tự hiện tại không phải là escape sequence hợp lệ trong JSON:
+        // Cụ thể là các ký tự do Turndown/Markdown vô tình escape: '[', ']', '{', '}', '*', '_'
+        if (escaped && /^[\[\]{}*_~]/.test(ch)) {
+          if (out.endsWith("\\")) {
+            out = out.slice(0, -1);
+          }
+          out += ch;
+          escaped = false;
+          continue;
+        }
+        out += ch;
+      }
+    } else {
+      out += ch;
+    }
+    escaped = (ch === "\\" && !escaped);
+  }
+  return out;
+}
+
+/**
+ * Bóc tách code fence ở rìa ngoài cùng của khối JSON/XML
+ */
+export function stripOuterCodeFence(raw: string): string {
+  let trimmed = raw.trim();
+  const openMatch = trimmed.match(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n/);
+  if (openMatch) {
+    trimmed = trimmed.slice(openMatch[0].length);
+  }
+  const closeMatch = trimmed.match(/\r?\n```[ \t]*$/);
+  if (closeMatch) {
+    trimmed = trimmed.slice(0, trimmed.length - closeMatch[0].length);
+  }
+  return trimmed.trim();
 }
 
 export { chatGptHtmlToMarkdown };

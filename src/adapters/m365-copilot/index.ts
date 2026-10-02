@@ -5,7 +5,7 @@ import { compileM365Prompt } from "./prompt";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
-import { M365OutputTranslator } from "./output-translator";
+import { M365OutputTranslator, maskArgumentsForLog } from "./output-translator";
 
 export * from "./bash-translator";
 export * from "./output-translator";
@@ -142,7 +142,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
           const callId = rawCall.id || `call_${Math.random().toString(36).slice(2, 10)}`;
 
           console.log(`[M365 TOOL] emit tool call: ${mapped.name} (${callId})`);
-          console.log(`[M365 TOOL] arguments=${mapped.arguments}`);
+          console.log(`[M365 TOOL] arguments=${maskArgumentsForLog(mapped.arguments)}`);
 
           emit({ type: "tool_call_start", id: callId, name: mapped.name });
           emit({ type: "tool_call_delta", arguments: mapped.arguments });

@@ -3,6 +3,12 @@ export interface FileRange {
   endLine?: number;
 }
 
+export interface WriteFileOptions {
+  stagingPath?: string;
+  expectedLength?: number;
+  expectedSha256?: string;
+}
+
 /**
  * Hợp đồng giao diện PlatformCommandStrategy (Tuân thủ Interface Segregation Principle - SOLID)
  * Định nghĩa các thao tác sinh câu lệnh hệ điều hành cho từng nền tảng (PowerShell, POSIX/Node, ...).
@@ -31,9 +37,9 @@ export interface PlatformCommandStrategy {
   grepCode(query: string, targetPath?: string): string;
 
   /**
-   * Sinh lệnh ghi file với nội dung được mã hóa Base64 an toàn.
+   * Sinh lệnh ghi file an toàn atomic với xác minh độ dài byte và SHA-256.
    */
-  writeFile(targetPath: string, base64Content: string): string;
+  writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string;
 
   /**
    * Sinh lệnh kiểm tra trạng thái Git.

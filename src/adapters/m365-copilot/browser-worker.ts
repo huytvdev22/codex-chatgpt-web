@@ -447,8 +447,13 @@ export async function executeM365Turn(
       // Điều kiện kết thúc:
       // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
-      // 3. Nội dung văn bản đã ổn định (ít nhất 4 nhịp = 1.0 giây không đổi text)
-      const isSettled = stableCycles >= 4 || (Date.now() - lastTextChangeAt >= 1000);
+      // 3. Không có khối <tool_call> hoặc patch đang mở dở dang (Yêu cầu 4 & 5)
+      // 4. Nội dung văn bản đã ổn định ít nhất 2.0 giây
+      const combinedText = lastBlocks.map(b => b.text).join(" ");
+      const hasUnclosedToolCall = /<\s*tool[\\_]*call\s*>/i.test(combinedText) && !/<\s*\/tool[\\_]*call\s*>/i.test(combinedText);
+      const hasUnclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedText);
+
+      const isSettled = !hasUnclosedToolCall && !hasUnclosedPatch && (stableCycles >= 6 || (Date.now() - lastTextChangeAt >= 2000));
       if (status.hasContent && !status.isGenerating && isSettled) {
         console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs}`);
         break;

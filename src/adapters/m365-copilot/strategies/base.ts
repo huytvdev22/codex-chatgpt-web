@@ -1,4 +1,4 @@
-import type { FileRange, PlatformCommandStrategy } from "./types";
+import type { FileRange, PlatformCommandStrategy, WriteFileOptions } from "./types";
 
 /**
  * Lớp cơ sở trừu tượng cho PlatformCommandStrategy (Tuân thủ Liskov Substitution Principle & DRY - SOLID)
@@ -11,7 +11,7 @@ export abstract class BasePlatformCommandStrategy implements PlatformCommandStra
   abstract listDir(targetPath: string): string;
   abstract searchFiles(pattern: string, targetPath?: string): string;
   abstract grepCode(query: string, targetPath?: string): string;
-  abstract writeFile(targetPath: string, base64Content: string): string;
+  abstract writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string;
 
   gitStatus(): string {
     return "git status -s";
