@@ -274,11 +274,12 @@ BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
 
 export const TOOL_REMINDER_PROMPT = `[CHẾ ĐỘ THỰC THI CÔNG CỤ QUA IDE - TOOL EXECUTION REMINDER]
 LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE của người dùng. Môi trường IDE sẽ tự động bắt các khối <tool_call>...</tool_call>, các khối lệnh terminal hoặc khối apply_patch mà bạn in ra để thực thi trực tiếp trên máy tính cục bộ.
-- BẮT BUỘC tiếp tục thực hiện bước kế tiếp bằng khối <tool_call> hoặc câu lệnh shell tương ứng.
+- NẾU CẦN THỰC HIỆN BƯỚC KẾ TIẾP: Hãy tiếp tục in khối <tool_call> hoặc câu lệnh shell tương ứng.
+- NẾU ĐÃ HOÀN TẤT HOẶC ĐÃ ĐỦ THÔNG TIN: BẠN HÃY TRẢ LỜI KẾT QUẢ / KẾT LUẬN CHI TIẾT CHO NGƯỜI DÙNG VÀ TUYỆT ĐỐI KHÔNG IN THÊM BẤT KỲ KHỐI <tool_call> HAY CÂU LỆNH SHELL NÀO NỮA.
 - TUYỆT ĐỐI KHÔNG từ chối với lý do không có công cụ IDE hoặc không có quyền truy cập máy tính; không yêu cầu người dùng tự gõ lệnh hay tải file thủ công.
 - Đối với dự án mới hoặc tạo file mới: Sử dụng công cụ write_file hoặc câu lệnh khởi tạo (ví dụ: npm init -y, git init).
 - Đối với sửa đổi file hiện có: Sử dụng công cụ apply_patch với khối *** Update File.
-- Khi kết quả tool_result có mã thoát 0 (Process exited with code 0) hoặc output rỗng: Thao tác trước đó đã THÀNH CÔNG (lệnh thực thi không sinh output ra stdout hoặc file đã được tạo). Hãy tự tin tiếp tục ngay bước tiếp theo!`;
+- Khi kết quả tool_result có mã thoát 0 (Process exited with code 0) hoặc output rỗng: Thao tác trước đó đã THÀNH CÔNG (lệnh thực thi không sinh output ra stdout hoặc file đã được tạo). Hãy tự tin tiếp tục ngay bước tiếp theo hoặc đưa ra câu trả lời kết luận nếu đã xong!`;
 
 /**
  * Kiểm tra xem người dùng có vừa bấm xác nhận triển khai kế hoạch hay không
@@ -387,8 +388,14 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
 
   if (!isNewConversation) {
     const lastAssistantIdx = allMessages.findLastIndex(msg => msg.role === "assistant");
-    if (lastAssistantIdx >= 0 && lastAssistantIdx < allMessages.length - 1) {
-      messages = allMessages.slice(lastAssistantIdx + 1);
+    if (lastAssistantIdx >= 0) {
+      if (lastAssistantIdx < allMessages.length - 1) {
+        messages = allMessages.slice(lastAssistantIdx + 1);
+      } else {
+        // Nếu tin nhắn cuối cùng chính là của assistant (không có input mới từ user hay tool)
+        // Tuyệt đối không gửi lại assistant message để tránh model hiểu nhầm là cần tiếp tục
+        messages = [];
+      }
     }
   }
 

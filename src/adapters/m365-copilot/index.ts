@@ -1,4 +1,4 @@
-import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
 import { compileM365Prompt } from "./prompt";
@@ -30,6 +30,102 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
     if (match) return match[1].trim();
   }
   return undefined;
+}
+
+export function stableSortValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "string") {
+      return value.replace(/\\/g, "/").trim();
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(stableSortValue);
+  }
+  const obj = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    sorted[key] = stableSortValue(obj[key]);
+  }
+  return sorted;
+}
+
+export function stableToolFingerprint(name: string, rawArgs: unknown): string {
+  let parsedArgs = rawArgs;
+  if (typeof rawArgs === "string") {
+    try {
+      parsedArgs = JSON.parse(rawArgs);
+    } catch {
+      parsedArgs = rawArgs.trim();
+    }
+  }
+  const normalized = stableSortValue(parsedArgs);
+  return `${name.trim()}:${JSON.stringify(normalized)}`;
+}
+
+export function isToolCallPart(part: unknown): boolean {
+  if (!part || typeof part !== "object") return false;
+  const p = part as Record<string, unknown>;
+  const typeStr = typeof p.type === "string" ? p.type.toLowerCase() : "";
+  return (
+    typeStr === "toolcall" ||
+    typeStr === "tool_call" ||
+    typeStr === "function_call" ||
+    typeStr === "functioncall" ||
+    typeStr === "custom_tool_call" ||
+    typeStr === "tool_search_call" ||
+    p.call_id !== undefined ||
+    p.callId !== undefined ||
+    p.function !== undefined
+  );
+}
+
+export function isAssistantFinalAnswer(msg: CodexMessage | undefined): boolean {
+  if (!msg || msg.role !== "assistant") return false;
+
+  // 1. Nếu content là string: Kiểm tra xem có chứa XML tool_call serialize không
+  if (typeof msg.content === "string") {
+    if (/<tool[\\_]*call>/i.test(msg.content)) {
+      return false;
+    }
+    return true;
+  }
+
+  // 2. Nếu content là structured parts: Kiểm tra toàn bộ schema biến thể của tool call
+  if (Array.isArray(msg.content)) {
+    const hasToolCall = msg.content.some(isToolCallPart);
+    return !hasToolCall;
+  }
+
+  return true;
+}
+
+interface ConversationGuardState {
+  toolIterations: number;
+  lastToolFingerprint?: string;
+  identicalToolCount: number;
+  updatedAt: number;
+}
+
+export const MAX_TOOL_ITERATIONS = 20;
+export const MAX_IDENTICAL_TOOL_CALLS = 3;
+const GUARD_TTL_MS = 15 * 60 * 1000; // 15 phút
+
+export const conversationGuard = new Map<string, ConversationGuardState>();
+
+export function cleanExpiredConversationGuards(now = Date.now()): void {
+  for (const [key, state] of conversationGuard.entries()) {
+    if (now - state.updatedAt > GUARD_TTL_MS) {
+      conversationGuard.delete(key);
+    }
+  }
+  if (conversationGuard.size > 1000) {
+    const entries = [...conversationGuard.entries()]
+      .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+    for (let i = 0; i < Math.min(200, entries.length); i++) {
+      conversationGuard.delete(entries[i][0]);
+    }
+  }
 }
 
 export class M365CopilotAdapter implements ProviderAdapter {
@@ -66,6 +162,24 @@ export class M365CopilotAdapter implements ProviderAdapter {
       this.lastConversationKey = conversationKey;
     }
 
+    // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
+    // Hoàn tất lượt ngay lập tức mà không gọi lại M365 Copilot
+    const allMsgs = parsed.context.messages || [];
+    const lastMsg = allMsgs[allMsgs.length - 1];
+    if (isAssistantFinalAnswer(lastMsg)) {
+      console.log(`[m365-adapter] Cuộc hội thoại đã kết thúc bằng phản hồi của trợ lý và không có pending tool call hoặc input mới. Hoàn tất lượt.`);
+      if (conversationKey) {
+        conversationGuard.delete(conversationKey);
+      }
+      emit({
+        type: "done",
+        stopReason: "stop",
+        endTurn: true,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      });
+      return;
+    }
+
     // 2. Biên dịch prompt (chỉ gửi tin nhắn mới nếu đang tiếp tục cuộc trò chuyện)
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
 
@@ -75,6 +189,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
       emit({ type: "text_delta", text: titleText });
       emit({
         type: "done",
+        stopReason: "stop",
+        endTurn: true,
         usage: {
           inputTokens: Math.ceil(compiledPrompt.length / 4),
           outputTokens: Math.ceil(titleText.length / 4),
@@ -136,11 +252,72 @@ export class M365CopilotAdapter implements ProviderAdapter {
       if (detectedToolCalls.length > 0) {
         const clientTools = parsed.context.tools || [];
         const detectedShell = extractClientShell(parsed);
+        const mappedCalls = detectedToolCalls.map(rawCall => ({
+          rawCall,
+          mapped: M365ToolBridge.mapToolCall(rawCall, clientTools, { shell: detectedShell }),
+          callId: rawCall.id || `call_${Math.random().toString(36).slice(2, 10)}`,
+        }));
 
-        for (const rawCall of detectedToolCalls) {
-          const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools, { shell: detectedShell });
-          const callId = rawCall.id || `call_${Math.random().toString(36).slice(2, 10)}`;
+        // Loop Guard: Kiểm tra giới hạn số vòng lặp và lặp lại công cụ liên tiếp
+        cleanExpiredConversationGuards();
+        const cKey = conversationKey || `transient_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+        const guardState = conversationGuard.get(cKey) || {
+          toolIterations: 0,
+          identicalToolCount: 0,
+          updatedAt: Date.now(),
+        };
 
+        guardState.toolIterations += 1;
+        guardState.updatedAt = Date.now();
+        const currentFingerprint = mappedCalls
+          .map(c => stableToolFingerprint(c.mapped.name, c.mapped.arguments))
+          .sort()
+          .join("|");
+
+        if (currentFingerprint === guardState.lastToolFingerprint) {
+          guardState.identicalToolCount += 1;
+        } else {
+          guardState.lastToolFingerprint = currentFingerprint;
+          guardState.identicalToolCount = 1;
+        }
+
+        conversationGuard.set(cKey, guardState);
+
+        // 1. Kiểm tra lặp lại cùng một tool call quá 3 lần liên tiếp
+        if (guardState.identicalToolCount >= MAX_IDENTICAL_TOOL_CALLS) {
+          console.warn(`[m365-guard] Ngắt vòng lặp: Công cụ bị gọi lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp.`);
+          conversationGuard.delete(cKey);
+          emit({
+            type: "text_delta",
+            text: `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${mappedCalls[0].mapped.name}\` đã được yêu cầu lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
+          });
+          emit({
+            type: "done",
+            stopReason: "stop",
+            endTurn: true,
+            usage,
+          });
+          return;
+        }
+
+        // 2. Kiểm tra vượt quá số vòng tool tối đa trong phiên (MAX_TOOL_ITERATIONS = 20)
+        if (guardState.toolIterations > MAX_TOOL_ITERATIONS) {
+          console.warn(`[m365-guard] Ngắt vòng lặp: Vượt quá giới hạn tối đa ${MAX_TOOL_ITERATIONS} lượt gọi công cụ trong phiên.`);
+          conversationGuard.delete(cKey);
+          emit({
+            type: "text_delta",
+            text: `\n\n> [!WARNING]\n> **Giới hạn an toàn (Max Tool Iterations Exceeded):** Đã chạm ngưỡng tối đa ${MAX_TOOL_ITERATIONS} lượt thực thi công cụ liên tiếp trong phiên. Hệ thống tự động kết thúc để bảo vệ tài nguyên.`,
+          });
+          emit({
+            type: "done",
+            stopReason: "stop",
+            endTurn: true,
+            usage,
+          });
+          return;
+        }
+
+        for (const { mapped, callId } of mappedCalls) {
           console.log(`[M365 TOOL] emit tool call: ${mapped.name} (${callId})`);
           console.log(`[M365 TOOL] arguments=${maskArgumentsForLog(mapped.arguments)}`);
 
@@ -171,11 +348,19 @@ export class M365CopilotAdapter implements ProviderAdapter {
       }
 
       console.log(`[m365-adapter] [done] conversationKey=${conversationKey} streamedAnyText=${streamedAnyText}`);
+      if (conversationKey) {
+        conversationGuard.delete(conversationKey);
+      }
       emit({
         type: "done",
+        stopReason: "stop",
+        endTurn: true,
         usage,
       });
     } catch (err: unknown) {
+      if (conversationKey) {
+        conversationGuard.delete(conversationKey);
+      }
       if (incoming.abortSignal?.aborted) {
         console.log(`[m365-adapter] [aborted] turn aborted by incoming signal`);
         throw new DOMException("M365 Copilot turn aborted", "AbortError");
