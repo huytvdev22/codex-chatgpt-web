@@ -1,4 +1,4 @@
-import type { LogRecord, ConversationGroup, TraceGroup } from "./types";
+import type { LogRecord, ConversationGroup, TraceGroup, TraceSpan } from "./types";
 import { getEventTranslation, translateDaemonLine } from "./event-translations";
 
 /**
@@ -15,46 +15,214 @@ export function formatLogsAsJsonl(records: LogRecord[]): string {
   return records.map((r) => JSON.stringify(r)).join("\n");
 }
 
+export interface DisplayedColumnsConfig {
+  time: boolean;
+  level: boolean;
+  event: boolean;
+  message: boolean;
+  duration: boolean;
+  spanId: boolean;
+  requestId: boolean;
+}
+
+export interface FormatDisplayedLogsOptions {
+  spans: TraceSpan[];
+  title: string;
+  durationMs: number;
+  visibleColumns: DisplayedColumnsConfig;
+  isVietnameseEvents: boolean;
+  timeSortOrder?: "asc" | "desc";
+  showTurnBadge?: boolean;
+  format?: "text" | "tsv" | "markdown";
+}
+
 /**
- * Định dạng tóm tắt log thành dạng văn bản / markdown dễ đọc để paste vào Slack, Jira, Issue
+ * Định dạng timestamp mili-giây sang chuỗi HH:mm:ss.SSS
+ */
+function formatTime(ts: number | string): string {
+  const d = typeof ts === "number" ? new Date(ts) : new Date(ts);
+  if (isNaN(d.getTime())) return String(ts).slice(11, 23);
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+/**
+ * Trích xuất message preview chính xác như hiển thị trên giao diện
+ */
+export function extractSpanMessage(span: TraceSpan, isVietnameseEvents: boolean): string {
+  const detail = span.record.detail || {};
+  const safe = (detail.safeDetails as Record<string, unknown>) || {};
+  const daemonVi =
+    isVietnameseEvents && typeof detail.line === "string"
+      ? translateDaemonLine(detail.line)
+      : null;
+
+  const msg =
+    (daemonVi && `${daemonVi} | ${detail.line}`) ||
+    (typeof safe.userMessage === "string" && `[User]: ${safe.userMessage.trim()}`) ||
+    (typeof safe.injectedPromptPreview === "string" && `[Prompt M365]: ${safe.injectedPromptPreview.trim()}`) ||
+    (typeof safe.responsePreview === "string" && `[Phản hồi M365]: ${safe.responsePreview.trim()}`) ||
+    (typeof safe.promptPreview === "string" && `[Prompt]: ${safe.promptPreview.trim()}`) ||
+    (typeof detail.line === "string" && detail.line.trim()) ||
+    (typeof detail.message === "string" && detail.message.trim()) ||
+    (typeof detail.command === "string" && `$ ${detail.command.trim()}`) ||
+    (typeof safe.preview === "string" && safe.preview.trim()) ||
+    (typeof safe.outputPreview === "string" && safe.outputPreview.trim()) ||
+    (typeof safe.url === "string" && safe.url.trim()) ||
+    (typeof safe.method === "string" &&
+      typeof safe.path === "string" &&
+      `${safe.method} ${safe.path}`) ||
+    (typeof detail.modelSlug === "string" && `Model: ${detail.modelSlug}`) ||
+    "—";
+
+  return msg.replace(/\r?\n/g, " ");
+}
+
+/**
+ * Định dạng tóm tắt log tuân thủ chính xác theo những gì đang hiển thị trên bảng giao diện (WYSIWYG):
+ * - Đúng các cột đang được người dùng bật trong Columns Picker
+ * - Đúng thứ tự sắp xếp thời gian (Cũ nhất trước ↑ / Mới nhất trước ↓)
+ * - Đúng tên sự kiện (Tiếng Việt có icon hoặc Tiếng Anh gốc)
+ * - Đúng nội dung tin nhắn preview
+ */
+export function formatDisplayedLogsSummary(options: FormatDisplayedLogsOptions): string {
+  const {
+    spans,
+    title,
+    durationMs,
+    visibleColumns,
+    isVietnameseEvents,
+    timeSortOrder = "asc",
+    showTurnBadge = false,
+    format = "text",
+  } = options;
+
+  // Xác định danh sách các cột đang hiển thị
+  const activeCols: { key: keyof DisplayedColumnsConfig; label: string }[] = [];
+  if (visibleColumns.time) activeCols.push({ key: "time", label: "TIME" });
+  if (visibleColumns.level) activeCols.push({ key: "level", label: "LEVEL" });
+  if (visibleColumns.event) activeCols.push({ key: "event", label: "EVENT" });
+  if (visibleColumns.message) activeCols.push({ key: "message", label: "MESSAGE" });
+  if (visibleColumns.duration) activeCols.push({ key: "duration", label: "DURATION" });
+  if (visibleColumns.spanId) activeCols.push({ key: "spanId", label: "SPAN ID" });
+  if (visibleColumns.requestId) activeCols.push({ key: "requestId", label: "REQUEST ID" });
+
+  if (activeCols.length === 0) {
+    activeCols.push({ key: "time", label: "TIME" });
+    activeCols.push({ key: "event", label: "EVENT" });
+    activeCols.push({ key: "message", label: "MESSAGE" });
+  }
+
+  const getCellValue = (span: TraceSpan, colKey: keyof DisplayedColumnsConfig): string => {
+    switch (colKey) {
+      case "time":
+        return formatTime(span.startTime);
+      case "level":
+        return span.record.level ? span.record.level.toUpperCase() : "INFO";
+      case "event": {
+        const turnPrefix = showTurnBadge && span.turnIndex ? `[T${span.turnIndex}] ` : "";
+        if (isVietnameseEvents) {
+          const trans = getEventTranslation(span.name);
+          return `${turnPrefix}${trans.icon} ${trans.labelVi}`;
+        }
+        return `${turnPrefix}${span.name}`;
+      }
+      case "message":
+        return extractSpanMessage(span, isVietnameseEvents);
+      case "duration":
+        return span.durationMs > 0 ? `${span.durationMs}ms` : "—";
+      case "spanId":
+        return span.spanId || "—";
+      case "requestId":
+        return String(span.record.detail?.requestId || "—");
+      default:
+        return "—";
+    }
+  };
+
+  // 1. Định dạng TSV (Tab-Separated Values) dán trực tiếp vào Excel / Google Sheets
+  if (format === "tsv") {
+    const tsvLines: string[] = [];
+    tsvLines.push(activeCols.map((c) => c.label).join("\t"));
+    for (const span of spans) {
+      const row = activeCols.map((c) => getCellValue(span, c.key));
+      tsvLines.push(row.join("\t"));
+    }
+    return tsvLines.join("\n");
+  }
+
+  // 2. Định dạng Markdown Table
+  if (format === "markdown") {
+    const mdLines: string[] = [];
+    mdLines.push(`### 📋 Bảng Log: ${title}`);
+    mdLines.push(`> Tổng số dòng: ${spans.length} | Sắp xếp: ${timeSortOrder === "asc" ? "Cũ nhất trước ↑" : "Mới nhất trước ↓"} | Ngôn ngữ: ${isVietnameseEvents ? "Tiếng Việt" : "Tiếng Anh"}`);
+    mdLines.push("");
+    mdLines.push(`| ${activeCols.map((c) => c.label).join(" | ")} |`);
+    mdLines.push(`| ${activeCols.map(() => "---").join(" | ")} |`);
+    for (const span of spans) {
+      const row = activeCols.map((c) => getCellValue(span, c.key).replace(/\|/g, "\\|"));
+      mdLines.push(`| ${row.join(" | ")} |`);
+    }
+    return mdLines.join("\n");
+  }
+
+  // 3. Định dạng Text Summary (văn bản chia cột thẳng hàng bằng |)
+  const lines: string[] = [];
+  lines.push(`=== LOG EXPORT (THEO ĐÚNG HIỂN THỊ): ${title} ===`);
+  lines.push(`Thời gian xuất: ${new Date().toISOString()}`);
+  lines.push(`Tổng số hàng: ${spans.length}${durationMs > 0 ? ` | Thời lượng: ${(durationMs / 1000).toFixed(2)}s (${durationMs}ms)` : ""}`);
+  lines.push(`Cột hiển thị (${activeCols.length}): ${activeCols.map((c) => c.label).join(" | ")}`);
+  lines.push(`Sắp xếp thời gian: ${timeSortOrder === "asc" ? "Cũ nhất trước (Oldest First ↑)" : "Mới nhất trước (Newest First ↓)"} | Ngôn ngữ sự kiện: ${isVietnameseEvents ? "Tiếng Việt" : "Gốc (Tiếng Anh)"}`);
+  lines.push("----------------------------------------------------------------------------------------------------");
+
+  // In tiêu đề cột
+  lines.push(activeCols.map((c) => c.label).join(" | "));
+  lines.push("----------------------------------------------------------------------------------------------------");
+
+  // In các dòng dữ liệu
+  for (const span of spans) {
+    const row = activeCols.map((c) => getCellValue(span, c.key));
+    lines.push(row.join(" | "));
+  }
+
+  lines.push("----------------------------------------------------------------------------------------------------");
+  return lines.join("\n");
+}
+
+/**
+ * Định dạng tóm tắt log (tương thích ngược)
  */
 export function formatLogsAsSummary(
   records: LogRecord[],
   title: string,
   durationMs: number
 ): string {
-  const lines: string[] = [];
-  lines.push(`=== LOG EXPORT: ${title} ===`);
-  lines.push(`Generated: ${new Date().toISOString()}`);
-  lines.push(`Total Records: ${records.length}`);
-  if (durationMs > 0) {
-    lines.push(`Duration: ${(durationMs / 1000).toFixed(2)}s (${durationMs}ms)`);
-  }
-  lines.push("------------------------------------------------------------");
+  const fakeSpans: TraceSpan[] = records.map((r, i) => ({
+    spanId: (r.detail?.spanId as string) || `span_${i}`,
+    name: r.event,
+    event: r.event,
+    category: "generic",
+    startTime: new Date(r.at).getTime() || Date.now(),
+    durationMs: typeof r.detail?.durationMs === "number" ? r.detail.durationMs : 0,
+    status: r.level === "error" ? "failed" : r.level === "warning" ? "warning" : "completed",
+    record: r,
+  }));
 
-  for (const record of records) {
-    const detail = record.detail || {};
-    const safe = (detail.safeDetails as Record<string, unknown>) || {};
-    const timeStr = record.at ? record.at.slice(11, 23) : "??:??:??.???";
-    const levelStr = record.level ? record.level.toUpperCase().padEnd(5) : "INFO ";
-
-    const preview =
-      (typeof detail.line === "string" && detail.line.trim()) ||
-      (typeof detail.message === "string" && detail.message.trim()) ||
-      (typeof detail.command === "string" && `$ ${detail.command.trim()}`) ||
-      (typeof safe.preview === "string" && safe.preview.trim()) ||
-      (typeof safe.modelSlug === "string" && `Model: ${safe.modelSlug}`) ||
-      "";
-
-    let line = `[${timeStr}] [${levelStr}] ${record.event}`;
-    if (preview) {
-      line += ` | ${preview}`;
-    }
-    lines.push(line);
-  }
-
-  lines.push("------------------------------------------------------------");
-  return lines.join("\n");
+  return formatDisplayedLogsSummary({
+    spans: fakeSpans,
+    title,
+    durationMs,
+    visibleColumns: {
+      time: true,
+      level: true,
+      event: true,
+      message: true,
+      duration: false,
+      spanId: false,
+      requestId: false,
+    },
+    isVietnameseEvents: true,
+  });
 }
 
 /**
@@ -78,7 +246,7 @@ export function downloadFile(content: string, filename: string, mimeType: string
 export function generateExportFilename(
   prefix: string,
   id: string,
-  extension: "json" | "jsonl" | "txt" | "md"
+  extension: "json" | "jsonl" | "txt" | "md" | "tsv"
 ): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");

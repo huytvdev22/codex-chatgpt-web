@@ -6,6 +6,8 @@ import {
   formatLogsAsPrettyJson,
   formatLogsAsJsonl,
   formatLogsAsSummary,
+  formatDisplayedLogsSummary,
+  extractSpanMessage,
   formatFlowPayloadReport,
   downloadFile,
   generateExportFilename,
@@ -1113,8 +1115,8 @@ export function TraceExplorer({
                         style={{
                           height: 28,
                           fontSize: 11,
-                          padding: "0 10px",
-                          gap: 5,
+                          padding: "0 8px",
+                          gap: 4,
                           background: "var(--color-bg-secondary, rgba(255,255,255,0.06))",
                           borderColor: "var(--color-accent, #3b82f6)",
                           color: "var(--color-accent, #60a5fa)",
@@ -1132,22 +1134,22 @@ export function TraceExplorer({
                         }}
                         title="Tải báo cáo chi tiết Flow và nội dung Message Payload thực tế (Markdown)"
                       >
-                        <span>📑 Flow Report (.md)</span>
+                        <span>📑 Flow (.md)</span>
                       </button>
 
                       {/* Dropdown Menu: Copy Log ▾ */}
                       <div className="te-menu-wrapper">
                         <button
                           className="te-btn"
-                          style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                          style={{ height: 28, fontSize: 11, padding: "0 8px" }}
                           onClick={() => {
                             setIsCopyMenuOpen((prev) => !prev);
                             setIsDownloadMenuOpen(false);
                             setIsColumnPickerOpen(false);
                           }}
-                          title={`Sao chép ${targetRecords.length} log records vào Clipboard`}
+                          title={`Sao chép ${sortedSpans.length} dòng hiển thị vào Clipboard`}
                         >
-                          <span>📋 Copy Log ({targetRecords.length}) ▾</span>
+                          <span>📋 Copy ({sortedSpans.length}) ▾</span>
                         </button>
 
                         {isCopyMenuOpen ? (
@@ -1172,13 +1174,82 @@ export function TraceExplorer({
                               <button
                                 className="te-menu-item"
                                 onClick={() => {
+                                  const text = formatDisplayedLogsSummary({
+                                    spans: sortedSpans,
+                                    title: targetTitle,
+                                    durationMs: targetDuration,
+                                    visibleColumns,
+                                    isVietnameseEvents,
+                                    timeSortOrder,
+                                    showTurnBadge: Boolean(
+                                      activeSelection.isAllTurns && activeSelection.conversation.traces.length > 1
+                                    ),
+                                    format: "text",
+                                  });
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép ${sortedSpans.length} dòng tóm tắt theo hiển thị`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Text Summary (Theo hiển thị)</span>
+                                <span className="te-menu-item-subtitle">.txt</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatDisplayedLogsSummary({
+                                    spans: sortedSpans,
+                                    title: targetTitle,
+                                    durationMs: targetDuration,
+                                    visibleColumns,
+                                    isVietnameseEvents,
+                                    timeSortOrder,
+                                    showTurnBadge: Boolean(
+                                      activeSelection.isAllTurns && activeSelection.conversation.traces.length > 1
+                                    ),
+                                    format: "tsv",
+                                  });
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép ${sortedSpans.length} dòng dạng bảng TSV (sẵn sàng dán Excel)`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Bảng TSV (Dán Excel / Sheets)</span>
+                                <span className="te-menu-item-subtitle">.tsv</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatDisplayedLogsSummary({
+                                    spans: sortedSpans,
+                                    title: targetTitle,
+                                    durationMs: targetDuration,
+                                    visibleColumns,
+                                    isVietnameseEvents,
+                                    timeSortOrder,
+                                    showTurnBadge: Boolean(
+                                      activeSelection.isAllTurns && activeSelection.conversation.traces.length > 1
+                                    ),
+                                    format: "markdown",
+                                  });
+                                  navigator.clipboard.writeText(text);
+                                  showToast(`✓ Đã sao chép ${sortedSpans.length} dòng dạng Markdown Table`);
+                                  setIsCopyMenuOpen(false);
+                                }}
+                              >
+                                <span>Bảng Markdown Table</span>
+                                <span className="te-menu-item-subtitle">.md</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
                                   const text = formatLogsAsPrettyJson(targetRecords);
                                   navigator.clipboard.writeText(text);
                                   showToast(`✓ Đã sao chép ${targetRecords.length} log (Pretty JSON)`);
                                   setIsCopyMenuOpen(false);
                                 }}
                               >
-                                <span>Pretty JSON</span>
+                                <span>Pretty JSON (Raw)</span>
                                 <span className="te-menu-item-subtitle">.json</span>
                               </button>
                               <button
@@ -1190,20 +1261,8 @@ export function TraceExplorer({
                                   setIsCopyMenuOpen(false);
                                 }}
                               >
-                                <span>JSON Lines</span>
+                                <span>JSON Lines (Raw)</span>
                                 <span className="te-menu-item-subtitle">.jsonl</span>
-                              </button>
-                              <button
-                                className="te-menu-item"
-                                onClick={() => {
-                                  const text = formatLogsAsSummary(targetRecords, targetTitle, targetDuration);
-                                  navigator.clipboard.writeText(text);
-                                  showToast(`✓ Đã sao chép tóm tắt ${targetRecords.length} log`);
-                                  setIsCopyMenuOpen(false);
-                                }}
-                              >
-                                <span>Text Summary</span>
-                                <span className="te-menu-item-subtitle">.txt</span>
                               </button>
                             </div>
                           </>
@@ -1214,15 +1273,15 @@ export function TraceExplorer({
                       <div className="te-menu-wrapper">
                         <button
                           className="te-btn"
-                          style={{ height: 28, fontSize: 11, padding: "0 10px" }}
+                          style={{ height: 28, fontSize: 11, padding: "0 8px" }}
                           onClick={() => {
                             setIsDownloadMenuOpen((prev) => !prev);
                             setIsCopyMenuOpen(false);
                             setIsColumnPickerOpen(false);
                           }}
-                          title={`Tải xuống ${targetRecords.length} log records`}
+                          title={`Tải xuống các log đang hiển thị (${sortedSpans.length} dòng)`}
                         >
-                          <span>⬇️ Download ▾</span>
+                          <span>⬇️ Export ▾</span>
                         </button>
 
                         {isDownloadMenuOpen ? (
@@ -1252,6 +1311,78 @@ export function TraceExplorer({
                               <button
                                 className="te-menu-item"
                                 onClick={() => {
+                                  const text = formatDisplayedLogsSummary({
+                                    spans: sortedSpans,
+                                    title: targetTitle,
+                                    durationMs: targetDuration,
+                                    visibleColumns,
+                                    isVietnameseEvents,
+                                    timeSortOrder,
+                                    showTurnBadge: Boolean(
+                                      activeSelection.isAllTurns && activeSelection.conversation.traces.length > 1
+                                    ),
+                                    format: "text",
+                                  });
+                                  const filename = generateExportFilename(targetPrefix, targetId, "txt");
+                                  downloadFile(text, filename, "text/plain");
+                                  showToast(`✓ Đã tải xuống ${filename} (${sortedSpans.length} dòng hiển thị)`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Text Summary File (Theo hiển thị)</span>
+                                <span className="te-menu-item-subtitle">.txt</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatDisplayedLogsSummary({
+                                    spans: sortedSpans,
+                                    title: targetTitle,
+                                    durationMs: targetDuration,
+                                    visibleColumns,
+                                    isVietnameseEvents,
+                                    timeSortOrder,
+                                    showTurnBadge: Boolean(
+                                      activeSelection.isAllTurns && activeSelection.conversation.traces.length > 1
+                                    ),
+                                    format: "tsv",
+                                  });
+                                  const filename = generateExportFilename(targetPrefix, targetId, "tsv");
+                                  downloadFile(text, filename, "text/tab-separated-values");
+                                  showToast(`✓ Đã tải xuống ${filename} (Mở bằng Excel)`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Excel / TSV File (Theo hiển thị)</span>
+                                <span className="te-menu-item-subtitle">.tsv</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
+                                  const text = formatDisplayedLogsSummary({
+                                    spans: sortedSpans,
+                                    title: targetTitle,
+                                    durationMs: targetDuration,
+                                    visibleColumns,
+                                    isVietnameseEvents,
+                                    timeSortOrder,
+                                    showTurnBadge: Boolean(
+                                      activeSelection.isAllTurns && activeSelection.conversation.traces.length > 1
+                                    ),
+                                    format: "markdown",
+                                  });
+                                  const filename = generateExportFilename(`table_${targetPrefix}`, targetId, "md");
+                                  downloadFile(text, filename, "text/markdown");
+                                  showToast(`✓ Đã tải xuống ${filename}`);
+                                  setIsDownloadMenuOpen(false);
+                                }}
+                              >
+                                <span>Markdown Table File</span>
+                                <span className="te-menu-item-subtitle">.md</span>
+                              </button>
+                              <button
+                                className="te-menu-item"
+                                onClick={() => {
                                   const text = formatLogsAsPrettyJson(targetRecords);
                                   const filename = generateExportFilename(targetPrefix, targetId, "json");
                                   downloadFile(text, filename, "application/json");
@@ -1259,7 +1390,7 @@ export function TraceExplorer({
                                   setIsDownloadMenuOpen(false);
                                 }}
                               >
-                                <span>Pretty JSON File</span>
+                                <span>Pretty JSON File (Raw)</span>
                                 <span className="te-menu-item-subtitle">.json</span>
                               </button>
                               <button
@@ -1272,21 +1403,8 @@ export function TraceExplorer({
                                   setIsDownloadMenuOpen(false);
                                 }}
                               >
-                                <span>JSONL File</span>
+                                <span>JSONL File (Raw)</span>
                                 <span className="te-menu-item-subtitle">.jsonl</span>
-                              </button>
-                              <button
-                                className="te-menu-item"
-                                onClick={() => {
-                                  const text = formatLogsAsSummary(targetRecords, targetTitle, targetDuration);
-                                  const filename = generateExportFilename(targetPrefix, targetId, "txt");
-                                  downloadFile(text, filename, "text/plain");
-                                  showToast(`✓ Đã tải xuống ${filename}`);
-                                  setIsDownloadMenuOpen(false);
-                                }}
-                              >
-                                <span>Text Summary File</span>
-                                <span className="te-menu-item-subtitle">.txt</span>
                               </button>
                             </div>
                           </>
@@ -1294,7 +1412,7 @@ export function TraceExplorer({
                       </div>
                     </div>
 
-                    <div className="te-action-bar-right" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div className="te-action-bar-right" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <button
                         className={`te-btn ${isVietnameseEvents ? "active" : ""}`}
                         style={{
@@ -1313,10 +1431,10 @@ export function TraceExplorer({
                         onClick={() => setIsVietnameseEvents((prev) => !prev)}
                         title="Bật/Tắt chế độ hiển thị sự kiện tiếng Việt và giải nghĩa dòng chảy hệ thống"
                       >
-                        <span>🇻🇳 {isVietnameseEvents ? "Việt hóa: BẬT" : "Việt hóa: TẮT"}</span>
+                        <span>🇻🇳 {isVietnameseEvents ? "Tiếng Việt" : "Tiếng Anh"}</span>
                       </button>
 
-                      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", whiteSpace: "nowrap" }}>
                         {sortedSpans.length} events
                       </span>
                     </div>
@@ -1345,7 +1463,9 @@ export function TraceExplorer({
                       {visibleColumns.level && (
                         <th style={{ width: 60, textAlign: "center" }}>Level</th>
                       )}
-                      {visibleColumns.event && <th>Event</th>}
+                      {visibleColumns.event && (
+                        <th style={{ width: 200, minWidth: 170 }}>Event</th>
+                      )}
                       {visibleColumns.message && <th>Message</th>}
                       {visibleColumns.duration && (
                         <th style={{ width: 70, textAlign: "right" }}>Duration</th>
@@ -1360,27 +1480,7 @@ export function TraceExplorer({
                       const isExpanded = expandedSpanIds.has(span.spanId);
                       const detail = span.record.detail || {};
                       const safe = (detail.safeDetails as Record<string, unknown>) || {};
-                      const daemonVi =
-                        isVietnameseEvents && typeof detail.line === "string"
-                          ? translateDaemonLine(detail.line)
-                          : null;
-                      const previewText =
-                        (daemonVi && `${daemonVi} | ${detail.line}`) ||
-                        (typeof safe.userMessage === "string" && `[User]: ${safe.userMessage.trim()}`) ||
-                        (typeof safe.injectedPromptPreview === "string" && `[Prompt M365]: ${safe.injectedPromptPreview.trim()}`) ||
-                        (typeof safe.responsePreview === "string" && `[Phản hồi M365]: ${safe.responsePreview.trim()}`) ||
-                        (typeof safe.promptPreview === "string" && `[Prompt]: ${safe.promptPreview.trim()}`) ||
-                        (typeof detail.line === "string" && detail.line.trim()) ||
-                        (typeof detail.message === "string" && detail.message.trim()) ||
-                        (typeof detail.command === "string" && `$ ${detail.command.trim()}`) ||
-                        (typeof safe.preview === "string" && safe.preview.trim()) ||
-                        (typeof safe.outputPreview === "string" && safe.outputPreview.trim()) ||
-                        (typeof safe.url === "string" && safe.url.trim()) ||
-                        (typeof safe.method === "string" &&
-                          typeof safe.path === "string" &&
-                          `${safe.method} ${safe.path}`) ||
-                        (typeof detail.modelSlug === "string" && `Model: ${detail.modelSlug}`) ||
-                        "—";
+                      const previewText = extractSpanMessage(span, isVietnameseEvents);
 
                       const activeTab = expandedDocTabs[span.spanId] || "table";
                       const colSpanCount = 1 + activeColumnCount;
@@ -1441,24 +1541,64 @@ export function TraceExplorer({
                                       : span.name
                                   }
                                 >
-                                  {activeSelection.isAllTurns &&
-                                  activeSelection.conversation.traces.length > 1 &&
-                                  span.turnIndex ? (
-                                    <span
-                                      className="te-turn-badge-tag"
-                                      title={`Thuộc Turn #${span.turnIndex} (Trace: ${span.traceId || ""})`}
-                                    >
-                                      T{span.turnIndex}
-                                    </span>
-                                  ) : null}
-                                  {translation ? (
-                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                                      <span style={{ fontSize: 13, lineHeight: 1 }}>{translation.icon}</span>
-                                      <span style={{ fontWeight: 500 }}>{translation.labelVi}</span>
-                                    </span>
-                                  ) : (
-                                    <span>{span.name}</span>
-                                  )}
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                      minWidth: 0,
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    {activeSelection.isAllTurns &&
+                                    activeSelection.conversation.traces.length > 1 &&
+                                    span.turnIndex ? (
+                                      <span
+                                        className="te-turn-badge-tag"
+                                        style={{ flexShrink: 0 }}
+                                        title={`Thuộc Turn #${span.turnIndex} (Trace: ${span.traceId || ""})`}
+                                      >
+                                        T{span.turnIndex}
+                                      </span>
+                                    ) : null}
+                                    {translation ? (
+                                      <span
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: 5,
+                                          minWidth: 0,
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        <span style={{ fontSize: 13, lineHeight: 1, flexShrink: 0 }}>
+                                          {translation.icon}
+                                        </span>
+                                        <span
+                                          style={{
+                                            fontWeight: 500,
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                          }}
+                                        >
+                                          {translation.labelVi}
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        style={{
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {span.name}
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                               );
                             })()}
