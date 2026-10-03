@@ -524,7 +524,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
           terminalExplanation,
           ...(translated.parseDiagnostics ? { parseDiagnostics: translated.parseDiagnostics } : {}),
           toolCount: 0,
-          finalAnswer: remainingText || reply || "",
+          finalAnswer: reply || remainingText || "",
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
         },
@@ -537,7 +537,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
       });
 
       // [DEBUG PIPELINE] STEP 4: Bridge Server ➔ Codex IDE (OUTGOING SSE / TOOL CALLS)
-      const step4TextContent = (remainingText || reply || "").trim();
+      const step4TextContent = (reply || remainingText || "").trim();
       logDebugPipelineStation(4, "BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)", step4TextContent || "(Phản hồi hoàn tất)");
     } catch (err: unknown) {
       if (conversationKey) {
