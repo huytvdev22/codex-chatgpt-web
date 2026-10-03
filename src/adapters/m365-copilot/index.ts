@@ -227,10 +227,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì forward nguyên trạng raw request của Codex
+    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì forward nguyên trạng raw request của Codex (không format json để tiết kiệm token)
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
     const promptToSend = isTemporaryPerRequest
-      ? JSON.stringify(rawBody || parsed, null, 2)
+      ? (typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody || parsed))
       : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
