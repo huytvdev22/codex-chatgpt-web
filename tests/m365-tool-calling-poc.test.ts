@@ -547,8 +547,8 @@ const b = \\{\\
     expect(prompt).toContain("TEXT INTERACTION PROTOCOL");
     expect(prompt).toContain("KHÔNG tự chạy trong sandbox /mnt/data");
     expect(prompt).toContain("<tool_call>");
-    expect(prompt).toContain("DƯỚI ĐÂY LÀ TOÀN BỘ YÊU CẦU VÀ NGỮ CẢNH CỦA CODEX IDE");
-    expect(prompt).toContain(JSON.stringify(rawBody));
+    expect(prompt).toContain("[YÊU CẦU CỦA NGƯỜI DÙNG]");
+    expect(prompt).toContain("chỉnh sửa file");
     expect(prompt).toContain("[Yêu cầu định dạng đầu ra]");
   });
 });

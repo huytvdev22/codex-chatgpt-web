@@ -2,6 +2,7 @@ import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
 import { compileM365Prompt, compileM365HybridForwardPrompt } from "./prompt";
+import { CodexRawPayload } from "./codex-raw-payload";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
@@ -162,15 +163,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
       throw new DOMException("M365 Copilot turn aborted before start", "AbortError");
     }
 
-    // 1. Xác định định danh phiên trò chuyện và kiểm tra xem có phải cuộc trò chuyện mới
-    const rawBody = parsed._rawBody as Record<string, any> | undefined;
-    const clientMeta = rawBody?.client_metadata as Record<string, any> | undefined;
-    const turnMeta = clientMeta?.["x-codex-turn-metadata"];
-    const parsedTurnMeta = typeof turnMeta === "string" ? (() => { try { return JSON.parse(turnMeta); } catch { return undefined; } })() : turnMeta;
-
+    // 1. Khởi tạo Domain Model 1:1 đại diện cho toàn bộ Raw JSON Request của Codex
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
     const conversationKey = incoming.headers.get("x-codex-conversation-key")
-      || parsedTurnMeta?.thread_id
-      || clientMeta?.thread_id
+      || rawPayload.getThreadId()
       || undefined;
 
     const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
@@ -227,10 +223,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì dùng Hybrid Forward Prompt (chặn /mnt/data và hướng dẫn tool_call)
+    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì dùng Prompt tối ưu từ Domain Model 1:1
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
     const promptToSend = isTemporaryPerRequest
-      ? compileM365HybridForwardPrompt(parsed, rawBody)
+      ? rawPayload.buildOptimizedPrompt()
       : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)

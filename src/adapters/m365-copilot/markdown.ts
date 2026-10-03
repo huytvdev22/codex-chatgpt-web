@@ -69,7 +69,7 @@ export class M365MarkdownBuffer {
 
   constructor(
     private readonly transform: (md: string) => string = md => md
-  ) {}
+  ) { }
 
   /**
    * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
@@ -128,7 +128,17 @@ export class M365MarkdownBuffer {
   }
 
   private commitBlock(block: M365MarkdownBlock): string {
-    const rawMd = m365HtmlToMarkdown(block.html).trim();
+    // Nếu khối là khối công cụ hoặc patch, ưu tiên trích xuất textContent thuần túy (raw text)
+    // để tránh việc Turndown tự động escape các ký tự cú pháp như _ thành \_, [ thành \[, * thành \*
+    let rawMd: string;
+    if (
+      /<\s*tool[\\_]*call\s*>/i.test(block.text) ||
+      /(?:\\?\*){2,3}\s*Begin Patch/i.test(block.text)
+    ) {
+      rawMd = block.text.trim();
+    } else {
+      rawMd = m365HtmlToMarkdown(block.html).trim();
+    }
     const cleanMd = normalizeMarkdownFences(this.transform(rawMd).trim());
     this.committedKeys.add(block.key);
 
@@ -384,7 +394,7 @@ export class M365ToolCallDetector {
           arguments: args,
         };
       }
-    } catch {}
+    } catch { }
 
     // 2. Thử parse nguyên bản nếu clean khác sanitized
     try {
@@ -415,39 +425,7 @@ export class M365ToolCallDetector {
           arguments: args,
         };
       }
-    } catch {}
-
-    // 3. Thử parse với bộ sửa lỗi unescaped double quotes trong code/string literal
-    try {
-      const repaired = repairJsonUnescapedQuotes(clean);
-      const parsed = JSON.parse(repaired);
-      if (parsed && typeof parsed === "object") {
-        const name = typeof parsed.name === "string" ? parsed.name : "read_file";
-        let args = parsed.arguments;
-        if (!args && parsed.path) {
-          args = { path: parsed.path };
-        } else if (typeof args === "string") {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            args = { path: args };
-          }
-        } else if (!args) {
-          args = {};
-        }
-
-        if (name === "write_file") {
-          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
-            return null;
-          }
-        }
-
-        return {
-          name,
-          arguments: args,
-        };
-      }
-    } catch {}
+    } catch { }
 
     // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
     return null;
@@ -505,94 +483,6 @@ export function sanitizeJsonControlChars(raw: string): string {
     escaped = (ch === "\\" && !escaped);
   }
   return out;
-}
-
-/**
- * Tự động sửa chữa và escape các dấu ngoặc kép (") nằm bên trong string literal của JSON
- * mà mô hình AI không escape khi sinh code/script hoặc nội dung văn bản.
- * Đồng thời tự động chuẩn hóa các ký tự điều khiển thô (raw newline, carriage return, tab).
- */
-export function repairJsonUnescapedQuotes(jsonStr: string): string {
-  let result = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let i = 0; i < jsonStr.length; i++) {
-    const ch = jsonStr[i];
-
-    if (ch === "\\" && inString) {
-      result += ch;
-      escaped = !escaped;
-      continue;
-    }
-
-    if (ch === "\"") {
-      if (escaped) {
-        result += ch;
-        escaped = false;
-        continue;
-      }
-
-      if (!inString) {
-        inString = true;
-        result += ch;
-      } else {
-        const rest = jsonStr.slice(i + 1);
-        const nextMatch = rest.match(/^\s*(:|,|\}|\])/);
-
-        let isRealEnd = false;
-        if (nextMatch) {
-          const delimiter = nextMatch[1];
-          if (delimiter === ":") {
-            isRealEnd = true;
-          } else if (delimiter === "}" || delimiter === "]") {
-            isRealEnd = true;
-          } else if (delimiter === ",") {
-            const afterComma = rest.slice(nextMatch[0].length);
-            const isNextKeyOrItem = /^\s*(?:"[a-zA-Z0-9_$-]+"\s*:|[{\[\d"true|false|null])/.test(afterComma);
-            if (isNextKeyOrItem) {
-              isRealEnd = true;
-            }
-          }
-        }
-
-        if (isRealEnd) {
-          inString = false;
-          result += ch;
-        } else {
-          result += "\\\"";
-        }
-      }
-      escaped = false;
-      continue;
-    }
-
-    if (inString) {
-      if (ch === "\n") {
-        if (escaped && result.endsWith("\\")) {
-          result = result.slice(0, -1);
-        }
-        result += "\\n";
-        escaped = false;
-        continue;
-      } else if (ch === "\r") {
-        if (escaped && result.endsWith("\\")) {
-          result = result.slice(0, -1);
-        }
-        result += "\\r";
-        escaped = false;
-        continue;
-      } else if (ch === "\t") {
-        result += "\\t";
-        escaped = false;
-        continue;
-      }
-    }
-
-    result += ch;
-    escaped = false;
-  }
-  return result;
 }
 
 /**

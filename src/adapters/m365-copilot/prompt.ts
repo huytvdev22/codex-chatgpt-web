@@ -1,4 +1,5 @@
 import type { CodexContentPart, CodexParsedRequest } from "../../types";
+import { CodexRawPayload } from "./codex-raw-payload";
 import {
   TOOL_DECLARATION_PROMPT,
   PLAN_MODE_PROMPT,
@@ -287,25 +288,12 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
 /**
  * Biên dịch Hybrid Forward Prompt:
  * Kết hợp chỉ dẫn giao thức Text Interaction Protocol (để ngăn Copilot chạy sandbox /mnt/data
- * và hướng dẫn xuất <tool_call>) cùng toàn bộ chuỗi Raw JSON nguyên vẹn của Codex.
+/**
+ * Xây dựng Prompt chuyển tiếp cho chế độ Temporary Chat Per Request.
+ * Sử dụng class CodexRawPayload đại diện 1:1 dữ liệu Codex để build prompt tối ưu token:
+ * Loại bỏ metadata kỹ thuật rác, trích xuất đúng công cụ và ngữ cảnh lập trình cần thiết.
  */
 export function compileM365HybridForwardPrompt(parsed: CodexParsedRequest, rawBody?: unknown): string {
-  const rawJson = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody || parsed);
-
-  return [
-    `[HỆ THỐNG GIAO TIẾP VĂN BẢN VỚI IDE - TEXT INTERACTION PROTOCOL]`,
-    `Bạn là Trợ lý Lập trình viên AI được kết nối trực tiếp với Codex IDE trên máy tính người dùng. IDE đang tự động lắng nghe luồng văn bản của cuộc trò chuyện này.`,
-    `QUY TẮC BẮT BUỘC:`,
-    `1. KHÔNG tự chạy trong sandbox /mnt/data của Copilot; container đám mây đó không thể truy cập mã nguồn trên máy tính người dùng.`,
-    `2. Để thao tác trên dự án (đọc file, xem thư mục, sửa code, chạy lệnh), bạn HÃY XUẤT CÂU LỆNH BASH (ví dụ: cat <file>, ls, git status) hoặc xuất khối văn bản:`,
-    `<tool_call>`,
-    `{"name": "TOOL_NAME", "arguments": {"ARG_KEY": "ARG_VALUE"}}`,
-    `</tool_call>`,
-    `Hệ thống IDE sẽ tự động bắt lấy lệnh bạn in ra, chạy trực tiếp trên dự án cục bộ và trả kết quả vào thẻ <tool_result> cho bạn ở lượt kế tiếp.`,
-    ``,
-    `DƯỚI ĐÂY LÀ TOÀN BỘ YÊU CẦU VÀ NGỮ CẢNH CỦA CODEX IDE:`,
-    rawJson,
-    ``,
-    `[Yêu cầu định dạng đầu ra]: Hãy xuất ngay câu lệnh terminal tương ứng (ví dụ: cat <file>, ls) hoặc khối <tool_call> tương ứng để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`,
-  ].join("\n");
+  const payload = CodexRawPayload.from(rawBody || parsed._rawBody || parsed);
+  return payload.buildOptimizedPrompt();
 }

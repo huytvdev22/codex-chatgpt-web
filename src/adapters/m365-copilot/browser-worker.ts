@@ -106,7 +106,7 @@ export async function executeM365Turn(
       // 2.1. Nếu URL đang lưu thread cũ (/chat/c/...), điều hướng thẳng về /chat để mở phiên trắng
       if (page.url().includes("/chat/c/")) {
         console.log(`[m365-worker] Điều hướng về /chat từ thread cũ: ${page.url()}`);
-        await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+        await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => { });
         await new Promise(r => setTimeout(r, 400));
       }
 
@@ -131,7 +131,7 @@ export async function executeM365Turn(
             }
           }, 200);
         }
-      }).catch(() => {});
+      }).catch(() => { });
 
       // Chờ giao diện ổn định sau khi kích hoạt new chat
       await new Promise(r => setTimeout(r, 400));
@@ -146,7 +146,7 @@ export async function executeM365Turn(
             tempBtn.click();
             tempBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
           }
-        }).catch(() => {});
+        }).catch(() => { });
         await new Promise(r => setTimeout(r, 300));
       }
 
@@ -165,7 +165,7 @@ export async function executeM365Turn(
       if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
         tempBtn.click();
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     // 3.1. Đảm bảo model mong muốn (Capability Mode) được chọn trên giao diện M365 Copilot
     if (options.modelSlug) {
@@ -252,7 +252,7 @@ export async function executeM365Turn(
             'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
           ) as HTMLButtonElement | null;
           if (stopBtn) stopBtn.click();
-        }).catch(() => {});
+        }).catch(() => { });
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
       }
 
@@ -274,7 +274,7 @@ export async function executeM365Turn(
         const messages = Array.from(document.querySelectorAll(
           ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
         ));
-        
+
         // Quét thông báo lỗi hệ thống hoặc quota từ M365 Web
         let detectedWebError = "";
         const errorEl = document.querySelector(
@@ -501,7 +501,7 @@ export async function executeM365Turn(
           traceId: options.traceId,
           helperPid: process.pid,
           refreshViewport: false,
-        }, undefined, options.signal).catch(() => {});
+        }, undefined, options.signal).catch(() => { });
       }
 
       // Stream các khối đã hoàn thành thông qua M365MarkdownBuffer
@@ -523,7 +523,7 @@ export async function executeM365Turn(
         const currentChars = lastBlocks.reduce((acc, b) => acc + b.text.length, 0);
         const stableSec = Math.round((Date.now() - lastTextChangeAt) / 1000);
         const combinedTextSoFar = lastBlocks.map(b => b.text).join(" ");
-        const unclosedToolCall = /<\s*tool[\\_]*call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool[\\_]*call\s*>/i.test(combinedTextSoFar);
+        const unclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedTextSoFar);
         const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
 
         const statusSummary = status.isGenerating
@@ -554,9 +554,9 @@ export async function executeM365Turn(
       // 2. Không còn đang sinh (!status.isGenerating)
       // 3. Khối tool_call hoặc patch đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
       const combinedText = lastBlocks.map(b => b.text).join(" ");
-      const hasUnclosedToolCall = /<\s*tool[\\_]*call\s*>/i.test(combinedText) && !/<\s*\/tool[\\_]*call\s*>/i.test(combinedText);
+      const hasUnclosedToolCall = /<\s*tool\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\?_call\s*>/i.test(combinedText);
       const hasUnclosedPatch = /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
-      const toolCallFullyClosed = /<\s*\/tool[\\_]*call\s*>/i.test(combinedText);
+      const toolCallFullyClosed = /<\s*\/tool\\?_call\s*>/i.test(combinedText);
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
       // - Nếu có thẻ </tool_call> đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
@@ -655,11 +655,11 @@ export async function executeM365Turn(
         helperPid: process.pid,
         status: finalStatus,
         retain: true,
-      }).catch(() => {});
+      }).catch(() => { });
       await withTimeout(notifyPromise, 2000, undefined);
     }
     console.log(`[m365-worker] [cleanup] closing browser connection (timeout 3000ms)...`);
-    await withTimeout(browser.close().catch(() => {}), 3000, undefined);
+    await withTimeout(browser.close().catch(() => { }), 3000, undefined);
     console.log(`[m365-worker] [cleanup] browser closed`);
   }
 }

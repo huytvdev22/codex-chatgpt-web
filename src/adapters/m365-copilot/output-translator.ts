@@ -1,5 +1,5 @@
 import { BashCommandTranslator } from "./bash-translator";
-import { sanitizeJsonControlChars, repairJsonUnescapedQuotes } from "./markdown";
+import { sanitizeJsonControlChars } from "./markdown";
 import { AtomicFileWriter } from "./atomic-file-writer";
 
 /**
@@ -26,17 +26,17 @@ export interface ParseDiagnostics {
  */
 export type TranslationResult =
   | {
-      type: "tool_call";
-      tool_calls: OpenAIToolCall[];
-      rawResponse: string;
-      parseDiagnostics?: ParseDiagnostics;
-    }
+    type: "tool_call";
+    tool_calls: OpenAIToolCall[];
+    rawResponse: string;
+    parseDiagnostics?: ParseDiagnostics;
+  }
   | {
-      type: "final_answer";
-      content: string;
-      rawResponse: string;
-      parseDiagnostics?: ParseDiagnostics;
-    };
+    type: "final_answer";
+    content: string;
+    rawResponse: string;
+    parseDiagnostics?: ParseDiagnostics;
+  };
 
 export interface DetectedToolCall {
   name: string;
@@ -109,8 +109,7 @@ export function balanceJsonBraces(raw: string): string {
 export function cleanJsonPayload(raw: string): string {
   const stripped = stripOuterCodeFence(raw);
   const unescaped = stripped.replace(/\\([_\[\]*~`>#+\-.!|{}()])/g, "$1");
-  const repaired = repairJsonUnescapedQuotes(unescaped);
-  return balanceJsonBraces(repaired);
+  return balanceJsonBraces(unescaped);
 }
 
 /**
@@ -343,9 +342,10 @@ export class XmlToolCallDetector implements IToolCallDetector {
   private parseInnerXml(innerContent: string): DetectedToolCall | null {
     const clean = cleanJsonPayload(innerContent);
 
-    // 1. Thử parse với payload đã làm sạch và sửa chữa quotes / control chars
+    // 1. Thử parse với sanitizer xử lý raw newlines/control characters
     try {
-      const parsed = JSON.parse(clean);
+      const sanitized = sanitizeJsonControlChars(clean);
+      const parsed = JSON.parse(sanitized);
       if (parsed && typeof parsed === "object") {
         const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
         let args = parsed.arguments || parsed.args || {};
@@ -367,12 +367,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
 
         return { name, arguments: args };
       }
-    } catch {}
+    } catch { }
 
-    // 2. Thử parse với sanitizer xử lý raw newlines/control characters
+    // 2. Thử parse nguyên bản
     try {
-      const sanitized = sanitizeJsonControlChars(clean);
-      const parsed = JSON.parse(sanitized);
+      const parsed = JSON.parse(clean);
       if (parsed && typeof parsed === "object") {
         const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
         let args = parsed.arguments || parsed.args || {};
@@ -393,33 +392,7 @@ export class XmlToolCallDetector implements IToolCallDetector {
 
         return { name, arguments: args };
       }
-    } catch {}
-
-    // 3. Thử parse với repairJsonUnescapedQuotes trên nội dung gốc
-    try {
-      const repaired = repairJsonUnescapedQuotes(innerContent);
-      const parsed = JSON.parse(repaired);
-      if (parsed && typeof parsed === "object") {
-        const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
-        let args = parsed.arguments || parsed.args || {};
-        if (typeof args === "string") {
-          try { args = JSON.parse(args); } catch { args = { path: args }; }
-        } else if (Object.keys(args).length === 0) {
-          if (parsed.path) args = { path: parsed.path };
-          else if (parsed.cmd) args = { cmd: parsed.cmd };
-          else if (parsed.input) args = { input: parsed.input };
-          else if (parsed.patch) args = { input: parsed.patch };
-        }
-
-        if (name === "write_file") {
-          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
-            return null;
-          }
-        }
-
-        return { name, arguments: args };
-      }
-    } catch {}
+    } catch { }
 
     // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
     return null;
@@ -434,7 +407,7 @@ export class BashCommandDetector implements IToolCallDetector {
   readonly priority = 3;
   readonly name = "BashCommandDetector";
 
-  constructor(private readonly translator = new BashCommandTranslator()) {}
+  constructor(private readonly translator = new BashCommandTranslator()) { }
 
   detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     const all = this.translator.translateAll(rawResponse);
@@ -464,7 +437,7 @@ export function maskArgumentsForLog(argsStr: string): string {
       }
       return JSON.stringify(masked);
     }
-  } catch {}
+  } catch { }
   if (argsStr.length > 300) {
     return `${argsStr.slice(0, 150)}... [TRUNCATED ${argsStr.length - 250} chars] ...${argsStr.slice(-100)}`;
   }
@@ -499,7 +472,7 @@ export function maskToolCallsForLog(toolCalls: OpenAIToolCall[]): any[] {
           },
         };
       }
-    } catch {}
+    } catch { }
     return tc;
   });
 }
@@ -604,17 +577,17 @@ export class M365OutputTranslator {
       rawResponse,
       ...(diagnosticWarning
         ? {
-            parseDiagnostics: {
-              suspiciousToolDetected: true,
-              warningMessage: diagnosticWarning,
-            },
-          }
+          parseDiagnostics: {
+            suspiciousToolDetected: true,
+            warningMessage: diagnosticWarning,
+          },
+        }
         : {
-            parseDiagnostics: {
-              terminalReason: "model_final_answer",
-              warningMessage: "M365 Copilot hoàn tất câu trả lời dạng văn bản kết luận (Final Answer).",
-            },
-          }),
+          parseDiagnostics: {
+            terminalReason: "model_final_answer",
+            warningMessage: "M365 Copilot hoàn tất câu trả lời dạng văn bản kết luận (Final Answer).",
+          },
+        }),
     };
   }
 
