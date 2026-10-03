@@ -523,7 +523,7 @@ export async function executeM365Turn(
         const currentChars = lastBlocks.reduce((acc, b) => acc + b.text.length, 0);
         const stableSec = Math.round((Date.now() - lastTextChangeAt) / 1000);
         const combinedTextSoFar = lastBlocks.map(b => b.text).join(" ");
-        const unclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedTextSoFar);
+        const unclosedToolCall = /<\s*tool[\\_]*call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool[\\_]*call\s*>/i.test(combinedTextSoFar);
         const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
 
         const statusSummary = status.isGenerating
@@ -554,9 +554,9 @@ export async function executeM365Turn(
       // 2. Không còn đang sinh (!status.isGenerating)
       // 3. Khối tool_call hoặc patch đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
       const combinedText = lastBlocks.map(b => b.text).join(" ");
-      const hasUnclosedToolCall = /<\s*tool\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\?_call\s*>/i.test(combinedText);
+      const hasUnclosedToolCall = /<\s*tool[\\_]*call\s*>/i.test(combinedText) && !/<\s*\/tool[\\_]*call\s*>/i.test(combinedText);
       const hasUnclosedPatch = /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
-      const toolCallFullyClosed = /<\s*\/tool\\?_call\s*>/i.test(combinedText);
+      const toolCallFullyClosed = /<\s*\/tool[\\_]*call\s*>/i.test(combinedText);
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
       // - Nếu có thẻ </tool_call> đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay

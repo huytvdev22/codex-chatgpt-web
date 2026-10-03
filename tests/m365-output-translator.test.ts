@@ -435,4 +435,19 @@ git status`;
       expect(JSON.parse(res.tool_calls[1].function.arguments)).toEqual({ path: "src/version.ts" });
     }
   });
+
+  test("Tool Calling: tự động phục hồi và parse thành công khi LLM sinh unescaped double quotes trong code/script", () => {
+    const rawWithUnescapedQuotes = `<tool_call>
+{"name":"exec_command","arguments":{"cmd":"cat > .github/workflows/ci.yml <<'EOF'\\nif ($PSVersionTable.PSVersion.Major -ne 5) {\\n throw \\"Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)\\"\\n }\\nEOF\\ngit diff","workdir":"/app"}}
+</tool_call>`;
+    const res = translator.translate(rawWithUnescapedQuotes);
+    expect(res.type).toBe("tool_call");
+    if (res.type === "tool_call") {
+      expect(res.tool_calls.length).toBe(1);
+      expect(res.tool_calls[0].function.name).toBe("exec_command");
+      const args = JSON.parse(res.tool_calls[0].function.arguments);
+      expect(args.workdir).toBe("/app");
+      expect(args.cmd).toContain("throw \"Expected Windows PowerShell 5.1");
+    }
+  });
 });
