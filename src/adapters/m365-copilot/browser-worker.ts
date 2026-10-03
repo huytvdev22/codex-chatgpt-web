@@ -19,6 +19,7 @@ export interface M365BrowserRunOptions {
   shouldStop?: () => boolean;
   modelSlug?: string;
   traceContext?: TraceContext;
+  forceTemporaryChat?: boolean;
 }
 
 let activeM365ConversationKey: string | null = null;
@@ -93,8 +94,9 @@ export async function executeM365Turn(
       await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 20_000 });
     }
 
-    // 2. Nếu là cuộc hội thoại mới trên Codex, mở một phiên chat mới trên M365
-    const shouldStartNewChat = options.isNewConversation || (
+    // 2. Kiểm tra chế độ Temporary Chat Per Request
+    const isTemporaryMode = Boolean(options.forceTemporaryChat || (descriptor as any).m365TemporaryChatPerRequest);
+    const shouldStartNewChat = isTemporaryMode || options.isNewConversation || (
       options.conversationKey && activeM365ConversationKey && options.conversationKey !== activeM365ConversationKey
     );
 
@@ -111,7 +113,7 @@ export async function executeM365Turn(
         }
 
         // Hoặc tắt rồi bật lại Temporary Chat để làm mới phiên
-        const tempBtn = document.querySelector('button[aria-label="Temporary chat"]') as HTMLButtonElement | null;
+        const tempBtn = document.querySelector('button[aria-label="Temporary chat"], [aria-label*="Temporary chat" i], [aria-label*="Cuộc trò chuyện tạm thời" i]') as HTMLButtonElement | null;
         if (tempBtn) {
           tempBtn.click();
           setTimeout(() => {
@@ -124,6 +126,21 @@ export async function executeM365Turn(
 
       // Chờ giao diện ổn định sau khi kích hoạt new chat
       await new Promise(r => setTimeout(r, 600));
+
+      // Bật Temporary Chat nếu ở chế độ Temporary Mode
+      if (isTemporaryMode) {
+        await page.evaluate(() => {
+          const tempBtn = document.querySelector(
+            'button[aria-label="Temporary chat"], [aria-label*="Temporary chat" i], [aria-label*="Cuộc trò chuyện tạm thời" i]'
+          ) as HTMLButtonElement | null;
+          if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
+            tempBtn.click();
+            tempBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+          }
+        }).catch(() => {});
+        await new Promise(r => setTimeout(r, 300));
+      }
+
       activeM365ConversationKey = options.conversationKey || null;
     } else if (options.conversationKey) {
       activeM365ConversationKey = options.conversationKey;

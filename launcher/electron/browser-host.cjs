@@ -378,6 +378,7 @@ class BrowserHost {
     this.manualTerminalSignals = new Map();
     this.manualCompletionSignals = new Map();
     this.interactionModeOverride = null;
+    this.m365TemporaryChatPerRequest = false;
     this.selectedTabId = "home";
     this.manualOperation = null;
     this.loginOperation = null;
@@ -3598,6 +3599,7 @@ class BrowserHost {
       activeSurfaceId: this.surfaceId,
       surfaceTargets,
       provider: this.provider || "chatgpt",
+      m365TemporaryChatPerRequest: this.m365TemporaryChatPerRequest === true,
       createdAt: new Date().toISOString(),
     };
     writePrivateFileAtomic(this.descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
@@ -3609,6 +3611,11 @@ class BrowserHost {
     const browserSession = contents.session;
     browserSession.flushStorageData();
     await browserSession.cookies.flushStore();
+  }
+
+  setM365TemporaryChatPerRequest(enabled) {
+    this.m365TemporaryChatPerRequest = enabled === true;
+    this.writeDescriptor();
   }
 
   destroy() {

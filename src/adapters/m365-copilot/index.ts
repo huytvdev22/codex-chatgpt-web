@@ -10,6 +10,7 @@ import { emitStructuredEvent } from "../../observability/emitter";
 import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
 import type { TraceContext } from "../../observability/types";
+import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 
 export * from "./bash-translator";
 export * from "./output-translator";
@@ -179,11 +180,21 @@ export class M365CopilotAdapter implements ProviderAdapter {
       this.lastConversationKey = conversationKey;
     }
 
+    // 1.1. Kiểm tra cấu hình Temporary Chat Per Request từ Launcher
+    let isTemporaryPerRequest = false;
+    const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR;
+    if (descriptorPath) {
+      try {
+        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+        isTemporaryPerRequest = Boolean((descriptor as any).m365TemporaryChatPerRequest);
+      } catch {}
+    }
+
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
-    // Hoàn tất lượt ngay lập tức mà không gọi lại M365 Copilot
+    // (Chỉ áp dụng trong chế độ Stateful thông thường)
     const allMsgs = parsed.context.messages || [];
     const lastMsg = allMsgs[allMsgs.length - 1];
-    if (isAssistantFinalAnswer(lastMsg)) {
+    if (!isTemporaryPerRequest && isAssistantFinalAnswer(lastMsg)) {
       console.log(`[m365-adapter] Cuộc hội thoại đã kết thúc bằng phản hồi của trợ lý và không có pending tool call hoặc input mới. Hoàn tất lượt.`);
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
@@ -210,8 +221,9 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt (chỉ gửi tin nhắn mới nếu đang tiếp tục cuộc trò chuyện)
+    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì forward nguyên trạng raw request của Codex
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
+    const promptToSend = (isTemporaryPerRequest && rawBody) ? JSON.stringify(rawBody, null, 2) : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {
@@ -250,7 +262,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
       const toolDetector = new M365ToolCallDetector();
       let streamedAnyText = false;
 
-      const reply = await executeM365Turn(compiledPrompt, {
+      const reply = await executeM365Turn(promptToSend, {
         onChunk: (delta) => {
           const safeText = toolDetector.feed(delta);
           if (safeText) {
@@ -261,7 +273,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         signal: incoming.abortSignal,
         traceId: incoming.headers.get("x-codex-trace-id") || undefined,
         conversationKey,
-        isNewConversation,
+        isNewConversation: isTemporaryPerRequest ? true : isNewConversation,
+        forceTemporaryChat: isTemporaryPerRequest,
         shouldStop: () => toolDetector.hasDetectedToolCall(),
         modelSlug: parsed.modelId,
         traceContext,
