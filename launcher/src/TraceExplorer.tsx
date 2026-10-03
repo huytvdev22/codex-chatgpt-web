@@ -138,6 +138,13 @@ export function TraceExplorer({
   // Console Logs Terminal State
   const [consoleSearch, setConsoleSearch] = useState("");
   const [consoleAutoScroll, setConsoleAutoScroll] = useState(true);
+  const [consoleWrap, setConsoleWrap] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("codex_console_wrap") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [consoleClearedTime, setConsoleClearedTime] = useState<number | null>(null);
   const [consoleScope, setConsoleScope] = useState<"all" | "selected">("all");
   const consoleContainerRef = useRef<HTMLDivElement>(null);
@@ -565,6 +572,17 @@ export function TraceExplorer({
       consoleContainerRef.current.scrollTop = consoleContainerRef.current.scrollHeight;
     }
   }, [viewMode, filteredConsoleRecords.length, consoleAutoScroll]);
+
+  const toggleConsoleWrap = () => {
+    setConsoleWrap((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("codex_console_wrap", String(next));
+      } catch {}
+      showToast(next ? "Đã bật Wrap text (tự xuống dòng)" : "Đã bật Cuộn ngang (No wrap)");
+      return next;
+    });
+  };
 
   const handleCopyConsoleLogs = () => {
     const text = filteredConsoleRecords
@@ -1165,6 +1183,24 @@ export function TraceExplorer({
                             title="Tự động cuộn theo dòng log mới nhất"
                           >
                             <span>{consoleAutoScroll ? "⏬ Cuộn: BẬT" : "⏸️ Cuộn: TẮT"}</span>
+                          </button>
+                          <button
+                            className={`te-btn ${consoleWrap ? "active" : ""}`}
+                            style={{
+                              height: 26,
+                              fontSize: 11,
+                              padding: "0 8px",
+                              color: consoleWrap ? "#38bdf8" : undefined,
+                              borderColor: consoleWrap ? "rgba(56, 189, 248, 0.4)" : undefined,
+                            }}
+                            onClick={toggleConsoleWrap}
+                            title={
+                              consoleWrap
+                                ? "Đang BẬT Wrap text (tự xuống dòng). Nhấp để tắt Wrap và cho phép cuộn ngang (Scroll horizontal)"
+                                : "Đang TẮT Wrap (cho phép cuộn ngang). Nhấp để bật Wrap text (tự động xuống dòng khi log dài)"
+                            }
+                          >
+                            <span>{consoleWrap ? "↩️ Wrap: BẬT" : "➡️ Cuộn ngang"}</span>
                           </button>
                           <button
                             className="te-btn"
@@ -2289,34 +2325,10 @@ export function TraceExplorer({
                 })()}
               </div>
             ) : (
-              <div
-                className="te-console-terminal-wrapper"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  flex: 1,
-                  minHeight: 0,
-                  background: "var(--color-bg-primary, #090d16)",
-                  padding: "8px 12px 12px 12px",
-                }}
-              >
+              <div className="te-console-terminal-wrapper">
                 <div
                   ref={consoleContainerRef}
-                  style={{
-                    flex: 1,
-                    minHeight: 0,
-                    background: "#0d1117",
-                    border: "1px solid rgba(255, 255, 255, 0.08)",
-                    borderRadius: 6,
-                    padding: "12px 14px",
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-                    fontSize: 12,
-                    lineHeight: 1.6,
-                    overflowY: "auto",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    userSelect: "text",
-                  }}
+                  className={`te-console-terminal-screen ${consoleWrap ? "is-wrap" : "is-nowrap"}`}
                 >
                   {filteredConsoleRecords.length === 0 ? (
                     <div style={{ color: "#64748b", fontStyle: "italic", textAlign: "center", marginTop: 60 }}>
@@ -2325,37 +2337,37 @@ export function TraceExplorer({
                         : "(Chưa có log console hoặc màn hình đã được xóa sạch)"}
                     </div>
                   ) : (
-                    filteredConsoleRecords.map((r, idx) => {
-                      const time = new Date(r.at).toLocaleTimeString();
-                      const rawLine = (r.detail?.line as string) || (r.detail?.message as string) || "";
-                      const isError = r.level === "error" || rawLine.includes("[error]") || rawLine.includes("error=");
-                      const isCompleted = rawLine.includes("[completed]");
-                      const isStart = rawLine.includes("[start]") || rawLine.includes("[busy]");
-                      const isAbort = rawLine.includes("[abort]") || rawLine.includes("[warn]");
+                    <div className="te-console-content">
+                      {filteredConsoleRecords.map((r, idx) => {
+                        const time = new Date(r.at).toLocaleTimeString();
+                        const rawLine = (r.detail?.line as string) || (r.detail?.message as string) || "";
+                        const isError = r.level === "error" || rawLine.includes("[error]") || rawLine.includes("error=");
+                        const isCompleted = rawLine.includes("[completed]");
+                        const isStart = rawLine.includes("[start]") || rawLine.includes("[busy]");
+                        const isAbort = rawLine.includes("[abort]") || rawLine.includes("[warn]");
 
-                      let textColor = "#e2e8f0";
-                      if (isError) textColor = "#f87171";
-                      else if (isCompleted) textColor = "#34d399";
-                      else if (isStart) textColor = "#60a5fa";
-                      else if (isAbort) textColor = "#fbbf24";
+                        let textColor = "#e2e8f0";
+                        if (isError) textColor = "#f87171";
+                        else if (isCompleted) textColor = "#34d399";
+                        else if (isStart) textColor = "#60a5fa";
+                        else if (isAbort) textColor = "#fbbf24";
 
-                      return (
-                        <div
-                          key={`${r.at}-${idx}`}
-                          style={{
-                            display: "flex",
-                            gap: 10,
-                            padding: "1px 0",
-                            color: textColor,
-                          }}
-                        >
-                          <span style={{ color: "#475569", userSelect: "none", flexShrink: 0 }}>
-                            [{time}]
-                          </span>
-                          <span style={{ flex: 1 }}>{rawLine}</span>
-                        </div>
-                      );
-                    })
+                        return (
+                          <div
+                            key={`${r.at}-${idx}`}
+                            className="te-console-row"
+                            style={{ color: textColor }}
+                          >
+                            <span className="te-console-time">
+                              [{time}]
+                            </span>
+                            <span className="te-console-text">
+                              {rawLine}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
