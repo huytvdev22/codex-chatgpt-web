@@ -213,6 +213,10 @@ export class CodexPayloadNormalizer {
       }
     }
 
+    // Trích xuất developerInstructions và environmentContext từ input
+    const developerInstructions: string[] = [];
+    let environmentContext: string | undefined;
+
     // Xây dựng priorHistory: LOẠI BỎ hoàn toàn latest user item để tránh duplicate trong prompt!
     const priorHistory: NormalizedTurn[] = [];
     for (let i = 0; i < input.length; i++) {
@@ -224,7 +228,27 @@ export class CodexPayloadNormalizer {
       const item = input[i];
       if (!item) continue;
 
-      if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "assistant" || item.role === "developer"))) {
+      const isDev = item.role === "developer" || (item.type === "message" && item.role === "developer");
+      if (isDev) {
+        let text = this.extractTextFromContent((item as any).content);
+        const envMatch = text.match(/<environment_context>([\s\S]*?)<\/environment_context>/i);
+        if (envMatch) {
+          environmentContext = (environmentContext ? `${environmentContext}\n` : "") + envMatch[1].trim();
+        }
+        text = text
+          .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
+          .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
+          .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
+          .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
+          .trim();
+
+        if (text && !text.includes("You are Codex, a coding assistant")) {
+          developerInstructions.push(text);
+        }
+        continue;
+      }
+
+      if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "assistant"))) {
         const text = this.extractTextFromContent((item as any).content);
         if (text.trim()) {
           priorHistory.push({
@@ -278,6 +302,8 @@ export class CodexPayloadNormalizer {
       stream: rawPayload.stream ?? true,
       threadId: rawPayload.getThreadId(),
       turnId: rawPayload.getTurnId(),
+      developerInstructions: developerInstructions.length > 0 ? developerInstructions : undefined,
+      environmentContext,
       priorHistory,
       latestUserInstruction,
       trailingToolResults,

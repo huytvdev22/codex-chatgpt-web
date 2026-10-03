@@ -73,6 +73,9 @@ export interface NormalizedCodexRequest {
   stream: boolean;
   threadId?: string;
   turnId?: string;
+  systemInstructions?: string[];
+  environmentContext?: string;
+  developerInstructions?: string[];
   priorHistory: NormalizedTurn[];
   latestUserInstruction?: string;
   trailingToolResults: NormalizedToolResult[];
@@ -81,3 +84,4 @@ export interface NormalizedCodexRequest {
   executionPolicy: NormalizedExecutionPolicy;
   rawSnapshot: CodexRawRequestWire;
 }
+

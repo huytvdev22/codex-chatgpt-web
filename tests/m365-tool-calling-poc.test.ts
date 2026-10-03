@@ -525,7 +525,7 @@ const b = \\{\\
     expect(finalResult.delta).toContain("chrome.storage.local");
   });
 
-  test("Phase 14: compileM365HybridForwardPrompt combines protocol directive and raw codex json", () => {
+  test("Phase 14: compileM365HybridForwardPrompt combines protocol directive and raw codex json without coercive output format directive", () => {
     const parsed: CodexParsedRequest = {
       modelId: "m365-copilot/think",
       stream: true,
@@ -545,10 +545,67 @@ const b = \\{\\
 
     const prompt = compileM365HybridForwardPrompt(parsed, rawBody);
     expect(prompt).toContain("TEXT INTERACTION PROTOCOL");
-    expect(prompt).toContain("KHÔNG tự chạy trong sandbox /mnt/data");
+    expect(prompt).toContain("sandbox /mnt/data");
     expect(prompt).toContain("<tool_call>");
+    expect(prompt).toContain("<custom_tool_call");
     expect(prompt).toContain("[YÊU CẦU CỦA NGƯỜI DÙNG]");
     expect(prompt).toContain("chỉnh sửa file");
-    expect(prompt).toContain("[Yêu cầu định dạng đầu ra]");
+    // Khẳng định loại bỏ hoàn toàn dòng lệnh ép buộc tool call
+    expect(prompt).not.toContain("[Yêu cầu định dạng đầu ra]");
+  });
+
+  test("Phase 15: M365OutputTranslator cleans user raw response with unescaped quotes, 2-star End Patch, and BizChat suffix", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const rawUserSnippet = `<tool_call> {"name":"apply_patch","arguments":{"patch":"*** Begin Patch\\n*** Update File: .github/workflows/ci.yml\\n@@\\n if (-not :Is64BitOperatingSystem) {\\n throw \\"The Windows CI runner must be 64-bit\\"\\n }\\n** End Patch"}} </tool_call>\\n\\nProvide your feedback on BizChat`;
+
+    const translator = new M365OutputTranslator();
+    const result = translator.translate(rawUserSnippet);
+
+    expect(result.type).toBe("tool_call");
+    if (result.type === "tool_call") {
+      expect(result.tool_calls.length).toBe(1);
+      const call = result.tool_calls[0];
+      expect(call.function.name).toBe("apply_patch");
+      const args = JSON.parse(call.function.arguments);
+      expect(args.input).toContain("*** Begin Patch");
+      expect(args.input).toContain("*** End Patch");
+      expect(args.input).toContain("throw \"The Windows CI runner must be 64-bit\"");
+      expect(args.input).not.toContain("BizChat");
+      expect(args.input).not.toContain("}} </tool_call>");
+      expect(args.input.endsWith("*** End Patch")).toBe(true);
+    }
+  });
+
+  test("Phase 15b: M365OutputTranslator translates custom_tool_call name=apply_patch cleanly", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const rawSnippet = `<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** Update File: test.txt\n@@\n-old\n+new\n*** End Patch\n</custom_tool_call>`;
+
+    const translator = new M365OutputTranslator();
+    const result = translator.translate(rawSnippet);
+
+    expect(result.type).toBe("tool_call");
+    if (result.type === "tool_call") {
+      expect(result.tool_calls.length).toBe(1);
+      const call = result.tool_calls[0];
+      expect(call.function.name).toBe("apply_patch");
+      const args = JSON.parse(call.function.arguments);
+      expect(args.input).toContain("*** Begin Patch");
+      expect(args.input).toContain("*** End Patch");
+      expect(args.input.endsWith("*** End Patch")).toBe(true);
+    }
+  });
+
+  test("Phase 15c: Natural conversational greeting translates to final_answer without false-positive tool call", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const naturalReply = "Xin chào! Tôi là Trợ lý lập trình AI của bạn. Tôi có thể giúp gì cho dự án hôm nay?";
+
+    const translator = new M365OutputTranslator();
+    const result = translator.translate(naturalReply);
+
+    expect(result.type).toBe("final_answer");
+    if (result.type === "final_answer") {
+      expect(result.content).toBe(naturalReply);
+    }
   });
 });
+

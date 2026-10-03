@@ -1,6 +1,8 @@
 import { BashCommandTranslator } from "./bash-translator";
-import { sanitizeJsonControlChars } from "./markdown";
+import { sanitizeJsonControlChars, sanitizeCodexPatchContent } from "./markdown";
 import { AtomicFileWriter } from "./atomic-file-writer";
+
+export { sanitizeCodexPatchContent };
 
 /**
  * Cấu trúc OpenAI Tool Call chuẩn hóa
@@ -141,8 +143,12 @@ export function normalizePatchEnvelope(raw: string): string {
  * *** Begin Patch
  * ...
  * *** End Patch
- * Hỗ trợ nằm trong code block ```patch ... ```, ```diff ... ``` hoặc văn bản trần
- * TUYỆT ĐỐI KHÔNG thực thi khi khối patch chưa hoàn chỉnh (Yêu cầu 4 & 5).
+ * Hỗ trợ:
+ * - Dạng 2 hoặc 3 dấu sao (*** Begin Patch hoặc ** Begin Patch)
+ * - Nằm trong thẻ <custom_tool_call name="apply_patch">
+ * - Nằm trong chuỗi JSON của <tool_call> bị vỡ format
+ * - Nằm trong code block ```patch ... ```, ```diff ... ``` hoặc văn bản trần
+ * Tự động gọt sạch toàn bộ rác XML và BizChat ở đuôi để Lark grammar của Codex IDE luôn parse thành công.
  */
 export class PatchToolCallDetector implements IToolCallDetector {
   readonly priority = 0;
@@ -154,37 +160,49 @@ export class PatchToolCallDetector implements IToolCallDetector {
     // Chuẩn hóa ký tự * bị escape bởi Turndown trước khi tìm kiếm
     const unescaped = rawResponse.replaceAll("\\*", "*");
 
-    // Tìm tất cả các khối hoàn chỉnh: *** Begin Patch ... *** End Patch
-    const matches = [...unescaped.matchAll(/\*{3}\s*Begin Patch([\s\S]*?)\*{3}\s*End Patch/gi)];
+    // 1. Kiểm tra thẻ <custom_tool_call name="apply_patch">...</custom_tool_call> trước
+    const customMatch = unescaped.match(/<\s*custom[\\_]*tool[\\_]*call(?:\s+name=["']apply_patch["'])?\s*>([\s\S]*?)<\s*\/custom[\\_]*tool[\\_]*call\s*>/i);
+    if (customMatch) {
+      const cleanedPatch = sanitizeCodexPatchContent(customMatch[1]);
+      if (cleanedPatch.includes("*** Begin Patch")) {
+        return {
+          name: "apply_patch",
+          arguments: { input: cleanedPatch },
+        };
+      }
+    }
+
+    // 2. Tìm tất cả các khối hoàn chỉnh: *** Begin Patch ... *** End Patch (hỗ trợ cả 2 hoặc 3 dấu sao)
+    const matches = [...unescaped.matchAll(/\*{2,3}\s*Begin Patch([\s\S]*?)\*{2,3}\s*End Patch/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
       for (const m of matches) {
-        const normalized = normalizePatchEnvelope(m[0]);
-        let patch = normalized;
-        const beginIdx = patch.indexOf("*** Begin Patch");
-        if (beginIdx >= 0) patch = patch.slice(beginIdx);
-        const endIdx = patch.lastIndexOf("*** End Patch");
-        if (endIdx >= 0) patch = patch.slice(0, endIdx + "*** End Patch".length);
-
+        const cleanedPatch = sanitizeCodexPatchContent(m[0]);
         calls.push({
           name: "apply_patch",
-          arguments: { input: patch },
+          arguments: { input: cleanedPatch },
         });
       }
       return calls.length === 1 ? calls[0] : calls;
     }
 
-    // Nếu khối patch có Begin Patch và chứa header File (Update/Add/Delete),
+    // 3. Nếu khối patch có Begin Patch và chứa header File (Update/Add/Delete),
     // cho phép auto-close *** End Patch khi stream đã kết thúc
-    const openMatch = unescaped.match(/\*{3}\s*Begin Patch([\s\S]*)$/i);
-    if (openMatch && /\*{3}\s*(?:Update|Add|Delete)\s*File:/i.test(openMatch[1])) {
-      let patch = normalizePatchEnvelope(openMatch[0]);
-      if (!patch.endsWith("*** End Patch")) {
-        patch = `${patch}\n*** End Patch`;
+    const openMatch = unescaped.match(/\*{2,3}\s*Begin Patch([\s\S]*)$/i);
+    if (openMatch && /\*{2,3}\s*(?:Update|Add|Delete)\s*File:/i.test(openMatch[1])) {
+      // Làm sạch rác XML/JSON ở đuôi trước khi auto-close
+      let rawSnippet = openMatch[0];
+      const junkIdx = rawSnippet.search(/["']\}\s*<\s*\/tool|Provide your feedback|BizChat/i);
+      if (junkIdx >= 0) {
+        rawSnippet = rawSnippet.slice(0, junkIdx);
+      }
+      let cleanedPatch = sanitizeCodexPatchContent(rawSnippet);
+      if (!cleanedPatch.endsWith("*** End Patch")) {
+        cleanedPatch = `${cleanedPatch}\n*** End Patch`;
       }
       return {
         name: "apply_patch",
-        arguments: { input: patch },
+        arguments: { input: cleanedPatch },
       };
     }
 
@@ -324,7 +342,23 @@ export class XmlToolCallDetector implements IToolCallDetector {
   detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     if (!rawResponse || !rawResponse.trim()) return null;
 
-    // Tìm tất cả các cặp thẻ HOÀN CHỈNH: <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
+    // 1. Tìm tất cả các thẻ <custom_tool_call name="...">...</custom_tool_call>
+    const customMatches = [...rawResponse.matchAll(/<\s*custom[\\_]*tool[\\_]*call(?:\s+name=["']([^"']+)["'])?\s*>([\s\S]*?)<\s*\/custom[\\_]*tool[\\_]*call\s*>/gi)];
+    if (customMatches.length > 0) {
+      const calls: DetectedToolCall[] = [];
+      for (const m of customMatches) {
+        const name = m[1] || (m[2].includes("Begin Patch") ? "apply_patch" : "custom_tool");
+        if (name === "apply_patch" || m[2].includes("Begin Patch")) {
+          const cleaned = sanitizeCodexPatchContent(m[2]);
+          calls.push({ name: "apply_patch", arguments: { input: cleaned } });
+        } else {
+          calls.push({ name, arguments: { input: m[2].trim() } });
+        }
+      }
+      if (calls.length > 0) return calls.length === 1 ? calls[0] : calls;
+    }
+
+    // 2. Tìm tất cả các cặp thẻ HOÀN CHỈNH: <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
     const matches = [...rawResponse.matchAll(/<\s*tool[\\_]*call\s*>([\s\S]*?)<\s*\/tool[\\_]*call\s*>/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
@@ -332,7 +366,7 @@ export class XmlToolCallDetector implements IToolCallDetector {
         const item = this.parseInnerXml(m[1]);
         if (item) calls.push(item);
       }
-      if (calls.length > 0) return calls;
+      if (calls.length > 0) return calls.length === 1 ? calls[0] : calls;
     }
 
     // Nếu không có thẻ đóng, tool call chưa hoàn chỉnh -> Không được thực thi
@@ -365,6 +399,14 @@ export class XmlToolCallDetector implements IToolCallDetector {
           }
         }
 
+        // Nếu là apply_patch, đảm bảo nội dung patch được làm sạch bằng sanitizeCodexPatchContent
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+
         return { name, arguments: args };
       }
     } catch { }
@@ -390,11 +432,28 @@ export class XmlToolCallDetector implements IToolCallDetector {
           }
         }
 
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+
         return { name, arguments: args };
       }
     } catch { }
 
-    // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
+    // 3. Cứu hộ trường hợp apply_patch: JSON.parse thất bại vì unescaped quotes bên trong patch
+    if (/\*{2,3}\s*Begin Patch/i.test(innerContent)) {
+      const cleanedPatch = sanitizeCodexPatchContent(innerContent);
+      if (cleanedPatch.includes("*** Begin Patch")) {
+        return {
+          name: "apply_patch",
+          arguments: { input: cleanedPatch },
+        };
+      }
+    }
+
     return null;
   }
 }
