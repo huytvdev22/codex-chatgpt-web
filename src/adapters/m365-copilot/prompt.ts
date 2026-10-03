@@ -285,15 +285,71 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
   return finalPrompt;
 }
 
-/**
- * Biên dịch Hybrid Forward Prompt:
- * Kết hợp chỉ dẫn giao thức Text Interaction Protocol (để ngăn Copilot chạy sandbox /mnt/data
+import { CodexPayloadNormalizer } from "./codex-normalizer";
+
 /**
  * Xây dựng Prompt chuyển tiếp cho chế độ Temporary Chat Per Request.
- * Sử dụng class CodexRawPayload đại diện 1:1 dữ liệu Codex để build prompt tối ưu token:
- * Loại bỏ metadata kỹ thuật rác, trích xuất đúng công cụ và ngữ cảnh lập trình cần thiết.
+ * Sử dụng CodexPayloadNormalizer để trích xuất request canonical,
+ * khử trùng lặp câu hỏi người dùng và lấy đúng trailing tool results.
  */
 export function compileM365HybridForwardPrompt(parsed: CodexParsedRequest, rawBody?: unknown): string {
   const payload = CodexRawPayload.from(rawBody || parsed._rawBody || parsed);
-  return payload.buildOptimizedPrompt();
+  const normalized = CodexPayloadNormalizer.normalize(payload);
+
+  const lines: string[] = [];
+
+  // 1. System Protocol
+  lines.push(`[HỆ THỐNG GIAO TIẾP VĂN BẢN VỚI IDE - TEXT INTERACTION PROTOCOL]`);
+  lines.push(`Bạn là Trợ lý Lập trình viên AI được kết nối trực tiếp với Codex IDE trên máy tính người dùng.`);
+  lines.push(`QUY TẮC BẮT BUỘC:`);
+  lines.push(`1. KHÔNG tự chạy trong sandbox /mnt/data của Copilot; container đám mây đó không thể truy cập mã nguồn trên máy tính người dùng.`);
+  lines.push(`2. Để thao tác trên dự án (đọc file, xem thư mục, sửa code, chạy lệnh), bạn HÃY XUẤT CÂU LỆNH BASH (ví dụ: cat <file>, ls, git status) hoặc xuất khối văn bản:`);
+  lines.push(`<tool_call>`);
+  lines.push(`{"name": "TOOL_NAME", "arguments": {"ARG_KEY": "ARG_VALUE"}}`);
+  lines.push(`</tool_call>`);
+  lines.push(`Hệ thống IDE sẽ tự động bắt lấy lệnh bạn in ra, chạy trực tiếp trên dự án cục bộ và trả kết quả vào thẻ <tool_result> cho bạn ở lượt kế tiếp.\n`);
+
+  // 2. Danh sách công cụ khả dụng
+  if (normalized.activeCodingTools.length > 0) {
+    lines.push(`[CÁC CÔNG CỤ CÓ SẴN TRONG IDE]:`);
+    for (const t of normalized.activeCodingTools) {
+      lines.push(`- ${t.identity.name}: ${t.description.split("\n")[0] || ""}`);
+    }
+    lines.push(``);
+  }
+
+  // 3. Kết quả Tool gần nhất (Trailing tool results của turn hiện tại)
+  if (normalized.trailingToolResults.length > 0) {
+    lines.push(`[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:`);
+    for (const res of normalized.trailingToolResults) {
+      lines.push(`<tool_result id="${res.callId}">\n${res.output}\n</tool_result>`);
+    }
+    lines.push(`Hãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất ngay khối <tool_call> mới. Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.\n`);
+  }
+
+  // 4. Lịch sử trao đổi gần đây (đã khử trùng lặp câu hỏi mới nhất)
+  if (normalized.priorHistory.length > 0 && normalized.trailingToolResults.length === 0) {
+    lines.push(`[LỊCH SỬ TRAO ĐỔI GẦN ĐÂY]:`);
+    const recent = normalized.priorHistory.slice(-6);
+    for (const h of recent) {
+      if (h.role === "user") {
+        lines.push(`Người dùng: ${h.content}`);
+      } else if (h.role === "assistant") {
+        lines.push(`Trợ lý: ${h.content}`);
+      }
+    }
+    lines.push(``);
+  }
+
+  // 5. Yêu cầu của người dùng (Latest user instruction duy nhất)
+  if (normalized.latestUserInstruction) {
+    lines.push(`[YÊU CẦU CỦA NGƯỜI DÙNG]:`);
+    lines.push(normalized.latestUserInstruction);
+    lines.push(``);
+  }
+
+  // 6. Định dạng đầu ra
+  lines.push(`[Yêu cầu định dạng đầu ra]: Hãy xuất ngay câu lệnh terminal tương ứng (ví dụ: cat <file>, ls) hoặc khối <tool_call> tương ứng để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`);
+
+  return lines.join("\n");
 }

@@ -226,7 +226,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
     // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì dùng Prompt tối ưu từ Domain Model 1:1
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
     const promptToSend = isTemporaryPerRequest
-      ? rawPayload.buildOptimizedPrompt()
+      ? compileM365HybridForwardPrompt(parsed, rawPayload)
       : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)

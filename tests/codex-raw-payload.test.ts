@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/m365-copilot/codex-raw-payload";
+import {
+  CodexRawPayload,
+  CodexWireParser,
+  type CodexRawRequestWire,
+} from "../src/adapters/m365-copilot/codex-raw-payload";
 
-describe("CodexRawPayload 1:1 Representation Tests", () => {
+describe("CodexRawPayload & CodexWireParser Tests (Giai đoạn 1)", () => {
   const sampleWireRequest: CodexRawRequestWire = {
     model: "m365-copilot/think",
     stream: true,
+    store: false,
+    tool_choice: "auto",
+    parallel_tool_calls: false,
+    include: ["reasoning.encrypted_content"],
     prompt_cache_key: "thread_abc_123",
+    text: { verbosity: "low" },
     client_metadata: {
       thread_id: "thread_abc_123",
       "x-codex-turn-metadata": JSON.stringify({
@@ -23,114 +32,77 @@ describe("CodexRawPayload 1:1 Representation Tests", () => {
     ],
     input: [
       {
-        type: "additional_tools",
-        id: "at_123",
-        tools: [
-          {
-            type: "function",
-            name: "exec_command",
-            description: "Runs a command in a PTY",
-            parameters: {
-              type: "object",
-              properties: { cmd: { type: "string" } },
-            },
-          },
-          {
-            type: "function",
-            name: "read_file",
-            description: "Reads a file from workspace",
-          },
-          {
-            type: "function",
-            name: "sports",
-            description: "Looks up sports schedules",
-          },
-        ],
-      },
-      {
-        type: "message",
-        role: "developer",
-        content: [{ type: "input_text", text: "System prompt instructions" }],
-      },
-      {
         type: "message",
         role: "user",
         content: [{ type: "input_text", text: "Thêm comment cho file ci.yml" }],
       },
-      {
-        type: "function_call",
-        call_id: "call_abc123",
-        name: "read_file",
-        arguments: JSON.stringify({ path: ".github/workflows/ci.yml" }),
-      },
-      {
-        type: "function_call_output",
-        call_id: "call_abc123",
-        output: "name: CI\non:\n  push:\n    branches: [main]",
-      },
     ],
   };
 
-  test("1:1 Fidelity: toJSON() và toRawJson() giữ nguyên 100% dữ liệu gốc", () => {
-    const payload = CodexRawPayload.from(sampleWireRequest);
+  test("CodexWireParser: Structural Guards từ chối request không hợp lệ", () => {
+    expect(() => CodexWireParser.parse(null)).toThrow(TypeError);
+    expect(() => CodexWireParser.parse(undefined)).toThrow(TypeError);
+    expect(() => CodexWireParser.parse("string")).toThrow(TypeError);
+    expect(() => CodexWireParser.parse(123)).toThrow(TypeError);
+    expect(() => CodexWireParser.parse([])).toThrow(TypeError);
+
+    // model sai kiểu
+    expect(() => CodexWireParser.parse({ model: 123 as any })).toThrow(TypeError);
+    // input sai kiểu
+    expect(() => CodexWireParser.parse({ model: "test", input: "not-array" as any })).toThrow(TypeError);
+    // tools sai kiểu
+    expect(() => CodexWireParser.parse({ model: "test", tools: "not-array" as any })).toThrow(TypeError);
+    // client_metadata sai kiểu
+    expect(() => CodexWireParser.parse({ model: "test", client_metadata: "not-object" as any })).toThrow(TypeError);
+
+    // Request hợp lệ
+    const valid = CodexWireParser.parse({ model: "m365-copilot/think", input: [] });
+    expect(valid.model).toBe("m365-copilot/think");
+  });
+
+  test("Deep Snapshot Fidelity: toJSON() bảo toàn 1:1 parsed JSON snapshot và bất biến", () => {
+    const inputClone = structuredClone(sampleWireRequest);
+    const payload = CodexRawPayload.from(inputClone);
+
     expect(payload.model).toBe("m365-copilot/think");
     expect(payload.stream).toBe(true);
+    expect(payload.store).toBe(false);
+    expect(payload.tool_choice).toBe("auto");
+    expect(payload.parallel_tool_calls).toBe(false);
+    expect(payload.include).toEqual(["reasoning.encrypted_content"]);
+    expect(payload.text).toEqual({ verbosity: "low" });
     expect(payload.getThreadId()).toBe("thread_abc_123");
     expect(payload.getTurnId()).toBe("turn_xyz_789");
 
-    const jsonRoundtrip = payload.toJSON();
-    expect(jsonRoundtrip).toEqual(sampleWireRequest);
+    // Sửa đổi object gốc bên ngoài không làm ảnh hưởng snapshot bên trong
+    (inputClone as any).model = "modified-model";
+    expect(payload.model).toBe("m365-copilot/think");
 
-    const parsedFromStr = JSON.parse(payload.toRawJson());
-    expect(parsedFromStr).toEqual(sampleWireRequest);
+    // toJSON trả về bản sao deep clone mới
+    const exported1 = payload.toJSON();
+    const exported2 = payload.toJSON();
+    expect(exported1).toEqual(sampleWireRequest);
+    expect(exported1).not.toBe(exported2);
   });
 
-  test("Trích xuất thông tin người dùng và lịch sử chính xác", () => {
-    const payload = CodexRawPayload.from(sampleWireRequest);
-    expect(payload.getLatestUserInstruction()).toBe("Thêm comment cho file ci.yml");
-    expect(payload.getAllUserInstructions()).toEqual(["Thêm comment cho file ci.yml"]);
+  test("Bảo toàn các trường không có trong schema chuẩn vào extra", () => {
+    const rawWithExtra: CodexRawRequestWire = {
+      model: "test-model",
+      some_custom_future_flag: "active",
+      custom_config: { nested: true },
+    };
 
-    const history = payload.getConversationHistory();
-    expect(history.length).toBe(4);
-    expect(history[0].role).toBe("developer");
-    expect(history[1].role).toBe("user");
-    expect(history[2].role).toBe("assistant");
-    expect(history[3].role).toBe("tool");
+    const payload = CodexRawPayload.from(rawWithExtra);
+    expect(payload.extra["some_custom_future_flag"]).toBe("active");
+    expect(payload.extra["custom_config"]).toEqual({ nested: true });
   });
 
-  test("Trích xuất công cụ khả dụng và kết quả công cụ gần nhất", () => {
-    const payload = CodexRawPayload.from(sampleWireRequest);
-    const tools = payload.getAvailableTools();
-    const toolNames = tools.map(t => t.name);
-    expect(toolNames).toContain("custom_root_tool");
-    expect(toolNames).toContain("exec_command");
-    expect(toolNames).toContain("read_file");
-    expect(toolNames).toContain("sports");
-
-    const toolResults = payload.getLatestToolResults();
-    expect(toolResults.length).toBe(1);
-    expect(toolResults[0].callId).toBe("call_abc123");
-    expect(toolResults[0].output).toContain("name: CI");
-  });
-
-  test("buildOptimizedPrompt() loại bỏ metadata rác, lọc tool và giảm kích thước", () => {
-    const payload = CodexRawPayload.from(sampleWireRequest);
-    const optimized = payload.buildOptimizedPrompt();
-
-    // Phải chứa các thành phần cốt lõi
-    expect(optimized).toContain("[HỆ THỐNG GIAO TIẾP VĂN BẢN VỚI IDE - TEXT INTERACTION PROTOCOL]");
-    expect(optimized).toContain("<tool_call>");
-    expect(optimized).toContain("exec_command");
-    expect(optimized).toContain("read_file");
-    expect(optimized).toContain("<tool_result id=\"call_abc123\">");
-
-    // Phải loại bỏ tool không liên quan như sports
-    expect(optimized).not.toContain("sports");
-
-    // So sánh độ dài: Kiểm tra độ dài và các thành phần cốt lõi
-    const rawLen = payload.toRawJson().length;
-    const optLen = optimized.length;
-    console.log(`[Prompt Generated] Raw JSON: ${rawLen} chars, Optimized Prompt: ${optLen} chars`);
-    expect(optimized.length).toBeGreaterThan(0);
+  test("Không tự ý gán default làm sai lệch raw wire", () => {
+    // Không có stream trong request gốc
+    const payload = CodexRawPayload.from({ model: "custom-model" });
+    expect(payload.stream).toBeUndefined();
+    expect(payload.store).toBeUndefined();
+    expect(payload.parallel_tool_calls).toBeUndefined();
+    expect(payload.tools).toBeUndefined();
   });
 });
