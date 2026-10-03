@@ -20,7 +20,7 @@ const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tre
 const { windowsTrustEnvironment } = require("./windows-trust.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
-const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
+const MAX_RUNTIME_LOG_LINE_CHARS = 10 * 1024 * 1024;
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;

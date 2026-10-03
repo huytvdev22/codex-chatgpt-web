@@ -6,9 +6,9 @@ const {
   filterSafeDetailsForExport,
 } = require("./observability-policy.cjs");
 
-const MAX_LOG_BYTES = 4 * 1024 * 1024;
+const MAX_LOG_BYTES = 32 * 1024 * 1024;
 const MAX_MEMORY_RECORDS = 5000;
-const MAX_LOG_STRING_CHARS = 32 * 1024;
+const MAX_LOG_STRING_CHARS = 10 * 1024 * 1024;
 
 function redactText(value) {
   const redacted = value

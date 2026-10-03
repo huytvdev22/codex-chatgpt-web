@@ -17,7 +17,7 @@ const { windowsTrustEnvironment } = require("./windows-trust.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
-const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
+const MAX_RUNTIME_LOG_LINE_CHARS = 10 * 1024 * 1024;
 const MAX_CONTROL_OUTPUT_BYTES = 1024 * 1024;
 const DRAIN_IDLE_TIMEOUT_MS = 15_000;
 const DRAIN_POLL_INTERVAL_MS = 100;
