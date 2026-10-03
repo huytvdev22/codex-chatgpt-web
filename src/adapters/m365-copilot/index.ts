@@ -9,6 +9,8 @@ import { M365OutputTranslator, maskArgumentsForLog } from "./output-translator";
 import { emitStructuredEvent } from "../../observability/emitter";
 import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
+import path from "node:path";
+import { homedir } from "node:os";
 import type { TraceContext } from "../../observability/types";
 import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 
@@ -182,13 +184,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
     // 1.1. Kiểm tra cấu hình Temporary Chat Per Request từ Launcher
     let isTemporaryPerRequest = false;
-    const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR;
+    const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR
+      || path.join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
     if (descriptorPath) {
       try {
         const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        isTemporaryPerRequest = Boolean((descriptor as any).m365TemporaryChatPerRequest);
-      } catch {}
+        isTemporaryPerRequest = Boolean(descriptor.m365TemporaryChatPerRequest);
+      } catch (err) {
+        console.warn(`[m365-adapter] Không thể đọc descriptor từ ${descriptorPath}:`, err);
+      }
     }
+    console.log(`[m365-adapter] Chế độ Temporary Chat Per Request: ${isTemporaryPerRequest ? "BẬT (Pure Forwarder)" : "TẮT (Stateful)"}`);
 
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
     // (Chỉ áp dụng trong chế độ Stateful thông thường)
@@ -223,7 +229,9 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
     // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì forward nguyên trạng raw request của Codex
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
-    const promptToSend = (isTemporaryPerRequest && rawBody) ? JSON.stringify(rawBody, null, 2) : compiledPrompt;
+    const promptToSend = isTemporaryPerRequest
+      ? JSON.stringify(rawBody || parsed, null, 2)
+      : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {

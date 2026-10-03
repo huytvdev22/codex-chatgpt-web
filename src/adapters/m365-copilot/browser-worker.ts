@@ -95,12 +95,21 @@ export async function executeM365Turn(
     }
 
     // 2. Kiểm tra chế độ Temporary Chat Per Request
-    const isTemporaryMode = Boolean(options.forceTemporaryChat || (descriptor as any).m365TemporaryChatPerRequest);
+    const isTemporaryMode = Boolean(options.forceTemporaryChat || descriptor.m365TemporaryChatPerRequest);
     const shouldStartNewChat = isTemporaryMode || options.isNewConversation || (
       options.conversationKey && activeM365ConversationKey && options.conversationKey !== activeM365ConversationKey
     );
 
+    console.log(`[m365-worker] Trạng thái phiên: isTemporaryMode=${isTemporaryMode}, shouldStartNewChat=${shouldStartNewChat}`);
+
     if (shouldStartNewChat) {
+      // 2.1. Nếu URL đang lưu thread cũ (/chat/c/...), điều hướng thẳng về /chat để mở phiên trắng
+      if (page.url().includes("/chat/c/")) {
+        console.log(`[m365-worker] Điều hướng về /chat từ thread cũ: ${page.url()}`);
+        await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 400));
+      }
+
       await page.evaluate(() => {
         // Thử click nút "New chat" / "Cuộc trò chuyện mới" (hỗ trợ cả thẻ a và button)
         const newChatBtn = document.querySelector(
@@ -113,25 +122,25 @@ export async function executeM365Turn(
         }
 
         // Hoặc tắt rồi bật lại Temporary Chat để làm mới phiên
-        const tempBtn = document.querySelector('button[aria-label="Temporary chat"], [aria-label*="Temporary chat" i], [aria-label*="Cuộc trò chuyện tạm thời" i]') as HTMLButtonElement | null;
+        const tempBtn = document.querySelector('button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]') as HTMLButtonElement | null;
         if (tempBtn) {
           tempBtn.click();
           setTimeout(() => {
             if (tempBtn.getAttribute("aria-pressed") !== "true") {
               tempBtn.click();
             }
-          }, 300);
+          }, 200);
         }
       }).catch(() => {});
 
       // Chờ giao diện ổn định sau khi kích hoạt new chat
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 400));
 
       // Bật Temporary Chat nếu ở chế độ Temporary Mode
       if (isTemporaryMode) {
         await page.evaluate(() => {
           const tempBtn = document.querySelector(
-            'button[aria-label="Temporary chat"], [aria-label*="Temporary chat" i], [aria-label*="Cuộc trò chuyện tạm thời" i]'
+            'button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]'
           ) as HTMLButtonElement | null;
           if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
             tempBtn.click();

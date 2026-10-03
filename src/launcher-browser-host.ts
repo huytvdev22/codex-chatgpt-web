@@ -58,6 +58,7 @@ export interface LauncherBrowserHostDescriptor {
   activeSurfaceId?: string;
   provider?: "m365" | "chatgpt";
   surfaceTargets: Record<string, string>;
+  m365TemporaryChatPerRequest?: boolean;
   createdAt: string;
 }
 
@@ -158,6 +159,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     activeSurfaceId: descriptor.activeSurfaceId,
     provider: descriptor.provider,
     surfaceTargets: targets,
+    m365TemporaryChatPerRequest: (descriptor as any).m365TemporaryChatPerRequest === true,
     createdAt: descriptor.createdAt,
   };
 }
