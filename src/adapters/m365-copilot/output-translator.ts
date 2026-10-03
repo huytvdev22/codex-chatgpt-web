@@ -14,6 +14,13 @@ export interface OpenAIToolCall {
   };
 }
 
+export interface ParseDiagnostics {
+  suspiciousToolDetected?: boolean;
+  unclosedTagDetected?: boolean;
+  terminalReason?: string;
+  warningMessage?: string;
+}
+
 /**
  * Kết quả phân tích dịch từ M365 Output Translator
  */
@@ -22,11 +29,13 @@ export type TranslationResult =
       type: "tool_call";
       tool_calls: OpenAIToolCall[];
       rawResponse: string;
+      parseDiagnostics?: ParseDiagnostics;
     }
   | {
       type: "final_answer";
       content: string;
       rawResponse: string;
+      parseDiagnostics?: ParseDiagnostics;
     };
 
 export interface DetectedToolCall {
@@ -66,14 +75,41 @@ export function stripOuterCodeFence(raw: string): string {
 }
 
 /**
+ * Tự động cân bằng dấu đóng ngoặc nhọn JSON nếu bị thiếu do Markdown hoặc DOM cắt dở
+ */
+export function balanceJsonBraces(raw: string): string {
+  let inString = false;
+  let escaped = false;
+  let openBraces = 0;
+  let closeBraces = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"' && !escaped) {
+      inString = !inString;
+    } else if (!inString) {
+      if (ch === "{") openBraces++;
+      else if (ch === "}") closeBraces++;
+    }
+    escaped = (ch === "\\" && !escaped);
+  }
+  if (openBraces > closeBraces) {
+    return raw + "}".repeat(openBraces - closeBraces);
+  }
+  return raw;
+}
+
+/**
  * Chuẩn hóa và làm sạch chuỗi JSON payload:
  * 1. Bóc outer code fence mà không xâm phạm code fence bên trong.
- * 2. Khôi phục các định danh JSON property bị Turndown escape (ví dụ "read\_file" -> "read_file").
+ * 2. Khôi phục các ký tự bị Markdown/Turndown escape không hợp lệ trong cú pháp JSON
+ *    (ví dụ: "run\_command" -> "run_command", "\[n\]" -> "[n]", "\*" -> "*").
+ *    Trong JSON, chỉ có các escape: \" \\ \/ \b \f \n \r \t \uXXXX là hợp lệ.
+ * 3. Tự động cân bằng ngoặc nhọn nếu mô hình mở nhiều hơn đóng.
  */
 export function cleanJsonPayload(raw: string): string {
   const stripped = stripOuterCodeFence(raw);
-  // Khôi phục các định danh JSON property/value bị Turndown escape: \_ -> _
-  return stripped.replace(/\\_/g, "_");
+  const unescaped = stripped.replace(/\\([_\[\]*~`>#+\-.!|{}()])/g, "$1");
+  return balanceJsonBraces(unescaped);
 }
 
 /**
@@ -173,7 +209,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
 
     // Không match nếu đang là XML tool_call để nhường cho XmlToolCallDetector nếu nằm trong thẻ
     const trimmed = rawResponse.trim();
-    if (trimmed.startsWith("<tool_call>") || trimmed.startsWith("<tool\\_call>")) {
+    if (/^<\s*tool\\\\?_call\s*>/i.test(trimmed)) {
       return null;
     }
 
@@ -290,7 +326,7 @@ export class XmlToolCallDetector implements IToolCallDetector {
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // Tìm tất cả các cặp thẻ HOÀN CHỈNH: <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
-    const matches = [...rawResponse.matchAll(/<\s*tool[\\_]*call\s*>([\s\S]*?)<\s*\/tool[\\_]*call\s*>/gi)];
+    const matches = [...rawResponse.matchAll(/<\s*tool\\\\?_call\s*>([\s\S]*?)<\s*\/tool\\\\?_call\s*>/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
       for (const m of matches) {
@@ -475,11 +511,15 @@ export class M365OutputTranslator {
     console.log(rawPreview);
 
     // Nếu phản hồi chứa thẻ <proposed_plan>, đây là bản kế hoạch hoàn chỉnh cho Codex UI duyệt (Final Answer)
-    if (/<proposed[\\_]*plan>[\s\S]*?<\/proposed[\\_]*plan>/i.test(rawResponse)) {
+    if (/<\s*proposed\\\\?_plan\s*>[\s\S]*?<\s*\/proposed\\\\?_plan\s*>/i.test(rawResponse)) {
       return {
         type: "final_answer",
         content: rawResponse.trim(),
         rawResponse,
+        parseDiagnostics: {
+          terminalReason: "proposed_plan",
+          warningMessage: "Phản hồi chứa bản kế hoạch <proposed_plan>. Trả về Final Answer cho người dùng/Codex duyệt kế hoạch.",
+        },
       };
     }
 
@@ -504,16 +544,51 @@ export class M365OutputTranslator {
           type: "tool_call",
           tool_calls: toolCalls,
           rawResponse,
+          parseDiagnostics: {
+            terminalReason: "tool_calls_emitted",
+            warningMessage: `Phát hiện ${toolCalls.length} tool call hợp lệ: ${toolCalls.map(t => t.function.name).join(", ")}.`,
+          },
         };
       }
     }
 
     // Nếu không khớp với bất kỳ tool call nào, đây là Final Answer
     const trimmedAnswer = rawResponse.trim();
+
+    // Kiểm tra chẩn đoán: Có chứa dấu hiệu nghi vấn tool call mà không parse được hay không?
+    const hasSuspiciousXml = /<\s*tool\\\\?_call\s*>/i.test(rawResponse);
+    const hasUnclosedXml = hasSuspiciousXml && !/<\s*\/tool\\\\?_call\s*>/i.test(rawResponse);
+    const hasSuspiciousJson = /"action"\s*:\s*"tool_call"|"name"\s*:\s*"(?:read_file|write_file|apply_patch|exec_command|run_command)"/i.test(rawResponse);
+    const hasSuspiciousPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(rawResponse);
+
+    let diagnosticWarning = "";
+    if (hasUnclosedXml) {
+      diagnosticWarning = "Phát hiện thẻ <tool_call> chưa được đóng hoàn chỉnh từ M365 (thiếu </tool_call>). Codex dừng do nhận kết quả là văn bản thường.";
+    } else if (hasSuspiciousXml) {
+      diagnosticWarning = "Phát hiện khối <tool_call> hoàn chỉnh nhưng parse JSON thất bại. Codex bị dừng xử lý và chuyển sang Final Answer vì lý do này.";
+    } else if (hasSuspiciousPatch) {
+      diagnosticWarning = "Phát hiện khối *** Begin Patch nhưng khối patch chưa đóng hoặc bị lỗi cấu trúc. Codex dừng xử lý.";
+    } else if (hasSuspiciousJson) {
+      diagnosticWarning = "Phát hiện chuỗi JSON có thuộc tính tool_call nhưng không trích xuất được tham số hợp lệ.";
+    }
+
     return {
       type: "final_answer",
       content: trimmedAnswer,
       rawResponse,
+      ...(diagnosticWarning
+        ? {
+            parseDiagnostics: {
+              suspiciousToolDetected: true,
+              warningMessage: diagnosticWarning,
+            },
+          }
+        : {
+            parseDiagnostics: {
+              terminalReason: "model_final_answer",
+              warningMessage: "M365 Copilot hoàn tất câu trả lời dạng văn bản kết luận (Final Answer).",
+            },
+          }),
     };
   }
 

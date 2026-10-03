@@ -173,7 +173,13 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
   if (isNewConversation && parsed.context.systemPrompt && parsed.context.systemPrompt.length > 0) {
     const filteredSystem = parsed.context.systemPrompt
       .map(sp => sp.trim())
-      .filter(sp => sp.length > 0 && !sp.startsWith("<environment_context>") && !sp.includes("spawn_agent"))
+      .filter(
+        sp =>
+          sp.length > 0 &&
+          !sp.startsWith("<environment_context>") &&
+          !sp.includes("spawn_agent") &&
+          !sp.includes("You are Codex, a coding assistant")
+      )
       .join("\n\n");
     if (filteredSystem) {
       parts.push(`[System Instructions]:\n${filteredSystem}`);
@@ -206,7 +212,13 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
         .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
         .trim();
       // Bỏ qua skills_instructions dài nếu > 2000 ký tự để bảo vệ token budget
-      if (text.length > 0 && text.length < 2000 && !text.includes("<skills_instructions>")) {
+      // Bỏ qua base instructions mặc định "You are Codex, a coding assistant..." vì đã có TOOL_DECLARATION_PROMPT chuyên dụng cho IDE
+      if (
+        text.length > 0 &&
+        text.length < 2000 &&
+        !text.includes("<skills_instructions>") &&
+        !text.includes("You are Codex, a coding assistant")
+      ) {
         parts.push(`[Context]: ${text}`);
       }
     } else if (msg.role === "user") {

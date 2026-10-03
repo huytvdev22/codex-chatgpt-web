@@ -193,6 +193,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         traceContext,
         safeDetails: {
           completionType: "final_answer",
+          terminalReason: "already_completed_assistant_reply",
+          terminalExplanation: "Cuộc hội thoại đã kết thúc bằng phản hồi trước đó của trợ lý và không có lệnh mới từ Codex.",
           toolCount: 0,
           inputTokens: 0,
           outputTokens: 0,
@@ -224,6 +226,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         traceContext,
         safeDetails: {
           completionType: "title_response",
+          terminalReason: "title_request",
+          terminalExplanation: "Codex gửi yêu cầu sinh tiêu đề ngầm, hệ thống đã phản hồi tức thì.",
           toolCount: 0,
           finalAnswer: titleText,
           inputTokens: usage.inputTokens,
@@ -372,6 +376,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
             traceContext,
             safeDetails: {
               completionType: "loop_blocked",
+              terminalReason: "loop_blocked_repeated_tool",
+              terminalExplanation: `Ngắt vòng lặp an toàn: Công cụ ${mappedCalls[0]?.mapped.name} bị gọi lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp với cùng tham số.`,
               toolCount: 0,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
@@ -409,6 +415,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
             traceContext,
             safeDetails: {
               completionType: "loop_blocked",
+              terminalReason: "loop_blocked_max_iterations",
+              terminalExplanation: `Ngắt an toàn: Đã chạm giới hạn tối đa ${MAX_TOOL_ITERATIONS} lượt gọi công cụ liên tiếp trong phiên.`,
               toolCount: 0,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
@@ -442,6 +450,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
           traceContext,
           safeDetails: {
             completionType: "tool_call",
+            terminalReason: "tool_calls_emitted",
+            terminalExplanation: `Bridge Server đã phát lệnh gọi ${detectedToolCalls.length} công cụ về Codex: ${mappedCalls.map(c => c.mapped.name).join(", ")}. Codex sẽ tiếp tục thực thi và mở lượt tiếp theo.`,
             toolCount: detectedToolCalls.length,
             toolCalls: mappedCalls.map(c => ({
               id: c.callId,
@@ -478,12 +488,29 @@ export class M365CopilotAdapter implements ProviderAdapter {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
       }
+      const isSuspiciousFallback = Boolean(translated.parseDiagnostics?.suspiciousToolDetected);
+      const terminalReason = isSuspiciousFallback
+        ? "parse_failed_fallback_final_answer"
+        : (translated.parseDiagnostics?.terminalReason || "model_final_answer");
+
+      const terminalExplanation = isSuspiciousFallback
+        ? `CẢNH BÁO: M365 có sinh khối công cụ nhưng parser bị lỗi JSON (${translated.parseDiagnostics?.errors?.[0]?.error || "cú pháp hỏng"}), dẫn đến bị fallback sang văn bản thường làm Codex dừng lại.`
+        : (translated.parseDiagnostics?.warningMessage || "M365 Copilot hoàn tất câu trả lời kết luận (Final Answer). Codex dừng chu trình agent và chờ người dùng.");
+
+      if (isSuspiciousFallback) {
+        console.warn(`[m365-adapter] [PARSER-FALLBACK-WARNING] Phát hiện fallback nguy hiểm sang final_answer:`, translated.parseDiagnostics);
+      }
+      console.log(`[m365-adapter] [turn-completed] terminalReason=${terminalReason} explanation=${terminalExplanation}`);
+
       emitStructuredEvent({
-        level: "info",
+        level: isSuspiciousFallback ? "warning" : "info",
         event: "m365.turn.completed",
         traceContext,
         safeDetails: {
-          completionType: "final_answer",
+          completionType: isSuspiciousFallback ? "parse_failed" : "final_answer",
+          terminalReason,
+          terminalExplanation,
+          ...(translated.parseDiagnostics ? { parseDiagnostics: translated.parseDiagnostics } : {}),
           toolCount: 0,
           finalAnswer: remainingText || reply || "",
           inputTokens: usage.inputTokens,
@@ -508,6 +535,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
           traceContext,
           safeDetails: {
             completionType: "aborted",
+            terminalReason: "client_aborted",
+            terminalExplanation: "Codex gửi tín hiệu abort (người dùng bấm Dừng hoặc ngắt kết nối).",
             toolCount: 0,
             inputTokens: 0,
             outputTokens: 0,
@@ -523,6 +552,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         traceContext,
         safeDetails: {
           completionType: "error",
+          terminalReason: "error",
+          terminalExplanation: `Gặp lỗi trong quá trình thực thi: ${message}`,
           toolCount: 0,
           inputTokens: 0,
           outputTokens: 0,

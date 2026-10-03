@@ -82,7 +82,7 @@ export function App() {
       setOperation(next);
       if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
     });
-    const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-299), record]));
+    const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-4999), record]));
     const unsubscribeLogsCleared = api.onLogsCleared?.(() => setLogs([]));
     const unsubscribeUpdate = api.onUpdateState((update) => {
       setSnapshot((current) => current ? { ...current, update } : current);

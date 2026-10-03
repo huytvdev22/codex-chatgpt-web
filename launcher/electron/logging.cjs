@@ -7,8 +7,8 @@ const {
 } = require("./observability-policy.cjs");
 
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
-const MAX_MEMORY_RECORDS = 300;
-const MAX_LOG_STRING_CHARS = 16 * 1024;
+const MAX_MEMORY_RECORDS = 5000;
+const MAX_LOG_STRING_CHARS = 32 * 1024;
 
 function redactText(value) {
   const redacted = value
@@ -199,7 +199,7 @@ function createLogger({ filePath, publish }) {
     info: (event, detail) => append("info", event, detail),
     warn: (event, detail) => append("warning", event, detail),
     error: (event, detail) => append("error", event, detail),
-    recent: (limit = 150) => records.slice(-Math.max(1, Math.min(300, limit))),
+    recent: (limit = 1000) => records.slice(-Math.max(1, Math.min(5000, limit))),
     clear: () => {
       records.length = 0;
       try {

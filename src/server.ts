@@ -601,37 +601,37 @@ async function handleM365ResponseRequest(
       actualCodexMessage = userMessagePreview;
     } else if (rawRecord && Array.isArray(rawRecord.input)) {
       // Codex Responses API (mảng input chứa các message hoặc function_call_output)
-      const textParts: string[] = [];
       const toolParts: string[] = [];
+      let latestUserText = "";
+
       for (const item of rawRecord.input as any[]) {
         if (!item || typeof item !== "object") continue;
         if (item.type === "message" && item.role === "user") {
+          let itemText = "";
           if (Array.isArray(item.content)) {
-            for (const c of item.content) {
-              if (c && typeof c === "object" && typeof c.text === "string") textParts.push(c.text);
-              else if (typeof c === "string") textParts.push(c);
-            }
+            itemText = item.content
+              .map((c: any) => (typeof c === "object" ? c.text || "" : String(c || "")))
+              .filter(Boolean)
+              .join(" ");
           } else if (typeof item.content === "string") {
-            textParts.push(item.content);
+            itemText = item.content;
+          }
+          if (itemText) {
+            latestUserText = itemText; // Giữ lại tin nhắn user cuối cùng
           }
         } else if (item.type === "function_call_output") {
           const callId = item.call_id || item.id || "call";
           const out = typeof item.output === "string" ? item.output : JSON.stringify(item.output || "");
           toolParts.push(`[Tool Result: ${callId}]\n${out}`);
-        } else if (typeof item.text === "string") {
-          textParts.push(item.text);
         }
       }
-      if (textParts.length > 0) {
-        userMessagePreview = textParts.join("\n\n");
-      }
+
       if (toolParts.length > 0) {
         actualCodexMessage = toolParts.join("\n\n");
-        if (!userMessagePreview) {
-          userMessagePreview = `Tool Result (${toolParts.length} kết quả)`;
-        }
+        userMessagePreview = `Tool Result (${toolParts.length} kết quả)`;
       } else {
-        actualCodexMessage = userMessagePreview;
+        userMessagePreview = latestUserText;
+        actualCodexMessage = latestUserText;
       }
     }
 

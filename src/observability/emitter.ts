@@ -93,12 +93,29 @@ export function emitStructuredEvent(input: EmitStructuredEventInput): void {
     // Kiểm tra kích thước an toàn trước khi in ra stdout
     let serialized = JSON.stringify(envelope);
     if (Buffer.byteLength(serialized, "utf8") > MAX_EVENT_PAYLOAD_BYTES) {
-      // Nếu payload vượt quá 64KB, lược bớt safeDetails và thêm cảnh báo truncated
-      envelope.detail.safeDetails = {
-        _warning: "payload_exceeded_size_limit",
-        _truncated: true,
-      };
+      // Nếu payload vượt quá giới hạn an toàn:
+      // Giữ lại các trường trọng yếu (actualMessage, userMessage, rawPrompt, rawResponse, finalAnswer),
+      // lược bỏ rawMessages cồng kềnh và cắt bớt string nếu vượt quá 32KB
+      const safe = envelope.detail.safeDetails as Record<string, unknown>;
+      if (safe && typeof safe === "object") {
+        if ("rawMessages" in safe) {
+          delete safe.rawMessages;
+        }
+        for (const [k, v] of Object.entries(safe)) {
+          if (typeof v === "string" && v.length > 32 * 1024) {
+            safe[k] = `${v.slice(0, 32 * 1024)}\n...[truncated]`;
+          }
+        }
+        safe._truncated = true;
+      }
       serialized = JSON.stringify(envelope);
+      if (Buffer.byteLength(serialized, "utf8") > MAX_EVENT_PAYLOAD_BYTES) {
+        envelope.detail.safeDetails = {
+          _warning: "payload_exceeded_size_limit",
+          _truncated: true,
+        };
+        serialized = JSON.stringify(envelope);
+      }
     }
 
     process.stdout.write(`${OBS_PREFIX_V1}${serialized}\n`);

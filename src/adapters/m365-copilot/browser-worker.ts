@@ -245,8 +245,20 @@ export async function executeM365Turn(
           ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
         ));
         
+        // Quét thông báo lỗi hệ thống hoặc quota từ M365 Web
+        let detectedWebError = "";
+        const errorEl = document.querySelector(
+          '[data-testid="error-message"], .fai-ErrorMessage, [role="alert"], [class*="errorMessage" i], [class*="error-banner" i]'
+        );
+        if (errorEl && errorEl.textContent?.trim()) {
+          const errText = errorEl.textContent.trim();
+          if (/something went wrong|try again|reached the limit|limit exceeded|đã xảy ra lỗi|vượt quá giới hạn/i.test(errText)) {
+            detectedWebError = errText;
+          }
+        }
+
         if (messages.length === 0) {
-          return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false };
+          return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false, detectedWebError };
         }
 
         const lastMsg = messages[messages.length - 1] as HTMLElement;
@@ -436,14 +448,24 @@ export async function executeM365Turn(
         const rawHtml = clone.innerHTML || "";
         const hasContent = blocks.length > 0;
         const isNew = (messages.length > before.count) || isGenerating;
-        return { isGenerating, blocks, rawHtml, isNew, hasContent };
+        return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError };
       }, beforeState);
+
+      // Nếu phát hiện lỗi giao diện web của M365 (quota, session hết hạn, error banner), ném lỗi ngay
+      if (status.detectedWebError) {
+        throw new Error(`[M365 Web Error] ${status.detectedWebError}`);
+      }
 
       if (status.isGenerating) {
         seenGenerating = true;
       }
 
-      if (options.traceId && attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat
+      // Cảnh báo nếu sau 20s gửi tin nhắn mà M365 chưa có phản hồi nào
+      if (attempts === 80 && !seenGenerating && status.blocks.length === 0) {
+        console.warn(`[m365-worker] [warning] Sau 20s vẫn chưa nhận được phản hồi từ M365 (có thể nút Gửi chưa được kích hoạt hoặc mạng chậm).`);
+      }
+
+      if (options.traceId && attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat tới launcher
         notifyLauncherTurn(descriptorPath, {
           phase: "heartbeat",
           traceId: options.traceId,
@@ -465,13 +487,45 @@ export async function executeM365Turn(
         }
       }
 
+      // Định kỳ mỗi ~4 giây (16 chu kỳ) phát log tiến độ chi tiết để theo dõi trạng thái sống (Liveness)
+      if (attempts % 16 === 0) {
+        const elapsedSec = Math.round((attempts * pollIntervalMs) / 1000);
+        const currentChars = lastBlocks.reduce((acc, b) => acc + b.text.length, 0);
+        const stableSec = Math.round((Date.now() - lastTextChangeAt) / 1000);
+        const combinedTextSoFar = lastBlocks.map(b => b.text).join(" ");
+        const unclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedTextSoFar);
+        const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
+
+        const statusSummary = status.isGenerating
+          ? `M365 đang sinh văn bản (${elapsedSec}s, ${currentChars} ký tự)...`
+          : (status.hasContent
+            ? `M365 tạm dừng sinh, đang chờ ổn định (${stableSec}s, ${currentChars} ký tự)...`
+            : `Đang chờ M365 bắt đầu phản hồi (${elapsedSec}s)...`);
+
+        emitStructuredEvent({
+          level: "info",
+          event: "m365.provider.progress",
+          traceContext: options.traceContext,
+          safeDetails: {
+            elapsedSeconds: elapsedSec,
+            isGenerating: status.isGenerating,
+            outputChars: currentChars,
+            stableSeconds: stableSec,
+            hasUnclosedToolCall: unclosedToolCall,
+            hasUnclosedPatch: unclosedPatch,
+            statusSummary,
+            domStatus: status.isGenerating ? "generating" : (status.hasContent ? "settling" : "idle"),
+          },
+        });
+      }
+
       // Điều kiện kết thúc:
       // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
       // 3. Không có khối <tool_call> hoặc patch đang mở dở dang (Yêu cầu 4 & 5)
       // 4. Nội dung văn bản đã ổn định ít nhất 2.0 giây
       const combinedText = lastBlocks.map(b => b.text).join(" ");
-      const hasUnclosedToolCall = /<\s*tool[\\_]*call\s*>/i.test(combinedText) && !/<\s*\/tool[\\_]*call\s*>/i.test(combinedText);
+      const hasUnclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedText);
       const hasUnclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedText);
 
       const isSettled = !hasUnclosedToolCall && !hasUnclosedPatch && (stableCycles >= 6 || (Date.now() - lastTextChangeAt >= 2000));
@@ -479,6 +533,11 @@ export async function executeM365Turn(
         console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs}`);
         break;
       }
+    }
+
+    const timedOut = attempts >= maxAttempts;
+    if (timedOut) {
+      console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(maxAttempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
     }
 
     // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
@@ -489,7 +548,7 @@ export async function executeM365Turn(
 
     finalStatus = "completed";
     emitStructuredEvent({
-      level: "info",
+      level: timedOut ? "warning" : "info",
       event: "m365.provider.finished",
       traceContext: options.traceContext,
       safeDetails: {
@@ -499,12 +558,17 @@ export async function executeM365Turn(
         outputChars: fullMarkdown.length,
         responsePreview: fullMarkdown,
         rawResponse: fullMarkdown,
+        timedOut,
+        terminalReason: timedOut ? "polling_timeout" : "completed_settled",
+        terminalExplanation: timedOut
+          ? `Hết thời gian chờ tối đa 120s nhưng M365 chưa đóng khối phản hồi hoàn toàn.`
+          : `M365 đã hoàn tất và văn bản đã ổn định.`,
       },
       diagnosticDetails: {
         outputBytes: Buffer.byteLength(fullMarkdown, "utf8"),
       },
     });
-    console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus}`);
+    console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus} timedOut=${timedOut}`);
     return fullMarkdown;
   } catch (err) {
     if (options.signal?.aborted) {
