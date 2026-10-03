@@ -110,6 +110,7 @@ import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState, getStoredResponseTraceState } from "./responses/state";
 import { resolveTraceContext, traceStorage } from "./observability/trace-context";
 import { emitStructuredEvent } from "./observability/emitter";
+import { logDebugPipelineStation } from "./observability/debug-logger";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
@@ -582,57 +583,33 @@ async function handleM365ResponseRequest(
 
   // 2. Bọc toàn bộ trong traceStorage.run
   return traceStorage.run(traceContext, async () => {
-    // Trích xuất tin nhắn người dùng hoặc kết quả công cụ phục vụ Message Flow & Payload Inspection
+    // [DEBUG PIPELINE] STEP 1: Codex IDE ➔ Bridge Server (RAW REQUEST / TOOL RESULT)
+    logDebugPipelineStation(1, "CODEX IDE ➔ BRIDGE SERVER (RAW REQUEST / TOOL RESULT)", JSON.stringify(raw));
+
+    // Trích xuất tin nhắn phục vụ telemetry
     let userMessagePreview = "";
     let actualCodexMessage = "";
     const rawRecord = raw as Record<string, unknown> | null;
     if (rawRecord && Array.isArray(rawRecord.messages)) {
-      const lastUserMsg = [...rawRecord.messages].reverse().find((m: any) => m && m.role === "user");
-      if (lastUserMsg) {
-        if (typeof lastUserMsg.content === "string") {
-          userMessagePreview = lastUserMsg.content;
-        } else if (Array.isArray(lastUserMsg.content)) {
-          userMessagePreview = lastUserMsg.content
-            .map((c: any) => (typeof c === "string" ? c : c.text || ""))
-            .filter(Boolean)
-            .join(" ");
-        }
-      }
+      const lastUser = [...rawRecord.messages].reverse().find((m: any) => m && m.role === "user");
+      userMessagePreview = typeof lastUser?.content === "string" ? lastUser.content : "";
       actualCodexMessage = userMessagePreview;
     } else if (rawRecord && Array.isArray(rawRecord.input)) {
-      // Codex Responses API (mảng input chứa các message hoặc function_call_output)
       const toolParts: string[] = [];
-      let latestUserText = "";
-
+      const userParts: string[] = [];
       for (const item of rawRecord.input as any[]) {
         if (!item || typeof item !== "object") continue;
         if (item.type === "message" && item.role === "user") {
-          let itemText = "";
-          if (Array.isArray(item.content)) {
-            itemText = item.content
-              .map((c: any) => (typeof c === "object" ? c.text || "" : String(c || "")))
-              .filter(Boolean)
-              .join(" ");
-          } else if (typeof item.content === "string") {
-            itemText = item.content;
-          }
-          if (itemText) {
-            latestUserText = itemText; // Giữ lại tin nhắn user cuối cùng
-          }
+          const t = typeof item.content === "string" ? item.content : Array.isArray(item.content) ? item.content.map((c: any) => c.text || "").join(" ") : "";
+          if (t) userParts.push(t);
         } else if (item.type === "function_call_output") {
           const callId = item.call_id || item.id || "call";
           const out = typeof item.output === "string" ? item.output : JSON.stringify(item.output || "");
           toolParts.push(`[Tool Result: ${callId}]\n${out}`);
         }
       }
-
-      if (toolParts.length > 0) {
-        actualCodexMessage = toolParts.join("\n\n");
-        userMessagePreview = `Tool Result (${toolParts.length} kết quả)`;
-      } else {
-        userMessagePreview = latestUserText;
-        actualCodexMessage = latestUserText;
-      }
+      userMessagePreview = toolParts.length > 0 ? `Tool Result (${toolParts.length} kết quả)` : (userParts[userParts.length - 1] || "");
+      actualCodexMessage = toolParts.length > 0 ? toolParts.join("\n\n") : userParts.join("\n\n");
     }
 
     // 3. Emit codex.request.received

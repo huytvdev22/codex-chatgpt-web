@@ -6,6 +6,7 @@ import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../m365-models";
 import { emitStructuredEvent } from "../../observability/emitter";
+import { logDebugPipelineStation } from "../../observability/debug-logger";
 import type { TraceContext } from "../../observability/types";
 
 export interface M365BrowserRunOptions {
@@ -81,6 +82,9 @@ export async function executeM365Turn(
       promptBytes: Buffer.byteLength(promptText, "utf8"),
     },
   });
+
+  // [DEBUG PIPELINE] STEP 2: Bridge Server ➔ M365 Copilot Web (RAW INJECTED PROMPT)
+  logDebugPipelineStation(2, "BRIDGE SERVER ➔ M365 COPILOT WEB (RAW INJECTED PROMPT)", promptText);
 
   try {
     // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
@@ -569,6 +573,10 @@ export async function executeM365Turn(
       },
     });
     console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus} timedOut=${timedOut}`);
+
+    // [DEBUG PIPELINE] STEP 3: M365 Copilot Web ➔ Bridge Server (RAW RESPONSE SCRAPING)
+    logDebugPipelineStation(3, "M365 COPILOT WEB ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)", fullMarkdown);
+
     return fullMarkdown;
   } catch (err) {
     if (options.signal?.aborted) {

@@ -7,6 +7,7 @@ import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
 import { M365OutputTranslator, maskArgumentsForLog } from "./output-translator";
 import { emitStructuredEvent } from "../../observability/emitter";
+import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
 import type { TraceContext } from "../../observability/types";
 
@@ -470,6 +471,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
           usage,
         });
 
+        // [DEBUG PIPELINE] STEP 4: Bridge Server ➔ Codex IDE (OUTGOING SSE / TOOL CALLS)
+        logDebugPipelineStation(
+          4,
+          "BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)",
+          mappedCalls.map(c => ({
+            id: c.callId,
+            name: c.mapped.name,
+            arguments: c.mapped.arguments,
+          }))
+        );
+
         console.log(`[M365 TOOL] emitted ${detectedToolCalls.length} tool(s) with stopReason=tool_use`);
         return;
       }
@@ -494,7 +506,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         : (translated.parseDiagnostics?.terminalReason || "model_final_answer");
 
       const terminalExplanation = isSuspiciousFallback
-        ? `CẢNH BÁO: M365 có sinh khối công cụ nhưng parser bị lỗi JSON (${translated.parseDiagnostics?.errors?.[0]?.error || "cú pháp hỏng"}), dẫn đến bị fallback sang văn bản thường làm Codex dừng lại.`
+        ? `CẢNH BÁO: M365 có sinh khối công cụ nhưng parser bị lỗi JSON (${translated.parseDiagnostics?.warningMessage || "cú pháp hỏng"}), dẫn đến bị fallback sang văn bản thường làm Codex dừng lại.`
         : (translated.parseDiagnostics?.warningMessage || "M365 Copilot hoàn tất câu trả lời kết luận (Final Answer). Codex dừng chu trình agent và chờ người dùng.");
 
       if (isSuspiciousFallback) {
@@ -523,6 +535,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
         endTurn: true,
         usage,
       });
+
+      // [DEBUG PIPELINE] STEP 4: Bridge Server ➔ Codex IDE (OUTGOING SSE / TOOL CALLS)
+      const step4TextContent = (remainingText || reply || "").trim();
+      logDebugPipelineStation(4, "BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)", step4TextContent || "(Phản hồi hoàn tất)");
     } catch (err: unknown) {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
