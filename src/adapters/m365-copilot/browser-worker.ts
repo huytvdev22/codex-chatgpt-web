@@ -552,15 +552,24 @@ export async function executeM365Turn(
       // Điều kiện kết thúc:
       // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
-      // 3. Không có khối <tool_call> hoặc patch đang mở dở dang (Yêu cầu 4 & 5)
-      // 4. Nội dung văn bản đã ổn định ít nhất 2.0 giây
+      // 3. Khối tool_call hoặc patch đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
       const combinedText = lastBlocks.map(b => b.text).join(" ");
-      const hasUnclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedText);
-      const hasUnclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedText);
+      const hasUnclosedToolCall = /<\s*tool\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\?_call\s*>/i.test(combinedText);
+      const hasUnclosedPatch = /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
+      const toolCallFullyClosed = /<\s*\/tool\\?_call\s*>/i.test(combinedText);
 
-      const isSettled = !hasUnclosedToolCall && !hasUnclosedPatch && (stableCycles >= 6 || (Date.now() - lastTextChangeAt >= 2000));
+      // Nếu M365 đã dừng sinh và văn bản không đổi:
+      // - Nếu có thẻ </tool_call> đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
+      // - Nếu không có khối mở dở dang: Ổn định 2 giây là kết thúc
+      // - Hard Timeout chống kẹt: Nếu đã dừng sinh và không đổi ký tự trong 3.0 giây, kết thúc ngay lập tức
+      const isSettled = !status.isGenerating && (
+        (Date.now() - lastTextChangeAt >= 3000 || stableCycles >= 8) ||
+        (toolCallFullyClosed && (stableCycles >= 3 || Date.now() - lastTextChangeAt >= 1000)) ||
+        (!hasUnclosedToolCall && !hasUnclosedPatch && (stableCycles >= 6 || Date.now() - lastTextChangeAt >= 2000))
+      );
+
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs}`);
+        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed}`);
         break;
       }
     }
