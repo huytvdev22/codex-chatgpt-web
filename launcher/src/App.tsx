@@ -1166,6 +1166,9 @@ function SetupSurface({
   const setZeroRiskPro = (enabled: boolean) => run(async () => {
     updateState(await api!.setZeroRiskPro(enabled));
   });
+  const setM365TemporaryChatPerRequest = (enabled: boolean) => run(async () => {
+    updateState(await api!.setM365TemporaryChatPerRequest(enabled));
+  });
 
   return (
     <ContentSurface
@@ -1212,6 +1215,22 @@ function SetupSurface({
             repeatable={true}
             title="Run browser smoke test (M365)"
           />
+          <div className="setup-row">
+            <span className="setup-index"><Icon name="settings" /></span>
+            <div className="setup-row-copy">
+              <div className="setup-row-heading">
+                <strong>{copy.m365TemporaryChat}</strong>
+              </div>
+              <p>{copy.m365TemporaryChatBody}</p>
+            </div>
+            <div className="setup-actions">
+              <Switch
+                checked={Boolean(snapshot.state.m365TemporaryChatPerRequest)}
+                disabled={globalActionDisabled}
+                onChange={(checked) => void setM365TemporaryChatPerRequest(checked)}
+              />
+            </div>
+          </div>
         </div>
 
         {/* ── ChatGPT Setup Section ── */}
