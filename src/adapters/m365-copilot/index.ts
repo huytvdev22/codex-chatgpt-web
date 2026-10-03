@@ -1,7 +1,7 @@
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
-import { compileM365Prompt } from "./prompt";
+import { compileM365Prompt, compileM365HybridForwardPrompt } from "./prompt";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
@@ -227,10 +227,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì forward nguyên trạng raw request của Codex (không format json để tiết kiệm token)
+    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì dùng Hybrid Forward Prompt (chặn /mnt/data và hướng dẫn tool_call)
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
     const promptToSend = isTemporaryPerRequest
-      ? (typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody || parsed))
+      ? compileM365HybridForwardPrompt(parsed, rawBody)
       : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
+import { compileM365Prompt, compileM365HybridForwardPrompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
 import { M365ToolCallDetector, M365MarkdownBuffer, normalizeMarkdownFences } from "../src/adapters/m365-copilot/markdown";
 import { M365ToolBridge, normalizeFileContent } from "../src/adapters/m365-copilot/tool-bridge";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
@@ -523,5 +523,32 @@ const b = \\{\\
     expect(finalResult.markdown).toContain("chrome.storage.local");
     expect(finalResult.markdown).toContain("Đúng hướng.");
     expect(finalResult.delta).toContain("chrome.storage.local");
+  });
+
+  test("Phase 14: compileM365HybridForwardPrompt combines protocol directive and raw codex json", () => {
+    const parsed: CodexParsedRequest = {
+      modelId: "m365-copilot/think",
+      stream: true,
+      context: {
+        messages: [{
+          role: "user",
+          content: "chỉnh sửa và thêm comment cho file này giúp tôi",
+          timestamp: Date.now(),
+        }],
+      },
+      options: {},
+    };
+    const rawBody = {
+      model: "m365-copilot/think",
+      input: [{ role: "user", content: "chỉnh sửa file" }],
+    };
+
+    const prompt = compileM365HybridForwardPrompt(parsed, rawBody);
+    expect(prompt).toContain("TEXT INTERACTION PROTOCOL");
+    expect(prompt).toContain("KHÔNG tự chạy trong sandbox /mnt/data");
+    expect(prompt).toContain("<tool_call>");
+    expect(prompt).toContain("DƯỚI ĐÂY LÀ TOÀN BỘ YÊU CẦU VÀ NGỮ CẢNH CỦA CODEX IDE");
+    expect(prompt).toContain(JSON.stringify(rawBody));
+    expect(prompt).toContain("[Yêu cầu định dạng đầu ra]");
   });
 });
