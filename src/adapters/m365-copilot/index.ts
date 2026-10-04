@@ -193,10 +193,9 @@ export class M365CopilotAdapter implements ProviderAdapter {
     console.log(`[m365-adapter] Chế độ Temporary Chat Per Request: ${isTemporaryPerRequest ? "BẬT (Pure Forwarder)" : "TẮT (Stateful)"}`);
 
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
-    // (Chỉ áp dụng trong chế độ Stateful thông thường)
     const allMsgs = parsed.context.messages || [];
     const lastMsg = allMsgs[allMsgs.length - 1];
-    if (!isTemporaryPerRequest && isAssistantFinalAnswer(lastMsg)) {
+    if (isAssistantFinalAnswer(lastMsg)) {
       console.log(`[m365-adapter] Cuộc hội thoại đã kết thúc bằng phản hồi của trợ lý và không có pending tool call hoặc input mới. Hoàn tất lượt.`);
       if (conversationKey) {
         conversationGuard.delete(conversationKey);

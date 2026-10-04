@@ -3,6 +3,7 @@ import { getConfigDir } from "../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "./markdown";
+import { FastPathStreamBuffer } from "./temp-chat/fastPathScraper";
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../m365-models";
 import { emitStructuredEvent } from "../../observability/emitter";
@@ -237,6 +238,9 @@ export async function executeM365Turn(
 
     // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
     const markdownBuffer = new M365MarkdownBuffer();
+    const fastPathBuffer = new FastPathStreamBuffer();
+    let fastPathActive = false;
+    let lastFastPathText = "";
     let seenGenerating = false;
     let attempts = 0;
     let stableCycles = 0;
@@ -326,6 +330,20 @@ export async function executeM365Turn(
           codeText = codeText.replace(/^\n+|\n+$/g, "");
           return { lang, codeText };
         });
+
+        // Fast-Path: Nhận diện khối Markdown/plain code block từ Scriptor Editor
+        let fastPathRawText: string | null = null;
+        if (codeData.length === 1) {
+          const lang = codeData[0].lang;
+          if (!lang || lang === "markdown" || lang === "md" || lang === "plain") {
+            fastPathRawText = codeData[0].codeText;
+          }
+        } else if (codeData.length > 1) {
+          const mdBlock = codeData.find(b => b.lang === "markdown" || b.lang === "md");
+          if (mdBlock) {
+            fastPathRawText = mdBlock.codeText;
+          }
+        }
 
         // 2. Clone content element để thao tác dọn dẹp
         const clone = contentEl.cloneNode(true) as HTMLElement;
@@ -476,9 +494,9 @@ export async function executeM365Turn(
         });
 
         const rawHtml = clone.innerHTML || "";
-        const hasContent = blocks.length > 0;
+        const hasContent = blocks.length > 0 || Boolean(fastPathRawText && fastPathRawText.length > 0);
         const isNew = (messages.length > before.count) || isGenerating;
-        return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError };
+        return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText };
       }, beforeState);
 
       // Nếu phát hiện lỗi giao diện web của M365 (quota, session hết hạn, error banner), ném lỗi ngay
@@ -504,8 +522,19 @@ export async function executeM365Turn(
         }, undefined, options.signal).catch(() => { });
       }
 
-      // Stream các khối đã hoàn thành thông qua M365MarkdownBuffer
-      if (status.blocks && status.blocks.length > 0) {
+      // Stream các khối đã hoàn thành: Ưu tiên Fast-Path nếu đang ở chế độ Temporary Mode
+      if (isTemporaryMode && typeof status.fastPathRawText === "string") {
+        fastPathActive = true;
+        lastFastPathText = status.fastPathRawText;
+        const delta = fastPathBuffer.observe(lastFastPathText);
+        if (delta.length > 0) {
+          options.onChunk(delta);
+          lastTextChangeAt = Date.now();
+          stableCycles = 0;
+        } else {
+          stableCycles++;
+        }
+      } else if (status.blocks && status.blocks.length > 0) {
         lastBlocks = status.blocks as M365MarkdownBlock[];
         const delta = markdownBuffer.observe(lastBlocks);
         if (delta.length > 0) {
@@ -520,9 +549,9 @@ export async function executeM365Turn(
       // Định kỳ mỗi ~4 giây (16 chu kỳ) phát log tiến độ chi tiết để theo dõi trạng thái sống (Liveness)
       if (attempts % 16 === 0) {
         const elapsedSec = Math.round((attempts * pollIntervalMs) / 1000);
-        const currentChars = lastBlocks.reduce((acc, b) => acc + b.text.length, 0);
+        const currentChars = fastPathActive ? lastFastPathText.length : lastBlocks.reduce((acc, b) => acc + b.text.length, 0);
         const stableSec = Math.round((Date.now() - lastTextChangeAt) / 1000);
-        const combinedTextSoFar = lastBlocks.map(b => b.text).join(" ");
+        const combinedTextSoFar = fastPathActive ? lastFastPathText : lastBlocks.map(b => b.text).join(" ");
         const unclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedTextSoFar);
         const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
 
@@ -553,7 +582,7 @@ export async function executeM365Turn(
       // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
       // 3. Khối tool_call hoặc patch đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
-      const combinedText = lastBlocks.map(b => b.text).join(" ");
+      const combinedText = fastPathActive ? lastFastPathText : lastBlocks.map(b => b.text).join(" ");
       const hasUnclosedToolCall = /<\s*tool\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\?_call\s*>/i.test(combinedText);
       const hasUnclosedPatch = /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
       const toolCallFullyClosed = /<\s*\/tool\\?_call\s*>/i.test(combinedText);
@@ -569,7 +598,7 @@ export async function executeM365Turn(
       );
 
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed}`);
+        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} fastPath=${fastPathActive}`);
         break;
       }
     }
@@ -580,7 +609,17 @@ export async function executeM365Turn(
     }
 
     // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
-    const { delta: finalDelta, markdown: fullMarkdown } = markdownBuffer.finish(lastBlocks);
+    let fullMarkdown: string;
+    let finalDelta: string;
+    if (fastPathActive) {
+      const res = fastPathBuffer.finish(lastFastPathText);
+      fullMarkdown = res.markdown;
+      finalDelta = res.delta;
+    } else {
+      const res = markdownBuffer.finish(lastBlocks);
+      fullMarkdown = res.markdown;
+      finalDelta = res.delta;
+    }
     if (finalDelta.length > 0 && !options.shouldStop?.()) {
       options.onChunk(finalDelta);
     }

@@ -59,22 +59,9 @@ function generateToolCallId(): string {
   return `call_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
 
-/**
- * Bóc tách code fence ở rìa ngoài cùng (outer boundary) của khối JSON/XML.
- * TUYỆT ĐỐI BẢO TOÀN toàn bộ code fences (```text, ```mermaid) bên trong nội dung!
- */
-export function stripOuterCodeFence(raw: string): string {
-  let trimmed = raw.trim();
-  const openMatch = trimmed.match(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n/);
-  if (openMatch) {
-    trimmed = trimmed.slice(openMatch[0].length);
-  }
-  const closeMatch = trimmed.match(/\r?\n```[ \t]*$/);
-  if (closeMatch) {
-    trimmed = trimmed.slice(0, trimmed.length - closeMatch[0].length);
-  }
-  return trimmed.trim();
-}
+import { stripOuterCodeFence } from "./temp-chat/stripCodeFence";
+export { stripOuterCodeFence };
+
 
 /**
  * Tự động cân bằng dấu đóng ngoặc nhọn JSON nếu bị thiếu do Markdown hoặc DOM cắt dở
@@ -568,11 +555,15 @@ export class M365OutputTranslator {
     console.log("\n[M365 RAW RESPONSE]");
     console.log(rawPreview);
 
+    // Tự động lột bỏ lớp vỏ code block ngoài cùng (````markdown ... ```` hoặc ```...```)
+    // để các detector phát hiện công cụ bên trong, hoặc trả về văn bản sạch cho Final Answer
+    const unwrappedResponse = stripOuterCodeFence(rawResponse);
+
     // Nếu phản hồi chứa thẻ <proposed_plan>, đây là bản kế hoạch hoàn chỉnh cho Codex UI duyệt (Final Answer)
-    if (/<\s*proposed[\\_]*plan\s*>[\s\S]*?<\s*\/proposed[\\_]*plan\s*>/i.test(rawResponse)) {
+    if (/<\s*proposed[\\_]*plan\s*>[\s\S]*?<\s*\/proposed[\\_]*plan\s*>/i.test(unwrappedResponse)) {
       return {
         type: "final_answer",
-        content: rawResponse.trim(),
+        content: unwrappedResponse.trim(),
         rawResponse,
         parseDiagnostics: {
           terminalReason: "proposed_plan",
@@ -581,9 +572,9 @@ export class M365OutputTranslator {
       };
     }
 
-    // Duyệt qua các detector theo thứ tự ưu tiên
+    // Duyệt qua các detector theo thứ tự ưu tiên (kiểm tra trên unwrappedResponse trước, dự phòng rawResponse)
     for (const detector of this.detectors) {
-      const detected = detector.detect(rawResponse);
+      const detected = detector.detect(unwrappedResponse) || detector.detect(rawResponse);
       if (detected) {
         const callsList = Array.isArray(detected) ? detected : [detected];
         const toolCalls: OpenAIToolCall[] = callsList.map(item => ({
@@ -611,13 +602,13 @@ export class M365OutputTranslator {
     }
 
     // Nếu không khớp với bất kỳ tool call nào, đây là Final Answer
-    const trimmedAnswer = rawResponse.trim();
+    const trimmedAnswer = unwrappedResponse.trim();
 
     // Kiểm tra chẩn đoán: Có chứa dấu hiệu nghi vấn tool call mà không parse được hay không?
-    const hasSuspiciousXml = /<\s*tool[\\_]*call\s*>/i.test(rawResponse);
-    const hasUnclosedXml = hasSuspiciousXml && !/<\s*\/tool[\\_]*call\s*>/i.test(rawResponse);
-    const hasSuspiciousJson = /"action"\s*:\s*"tool_call"|"name"\s*:\s*"(?:read_file|write_file|apply_patch|exec_command|run_command)"/i.test(rawResponse);
-    const hasSuspiciousPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(rawResponse);
+    const hasSuspiciousXml = /<\s*tool[\\_]*call\s*>/i.test(unwrappedResponse);
+    const hasUnclosedXml = hasSuspiciousXml && !/<\s*\/tool[\\_]*call\s*>/i.test(unwrappedResponse);
+    const hasSuspiciousJson = /"action"\s*:\s*"tool_call"|"name"\s*:\s*"(?:read_file|write_file|apply_patch|exec_command|run_command)"/i.test(unwrappedResponse);
+    const hasSuspiciousPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(unwrappedResponse);
 
     let diagnosticWarning = "";
     if (hasUnclosedXml) {
