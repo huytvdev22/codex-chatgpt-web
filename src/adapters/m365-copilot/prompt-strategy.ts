@@ -51,6 +51,11 @@ BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI K
 </custom_tool_call>
 (Khi tạo file mới: Sử dụng *** Add File: path/to/file.ext thay vì Update File).
 
+QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
+- TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> (với *** Add File: hoặc *** Update File:) hoặc công cụ write_file.
+- NGHIÊM CẤM TUYỆT ĐỐI: Không được dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo file hoặc ghi đè nội dung file trong exec_command.
+- PHẠM VI CỦA exec_command: Chỉ dùng để chạy các câu lệnh dòng lệnh không tương tác (như: npm install, npm test, git status, git diff, mkdir -p ..., node server.js).
+
 QUY TẮC ỨNG XỬ:
 - Khi người dùng chào hỏi, hỏi đáp kiến thức, giải thích code: Trả lời tự nhiên bằng văn bản Markdown thông thường. TUYỆT ĐỐI KHÔNG xuất câu lệnh terminal hay thẻ <tool_call>.
 - Khi người dùng yêu cầu thao tác cụ thể trên dự án: Hãy xuất ngay khối công cụ tương ứng ở đầu câu trả lời.
@@ -75,6 +80,12 @@ export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
     const desc = tool.description ? tool.description.trim() : "No description provided.";
     return `- ${qualified}\n  ${desc}`;
   });
+
+  // Nếu trong danh sách chưa có write_file, bổ sung công cụ write_file do Tool Bridge hỗ trợ
+  const hasWriteFile = tools.some(t => t.identity.name === "write_file");
+  if (!hasWriteFile) {
+    entries.push("- write_file\n  Tạo file mới hoặc ghi đè nội dung file (tham số: path, content).");
+  }
 
   return `AVAILABLE TOOLS\n\n${entries.join("\n\n")}`;
 }

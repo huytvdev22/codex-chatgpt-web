@@ -195,10 +195,11 @@ BẠN BẮT BUỘC PHẢI TUÂN THỦ CÁC QUY TẮC SAU:
 export const IMPLEMENT_PLAN_PROMPT = `[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]
 Người dùng ĐÃ PHÊ DUYỆT bản kế hoạch và yêu cầu bắt đầu thực thi code ngay!
 BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
-1. Hãy bắt đầu ngay bằng cách xuất câu lệnh terminal hoặc khối <tool_call> cho bước đầu tiên:
-   - Nếu là dự án mới hoặc tạo file mới: Dùng write_file để tạo các file ban đầu (như package.json, server.js, index.html) hoặc chạy lệnh khởi tạo (ví dụ: npm init -y, git init).
-   - Nếu sửa đổi file đã có: Dùng apply_patch với khối *** Update File.
-2. Sau khi file được tạo/sửa và nhận kết quả toolResult, tiếp tục các bước kế tiếp hoặc chạy test (run_command) để kiểm tra tính đúng đắn.
+1. Hãy bắt đầu ngay bằng cách xuất khối <custom_tool_call name="apply_patch"> hoặc <tool_call> cho bước đầu tiên:
+   - Tạo file mới hoặc sửa file: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file hoặc *** Update File: path/to/file) hoặc công cụ write_file.
+   - TUYỆT ĐỐI NGHIÊM CẤM: Không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
+   - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, git status, mkdir -p ...).
+2. Sau khi file được tạo/sửa và nhận kết quả toolResult, tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command) để kiểm tra tính đúng đắn.
 3. TUYỆT ĐỐI KHÔNG xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt.
 4. TUYỆT ĐỐI KHÔNG từ chối hoặc nói rằng bạn không có công cụ IDE; IDE của người dùng đang tự động bắt các khối <tool_call> hoặc lệnh terminal của bạn để thực thi trực tiếp trên máy tính. Hãy bắt tay vào thực hiện bước 1 ngay!`;
 
@@ -210,8 +211,8 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
 - NẾU CẦN THỰC HIỆN BƯỚC KẾ TIẾP: Hãy tiếp tục in khối <tool_call> hoặc câu lệnh shell tương ứng.
 - NẾU ĐÃ HOÀN TẤT HOẶC ĐÃ ĐỦ THÔNG TIN: BẠN HÃY TRẢ LỜI KẾT QUẢ / KẾT LUẬN CHI TIẾT CHO NGƯỜI DÙNG VÀ TUYỆT ĐỐI KHÔNG IN THÊM BẤT KỲ KHỐI <tool_call> HAY CÂU LỆNH SHELL NÀO NỮA.
 - TUYỆT ĐỐI KHÔNG từ chối với lý do không có công cụ IDE hoặc không có quyền truy cập máy tính; không yêu cầu người dùng tự gõ lệnh hay tải file thủ công.
-- Đối với dự án mới hoặc tạo file mới: Sử dụng công cụ write_file hoặc câu lệnh khởi tạo (ví dụ: npm init -y, git init).
-- Đối với sửa đổi file hiện có: Sử dụng công cụ apply_patch với khối *** Update File.
+- Tạo file mới hoặc sửa file: Ưu tiên sử dụng apply_patch (với *** Add File: hoặc *** Update File:) hoặc công cụ write_file. TUYỆT ĐỐI KHÔNG dùng cat <<EOF hay heredoc shell để tạo file trong exec_command.
+- Lệnh exec_command chỉ dùng cho các câu lệnh CLI không tương tác (như npm install, npm test, git, mkdir -p).
 - Khi kết quả tool_result có mã thoát 0 (Process exited with code 0) hoặc output rỗng: Thao tác trước đó đã THÀNH CÔNG (lệnh thực thi không sinh output ra stdout hoặc file đã được tạo). Hãy tự tin tiếp tục ngay bước tiếp theo hoặc đưa ra câu trả lời kết luận nếu đã xong!`;
 
 /**
@@ -219,8 +220,8 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
  */
 export const TOOL_RESULT_HINTS = {
   planMode: `Sau khi nhận được kết quả công cụ trên, hãy phân tích kỹ lưỡng. LƯU Ý QUAN TRỌNG: Bạn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE). TUYỆT ĐỐI KHÔNG ĐƯỢC gọi công cụ chỉnh sửa code (apply_patch, write_file). Nếu đã đủ thông tin khảo sát, bạn HÃY XUẤT NGAY BẢN KẾ HOẠCH ĐƯỢC BỌC TRONG THẺ <proposed_plan>...</proposed_plan> bằng tiếng Việt để người dùng duyệt. Nếu cần đọc thêm file khác để lập kế hoạch, hãy tiếp tục in câu lệnh hoặc khối <tool_call> đọc file.`,
-  implementPlan: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <tool_call> mới (write_file nếu tạo file mới, apply_patch nếu sửa file, hoặc run_command để chạy test/lệnh). Tuyệt đối không từ chối, hãy xuất ngay khối <tool_call> tiếp theo hoặc trả lời kết quả nếu đã hoàn thành toàn bộ.`,
-  default: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới (write_file, apply_patch, run_command). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`,
+  implementPlan: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <tool_call> hoặc apply_patch mới (apply_patch hoặc write_file nếu tạo/sửa file, hoặc exec_command để chạy test/lệnh). TUYỆT ĐỐI KHÔNG dùng cat <<EOF để tạo file. Tuyệt đối không từ chối, hãy xuất ngay khối công cụ tiếp theo hoặc trả lời kết quả nếu đã hoàn thành toàn bộ.`,
+  default: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới (apply_patch, write_file, exec_command). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`,
 };
 
 /**
@@ -228,8 +229,8 @@ export const TOOL_RESULT_HINTS = {
  */
 export const OUTPUT_FORMAT_HINTS = {
   planMode: `[Yêu cầu định dạng đầu ra]: Đang ở chế độ Plan Mode. Nếu bạn cần đọc file hoặc kiểm tra cấu trúc mã nguồn trước khi lên kế hoạch, hãy xuất ngay câu lệnh đọc file (ví dụ: cat <file>, ls) hoặc khối <tool_call> tương ứng (read_file, list_dir). Nếu đã có đủ ngữ cảnh, bạn PHẢI XUẤT NGAY bản kế hoạch hoàn chỉnh được bọc trong thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt. TUYỆT ĐỐI KHÔNG gọi công cụ sửa file (apply_patch, write_file).`,
-  implementPlan: `[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay câu lệnh terminal hoặc khối <tool_call> chỉnh sửa file (apply_patch hoặc write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn.`,
-  default: `[Yêu cầu định dạng đầu ra]: Hãy xuất ngay câu lệnh terminal tương ứng (ví dụ: ls, cat, grep, git status) hoặc khối <tool_call> tương ứng (bước 1 nếu là yêu cầu MULTI-STEP) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`,
+  implementPlan: `[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay khối công cụ tạo hoặc sửa file (apply_patch hoặc write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn. TUYỆT ĐỐI KHÔNG dùng cat <<EOF hay heredoc shell.`,
+  default: `[Yêu cầu định dạng đầu ra]: Hãy xuất ngay khối công cụ tương ứng (hoặc câu lệnh terminal tương ứng nếu là lệnh shell) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`,
 };
 
 export {

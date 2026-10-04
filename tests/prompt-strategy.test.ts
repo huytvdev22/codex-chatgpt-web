@@ -189,4 +189,40 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(result.audit.toolsCount).toBe(5);
     expect(result.audit.finalPromptChars).toBe(result.finalPrompt.length);
   });
+
+  test("Khắc phục triệt để lỗi treo PTY heredoc: Khai báo write_file và cấm cat <<EOF", () => {
+    const payload = CodexRawPayload.from(sampleRaw);
+    const normalized = CodexPayloadNormalizer.normalize(payload);
+    const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
+
+    // 1. Phải khai báo write_file trong danh sách AVAILABLE TOOLS để M365 Copilot biết cách gọi
+    expect(dynamicText).toContain("- write_file");
+    expect(dynamicText).toContain("Tạo file mới hoặc ghi đè nội dung file");
+
+    // 2. UNIFIED_TOOL_PROTOCOL phải có quy tắc cấm heredoc shell và hướng dẫn tạo file
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("TẠO FILE MỚI HOẶC SỬA FILE");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("apply_patch");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("write_file");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("cat <<EOF");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("NGHIÊM CẤM TUYỆT ĐỐI");
+
+    // 3. Trong forward prompt khi implement plan phải có chỉ thị đúng đắn
+    const mockImplementingPlanParsed: CodexParsedRequest = {
+      modelId: "m365-copilot/think",
+      context: {
+        messages: [
+          { role: "user", content: "PLEASE IMPLEMENT THIS PLAN: ## Tóm tắt..." }
+        ],
+        tools: []
+      },
+      _rawBody: sampleRaw,
+    };
+
+    const planResult = compileM365HybridForwardPromptWithResult(mockImplementingPlanParsed, sampleRaw);
+    expect(planResult.isImplementingPlan).toBe(true);
+    expect(planResult.finalPrompt).toContain("[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]");
+    expect(planResult.finalPrompt).toContain("apply_patch");
+    expect(planResult.finalPrompt).toContain("write_file");
+    expect(planResult.finalPrompt).toContain("TUYỆT ĐỐI NGHIÊM CẤM: Không dùng các lệnh shell (cat <<EOF");
+  });
 });
