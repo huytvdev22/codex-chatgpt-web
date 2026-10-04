@@ -248,6 +248,7 @@ export async function executeM365Turn(
     let stableCycles = 0;
     let lastTextChangeAt = Date.now();
     let lastBlocks: M365MarkdownBlock[] = [];
+    let lastStatus: any = null;
     const maxAttempts = 2400; // 2400 * 250ms = 600 giây (10 phút) tối đa
     const pollIntervalMs = 250;
 
@@ -670,6 +671,7 @@ export async function executeM365Turn(
       // Dynamic Liveness Timeout:
       // Nếu đã chạm mốc maxAttempts nhưng M365 vẫn đang sinh (isGenerating) hoặc văn bản vừa thay đổi trong vòng 30s:
       // Tiếp tục gia hạn thời gian chờ để không bao giờ cắt cụt câu trả lời lớn đang sinh dở
+      lastStatus = status;
       if (attempts >= maxAttempts) {
         const timeSinceLastChange = Date.now() - lastTextChangeAt;
         const isActivelyGenerating = status.isGenerating || timeSinceLastChange < 30_000;
@@ -683,7 +685,7 @@ export async function executeM365Turn(
       }
     }
 
-    const timedOut = attempts >= maxAttempts && (status.isGenerating || Date.now() - lastTextChangeAt >= 30_000);
+    const timedOut = attempts >= maxAttempts && (lastStatus?.isGenerating || Date.now() - lastTextChangeAt >= 30_000);
     if (timedOut) {
       console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(attempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
     }
