@@ -267,9 +267,9 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(prompt).toContain("write_file");
     expect(prompt).toContain("MULTI-STEP");
     expect(prompt).toContain("node --check server.js");
-    expect(prompt).toContain("/mnt/data");
     expect(prompt).toContain("[Yêu cầu định dạng đầu ra]");
-    expect(prompt.endsWith("hoặc tự chạy trong sandbox /mnt/data.")).toBeTrue();
+    expect(prompt).toContain("hoặc tự chạy trong sandbox /mnt/data.");
+    expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]");
   });
 
   test("Phase 8: M365ToolCallDetector parses raw multiline unescaped newlines in JSON string literals (Self-healing parser)", () => {

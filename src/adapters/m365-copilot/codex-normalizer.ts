@@ -202,12 +202,83 @@ export class CodexPayloadNormalizer {
   }
 
   /**
+   * Chuyển đổi mảng context.messages từ CodexParsedRequest sang CodexRawInputItem
+   * nhằm hỗ trợ tương thích 100% khi request không có raw wire input (mock test hoặc pipeline cũ).
+   */
+  static convertMessagesToInput(messages: Array<any>): CodexRawInputItem[] {
+    const input: CodexRawInputItem[] = [];
+    for (const msg of messages || []) {
+      if (!msg) continue;
+      if (msg.role === "toolResult") {
+        input.push({
+          type: "function_call_output",
+          call_id: msg.toolCallId || msg.callId || "",
+          output: msg.content,
+          name: msg.toolName,
+        } as any);
+      } else if (msg.role === "assistant") {
+        if (Array.isArray(msg.content)) {
+          for (const part of msg.content) {
+            if (part && part.type === "toolCall") {
+              input.push({
+                type: "function_call",
+                call_id: part.id || "",
+                name: part.name || "",
+                arguments: part.arguments || {},
+              } as any);
+            } else if (part && part.type === "text") {
+              input.push({
+                type: "message",
+                role: "assistant",
+                content: part.text,
+              } as any);
+            }
+          }
+        } else {
+          input.push({
+            type: "message",
+            role: "assistant",
+            content: typeof msg.content === "string" ? msg.content : "",
+          } as any);
+        }
+      } else {
+        input.push({
+          type: "message",
+          role: msg.role || "user",
+          content: typeof msg.content === "string" ? msg.content : "",
+        } as any);
+      }
+    }
+    return input;
+  }
+
+  /**
    * Chuẩn hóa toàn bộ request từ CodexRawPayload sang NormalizedCodexRequest.
    */
   static normalize(rawPayload: CodexRawPayload): NormalizedCodexRequest {
-    const input = rawPayload.input || [];
+    const rawContextMsgs = (rawPayload as any).context?.messages || (rawPayload.extra as any)?.context?.messages;
+    const input = (rawPayload.input && rawPayload.input.length > 0)
+      ? rawPayload.input
+      : (Array.isArray(rawContextMsgs) ? this.convertMessagesToInput(rawContextMsgs) : []);
+
     const tools = this.extractTools(rawPayload);
-    const trailingToolResults = this.extractTrailingToolResults(rawPayload);
+    // Nếu tools rỗng nhưng có context.tools, bổ sung từ context.tools
+    const rawContextTools = (rawPayload as any).context?.tools || (rawPayload.extra as any)?.context?.tools;
+    if (tools.length === 0 && Array.isArray(rawContextTools)) {
+      for (const t of rawContextTools) {
+        if (t && t.name) {
+          tools.push({
+            kind: "function",
+            identity: { name: t.name, qualifiedName: t.name },
+            description: t.description || "",
+            rawParameters: t.parameters || {},
+          });
+        }
+      }
+    }
+
+    // Ghép call_id cho trailing tool results nếu input đến từ context.messages
+    const trailingToolResults = this.extractTrailingToolResults({ ...rawPayload, input } as any);
 
     // Xác định latest user message
     const latestUserIdx = this.findLatestUserItemIndex(input);

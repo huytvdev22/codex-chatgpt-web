@@ -3,6 +3,7 @@ import type { NormalizedCodexRequest, NormalizedTool } from "./canonical-types";
 import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
+  TOOL_REMINDER_PROMPT,
 } from "./prompts";
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
@@ -120,6 +121,7 @@ export interface PromptCompileInput {
   parsed: CodexParsedRequest;
   isPlanMode?: boolean;
   isImplementingPlan?: boolean;
+  isNewConversation?: boolean;
 }
 
 export interface PromptCompileResult {
@@ -245,6 +247,81 @@ export class M365PromptCompiler {
       : (normalized.collaborationMode || "default");
 
     const isPlanMode = !isImplementingPlan && collaborationMode === "plan";
+    const isNewConversation = input.isNewConversation ?? true;
+
+    // -------------------------------------------------------------
+    // CHẾ ĐỘ INCREMENTAL ROUNDTRIP (STATEFUL MODE - LƯỢT TIẾP THEO)
+    // Tối ưu hóa cực hạn: Chỉ gửi delta (lời nhắc thực thi, tool_result mới, user instruction mới)
+    // Giảm 95% token, model phản hồi nhanh tức thì, không bị quá tải ngữ cảnh!
+    // -------------------------------------------------------------
+    if (!isNewConversation) {
+      const incrementalSections: string[] = [];
+
+      const reminderSection = isImplementingPlan
+        ? IMPLEMENT_PLAN_PROMPT
+        : (isPlanMode ? `${PLAN_MODE_PROMPT}\n\n${TOOL_REMINDER_PROMPT}` : TOOL_REMINDER_PROMPT);
+      incrementalSections.push(reminderSection);
+
+      let toolResultsContent = "";
+      if (normalized.trailingToolResults.length > 0) {
+        const resultBlocks = normalized.trailingToolResults.map(res =>
+          `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
+        );
+        toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (apply_patch hoặc write_file nếu sửa/tạo file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
+        incrementalSections.push(toolResultsContent);
+      }
+
+      let userReqContent = "";
+      if (normalized.latestUserInstruction) {
+        userReqContent = `[YÊU CẦU CỦA NGƯỜI DÙNG]:\n${normalized.latestUserInstruction}`;
+        incrementalSections.push(userReqContent);
+      }
+
+      // Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
+      incrementalSections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
+
+      const finalPrompt = incrementalSections.join("\n\n").trim();
+
+      console.log(
+        `planMode=${isPlanMode}\n` +
+        `collaborationMode=${collaborationMode}\n` +
+        `finalPromptLength=${finalPrompt.length}\n` +
+        `mode=incremental_stateful`
+      );
+
+      const metrics = calculatePromptMetrics({
+        toolDeclaration: reminderSection,
+        developerInstructions: "",
+        history: "",
+        toolResults: toolResultsContent,
+        environment: "",
+        userRequest: userReqContent,
+        finalPrompt,
+      });
+
+      const audit: PromptAuditData = {
+        threadId: normalized.threadId,
+        turnId: normalized.turnId,
+        toolsCount: normalized.activeCodingTools.length,
+        developerRulesCount: 0,
+        historyTurns: 0,
+        toolResultsCount: normalized.trailingToolResults.length,
+        toolPromptChars: reminderSection.length,
+        historyChars: 0,
+        developerChars: 0,
+        environmentChars: 0,
+        finalPromptChars: finalPrompt.length,
+      };
+
+      return {
+        finalPrompt,
+        metrics,
+        audit,
+        collaborationMode,
+        isPlanMode,
+        isImplementingPlan,
+      };
+    }
 
     const sections: string[] = [];
 

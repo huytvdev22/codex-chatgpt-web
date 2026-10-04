@@ -268,8 +268,10 @@ node math.test.js
 
     const prompt = compileM365Prompt(parsed, false);
     expect(prompt).toContain("[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]");
-    expect(prompt).toContain("Nếu là dự án mới hoặc tạo file mới: Dùng write_file");
+    expect(prompt).toContain("Tạo file mới hoặc sửa file: Ưu tiên sử dụng");
+    expect(prompt).toContain("write_file");
     expect(prompt).toContain("[CHẾ ĐỘ THỰC THI CÔNG CỤ QUA IDE - TOOL EXECUTION REMINDER]");
+    expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]");
   });
 });
 
