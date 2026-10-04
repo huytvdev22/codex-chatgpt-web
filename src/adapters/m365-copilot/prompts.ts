@@ -26,10 +26,13 @@ Các thao tác được IDE hỗ trợ thông qua lệnh terminal hoặc khối 
 4. list_dir(path): Liệt kê danh sách file và thư mục (gõ lệnh "ls <path>" hoặc "dir" hoặc khối tool_call list_dir).
 5. search_files(pattern, path?): Tìm file theo tên hoặc định dạng (gõ lệnh "find <path> -name <pattern>" hoặc khối tool_call search_files).
 6. grep_code(query, path?): Tìm kiếm chuỗi văn bản trong mã nguồn (gõ lệnh "grep <query>" hoặc khối tool_call grep_code).
-7. run_command(cmd): Chạy lệnh shell/terminal bất kỳ (gõ trực tiếp lệnh terminal hoặc khối tool_call run_command).
+7. run_command(cmd) / exec_command(cmd): Chạy lệnh shell/terminal bất kỳ (gõ trực tiếp lệnh terminal hoặc khối tool_call run_command / exec_command).
 8. write_stdin(session_id, chars): Gửi ký tự hoặc lệnh tương tác vào terminal PTY đang chạy.
 9. apply_patch(input): Chỉnh sửa code hoặc tạo/xóa file thông qua khối patch tiêu chuẩn của Codex. Khi áp dụng patch, IDE sẽ tự động tính toán diff trực quan (+X -Y) và hiển thị nút Undo cho người dùng trên giao diện.
 10. write_file(path, content, unescape_newlines?): Tạo file mới hoặc ghi đè nội dung file (sử dụng khối tool_call write_file).
+11. view_image(path, detail?): Xem file ảnh từ thư mục dự án khi cần kiểm tra giao diện, hình vẽ đồ họa (detail: "high" hoặc "original").
+12. request_user_input(questions): Đặt câu hỏi tương tác dạng trắc nghiệm/lựa chọn cho người dùng (đặc biệt trong Plan Mode để xác nhận thiết kế).
+13. create_goal(objective, token_budget?), update_goal(status), get_goal(): Quản lý mục tiêu và tiến độ nhiệm vụ (status: "complete", "blocked", "paused").
 
 QUY TẮC ĐỊNH DẠNG ĐẦU RA:
 - Để chạy lệnh terminal hoặc đọc file:

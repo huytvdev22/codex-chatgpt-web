@@ -607,7 +607,7 @@ export class M365OutputTranslator {
     // Kiểm tra chẩn đoán: Có chứa dấu hiệu nghi vấn tool call mà không parse được hay không?
     const hasSuspiciousXml = /<\s*tool[\\_]*call\s*>/i.test(unwrappedResponse);
     const hasUnclosedXml = hasSuspiciousXml && !/<\s*\/tool[\\_]*call\s*>/i.test(unwrappedResponse);
-    const hasSuspiciousJson = /"action"\s*:\s*"tool_call"|"name"\s*:\s*"(?:read_file|write_file|apply_patch|exec_command|run_command)"/i.test(unwrappedResponse);
+    const hasSuspiciousJson = /"action"\s*:\s*"tool_call"|"name"\s*:\s*"(?:read_file|write_file|apply_patch|exec_command|run_command|write_stdin|view_image|request_user_input|create_goal|update_goal|get_goal)"/i.test(unwrappedResponse);
     const hasSuspiciousPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(unwrappedResponse);
 
     let diagnosticWarning = "";

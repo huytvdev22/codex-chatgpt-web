@@ -607,5 +607,105 @@ const b = \\{\\
       expect(result.content).toBe(naturalReply);
     }
   });
+
+  test("Phase 16: M365ToolBridge maps newly added tools correctly", () => {
+    // 1. write_stdin
+    const mappedStdin = M365ToolBridge.mapToolCall({
+      name: "write_stdin",
+      arguments: JSON.stringify({ session_id: 101, chars: "\u0003", yield_time_ms: 1000 }),
+    });
+    expect(mappedStdin.name).toBe("write_stdin");
+    expect(JSON.parse(mappedStdin.arguments)).toEqual({
+      session_id: 101,
+      chars: "\u0003",
+      yield_time_ms: 1000,
+    });
+
+    // 2. view_image
+    const mappedViewImage = M365ToolBridge.mapToolCall({
+      name: "view_image",
+      arguments: JSON.stringify({ path: "assets/logo.png", detail: "original" }),
+    });
+    expect(mappedViewImage.name).toBe("view_image");
+    expect(JSON.parse(mappedViewImage.arguments)).toEqual({
+      path: "assets/logo.png",
+      detail: "original",
+    });
+
+    // 3. request_user_input
+    const mappedUserInput = M365ToolBridge.mapToolCall({
+      name: "request_user_input",
+      arguments: JSON.stringify({
+        questions: [{
+          id: "q1",
+          header: "Auth",
+          question: "Which auth?",
+          options: [{ label: "JWT", description: "Use tokens" }],
+        }],
+      }),
+    });
+    expect(mappedUserInput.name).toBe("request_user_input");
+    const parsedUserInput = JSON.parse(mappedUserInput.arguments);
+    expect(parsedUserInput.questions.length).toBe(1);
+    expect(parsedUserInput.questions[0].id).toBe("q1");
+
+    // 4. create_goal
+    const mappedCreateGoal = M365ToolBridge.mapToolCall({
+      name: "create_goal",
+      arguments: JSON.stringify({ objective: "Build feature A", token_budget: 50000 }),
+    });
+    expect(mappedCreateGoal.name).toBe("create_goal");
+    expect(JSON.parse(mappedCreateGoal.arguments)).toEqual({
+      objective: "Build feature A",
+      token_budget: 50000,
+    });
+
+    // 5. update_goal
+    const mappedUpdateGoal = M365ToolBridge.mapToolCall({
+      name: "update_goal",
+      arguments: JSON.stringify({ status: "complete" }),
+    });
+    expect(mappedUpdateGoal.name).toBe("update_goal");
+    expect(JSON.parse(mappedUpdateGoal.arguments)).toEqual({
+      status: "complete",
+    });
+
+    // 6. get_goal
+    const mappedGetGoal = M365ToolBridge.mapToolCall({
+      name: "get_goal",
+      arguments: "{}",
+    });
+    expect(mappedGetGoal.name).toBe("get_goal");
+    expect(JSON.parse(mappedGetGoal.arguments)).toEqual({});
+
+    // 7. exec_command
+    const mappedExec = M365ToolBridge.mapToolCall({
+      name: "exec_command",
+      arguments: JSON.stringify({ cmd: "pytest", workdir: "/app" }),
+    });
+    expect(mappedExec.name).toBe("exec_command");
+    expect(JSON.parse(mappedExec.arguments).cmd).toBe("pytest");
+    expect(JSON.parse(mappedExec.arguments).workdir).toBe("/app");
+  });
+
+  test("Phase 17: M365OutputTranslator translates XML tool_call for view_image and request_user_input", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const translator = new M365OutputTranslator();
+
+    const snippet1 = `<tool_call>\n{"name": "view_image", "arguments": {"path": "diagram.png"}}\n</tool_call>`;
+    const res1 = translator.translate(snippet1);
+    expect(res1.type).toBe("tool_call");
+    if (res1.type === "tool_call") {
+      expect(res1.tool_calls[0].function.name).toBe("view_image");
+      expect(JSON.parse(res1.tool_calls[0].function.arguments).path).toBe("diagram.png");
+    }
+
+    const snippet2 = `<tool_call>\n{"name": "request_user_input", "arguments": {"questions": []}}\n</tool_call>`;
+    const res2 = translator.translate(snippet2);
+    expect(res2.type).toBe("tool_call");
+    if (res2.type === "tool_call") {
+      expect(res2.tool_calls[0].function.name).toBe("request_user_input");
+    }
+  });
 });
 

@@ -222,6 +222,84 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
       args: { cmd: `echo ${base64Patch} | base64 -d | git apply --whitespace=nowarn - || true` },
     };
   },
+
+  write_stdin: (args) => {
+    const sessionId = typeof args.session_id === "number" ? args.session_id : parseInt(String(args.session_id || 0), 10);
+    const chars = typeof args.chars === "string" ? args.chars : "";
+    const yieldTimeMs = typeof args.yield_time_ms === "number" ? args.yield_time_ms : undefined;
+    const maxTokens = typeof args.max_output_tokens === "number" ? args.max_output_tokens : undefined;
+    return {
+      name: "write_stdin",
+      args: {
+        session_id: sessionId,
+        chars,
+        ...(yieldTimeMs !== undefined ? { yield_time_ms: yieldTimeMs } : {}),
+        ...(maxTokens !== undefined ? { max_output_tokens: maxTokens } : {}),
+      },
+    };
+  },
+
+  view_image: (args) => {
+    const targetPath = String(args.path || args.file || args.image_path || "");
+    const detail = args.detail === "original" ? "original" : "high";
+    return {
+      name: "view_image",
+      args: {
+        path: targetPath,
+        detail,
+      },
+    };
+  },
+
+  request_user_input: (args) => {
+    const questions = Array.isArray(args.questions) ? args.questions : [];
+    return {
+      name: "request_user_input",
+      args: {
+        questions,
+      },
+    };
+  },
+
+  create_goal: (args) => {
+    const objective = String(args.objective || args.goal || "");
+    const tokenBudget = typeof args.token_budget === "number" ? args.token_budget : undefined;
+    return {
+      name: "create_goal",
+      args: {
+        objective,
+        ...(tokenBudget !== undefined ? { token_budget: tokenBudget } : {}),
+      },
+    };
+  },
+
+  update_goal: (args) => {
+    const status = String(args.status || "complete");
+    return {
+      name: "update_goal",
+      args: {
+        status,
+      },
+    };
+  },
+
+  get_goal: () => {
+    return {
+      name: "get_goal",
+      args: {},
+    };
+  },
+
+  exec_command: (args) => {
+    const cmd = args.cmd || args.command || "";
+    return {
+      name: "exec_command",
+      args: {
+        ...args,
+        cmd: String(cmd),
+      },
+    };
+  },
 };
 
 /**
