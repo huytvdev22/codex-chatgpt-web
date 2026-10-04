@@ -213,7 +213,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // Không match nếu đang là XML tool_call để nhường cho XmlToolCallDetector nếu nằm trong thẻ
-    if (/<\s*tool[\\_]*call\s*>/i.test(rawResponse)) {
+    if (/(?:<|\b)\s*tool[\\_]*call\s*>/i.test(rawResponse)) {
       return null;
     }
 
@@ -329,8 +329,8 @@ export class XmlToolCallDetector implements IToolCallDetector {
   detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     if (!rawResponse || !rawResponse.trim()) return null;
 
-    // 1. Tìm tất cả các thẻ <custom_tool_call name="...">...</custom_tool_call>
-    const customMatches = [...rawResponse.matchAll(/<\s*custom[\\_]*tool[\\_]*call(?:\s+name=["']([^"']+)["'])?\s*>([\s\S]*?)<\s*\/custom[\\_]*tool[\\_]*call\s*>/gi)];
+    // 1. Tìm tất cả các thẻ <custom_tool_call name="...">...</custom_tool_call> (hỗ trợ cả custom_tool_call>)
+    const customMatches = [...rawResponse.matchAll(/(?:<|\b)\s*custom[\\_]*tool[\\_]*call(?:\s+name=["']([^"']+)["'])?\s*>([\s\S]*?)(?:<\s*\/|\/\s*)custom[\\_]*tool[\\_]*call\s*>/gi)];
     if (customMatches.length > 0) {
       const calls: DetectedToolCall[] = [];
       for (const m of customMatches) {
@@ -345,8 +345,8 @@ export class XmlToolCallDetector implements IToolCallDetector {
       if (calls.length > 0) return calls.length === 1 ? calls[0] : calls;
     }
 
-    // 2. Tìm tất cả các cặp thẻ HOÀN CHỈNH: <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
-    const matches = [...rawResponse.matchAll(/<\s*tool[\\_]*call\s*>([\s\S]*?)<\s*\/tool[\\_]*call\s*>/gi)];
+    // 2. Tìm tất cả các cặp thẻ: <tool_call>...</tool_call>, tool_call>...</tool_call> hoặc /tool_call>
+    const matches = [...rawResponse.matchAll(/(?:<|\b)\s*tool[\\_]*call\s*>([\s\S]*?)(?:<\s*\/|\/\s*)tool[\\_]*call\s*>/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
       for (const m of matches) {

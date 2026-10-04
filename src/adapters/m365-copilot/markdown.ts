@@ -181,8 +181,8 @@ export class M365ToolCallDetector {
 
     while (this.buffer.length > 0) {
       if (!this.inToolCall && !this.inPatch) {
-        // 1. Ưu tiên tìm thẻ mở <tool_call>, <tool\_call>, hoặc <custom_tool_call ...>
-        const openMatch = this.buffer.match(/<\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i);
+        // 1. Ưu tiên tìm thẻ mở <tool_call>, tool_call>, <custom_tool_call ...>, custom_tool_call>
+        const openMatch = this.buffer.match(/(?:<|\b)\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i);
         if (openMatch && openMatch.index !== undefined) {
           if (openMatch.index > 0) {
             const prefix = this.buffer.slice(0, openMatch.index);
@@ -217,17 +217,21 @@ export class M365ToolCallDetector {
           break;
         }
 
-        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ mở không
-        const possiblePrefixMatch = this.buffer.match(/<[^>]*$/);
+        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ mở không (hỗ trợ cả dạng <... và tool...)
+        const possiblePrefixMatch = this.buffer.match(/(?:<[^>]*$|\b(?:custom[\\_]*)?tool(?:[\\_]*call)?[^>]*$)/i);
         if (possiblePrefixMatch && possiblePrefixMatch.index !== undefined) {
           const prefixCandidate = possiblePrefixMatch[0].toLowerCase();
           const targetPrefix = "<tool_call>";
           const targetPrefixAlt = "<tool\\_call>";
           const targetCustom = "<custom_tool_call";
+          const rawToolPrefix = "tool_call>";
+          const rawCustomPrefix = "custom_tool_call";
           if (
             targetPrefix.startsWith(prefixCandidate) ||
             targetPrefixAlt.startsWith(prefixCandidate) ||
-            targetCustom.startsWith(prefixCandidate)
+            targetCustom.startsWith(prefixCandidate) ||
+            rawToolPrefix.startsWith(prefixCandidate) ||
+            rawCustomPrefix.startsWith(prefixCandidate)
           ) {
             if (possiblePrefixMatch.index > 0) {
               emittedText += this.buffer.slice(0, possiblePrefixMatch.index);
@@ -274,8 +278,8 @@ export class M365ToolCallDetector {
         this.buffer = "";
         break;
       } else {
-        // Đang trong khối tool call, tìm thẻ đóng </tool_call> hoặc </custom_tool_call>
-        const closeMatch = this.buffer.match(/<\s*\/(?:custom[\\_]*)?tool[\\_]*call\s*>/i);
+        // Đang trong khối tool call, tìm thẻ đóng </tool_call>, /tool_call>, </custom_tool_call>
+        const closeMatch = this.buffer.match(/(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>/i);
         if (closeMatch && closeMatch.index !== undefined) {
           this.toolContent += this.buffer.slice(0, closeMatch.index);
           this.inToolCall = false;
@@ -354,7 +358,11 @@ export class M365ToolCallDetector {
    */
   private cleanToolPayload(raw: string): string {
     const stripped = stripOuterCodeFence(raw);
-    return stripped.replace(/\\_/g, "_");
+    return stripped
+      .replace(/\\_/g, "_")
+      .replace(/^[\s\S]*?(?:<|\b)(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i, "")
+      .replace(/(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>[\s\S]*$/i, "")
+      .trim();
   }
 
   private parseToolPayload(raw: string): ParsedToolCall | null {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { stripOuterCodeFence } from "../src/adapters/m365-copilot/temp-chat/stripCodeFence";
 import { M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
 import { compileM365HybridForwardPrompt } from "../src/adapters/m365-copilot/temp-chat/compileHybridForwardPrompt";
+import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
 import type { CodexParsedRequest } from "../src/types";
 
 describe("Temporary Chat 4-Backtick Fast-Path Specification Tests", () => {
@@ -131,6 +132,60 @@ public class App {
       expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]");
       expect(prompt).toContain("4 dấu backtick");
       expect(prompt.endsWith("TUYỆT ĐỐI KHÔNG VIẾT BẤT KỲ KÝ TỰ HAY VĂN BẢN NÀO BÊN NGOÀI KHỐI CODE NÀY.")).toBe(true);
+    });
+
+    it("kích hoạt Plan Mode và tiêm MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT khi tin nhắn có /plan", () => {
+      const planRequest: CodexParsedRequest = {
+        modelId: "gpt-4o",
+        context: {
+          messages: [
+            { role: "user", content: "## My request:\n/plan Hãy lên kế hoạch chi tiết từng bước để xây dựng một REST API Todos" }
+          ],
+        },
+      };
+
+      const prompt = compileM365HybridForwardPrompt(planRequest);
+      expect(prompt).toContain("[CHẾ ĐỘ LẬP KẾ HOẠCH - CODEX PLAN MODE ĐANG BẬT]");
+      expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC - CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE)]");
+      expect(prompt).toContain("<proposed_plan>");
+      expect(prompt).toContain("</proposed_plan>");
+    });
+  });
+
+  describe("Phát hiện thẻ Tool Call thiếu dấu < ở thẻ mở (Khắc phục Case 3)", () => {
+    it("dịch thành công thẻ tool_call> thiếu dấu < thành Tool Call hợp lệ", () => {
+      const rawResponse = `\`\`\`\`markdown
+tool_call>
+{"name": "write_stdin", "arguments": {"session_id": 7198, "chars": "\\u0003"}}
+</tool_call>
+\`\`\`\``;
+
+      const result = translator.translate(rawResponse);
+      expect(result.type).toBe("tool_call");
+      if (result.type === "tool_call") {
+        expect(result.tool_calls.length).toBe(1);
+        expect(result.tool_calls[0].function.name).toBe("write_stdin");
+        const args = JSON.parse(result.tool_calls[0].function.arguments);
+        expect(args.session_id).toBe(7198);
+        expect(args.chars).toBe("\u0003");
+      }
+    });
+
+    it("M365ToolCallDetector nuốt trọn chuỗi tool_call> mà KHÔNG emit text_delta rò rỉ ra UI", () => {
+      const detector = new M365ToolCallDetector();
+      const chunk = `tool_call>
+{"name": "write_stdin", "arguments": {"session_id": 7198, "chars": "\\u0003"}}
+</tool_call>`;
+
+      const emitted = detector.feed(chunk);
+      // Tuyệt đối không được rò rỉ thẻ tool_call hay JSON ra UI
+      expect(emitted).toBe("");
+      expect(detector.hasDetectedToolCall()).toBe(true);
+
+      const tc = detector.getToolCall();
+      expect(tc).not.toBeNull();
+      expect(tc?.name).toBe("write_stdin");
+      expect((tc?.arguments as any)?.session_id).toBe(7198);
     });
   });
 });

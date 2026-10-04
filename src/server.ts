@@ -473,6 +473,7 @@ export async function modelsRequest(
   if (authHeader.startsWith("Bearer sk-")) {
     const fallback = getFallbackNativeCatalog();
     const catalog = augmentNativeModelCatalog(fallback, config, contextOverride?.());
+    syncManagedModelCatalogFile(catalog);
     const body = JSON.stringify(catalog);
     return new Response(body, {
       status: 200,
@@ -501,6 +502,7 @@ export async function modelsRequest(
   let catalog: Record<string, unknown>;
   try {
     catalog = augmentNativeModelCatalog(await upstream.json(), config, contextOverride?.());
+    syncManagedModelCatalogFile(catalog);
   } catch (error) {
     onFailure?.(modelCatalogFailure("catalog", error));
     return formatErrorResponse(502, "invalid_response_error", error instanceof Error ? error.message : String(error));

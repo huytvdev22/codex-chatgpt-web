@@ -522,6 +522,11 @@ export async function executeM365Turn(
         }, undefined, options.signal).catch(() => { });
       }
 
+      // Định kỳ cuộn trang xuống đáy để kích thích trình duyệt render DOM liên tục
+      if (attempts % 4 === 0) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+      }
+
       // Stream các khối đã hoàn thành: Ưu tiên Fast-Path nếu đang ở chế độ Temporary Mode
       if (isTemporaryMode && typeof status.fastPathRawText === "string") {
         fastPathActive = true;
@@ -534,7 +539,7 @@ export async function executeM365Turn(
         } else {
           stableCycles++;
         }
-      } else if (status.blocks && status.blocks.length > 0) {
+      } else if (!isTemporaryMode && status.blocks && status.blocks.length > 0) {
         lastBlocks = status.blocks as M365MarkdownBlock[];
         const delta = markdownBuffer.observe(lastBlocks);
         if (delta.length > 0) {
@@ -552,8 +557,9 @@ export async function executeM365Turn(
         const currentChars = fastPathActive ? lastFastPathText.length : lastBlocks.reduce((acc, b) => acc + b.text.length, 0);
         const stableSec = Math.round((Date.now() - lastTextChangeAt) / 1000);
         const combinedTextSoFar = fastPathActive ? lastFastPathText : lastBlocks.map(b => b.text).join(" ");
-        const unclosedToolCall = /<\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/<\s*\/tool\\\\?_call\s*>/i.test(combinedTextSoFar);
+        const unclosedToolCall = /(?:<|\b)\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/(?:<\s*\/|\/\s*)tool\\\\?_call\s*>/i.test(combinedTextSoFar);
         const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
+        const unclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedTextSoFar) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedTextSoFar);
 
         const statusSummary = status.isGenerating
           ? `M365 đang sinh văn bản (${elapsedSec}s, ${currentChars} ký tự)...`
@@ -572,6 +578,7 @@ export async function executeM365Turn(
             stableSeconds: stableSec,
             hasUnclosedToolCall: unclosedToolCall,
             hasUnclosedPatch: unclosedPatch,
+            hasUnclosedPlan: unclosedPlan,
             statusSummary,
             domStatus: status.isGenerating ? "generating" : (status.hasContent ? "settling" : "idle"),
           },
@@ -581,24 +588,32 @@ export async function executeM365Turn(
       // Điều kiện kết thúc:
       // 1. Phải có nội dung trả lời (hasContent)
       // 2. Không còn đang sinh (!status.isGenerating)
-      // 3. Khối tool_call hoặc patch đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
+      // 3. Khối tool_call, patch hoặc proposed_plan đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
       const combinedText = fastPathActive ? lastFastPathText : lastBlocks.map(b => b.text).join(" ");
-      const hasUnclosedToolCall = /<\s*tool\\?_call\s*>/i.test(combinedText) && !/<\s*\/tool\\?_call\s*>/i.test(combinedText);
+      const hasUnclosedToolCall = /(?:<|\b)\s*tool\\?_call\s*>/i.test(combinedText) && !/(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
       const hasUnclosedPatch = /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
-      const toolCallFullyClosed = /<\s*\/tool\\?_call\s*>/i.test(combinedText);
+      const hasUnclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedText) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
+      const toolCallFullyClosed = /(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
+      const planFullyClosed = /<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
-      // - Nếu có thẻ </tool_call> đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
-      // - Nếu không có khối mở dở dang: Ổn định 2 giây là kết thúc
-      // - Hard Timeout chống kẹt: Nếu đã dừng sinh và không đổi ký tự trong 3.0 giây, kết thúc ngay lập tức
+      // - Nếu có thẻ tool_call hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
+      // - Nếu đang có khối mở dở dang: TUYỆT ĐỐI KHÔNG ngắt sớm
+      // - Đối với văn bản dài (> 2.000 ký tự) không có thẻ đóng dứt điểm: Cần thời gian chờ ổn định tối thiểu 6.0 giây (24 chu kỳ)
+      //   để tránh việc LLM tạm dừng tạo chữ giữa các đoạn (như trường hợp kế hoạch 20 mục)
+      const isLongResponse = combinedText.length > 2000;
+      const minStableTime = isLongResponse ? 6000 : 3000;
+      const minStableCycles = isLongResponse ? 24 : 8;
+
       const isSettled = !status.isGenerating && (
-        (Date.now() - lastTextChangeAt >= 3000 || stableCycles >= 8) ||
-        (toolCallFullyClosed && (stableCycles >= 3 || Date.now() - lastTextChangeAt >= 1000)) ||
-        (!hasUnclosedToolCall && !hasUnclosedPatch && (stableCycles >= 6 || Date.now() - lastTextChangeAt >= 2000))
+        ((toolCallFullyClosed || planFullyClosed) && (stableCycles >= 4 || Date.now() - lastTextChangeAt >= 1000)) ||
+        (!hasUnclosedToolCall && !hasUnclosedPatch && !hasUnclosedPlan && (
+          stableCycles >= minStableCycles || Date.now() - lastTextChangeAt >= minStableTime
+        ))
       );
 
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} fastPath=${fastPathActive}`);
+        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} planClosed=${planFullyClosed} fastPath=${fastPathActive}`);
         break;
       }
     }
@@ -620,6 +635,14 @@ export async function executeM365Turn(
       fullMarkdown = res.markdown;
       finalDelta = res.delta;
     }
+
+    // Fail-Closed: Ở chế độ Temporary Chat Per Request, bắt buộc M365 phải trả về trong codeblock
+    if (isTemporaryMode && (!fastPathActive || !fullMarkdown || !fullMarkdown.trim())) {
+      throw new Error(
+        `[M365 Format Error] M365 Copilot không trả về phản hồi bên trong khối codeblock markdown (4-backtick). Vui lòng kiểm tra lại prompt format của M365.`
+      );
+    }
+
     if (finalDelta.length > 0 && !options.shouldStop?.()) {
       options.onChunk(finalDelta);
     }

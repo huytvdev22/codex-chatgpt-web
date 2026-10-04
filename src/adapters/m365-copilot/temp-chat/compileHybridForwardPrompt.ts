@@ -6,7 +6,10 @@ import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
 } from "../prompts";
-import { MANDATORY_4_BACKTICK_MARKDOWN_PROMPT } from "./prompts";
+import {
+  MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
+  MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
+} from "./prompts";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
 const MAX_TOOL_RESULT_CHARS = 8_000;
@@ -41,24 +44,51 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
 
 export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
   if (isImplementingPlanRequest(parsed)) return false;
+
+  // 1. Kiểm tra tin nhắn người dùng gần nhất: Nếu có /plan thì BẮT BUỘC là Plan Mode
+  const messages = parsed.context.messages || [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      const text = typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+        ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
+        : "";
+      if (/(?:^|\s|\n)\/plan(?:\s|$)/i.test(text) || text.includes("## My request:\n/plan") || text.includes("/plan")) {
+        return true;
+      }
+      break;
+    }
+  }
+
+  // 2. Kiểm tra danh sách tools: Nếu có tool request_user_input (đặc trưng của Plan mode trong Codex)
+  const tools = parsed.context.tools || [];
+  const hasRequestUserInputTool = tools.some(t => {
+    const name = (t as any).name || (t as any).function?.name;
+    return name === "request_user_input";
+  });
+  if (hasRequestUserInputTool) {
+    return true;
+  }
+
+  // 3. Kiểm tra collaboration_mode từ raw payload hoặc client metadata
   const raw = parsed._rawBody as Record<string, any> | undefined;
   if (raw) {
-    if (raw.collaboration_mode_kind === "default" || raw.collaboration_mode?.mode === "default") return false;
     if (raw.collaboration_mode_kind === "plan" || raw.collaboration_mode?.mode === "plan") return true;
     if (raw.client_metadata) {
       const cm = raw.client_metadata;
-      if (cm.collaboration_mode?.mode === "default" || cm.collaboration_mode_kind === "default") return false;
       if (cm.collaboration_mode?.mode === "plan" || cm.collaboration_mode_kind === "plan") return true;
       if (typeof cm["x-codex-turn-metadata"] === "string") {
         try {
           const tm = JSON.parse(cm["x-codex-turn-metadata"]);
-          if (tm.collaboration_mode?.mode === "default" || tm.collaboration_mode_kind === "default") return false;
           if (tm.collaboration_mode?.mode === "plan" || tm.collaboration_mode_kind === "plan") return true;
         } catch {}
       }
     }
   }
-  const messages = parsed.context.messages || [];
+
+  // 4. Kiểm tra markers trong lịch sử và system instructions
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     const text = typeof msg.content === "string"
@@ -66,17 +96,12 @@ export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
       : Array.isArray(msg.content)
       ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
       : "";
-    if (text.includes("<collaboration_mode") || text.includes("# Collaboration Mode")) {
-      if (text.includes("Mode: Default") || text.includes('mode="default"') || text.includes("now in Default mode")) return false;
-      if (text.includes("Mode: Plan") || text.includes("# Plan Mode") || text.includes('mode="plan"')) return true;
-    }
+    if (text.includes("Mode: Plan") || text.includes("# Plan Mode") || text.includes('mode="plan"')) return true;
   }
   for (const sp of parsed.context.systemPrompt || []) {
-    if (sp.includes("<collaboration_mode") || sp.includes("# Collaboration Mode")) {
-      if (sp.includes("Mode: Default") || sp.includes('mode="default"') || sp.includes("now in Default mode")) return false;
-      if (sp.includes("Mode: Plan") || sp.includes("# Plan Mode") || sp.includes('mode="plan"')) return true;
-    }
+    if (sp.includes("Mode: Plan") || sp.includes("# Plan Mode") || sp.includes('mode="plan"')) return true;
   }
+
   return false;
 }
 
@@ -172,7 +197,7 @@ export function compileM365HybridForwardPrompt(parsed: CodexParsedRequest, rawBo
   }
 
   // 10. ĐỊNH HƯỚNG FAST-PATH 4-BACKTICKS (Tận dụng Recency Bias ở cuối cùng)
-  sections.push(MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
+  sections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
 
   let finalPrompt = sections.join("\n\n").trim();
 

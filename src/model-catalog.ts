@@ -59,6 +59,15 @@ export const CANONICAL_MODEL_DEFAULTS: JsonObject = {
   comp_hash: "3000",
   experimental_supported_tools: [],
   multi_agent_version: "v1",
+  default_reasoning_level: "low",
+  supported_reasoning_levels: [
+    { effort: "low", description: "Low" },
+  ],
+  context_window: 200_000,
+  max_context_window: 200_000,
+  effective_context_window_percent: 90,
+  auto_compact_token_limit: 180_000,
+  input_modalities: ["text", "image"],
 };
 
 export const DEFAULT_NATIVE_FALLBACK_MODELS: JsonObject[] = [
@@ -156,10 +165,25 @@ export function syncManagedModelCatalogFile(
     if (catalog && typeof catalog === "object" && Array.isArray((catalog as any).models)) {
       payload = {
         ...(catalog as any),
-        models: (catalog as any).models.map((m: any) => ({
-          ...structuredClone(CANONICAL_MODEL_DEFAULTS),
-          ...m,
-        })),
+        models: (catalog as any).models.map((m: any) => {
+          const merged = {
+            ...structuredClone(CANONICAL_MODEL_DEFAULTS),
+            ...m,
+          };
+          if (!Array.isArray(merged.supported_reasoning_levels) || merged.supported_reasoning_levels.length === 0) {
+            merged.supported_reasoning_levels = [{ effort: "low", description: "Low" }];
+          }
+          if (!merged.default_reasoning_level) {
+            merged.default_reasoning_level = (merged.supported_reasoning_levels[0] as any)?.effort ?? "low";
+          }
+          if (typeof merged.context_window !== "number" || merged.context_window <= 0) {
+            merged.context_window = 200_000;
+          }
+          if (typeof merged.max_context_window !== "number" || merged.max_context_window <= 0) {
+            merged.max_context_window = merged.context_window;
+          }
+          return merged;
+        }),
       };
     }
     const data = JSON.stringify(payload, null, 2) + "\n";
@@ -460,7 +484,6 @@ export function augmentNativeModelCatalog(
     ...structuredClone(catalog),
     models: deduplicatedModels,
   };
-  syncManagedModelCatalogFile(result);
   return result;
 }
 
