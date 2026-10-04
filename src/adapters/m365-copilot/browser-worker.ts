@@ -310,10 +310,14 @@ export async function executeM365Turn(
         const contentEl = replyEl || (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
 
         // 1. Quét các khối code trên LIVE DOM trước khi clone để lấy chính xác text (có newline + indent) và language
-        // Chỉ chọn container ngoài cùng của mỗi khối code (tránh lặp cả div[role='group'] lẫn thẻ con .scriptor-component-code-block)
+        // Quét trên cả lastMsg lẫn contentEl để không bao giờ bỏ sót khối Code Preview nếu nó là sibling bên ngoài markdown-reply
         const codeBlockQuery = "div[role='group'][aria-label='Code Preview'], .scriptor-component-code-block, [class*='scriptor-component-code-block']";
-        const allLiveCodeElements = Array.from(contentEl.querySelectorAll(codeBlockQuery)) as HTMLElement[];
-        const liveCodeBlocks = allLiveCodeElements.filter((el, _, all) => !all.some(other => other !== el && other.contains(el)));
+        const searchRoots = [lastMsg, contentEl].filter(Boolean) as HTMLElement[];
+        const allLiveCodeElements: HTMLElement[] = [];
+        searchRoots.forEach(root => {
+          root.querySelectorAll(codeBlockQuery).forEach(el => allLiveCodeElements.push(el as HTMLElement));
+        });
+        const liveCodeBlocks = allLiveCodeElements.filter((el, idx, all) => all.indexOf(el) === idx && !all.some(other => other !== el && other.contains(el)));
 
         // Kiểm tra Monaco model trực tiếp trên window nếu có
         let monacoModelsText: string[] = [];
@@ -377,18 +381,15 @@ export async function executeM365Turn(
           return { lang, codeText };
         });
 
-        // Fast-Path: Nhận diện khối Markdown/plain code block từ Scriptor Editor
+        // Fast-Path: Nhận diện khối code từ Scriptor Editor
         let fastPathRawText: string | null = null;
         if (codeData.length === 1) {
-          const lang = codeData[0].lang;
-          if (!lang || lang === "markdown" || lang === "md" || lang === "plain") {
-            fastPathRawText = codeData[0].codeText;
-          }
+          // Nếu chỉ có 1 khối code duy nhất, luôn lấy nội dung của khối đó làm fastPathRawText bất kể lang là gì
+          fastPathRawText = codeData[0].codeText;
         } else if (codeData.length > 1) {
-          const mdBlock = codeData.find(b => b.lang === "markdown" || b.lang === "md");
-          if (mdBlock) {
-            fastPathRawText = mdBlock.codeText;
-          }
+          // Nếu có nhiều khối code, ưu tiên khối markdown/plain hoặc khối có nội dung dài nhất
+          const mdBlock = codeData.find(b => b.lang === "markdown" || b.lang === "md" || b.lang === "plain" || !b.lang);
+          fastPathRawText = mdBlock ? mdBlock.codeText : codeData.reduce((prev, curr) => curr.codeText.length > prev.codeText.length ? curr : prev).codeText;
         }
 
         // 2. Clone content element để thao tác dọn dẹp
@@ -573,8 +574,9 @@ export async function executeM365Turn(
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
       }
 
-      // Stream các khối đã hoàn thành: Ưu tiên Fast-Path nếu đang ở chế độ Temporary Mode
-      if (isTemporaryMode && typeof status.fastPathRawText === "string") {
+      // Stream các khối đã hoàn thành:
+      // 1. Ưu tiên Fast-Path nếu tìm thấy khối code trong Scriptor Editor
+      if (typeof status.fastPathRawText === "string" && status.fastPathRawText.length > 0) {
         fastPathActive = true;
         lastFastPathText = status.fastPathRawText;
         const delta = fastPathBuffer.observe(lastFastPathText);
@@ -585,7 +587,9 @@ export async function executeM365Turn(
         } else {
           stableCycles++;
         }
-      } else if (!isTemporaryMode && status.blocks && status.blocks.length > 0) {
+      } else if (status.blocks && status.blocks.length > 0) {
+        // 2. Fallback sang Semantic DOM Blocks nếu không tìm thấy khối Scriptor Code Editor (áp dụng cho cả Temporary Mode và Stateful Mode)
+        fastPathActive = false;
         lastBlocks = status.blocks as M365MarkdownBlock[];
         const delta = markdownBuffer.observe(lastBlocks);
         if (delta.length > 0) {
@@ -697,10 +701,10 @@ export async function executeM365Turn(
       finalDelta = res.delta;
     }
 
-    // Fail-Closed: Ở chế độ Temporary Chat Per Request, bắt buộc M365 phải trả về trong codeblock
-    if (isTemporaryMode && (!fastPathActive || !fullMarkdown || !fullMarkdown.trim())) {
+    // Đảm bảo có nội dung phản hồi hợp lệ trước khi hoàn tất lượt
+    if (!fullMarkdown || !fullMarkdown.trim()) {
       throw new Error(
-        `[M365 Format Error] M365 Copilot không trả về phản hồi bên trong khối codeblock markdown (4-backtick). Vui lòng kiểm tra lại prompt format của M365.`
+        `[M365 Format Error] M365 Copilot không trả về bất kỳ nội dung phản hồi nào. Vui lòng kiểm tra kết nối mạng hoặc thử lại.`
       );
     }
 
