@@ -193,6 +193,8 @@ export async function executeM365Turn(
         document.querySelector("div[contenteditable='true']") ||
         document.querySelector("[role='textbox']")) as HTMLElement;
       if (!editor) throw new Error("Không tìm thấy ô nhập liệu của M365 Copilot!");
+      // Reset cache tích lũy dòng code của lượt trước
+      delete (window as any).__m365_code_lines_cache;
       editor.focus();
 
       // Xoá nội dung cũ nếu có
@@ -246,7 +248,7 @@ export async function executeM365Turn(
     let stableCycles = 0;
     let lastTextChangeAt = Date.now();
     let lastBlocks: M365MarkdownBlock[] = [];
-    const maxAttempts = 480; // 480 * 250ms = 120 giây tối đa
+    const maxAttempts = 2400; // 2400 * 250ms = 600 giây (10 phút) tối đa
     const pollIntervalMs = 250;
 
     while (attempts < maxAttempts) {
@@ -313,7 +315,23 @@ export async function executeM365Turn(
         const allLiveCodeElements = Array.from(contentEl.querySelectorAll(codeBlockQuery)) as HTMLElement[];
         const liveCodeBlocks = allLiveCodeElements.filter((el, _, all) => !all.some(other => other !== el && other.contains(el)));
 
-        const codeData = liveCodeBlocks.map(block => {
+        // Kiểm tra Monaco model trực tiếp trên window nếu có
+        let monacoModelsText: string[] = [];
+        try {
+          const win = window as any;
+          const models = win.monaco?.editor?.getModels?.();
+          if (Array.isArray(models) && models.length > 0) {
+            monacoModelsText = models.map((m: any) => typeof m.getValue === "function" ? m.getValue() : "").filter(Boolean);
+          }
+        } catch { }
+
+        // Khởi tạo bộ nhớ đệm tích lũy dòng code theo data-line-index trên window để chống mất dòng khi virtual scrolling
+        const win = window as any;
+        if (!win.__m365_code_lines_cache) {
+          win.__m365_code_lines_cache = new Map<number, string>();
+        }
+
+        const codeData = liveCodeBlocks.map((block, blockIdx) => {
           const langEl = block.querySelector("[data-testid='one-copilot-code-identity'] span, [class*='code-identity' i] span");
           let lang = langEl?.textContent?.trim().toLowerCase() || "";
           if (lang === "plain text" || lang === "text") lang = "plain";
@@ -322,11 +340,39 @@ export async function executeM365Turn(
           const lineEls = Array.from(block.querySelectorAll("[data-line-index]"));
           let codeText = "";
           if (lineEls.length > 0) {
-            codeText = lineEls.map(el => (el.textContent || "").replace(/\u00a0/g, " ")).join("\n");
+            // Tích lũy các dòng vào cache trên window theo line index
+            lineEls.forEach((el) => {
+              const idxAttr = el.getAttribute("data-line-index");
+              if (idxAttr !== null) {
+                const idx = parseInt(idxAttr, 10);
+                if (!isNaN(idx)) {
+                  win.__m365_code_lines_cache.set(idx, (el.textContent || "").replace(/\u00a0/g, " "));
+                }
+              }
+            });
+
+            // Ghép lại toàn bộ các dòng từ dòng 0 đến dòng lớn nhất từng thấy
+            const keys = Array.from(win.__m365_code_lines_cache.keys()) as number[];
+            if (keys.length > 0) {
+              const maxIdx = Math.max(...keys);
+              const assembled: string[] = [];
+              for (let i = 0; i <= maxIdx; i++) {
+                assembled.push(win.__m365_code_lines_cache.get(i) ?? "");
+              }
+              codeText = assembled.join("\n");
+            } else {
+              codeText = lineEls.map(el => (el.textContent || "").replace(/\u00a0/g, " ")).join("\n");
+            }
           } else {
             const findRoot = block.querySelector("[data-virtualized-code-find-root='true'], [role='textbox'][aria-label*='Code editor' i]") || block.lastElementChild;
             codeText = (findRoot ? (findRoot as HTMLElement).innerText : (block as HTMLElement).innerText || "").replace(/\u00a0/g, " ");
           }
+
+          // Ưu tiên Monaco model nếu model có nội dung dài hơn hoặc hoàn chỉnh hơn
+          if (monacoModelsText[blockIdx] && monacoModelsText[blockIdx].length >= codeText.length) {
+            codeText = monacoModelsText[blockIdx];
+          }
+
           codeText = codeText.replace(/^\n+|\n+$/g, "");
           return { lang, codeText };
         });
@@ -616,11 +662,26 @@ export async function executeM365Turn(
         console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} planClosed=${planFullyClosed} fastPath=${fastPathActive}`);
         break;
       }
+
+      // Dynamic Liveness Timeout:
+      // Nếu đã chạm mốc maxAttempts nhưng M365 vẫn đang sinh (isGenerating) hoặc văn bản vừa thay đổi trong vòng 30s:
+      // Tiếp tục gia hạn thời gian chờ để không bao giờ cắt cụt câu trả lời lớn đang sinh dở
+      if (attempts >= maxAttempts) {
+        const timeSinceLastChange = Date.now() - lastTextChangeAt;
+        const isActivelyGenerating = status.isGenerating || timeSinceLastChange < 30_000;
+        if (isActivelyGenerating && attempts < maxAttempts + 2400) { // Gia hạn thêm tối đa 10 phút nếu vẫn sinh
+          if (attempts % 40 === 0) {
+            console.log(`[m365-worker] [extended-liveness] Model vẫn đang tích cực sinh phản hồi (${Math.round(timeSinceLastChange / 1000)}s kể từ token gần nhất), tiếp tục chờ...`);
+          }
+        } else {
+          break;
+        }
+      }
     }
 
-    const timedOut = attempts >= maxAttempts;
+    const timedOut = attempts >= maxAttempts && (status.isGenerating || Date.now() - lastTextChangeAt >= 30_000);
     if (timedOut) {
-      console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(maxAttempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
+      console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(attempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
     }
 
     // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)

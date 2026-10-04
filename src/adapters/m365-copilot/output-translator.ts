@@ -62,6 +62,16 @@ function generateToolCallId(): string {
 import { stripOuterCodeFence } from "./temp-chat/stripCodeFence";
 export { stripOuterCodeFence };
 
+/**
+ * Chuẩn hóa tên tool: Tự động loại bỏ tiền tố "functions." nếu có
+ */
+export function normalizeToolName(name: string): string {
+  if (typeof name === "string" && name.startsWith("functions.")) {
+    return name.slice("functions.".length);
+  }
+  return name;
+}
+
 
 /**
  * Tự động cân bằng dấu đóng ngoặc nhọn JSON nếu bị thiếu do Markdown hoặc DOM cắt dở
@@ -282,7 +292,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
 
     // TH1: { "action": "tool_call", "tool": "read_file", "arguments": { ... } }
     if (obj.action === "tool_call" && (obj.tool || obj.name)) {
-      const toolName = String(obj.tool || obj.name);
+      const toolName = normalizeToolName(String(obj.tool || obj.name));
       let args = obj.arguments || obj.args || obj.parameters || {};
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -292,6 +302,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
 
     // TH2: { "name": "read_file", "arguments": { ... } }
     if (typeof obj.name === "string" && (obj.arguments !== undefined || obj.path !== undefined || obj.cmd !== undefined || obj.input !== undefined || obj.patch !== undefined)) {
+      const toolName = normalizeToolName(obj.name);
       let args = obj.arguments || {};
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -301,12 +312,12 @@ export class JsonToolCallDetector implements IToolCallDetector {
         else if (obj.input) args = { input: obj.input };
         else if (obj.patch) args = { input: obj.patch };
       }
-      return { name: obj.name, arguments: args };
+      return { name: toolName, arguments: args };
     }
 
     // TH3: { "tool": "read_file", "path": "pom.xml" }
     if (typeof obj.tool === "string") {
-      const toolName = obj.tool;
+      const toolName = normalizeToolName(obj.tool);
       const args = obj.arguments || { ...obj };
       delete (args as any).tool;
       delete (args as any).action;
@@ -368,7 +379,8 @@ export class XmlToolCallDetector implements IToolCallDetector {
       const sanitized = sanitizeJsonControlChars(clean);
       const parsed = JSON.parse(sanitized);
       if (parsed && typeof parsed === "object") {
-        const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const rawName = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const name = normalizeToolName(rawName);
         let args = parsed.arguments || parsed.args || {};
         if (typeof args === "string") {
           try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -402,7 +414,8 @@ export class XmlToolCallDetector implements IToolCallDetector {
     try {
       const parsed = JSON.parse(clean);
       if (parsed && typeof parsed === "object") {
-        const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const rawName = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const name = normalizeToolName(rawName);
         let args = parsed.arguments || parsed.args || {};
         if (typeof args === "string") {
           try { args = JSON.parse(args); } catch { args = { path: args }; }

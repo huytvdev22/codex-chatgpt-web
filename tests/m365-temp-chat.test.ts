@@ -134,17 +134,23 @@ public class App {
       expect(prompt.endsWith("TUYỆT ĐỐI KHÔNG VIẾT BẤT KỲ KÝ TỰ HAY VĂN BẢN NÀO BÊN NGOÀI KHỐI CODE NÀY.")).toBe(true);
     });
 
-    it("kích hoạt Plan Mode và tiêm MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT khi tin nhắn có /plan", () => {
+    it("kích hoạt Plan Mode và tiêm MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT khi raw request có marker Plan Mode", () => {
       const planRequest: CodexParsedRequest = {
         modelId: "gpt-4o",
         context: {
           messages: [
-            { role: "user", content: "## My request:\n/plan Hãy lên kế hoạch chi tiết từng bước để xây dựng một REST API Todos" }
+            { role: "user", content: "## My request:\nHãy lên kế hoạch chi tiết từng bước để xây dựng một REST API Todos" }
           ],
         },
       };
+      const rawBody = {
+        input: [
+          { role: "developer", content: "<collaboration_mode># Plan Mode (Conversational)\n..." },
+          { role: "user", content: "Hãy lên kế hoạch chi tiết" },
+        ],
+      };
 
-      const prompt = compileM365HybridForwardPrompt(planRequest);
+      const prompt = compileM365HybridForwardPrompt(planRequest, rawBody);
       expect(prompt).toContain("[CHẾ ĐỘ LẬP KẾ HOẠCH - CODEX PLAN MODE ĐANG BẬT]");
       expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC - CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE)]");
       expect(prompt).toContain("<proposed_plan>");

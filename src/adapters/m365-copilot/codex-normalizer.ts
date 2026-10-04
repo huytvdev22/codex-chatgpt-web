@@ -43,12 +43,18 @@ export class CodexPayloadNormalizer {
   static extractTools(rawPayload: CodexRawPayload): NormalizedTool[] {
     const tools: NormalizedTool[] = [];
     const seen = new Set<string>();
+    const DEFAULT_FUNCTION_NAMESPACE = "functions";
 
     const processSpec = (spec: CodexRawToolSpec, namespace?: string) => {
       if (!spec || typeof spec !== "object") return;
 
       if (spec.type === "namespace" && Array.isArray(spec.tools)) {
-        const nextNs = namespace ? `${namespace}.${spec.name}` : spec.name;
+        // Namespace "functions" là nhóm mặc định của Codex cho các native functions
+        // Tuyệt đối không gán tiền tố "functions." để tránh sinh ra functions.exec_command làm hỏng tool call
+        const isDefaultFunctions = spec.name === DEFAULT_FUNCTION_NAMESPACE;
+        const nextNs = isDefaultFunctions
+          ? namespace
+          : (namespace ? `${namespace}.${spec.name}` : spec.name);
         for (const sub of spec.tools) {
           processSpec(sub, nextNs);
         }
@@ -391,14 +397,19 @@ export class CodexPayloadNormalizer {
   ): { tool: NormalizedTool | null; ambiguous?: boolean } {
     if (!targetName) return { tool: null };
 
+    // Chuẩn hóa loại bỏ tiền tố functions. nếu có
+    const cleanTarget = targetName.startsWith("functions.")
+      ? targetName.slice("functions.".length)
+      : targetName;
+
     // 1. Kiểm tra khớp chính xác qualifiedName trước
-    const exactMatch = tools.find(t => t.identity.qualifiedName === targetName);
+    const exactMatch = tools.find(t => t.identity.qualifiedName === cleanTarget || t.identity.qualifiedName === targetName);
     if (exactMatch) {
       return { tool: exactMatch };
     }
 
-    // 2. Nếu targetName không có namespace (không chứa dấu chấm), tìm theo short name
-    const shortMatches = tools.filter(t => t.identity.name === targetName);
+    // 2. Tìm theo short name (name)
+    const shortMatches = tools.filter(t => t.identity.name === cleanTarget);
     if (shortMatches.length === 1) {
       return { tool: shortMatches[0] };
     }

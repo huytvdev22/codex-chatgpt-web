@@ -315,7 +315,11 @@ export class M365ToolBridge {
     clientTools: CodexTool[] = [],
     options?: MapToolCallOptions | PlatformCommandStrategy
   ): M365MappedToolCall {
-    const toolName = raw.name;
+    // Tự động gọt bỏ tiền tố functions. nếu M365 sinh ra theo namespace cũ
+    let toolName = raw.name;
+    if (typeof toolName === "string" && toolName.startsWith("functions.")) {
+      toolName = toolName.slice("functions.".length);
+    }
     let parsedArgs: Record<string, any> = {};
 
     if (typeof raw.arguments === "string") {
@@ -328,7 +332,7 @@ export class M365ToolBridge {
       parsedArgs = raw.arguments as Record<string, any>;
     }
 
-    const hasExactTool = clientTools.some((t) => t.name === toolName);
+    const hasExactTool = clientTools.some((t) => t.name === toolName || t.name === raw.name);
 
     // Xử lý riêng biệt cho apply_patch (công cụ native của Codex để hiển thị diff +X -Y và Undo)
     if (toolName === "apply_patch") {

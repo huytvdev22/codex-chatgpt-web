@@ -545,7 +545,7 @@ const b = \\{\\
 
     const prompt = compileM365HybridForwardPrompt(parsed, rawBody);
     expect(prompt).toContain("TEXT INTERACTION PROTOCOL");
-    expect(prompt).toContain("sandbox /mnt/data");
+    expect(prompt).not.toContain("sandbox /mnt/data");
     expect(prompt).toContain("<tool_call>");
     expect(prompt).toContain("<custom_tool_call");
     expect(prompt).toContain("[YÊU CẦU CỦA NGƯỜI DÙNG]");
