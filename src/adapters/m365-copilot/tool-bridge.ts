@@ -376,6 +376,10 @@ export class M365ToolBridge {
         const shouldUnescape = parsedArgs.unescape_newlines !== false && parsedArgs.unescape !== false;
         parsedArgs.content = normalizeFileContent(rawContent, { unescapeNewlines: shouldUnescape, targetPath });
       }
+      if (toolName === "exec_command") {
+        const cmd = parsedArgs.cmd || parsedArgs.command || "";
+        parsedArgs.cmd = String(cmd);
+      }
       return {
         name: toolName,
         arguments: JSON.stringify(parsedArgs),

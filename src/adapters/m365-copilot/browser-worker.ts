@@ -332,7 +332,7 @@ export async function executeM365Turn(
 
         // Khởi tạo bộ nhớ đệm tích lũy dòng code theo data-line-index trên window để chống mất dòng khi virtual scrolling
         const win = window as any;
-        if (!win.__m365_code_lines_cache || before.count !== messages.length) {
+        if (!win.__m365_code_lines_cache) {
           win.__m365_code_lines_cache = new Map<number, string>();
         }
 
@@ -593,9 +593,8 @@ export async function executeM365Turn(
         } else {
           stableCycles++;
         }
-      } else if (status.blocks && status.blocks.length > 0) {
+      } else if (!fastPathActive && status.blocks && status.blocks.length > 0) {
         // 2. Fallback sang Semantic DOM Blocks nếu không tìm thấy khối Scriptor Code Editor (áp dụng cho cả Temporary Mode và Stateful Mode)
-        fastPathActive = false;
         lastBlocks = status.blocks as M365MarkdownBlock[];
         const delta = markdownBuffer.observe(lastBlocks);
         if (delta.length > 0) {
@@ -700,16 +699,26 @@ export async function executeM365Turn(
     }
 
     // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
-    let fullMarkdown: string;
-    let finalDelta: string;
-    if (fastPathActive) {
-      const res = fastPathBuffer.finish(lastFastPathText);
-      fullMarkdown = res.markdown;
+    let fullMarkdown: string = "";
+    let finalDelta: string = "";
+    if (fastPathActive || (fastPathBuffer.getText() && fastPathBuffer.getText().length > 0)) {
+      const res = fastPathBuffer.finish(lastFastPathText || fastPathBuffer.getText());
+      fullMarkdown = res.markdown || fastPathBuffer.getText();
       finalDelta = res.delta;
-    } else {
+    }
+    if (!fullMarkdown || !fullMarkdown.trim()) {
       const res = markdownBuffer.finish(lastBlocks);
-      fullMarkdown = res.markdown;
-      finalDelta = res.delta;
+      if (res.markdown && res.markdown.trim()) {
+        fullMarkdown = res.markdown;
+        finalDelta = res.delta;
+      }
+    }
+    // Cứu hộ cấp cuối: Nếu vẫn rỗng, trích xuất từ bất kỳ nguồn text nào đã tích lũy trong lượt
+    if (!fullMarkdown || !fullMarkdown.trim()) {
+      fullMarkdown = fastPathBuffer.getText() || lastFastPathText || (lastBlocks || []).map(b => b.text).join("\n") || "";
+      if (fullMarkdown && !finalDelta) {
+        finalDelta = fullMarkdown;
+      }
     }
 
     // Auto-Healing: Nếu patch bị cắt cụt do model dừng sinh giữa chừng, tự động đóng thẻ

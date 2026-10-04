@@ -406,6 +406,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
           }
         }
 
+        if (name === "exec_command" && args && typeof args === "object") {
+          const cmd = args.cmd || args.command || "";
+          args.cmd = String(cmd);
+        }
+
         return { name, arguments: args };
       }
     } catch { }
@@ -437,6 +442,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
           if (typeof rawP === "string") {
             args = { input: sanitizeCodexPatchContent(rawP) };
           }
+        }
+
+        if (name === "exec_command" && args && typeof args === "object") {
+          const cmd = args.cmd || args.command || "";
+          args.cmd = String(cmd);
         }
 
         return { name, arguments: args };
