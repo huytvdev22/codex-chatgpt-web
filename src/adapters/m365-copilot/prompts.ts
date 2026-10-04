@@ -231,3 +231,9 @@ export const OUTPUT_FORMAT_HINTS = {
   implementPlan: `[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay câu lệnh terminal hoặc khối <tool_call> chỉnh sửa file (apply_patch hoặc write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn.`,
   default: `[Yêu cầu định dạng đầu ra]: Hãy xuất ngay câu lệnh terminal tương ứng (ví dụ: ls, cat, grep, git status) hoặc khối <tool_call> tương ứng (bước 1 nếu là yêu cầu MULTI-STEP) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`,
 };
+
+export {
+  MINIMAL_TOOL_PROTOCOL,
+  renderDynamicToolDeclarations,
+} from "./prompt-strategy";
+

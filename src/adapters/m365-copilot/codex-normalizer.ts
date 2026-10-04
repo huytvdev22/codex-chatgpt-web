@@ -240,6 +240,13 @@ export class CodexPayloadNormalizer {
           .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
           .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
           .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
+          // Rút gọn mạnh permissions và sandbox instructions khỏi prompt gửi M365
+          .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
+          .replace(/<permissions\s+instructions>[\s\S]*?<\/permissions\s+instructions>/gi, "")
+          .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
+          .replace(/<sandbox_mode[\s\S]*?<\/sandbox_mode[^>]*>/gi, "")
+          .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
+          .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
           .trim();
 
         if (text && !text.includes("You are Codex, a coding assistant")) {
@@ -282,15 +289,32 @@ export class CodexPayloadNormalizer {
       }
     }
 
-    // Lọc activeCodingTools: chỉ chọn các tool mà turn hiện tại THỰC SỰ khai báo
-    const preferredToolNames = new Set([
-      "exec_command",
-      "write_stdin",
-      "apply_patch",
-      "view_image",
-    ]);
+    // Phase 1: Tool Intelligence Preservation
+    // Loại bỏ hoàn toàn whitelist cứng để bảo toàn toàn bộ công cụ do Codex cung cấp.
+    // Toàn bộ các công cụ từ request (request_user_input, create_goal, update_goal, get_goal, web.run, tool_search, exec_command, apply_patch, write_stdin, v.v.)
+    // đều được bảo toàn trong activeCodingTools.
+    // Chỉ loại bỏ công cụ khi có lý do kỹ thuật rõ ràng và được ghi chú comment cụ thể.
+    const filteredTools: Array<{ tool: NormalizedTool; reason: string }> = [];
+    const activeCodingTools: NormalizedTool[] = [];
 
-    const activeCodingTools = tools.filter(t => preferredToolNames.has(t.identity.name));
+    for (const tool of tools) {
+      // Lý do loại bỏ 1: Công cụ không có tên hợp lệ hoặc tên rỗng -> không thể định danh để gọi qua protocol
+      if (!tool.identity.name || tool.identity.name.trim() === "") {
+        filteredTools.push({
+          tool,
+          reason: "Tên công cụ bị rỗng hoặc không xác định",
+        });
+        continue;
+      }
+
+      // Giữ lại 100% công cụ hợp lệ từ Codex request
+      activeCodingTools.push(tool);
+    }
+
+    // Sinh log thống kê theo yêu cầu Phase 1
+    console.log(
+      `[normalizer]\ntotalTools=${tools.length}\nactiveTools=${activeCodingTools.length}\nfilteredTools=${filteredTools.length}`
+    );
 
     const executionPolicy: NormalizedExecutionPolicy = {
       parallelToolCalls: rawPayload.parallel_tool_calls ?? false,
@@ -310,8 +334,47 @@ export class CodexPayloadNormalizer {
       tools,
       activeCodingTools,
       executionPolicy,
+      collaborationMode: this.detectCollaborationMode(rawPayload),
       rawSnapshot: rawPayload.toJSON(),
     };
+  }
+
+  /**
+   * Phát hiện Collaboration Mode trực tiếp từ raw request của Codex:
+   * - Nếu chứa: <collaboration_mode># Plan Mode (Conversational) -> "plan"
+   * - Nếu không bật: <collaboration_mode># Collaboration Mode: Default -> "default"
+   * (So sánh vị trí xuất hiện cuối cùng trong request để phản ánh trạng thái mới nhất).
+   */
+  static detectCollaborationMode(rawPayload: CodexRawPayload): "default" | "plan" {
+    const rawString = typeof (rawPayload as any).toJSON === "function"
+      ? JSON.stringify((rawPayload as any).toJSON())
+      : JSON.stringify(rawPayload);
+
+    // Marker bật Plan Mode:
+    // - <collaboration_mode># Plan Mode (Conversational) từ Codex thực tế
+    // - hoặc các biến thể <collaboration_mode># Plan Mode, "mode":"plan"
+    const planRegex = /(?:<collaboration_mode>#\s*Plan Mode|"mode"\s*:\s*"plan")/gi;
+    // Marker Default Mode (không bật Plan):
+    // - <collaboration_mode># Collaboration Mode: Default
+    // - hoặc "mode":"default"
+    const defaultRegex = /(?:<collaboration_mode>#\s*Collaboration Mode:\s*Default|"mode"\s*:\s*"default")/gi;
+
+    let lastPlanIdx = -1;
+    let match: RegExpExecArray | null;
+    while ((match = planRegex.exec(rawString)) !== null) {
+      lastPlanIdx = match.index;
+    }
+
+    let lastDefaultIdx = -1;
+    while ((match = defaultRegex.exec(rawString)) !== null) {
+      lastDefaultIdx = match.index;
+    }
+
+    if (lastPlanIdx !== -1 && lastPlanIdx > lastDefaultIdx) {
+      return "plan";
+    }
+
+    return "default";
   }
 
   /**

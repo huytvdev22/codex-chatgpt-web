@@ -189,8 +189,8 @@ describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
     expect(priorContents).toContain("Phản hồi cũ 1");
   });
 
-  test("activeCodingTools: Chỉ đưa write_stdin vào khi tool đó thực sự tồn tại trong turn", () => {
-    // Request 1: KHÔNG có write_stdin
+  test("activeCodingTools: Bảo toàn toàn bộ công cụ thực sự có mặt trong request (Loại bỏ whitelist cứng)", () => {
+    // Request 1: KHÔNG có write_stdin nhưng CÓ weather, exec_command, apply_patch
     const rawWithoutStdin: CodexRawRequestWire = {
       model: "m365-copilot/think",
       tools: [
@@ -204,8 +204,8 @@ describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
     const activeNames1 = norm1.activeCodingTools.map(t => t.identity.name);
     expect(activeNames1).toContain("exec_command");
     expect(activeNames1).toContain("apply_patch");
+    expect(activeNames1).toContain("weather"); // Đã bảo toàn weather thay vì bị lọc bởi whitelist cũ
     expect(activeNames1).not.toContain("write_stdin");
-    expect(activeNames1).not.toContain("weather");
 
     // Request 2: CÓ write_stdin
     const rawWithStdin: CodexRawRequestWire = {
@@ -220,5 +220,35 @@ describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
     const activeNames2 = norm2.activeCodingTools.map(t => t.identity.name);
     expect(activeNames2).toContain("exec_command");
     expect(activeNames2).toContain("write_stdin");
+
+    // Request 3: Chứa toàn bộ các công cụ Codex nâng cao (request_user_input, goals, web.run, tool_search)
+    const rawWithAdvancedTools: CodexRawRequestWire = {
+      model: "m365-copilot/think",
+      tools: [
+        { type: "function", name: "request_user_input", description: "Ask user" },
+        { type: "function", name: "create_goal", description: "Create goal" },
+        { type: "function", name: "update_goal", description: "Update goal" },
+        { type: "function", name: "get_goal", description: "Get goal" },
+        { type: "function", name: "tool_search", description: "Search tools" },
+        {
+          type: "namespace",
+          name: "web",
+          tools: [
+            { type: "function", name: "run", description: "Run web command" },
+          ],
+        },
+      ],
+      input: [],
+    };
+    const norm3 = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWithAdvancedTools));
+    const activeNames3 = norm3.activeCodingTools.map(t => t.identity.name);
+    expect(activeNames3).toContain("request_user_input");
+    expect(activeNames3).toContain("create_goal");
+    expect(activeNames3).toContain("update_goal");
+    expect(activeNames3).toContain("get_goal");
+    expect(activeNames3).toContain("tool_search");
+    expect(activeNames3).toContain("run"); // web.run
+    expect(norm3.activeCodingTools.some(t => t.identity.qualifiedName === "web.run")).toBe(true);
+    expect(norm3.activeCodingTools.length).toBe(6);
   });
 });

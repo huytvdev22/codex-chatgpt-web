@@ -1,5 +1,6 @@
 import type { CodexContentPart, CodexParsedRequest } from "../../types";
 import { CodexRawPayload } from "./codex-raw-payload";
+import { CodexPayloadNormalizer } from "./codex-normalizer";
 import {
   TOOL_DECLARATION_PROMPT,
   PLAN_MODE_PROMPT,
@@ -81,68 +82,11 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
  * không được lấy trạng thái cũ trong lịch sử khi người dùng đã chuyển sang Default mode hoặc phê duyệt triển khai.
  */
 export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
-  // 1. Nếu đang là lượt phê duyệt triển khai kế hoạch -> chắc chắn không phải Plan mode
   if (isImplementingPlanRequest(parsed)) {
     return false;
   }
-
-  // 2. Kiểm tra raw body nếu có collaboration_mode hoặc collaboration_mode_kind
-  const raw = parsed._rawBody as Record<string, any> | undefined;
-  if (raw) {
-    if (raw.collaboration_mode_kind === "default" || raw.collaboration_mode?.mode === "default") {
-      return false;
-    }
-    if (raw.collaboration_mode_kind === "plan" || raw.collaboration_mode?.mode === "plan") {
-      return true;
-    }
-    if (raw.client_metadata) {
-      const cm = raw.client_metadata;
-      if (cm.collaboration_mode?.mode === "default" || cm.collaboration_mode_kind === "default") return false;
-      if (cm.collaboration_mode?.mode === "plan" || cm.collaboration_mode_kind === "plan") return true;
-      if (typeof cm["x-codex-turn-metadata"] === "string") {
-        try {
-          const tm = JSON.parse(cm["x-codex-turn-metadata"]);
-          if (tm.collaboration_mode?.mode === "default" || tm.collaboration_mode_kind === "default") return false;
-          if (tm.collaboration_mode?.mode === "plan" || tm.collaboration_mode_kind === "plan") return true;
-        } catch {}
-      }
-    }
-  }
-
-  const messages = parsed.context.messages || [];
-
-  // 3. Tìm khối <collaboration_mode> MỚI NHẤT (duyệt ngược từ tin nhắn cuối về đầu)
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : Array.isArray(msg.content)
-      ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
-      : "";
-
-    if (text.includes("<collaboration_mode") || text.includes("# Collaboration Mode")) {
-      if (text.includes("Mode: Default") || text.includes('mode="default"') || text.includes("now in Default mode")) {
-        return false;
-      }
-      if (text.includes("Mode: Plan") || text.includes("# Plan Mode") || text.includes('mode="plan"')) {
-        return true;
-      }
-    }
-  }
-
-  // 4. Kiểm tra trong systemPrompt mới nhất
-  for (const sp of parsed.context.systemPrompt || []) {
-    if (sp.includes("<collaboration_mode") || sp.includes("# Collaboration Mode")) {
-      if (sp.includes("Mode: Default") || sp.includes('mode="default"') || sp.includes("now in Default mode")) {
-        return false;
-      }
-      if (sp.includes("Mode: Plan") || sp.includes("# Plan Mode") || sp.includes('mode="plan"')) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  const payload = CodexRawPayload.from(parsed._rawBody || parsed);
+  return CodexPayloadNormalizer.detectCollaborationMode(payload) === "plan";
 }
 
 /**
@@ -285,6 +229,17 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
   return finalPrompt;
 }
 
-export { compileM365HybridForwardPrompt } from "./temp-chat";
+export {
+  compileM365HybridForwardPrompt,
+  compileM365HybridForwardPromptWithResult,
+  renderDynamicToolDeclarations,
+  UNIFIED_TOOL_PROTOCOL,
+  MINIMAL_TOOL_PROTOCOL,
+  promptCompiler,
+  logPromptMetrics,
+  logPromptAudit,
+} from "./temp-chat";
+
+
 
 

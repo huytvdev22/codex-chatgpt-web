@@ -1,214 +1,79 @@
-import type { CodexContentPart, CodexParsedRequest } from "../../../types";
+import type { CodexParsedRequest } from "../../../types";
 import { CodexRawPayload } from "../codex-raw-payload";
 import { CodexPayloadNormalizer } from "../codex-normalizer";
 import {
-  TOOL_DECLARATION_PROMPT,
-  PLAN_MODE_PROMPT,
-  IMPLEMENT_PLAN_PROMPT,
-} from "../prompts";
-import {
-  MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
-  MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
-} from "./prompts";
+  promptCompiler,
+  logPromptMetrics,
+  logPromptAudit,
+  isImplementingPlanRequest,
+  truncateToolResult,
+  renderDynamicToolDeclarations,
+  UNIFIED_TOOL_PROTOCOL,
+  MINIMAL_TOOL_PROTOCOL,
+  type PromptCompileResult,
+  type PromptSectionMetrics,
+  type PromptAuditData,
+} from "../prompt-strategy";
 
-const MAX_M365_PROMPT_CHARS = 95_000;
-const MAX_TOOL_RESULT_CHARS = 8_000;
+export { isImplementingPlanRequest, truncateToolResult };
 
-export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
-  if (content.length <= maxChars) return content;
-  const half = Math.floor((maxChars - 200) / 2);
-  const head = content.slice(0, half);
-  const tail = content.slice(-half);
-  const omitted = content.length - (head.length + tail.length);
-  return `${head}\n\n[... Đã lược bớt ${omitted} ký tự ở giữa để tối ưu kích thước phản hồi ...]\n\n${tail}`;
-}
-
-export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
-  const messages = parsed.context.messages || [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role === "user") {
-      const text = typeof msg.content === "string"
-        ? msg.content
-        : Array.isArray(msg.content)
-        ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
-        : "";
-      if (/PLEASE IMPLEMENT THIS PLAN/i.test(text) || /Yes, implement this plan/i.test(text)) {
-        return true;
-      }
-      break;
-    }
-  }
-  return false;
-}
-
+/**
+ * Kiểm tra xem yêu cầu hiện tại có đang ở chế độ Plan Mode (/plan) hay không.
+ * Single Source of Truth: Dựa vào detectCollaborationMode của CodexPayloadNormalizer.
+ * TUYỆT ĐỐI KHÔNG coi sự xuất hiện của tool request_user_input là Plan Mode!
+ */
 export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
   if (isImplementingPlanRequest(parsed)) return false;
-
-  // 1. Kiểm tra tin nhắn người dùng gần nhất: Nếu có /plan thì BẮT BUỘC là Plan Mode
-  const messages = parsed.context.messages || [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role === "user") {
-      const text = typeof msg.content === "string"
-        ? msg.content
-        : Array.isArray(msg.content)
-        ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
-        : "";
-      if (/(?:^|\s|\n)\/plan(?:\s|$)/i.test(text) || text.includes("## My request:\n/plan") || text.includes("/plan")) {
-        return true;
-      }
-      break;
-    }
-  }
-
-  // 2. Kiểm tra danh sách tools: Nếu có tool request_user_input (đặc trưng của Plan mode trong Codex)
-  const tools = parsed.context.tools || [];
-  const hasRequestUserInputTool = tools.some(t => {
-    const name = (t as any).name || (t as any).function?.name;
-    return name === "request_user_input";
-  });
-  if (hasRequestUserInputTool) {
-    return true;
-  }
-
-  // 3. Kiểm tra collaboration_mode từ raw payload hoặc client metadata
-  const raw = parsed._rawBody as Record<string, any> | undefined;
-  if (raw) {
-    if (raw.collaboration_mode_kind === "plan" || raw.collaboration_mode?.mode === "plan") return true;
-    if (raw.client_metadata) {
-      const cm = raw.client_metadata;
-      if (cm.collaboration_mode?.mode === "plan" || cm.collaboration_mode_kind === "plan") return true;
-      if (typeof cm["x-codex-turn-metadata"] === "string") {
-        try {
-          const tm = JSON.parse(cm["x-codex-turn-metadata"]);
-          if (tm.collaboration_mode?.mode === "plan" || tm.collaboration_mode_kind === "plan") return true;
-        } catch {}
-      }
-    }
-  }
-
-  // 4. Kiểm tra markers trong lịch sử và system instructions
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : Array.isArray(msg.content)
-      ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
-      : "";
-    if (text.includes("Mode: Plan") || text.includes("# Plan Mode") || text.includes('mode="plan"')) return true;
-  }
-  for (const sp of parsed.context.systemPrompt || []) {
-    if (sp.includes("Mode: Plan") || sp.includes("# Plan Mode") || sp.includes('mode="plan"')) return true;
-  }
-
-  return false;
+  const payload = CodexRawPayload.from(parsed._rawBody || parsed);
+  return CodexPayloadNormalizer.detectCollaborationMode(payload) === "plan";
 }
 
 /**
  * Xây dựng Prompt chuyển tiếp cho chế độ Temporary Chat Per Request.
- * Sử dụng CodexPayloadNormalizer để trích xuất canonical request,
- * và tiêm chỉ thị MANDATORY_4_BACKTICK_MARKDOWN_PROMPT ở cuối prompt.
+ * Sử dụng M365PromptCompiler duy nhất:
+ * - Loại bỏ hoàn toàn mâu thuẫn Plan Mode / Default Mode
+ * - Rút gọn mạnh permissions + sandbox instructions
+ * - Thống nhất format tool duy nhất và render dynamic tools
+ * - Ghi nhận log: planMode, collaborationMode, finalPromptLength
  */
-export function compileM365HybridForwardPrompt(parsed: CodexParsedRequest, rawBody?: unknown): string {
+export function compileM365HybridForwardPrompt(
+  parsed: CodexParsedRequest,
+  rawBody?: unknown
+): string {
+  const result = compileM365HybridForwardPromptWithResult(parsed, rawBody);
+  return result.finalPrompt;
+}
+
+/**
+ * Phiên bản mở rộng trả về đầy đủ finalPrompt, metrics và audit data.
+ */
+export function compileM365HybridForwardPromptWithResult(
+  parsed: CodexParsedRequest,
+  rawBody?: unknown
+): PromptCompileResult {
   const payload = CodexRawPayload.from(rawBody || parsed._rawBody || parsed);
   const normalized = CodexPayloadNormalizer.normalize(payload);
 
-  const sections: string[] = [];
+  const result = promptCompiler.compile({
+    normalized,
+    parsed,
+  });
 
-  // 1. System Protocol & Tool Instructions
-  sections.push(TOOL_DECLARATION_PROMPT);
+  // Ghi nhận log metrics và audit
+  logPromptMetrics(result.metrics);
+  logPromptAudit(result.audit);
 
-  // 2. Chỉ dẫn Plan Mode hoặc Triển khai kế hoạch nếu có
-  const isImplementingPlan = isImplementingPlanRequest(parsed);
-  const isPlanMode = !isImplementingPlan && isPlanModeRequest(parsed);
-  if (isPlanMode) {
-    sections.push(PLAN_MODE_PROMPT);
-  } else if (isImplementingPlan) {
-    sections.push(IMPLEMENT_PLAN_PROMPT);
-  }
-
-  // 3. System Instructions từ Codex IDE
-  if (parsed.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
-    const filteredSystem = parsed.context.systemPrompt
-      .map(sp => sp.trim())
-      .filter(
-        sp =>
-          sp.length > 0 &&
-          !sp.startsWith("<environment_context>") &&
-          !sp.includes("spawn_agent") &&
-          !sp.includes("You are Codex, a coding assistant")
-      )
-      .join("\n\n");
-    if (filteredSystem) {
-      sections.push(`[System Instructions]:\n${filteredSystem}`);
-    }
-  }
-
-  // 4. Ngữ cảnh Môi trường làm việc (Environment Context)
-  if (normalized.environmentContext) {
-    sections.push(`[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]:\n${normalized.environmentContext}`);
-  }
-
-  // 5. Chỉ thị của Dự án / Developer Rules
-  if (normalized.developerInstructions && normalized.developerInstructions.length > 0) {
-    const devRules = normalized.developerInstructions.map(r => `- ${r}`).join("\n");
-    sections.push(`[CHỈ THỊ CỦA DỰ ÁN / DEVELOPER RULES]:\n${devRules}`);
-  }
-
-  // 6. Danh sách công cụ khả dụng trong IDE
-  if (normalized.activeCodingTools.length > 0) {
-    const toolList = normalized.activeCodingTools
-      .map(t => `- ${t.identity.name}: ${t.description.split("\n")[0] || ""}`)
-      .join("\n");
-    sections.push(`[CÁC CÔNG CỤ CÓ SẴN TRONG IDE]:\n${toolList}`);
-  }
-
-  // 7. Lịch sử trao đổi đầy đủ (Bảo toàn ngữ cảnh các lượt trước)
-  if (normalized.priorHistory.length > 0) {
-    const historyLines: string[] = [];
-    for (const h of normalized.priorHistory) {
-      if (h.role === "user") {
-        historyLines.push(`Người dùng: ${h.content}`);
-      } else if (h.role === "assistant") {
-        historyLines.push(`Trợ lý: ${h.content}`);
-      } else if (h.role === "tool") {
-        historyLines.push(`<tool_result id="${h.callId || ""}">\n${truncateToolResult(h.content)}\n</tool_result>`);
-      }
-    }
-    if (historyLines.length > 0) {
-      sections.push(`[LỊCH SỬ TRAO ĐỔI]:\n${historyLines.join("\n\n")}`);
-    }
-  }
-
-  // 8. Kết quả Tool gần nhất (Trailing tool results của turn hiện tại)
-  if (normalized.trailingToolResults.length > 0) {
-    const resultBlocks = normalized.trailingToolResults.map(res =>
-      `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
-    );
-    sections.push(
-      `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng. Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`
-    );
-  }
-
-  // 9. Yêu cầu của người dùng mới nhất (Latest user instruction duy nhất)
-  if (normalized.latestUserInstruction) {
-    sections.push(`[YÊU CẦU CỦA NGƯỜI DÙNG]:\n${normalized.latestUserInstruction}`);
-  }
-
-  // 10. ĐỊNH HƯỚNG FAST-PATH 4-BACKTICKS (Tận dụng Recency Bias ở cuối cùng)
-  sections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
-
-  let finalPrompt = sections.join("\n\n").trim();
-
-  // 11. Cắt tỉa an toàn độ dài (Budgeting Guard) nếu vượt quá ngưỡng an toàn của M365 (95,000 ký tự)
-  if (finalPrompt.length > MAX_M365_PROMPT_CHARS) {
-    const headLimit = 25_000;
-    const tailLimit = MAX_M365_PROMPT_CHARS - headLimit - 200;
-    const head = finalPrompt.slice(0, headLimit);
-    const tail = finalPrompt.slice(-tailLimit);
-    finalPrompt = `${head}\n\n... [Một số ngữ cảnh cũ được rút gọn để tối ưu độ dài cho M365 Copilot] ...\n\n${tail}`;
-  }
-
-  return finalPrompt;
+  return result;
 }
+
+export {
+  renderDynamicToolDeclarations,
+  UNIFIED_TOOL_PROTOCOL,
+  MINIMAL_TOOL_PROTOCOL,
+  promptCompiler,
+  logPromptMetrics,
+  logPromptAudit,
+  type PromptSectionMetrics,
+  type PromptAuditData,
+  type PromptCompileResult,
+};

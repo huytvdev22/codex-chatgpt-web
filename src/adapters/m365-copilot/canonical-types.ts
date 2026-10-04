@@ -82,6 +82,7 @@ export interface NormalizedCodexRequest {
   tools: NormalizedTool[];
   activeCodingTools: NormalizedTool[];
   executionPolicy: NormalizedExecutionPolicy;
+  collaborationMode: "default" | "plan";
   rawSnapshot: CodexRawRequestWire;
 }
 
