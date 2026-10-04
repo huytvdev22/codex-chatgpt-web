@@ -332,7 +332,7 @@ export async function executeM365Turn(
 
         // Khởi tạo bộ nhớ đệm tích lũy dòng code theo data-line-index trên window để chống mất dòng khi virtual scrolling
         const win = window as any;
-        if (!win.__m365_code_lines_cache) {
+        if (!win.__m365_code_lines_cache || before.count !== messages.length) {
           win.__m365_code_lines_cache = new Map<number, string>();
         }
 
@@ -570,9 +570,14 @@ export async function executeM365Turn(
         }, undefined, options.signal).catch(() => { });
       }
 
-      // Định kỳ cuộn trang xuống đáy để kích thích trình duyệt render DOM liên tục
+      // Định kỳ cuộn trang và các container Code Preview xuống đáy để kích thích trình duyệt render DOM liên tục
       if (attempts % 4 === 0) {
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+        await page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+          document.querySelectorAll("[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block").forEach(el => {
+            try { el.scrollTop = el.scrollHeight; } catch {}
+          });
+        }).catch(() => {});
       }
 
       // Stream các khối đã hoàn thành:
@@ -646,25 +651,29 @@ export async function executeM365Turn(
       const hasUnclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedText) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
       const toolCallFullyClosed = /(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
       const planFullyClosed = /<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
+      const patchFullyClosed = /(?:\\?\*){2,3}\s*End Patch/i.test(combinedText) || /<\s*\/\s*custom_tool_call\s*>/i.test(combinedText);
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
-      // - Nếu có thẻ tool_call hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
-      // - Nếu đang có khối mở dở dang: TUYỆT ĐỐI KHÔNG ngắt sớm
-      // - Đối với văn bản dài (> 2.000 ký tự) không có thẻ đóng dứt điểm: Cần thời gian chờ ổn định tối thiểu 6.0 giây (24 chu kỳ)
-      //   để tránh việc LLM tạm dừng tạo chữ giữa các đoạn (như trường hợp kế hoạch 20 mục)
+      // 1. Nếu có thẻ tool_call, patch hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
+      // 2. Nếu đang có khối mở dở dang: Chờ ổn định để xem M365 có viết tiếp không
+      // 3. Phá vỡ DEADLOCK: Nếu M365 đã dừng sinh (!status.isGenerating) VÀ văn bản bất động quá 8.0 giây (hoặc 32 chu kỳ):
+      //    BẮT BUỘC coi là đã hoàn tất (settled) kể cả khi patch/tool call chưa đóng (để tránh treo người dùng 10 phút).
       const isLongResponse = combinedText.length > 2000;
       const minStableTime = isLongResponse ? 6000 : 3000;
       const minStableCycles = isLongResponse ? 24 : 8;
 
+      const hasFullyClosedMarker = toolCallFullyClosed || planFullyClosed || patchFullyClosed;
+      const hasAnyUnclosedMarker = hasUnclosedToolCall || hasUnclosedPatch || hasUnclosedPlan;
+      const timeSinceChange = Date.now() - lastTextChangeAt;
+
       const isSettled = !status.isGenerating && (
-        ((toolCallFullyClosed || planFullyClosed) && (stableCycles >= 4 || Date.now() - lastTextChangeAt >= 1000)) ||
-        (!hasUnclosedToolCall && !hasUnclosedPatch && !hasUnclosedPlan && (
-          stableCycles >= minStableCycles || Date.now() - lastTextChangeAt >= minStableTime
-        ))
+        (hasFullyClosedMarker && (stableCycles >= 4 || timeSinceChange >= 1000)) ||
+        (!hasAnyUnclosedMarker && (stableCycles >= minStableCycles || timeSinceChange >= minStableTime)) ||
+        (timeSinceChange >= 8000 || stableCycles >= 32) // Hard deadlock breaker: Model đã dừng sinh và bất động 8s
       );
 
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} planClosed=${planFullyClosed} fastPath=${fastPathActive}`);
+        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
         break;
       }
 
@@ -701,6 +710,19 @@ export async function executeM365Turn(
       const res = markdownBuffer.finish(lastBlocks);
       fullMarkdown = res.markdown;
       finalDelta = res.delta;
+    }
+
+    // Auto-Healing: Nếu patch bị cắt cụt do model dừng sinh giữa chừng, tự động đóng thẻ
+    if (/(?:\\?\*){2,3}\s*Begin Patch/i.test(fullMarkdown) && !/(?:\\?\*){2,3}\s*End Patch/i.test(fullMarkdown)) {
+      console.warn(`[m365-worker] [auto-heal] Phát hiện patch chưa đóng do model dừng sinh giữa chừng. Tự động bổ sung *** End Patch ***.`);
+      const closingPatch = "\n*** End Patch ***\n";
+      fullMarkdown = `${fullMarkdown.trimEnd()}${closingPatch}`;
+      finalDelta = `${finalDelta}${closingPatch}`;
+      if (/<custom_tool_call(?:\s+name=["']apply_patch["'])?[^>]*>/i.test(fullMarkdown) && !/<\/custom_tool_call>/i.test(fullMarkdown)) {
+        const closingTag = "</custom_tool_call>\n";
+        fullMarkdown = `${fullMarkdown}${closingTag}`;
+        finalDelta = `${finalDelta}${closingTag}`;
+      }
     }
 
     // Đảm bảo có nội dung phản hồi hợp lệ trước khi hoàn tất lượt
