@@ -487,11 +487,10 @@ export async function executeM365Turn(
         const rawBlocks: Array<{ tag: string; html: string; text: string }> = [];
         const inlineNodes: Node[] = [];
 
-                /**
+        /**
          * Đẩy toàn bộ văn bản nội dòng (inline text delta) đang chờ ra ngoài callback stream.
          */
-function flushInline() {
-          logFunctionInput("browser:browser-worker", "flushInline");
+        function flushInline() {
           if (inlineNodes.length === 0) return;
           const temp = document.createElement("p");
           for (const n of inlineNodes) {
@@ -508,11 +507,10 @@ function flushInline() {
           }
         }
 
-                /**
+        /**
          * Duyệt đệ quy và trích xuất nội dung văn bản hoặc khối Markdown từ DOM node của tin nhắn Copilot.
          */
-function processNode(node: Node) {
-          logFunctionInput("browser:browser-worker", "processNode", { node });
+        function processNode(node: Node) {
           if (node.nodeType === Node.ELEMENT_NODE) {
             const el = node as HTMLElement;
             const tag = el.tagName.toLowerCase();
