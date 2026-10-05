@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { LogRecord, Language, TraceSpan, TraceGroup, ConversationGroup } from "./types";
 import type { Copy } from "./i18n";
 import { Icon } from "./icons";
@@ -45,14 +45,6 @@ function extractRecordMetadata(record: LogRecord) {
     const matchTrace = rawText.match(/\btraceId=([a-zA-Z0-9_-]+)/);
     if (matchTrace) {
       traceId = matchTrace[1];
-    } else {
-      const matchTurn = rawText.match(/\bturnId=([a-zA-Z0-9_-]+)/);
-      if (matchTurn) {
-        traceId = matchTurn[1];
-      } else {
-        const matchReq = rawText.match(/\brequestId=([a-zA-Z0-9_-]+)/);
-        if (matchReq) traceId = matchReq[1];
-      }
     }
   }
 
@@ -138,10 +130,24 @@ export function TraceExplorer({
     window.addEventListener("mouseup", onMouseUp);
   };
 
-  // View Mode: Bảng log Kibana hoặc Soi Pipeline (Debug Flow)
-  const [viewMode, setViewMode] = useState<"kibana" | "debug_flow">("kibana");
+  // View Mode: Bảng log Kibana, Soi Pipeline (Debug Flow), hoặc Console Logs
+  const [viewMode, setViewMode] = useState<"kibana" | "debug_flow" | "console">("kibana");
   const [copiedStationKey, setCopiedStationKey] = useState<string | null>(null);
   const [collapsedStationKeys, setCollapsedStationKeys] = useState<Set<string>>(new Set());
+
+  // Console Logs Terminal State
+  const [consoleSearch, setConsoleSearch] = useState("");
+  const [consoleAutoScroll, setConsoleAutoScroll] = useState(true);
+  const [consoleWrap, setConsoleWrap] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("codex_console_wrap") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [consoleClearedTime, setConsoleClearedTime] = useState<number | null>(null);
+  const [consoleScope, setConsoleScope] = useState<"all" | "selected">("all");
+  const consoleContainerRef = useRef<HTMLDivElement>(null);
 
   // Kibana Table Column Customization & Time Sort
   const [timeSortOrder, setTimeSortOrder] = useState<"asc" | "desc">("asc");
@@ -183,9 +189,18 @@ export function TraceExplorer({
     const traceMap = new Map<string, TraceGroup>();
     const systemRecords: LogRecord[] = [];
 
+    // Thu thập ánh xạ requestId -> traceId để liên kết log stdout daemon về đúng trace
+    const reqToTrace = new Map<string, string>();
     for (const record of activeLogs) {
       const meta = extractRecordMetadata(record);
-      const traceId = meta.traceId;
+      if (meta.traceId && meta.requestId) {
+        reqToTrace.set(meta.requestId, meta.traceId);
+      }
+    }
+
+    for (const record of activeLogs) {
+      const meta = extractRecordMetadata(record);
+      const traceId = meta.traceId || (meta.requestId ? reqToTrace.get(meta.requestId) : null);
 
       if (!traceId) {
         systemRecords.push(record);
@@ -525,6 +540,77 @@ export function TraceExplorer({
       setCopyFeedback(label);
       setTimeout(() => setCopyFeedback(null), 2000);
     });
+  };
+
+  // Trích xuất danh sách dòng log Console / Terminal từ daemon
+  const consoleRecords = useMemo(() => {
+    let sourceList = logs;
+    if (consoleScope === "selected" && activeSelection) {
+      sourceList = activeSelection.records;
+    }
+    return sourceList.filter((r) => {
+      if (consoleClearedTime && new Date(r.at).getTime() <= consoleClearedTime) {
+        return false;
+      }
+      const isDaemon = r.event === "runtime.daemon_stdout" || r.event === "runtime.daemon_stderr";
+      const hasLine = Boolean(r.detail?.line);
+      return isDaemon || hasLine;
+    });
+  }, [logs, consoleScope, activeSelection, consoleClearedTime]);
+
+  const filteredConsoleRecords = useMemo(() => {
+    if (!consoleSearch.trim()) return consoleRecords;
+    const q = consoleSearch.toLowerCase();
+    return consoleRecords.filter((r) => {
+      const line = String(r.detail?.line || r.detail?.message || "");
+      return line.toLowerCase().includes(q) || r.event.toLowerCase().includes(q);
+    });
+  }, [consoleRecords, consoleSearch]);
+
+  useEffect(() => {
+    if (viewMode === "console" && consoleAutoScroll && consoleContainerRef.current) {
+      consoleContainerRef.current.scrollTop = consoleContainerRef.current.scrollHeight;
+    }
+  }, [viewMode, filteredConsoleRecords.length, consoleAutoScroll]);
+
+  const toggleConsoleWrap = () => {
+    setConsoleWrap((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("codex_console_wrap", String(next));
+      } catch {}
+      showToast(next ? "Đã bật Wrap text (tự xuống dòng)" : "Đã bật Cuộn ngang (No wrap)");
+      return next;
+    });
+  };
+
+  const handleCopyConsoleLogs = () => {
+    const text = filteredConsoleRecords
+      .map((r) => {
+        const time = new Date(r.at).toLocaleTimeString();
+        const line = (r.detail?.line as string) || (r.detail?.message as string) || "";
+        return `[${time}] ${line}`;
+      })
+      .join("\n");
+    copyToClipboard(text, `Đã copy ${filteredConsoleRecords.length} dòng log console!`);
+  };
+
+  const handleClearConsoleLogs = () => {
+    setConsoleClearedTime(Date.now());
+    showToast("Đã xóa sạch màn hình Console Logs!");
+  };
+
+  const handleDownloadConsoleLogs = () => {
+    const text = filteredConsoleRecords
+      .map((r) => {
+        const time = new Date(r.at).toISOString();
+        const line = (r.detail?.line as string) || (r.detail?.message as string) || "";
+        return `[${time}] [${r.level.toUpperCase()}] ${line}`;
+      })
+      .join("\n");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    downloadFile(text, `terminal_console_${timestamp}.log`, "text/plain");
+    showToast("Đã tải file log console về máy!");
   };
 
   const formatDuration = (ms: number) => {
@@ -1044,11 +1130,104 @@ export function TraceExplorer({
                             fontWeight: viewMode === "debug_flow" ? 600 : 400,
                           }}
                           onClick={() => setViewMode("debug_flow")}
-                          title="Soi dữ liệu Message thực tế tại 4 điểm chạm: Codex ➜ Bridge ➜ M365 ➜ Codex"
+                          title="Debug Conversation: Dữ liệu thô tại 4 điểm chạm Codex ➜ Bridge ➜ M365 ➜ Codex"
                         >
-                          <span>🔍 Soi Pipeline (Debug Flow)</span>
+                          <span>Debug Conversation</span>
+                        </button>
+                        <button
+                          className={`te-pill ${viewMode === "console" ? "active" : ""}`}
+                          style={{
+                            height: 24,
+                            fontSize: 11,
+                            padding: "0 8px",
+                            cursor: "pointer",
+                            background: viewMode === "console" ? "rgba(16, 185, 129, 0.2)" : "transparent",
+                            color: viewMode === "console" ? "#34d399" : "var(--color-text-secondary, #94a3b8)",
+                            fontWeight: viewMode === "console" ? 600 : 400,
+                            border: viewMode === "console" ? "1px solid rgba(16, 185, 129, 0.4)" : "1px solid transparent",
+                          }}
+                          onClick={() => setViewMode("console")}
+                          title="Xem luồng log Console / Terminal trực tiếp từ daemon"
+                        >
+                          <span>💻 Console Logs</span>
                         </button>
                       </div>
+
+                      {viewMode === "console" && (
+                        <>
+                          <input
+                            type="text"
+                            className="te-search-input"
+                            style={{ height: 26, width: 180, fontSize: 11, padding: "0 8px" }}
+                            placeholder="Lọc nội dung console..."
+                            value={consoleSearch}
+                            onChange={(e) => setConsoleSearch(e.target.value)}
+                          />
+                          <button
+                            className="te-btn"
+                            style={{ height: 26, fontSize: 11, padding: "0 8px" }}
+                            onClick={() => setConsoleScope((prev) => (prev === "all" ? "selected" : "all"))}
+                            title="Chuyển đổi giữa xem toàn bộ logs daemon hoặc chỉ xem Turn đang chọn"
+                          >
+                            <span>{consoleScope === "all" ? "Toàn bộ daemon" : "Theo Turn đã chọn"}</span>
+                          </button>
+                          <button
+                            className={`te-btn ${consoleAutoScroll ? "active" : ""}`}
+                            style={{
+                              height: 26,
+                              fontSize: 11,
+                              padding: "0 8px",
+                              color: consoleAutoScroll ? "#34d399" : undefined,
+                            }}
+                            onClick={() => setConsoleAutoScroll((prev) => !prev)}
+                            title="Tự động cuộn theo dòng log mới nhất"
+                          >
+                            <span>{consoleAutoScroll ? "⏬ Cuộn: BẬT" : "⏸️ Cuộn: TẮT"}</span>
+                          </button>
+                          <button
+                            className={`te-btn ${consoleWrap ? "active" : ""}`}
+                            style={{
+                              height: 26,
+                              fontSize: 11,
+                              padding: "0 8px",
+                              color: consoleWrap ? "#38bdf8" : undefined,
+                              borderColor: consoleWrap ? "rgba(56, 189, 248, 0.4)" : undefined,
+                            }}
+                            onClick={toggleConsoleWrap}
+                            title={
+                              consoleWrap
+                                ? "Đang BẬT Wrap text (tự xuống dòng). Nhấp để tắt Wrap và cho phép cuộn ngang (Scroll horizontal)"
+                                : "Đang TẮT Wrap (cho phép cuộn ngang). Nhấp để bật Wrap text (tự động xuống dòng khi log dài)"
+                            }
+                          >
+                            <span>{consoleWrap ? "↩️ Wrap: BẬT" : "➡️ Cuộn ngang"}</span>
+                          </button>
+                          <button
+                            className="te-btn"
+                            style={{ height: 26, fontSize: 11, padding: "0 8px" }}
+                            onClick={handleCopyConsoleLogs}
+                            title="Sao chép toàn bộ log console vào clipboard"
+                          >
+                            <span>📋 Copy</span>
+                          </button>
+                          <button
+                            className="te-btn"
+                            style={{ height: 26, fontSize: 11, padding: "0 8px", color: "#f87171", borderColor: "rgba(239, 68, 68, 0.3)" }}
+                            onClick={handleClearConsoleLogs}
+                            title="Xóa sạch màn hình log console"
+                          >
+                            <span>🗑️ Clear</span>
+                          </button>
+                          <button
+                            className="te-btn"
+                            style={{ height: 26, fontSize: 11, padding: "0 8px" }}
+                            onClick={handleDownloadConsoleLogs}
+                            title="Tải toàn bộ log console thành file .log"
+                          >
+                            <span>⬇️ Tải .log</span>
+                          </button>
+                        </>
+                      )}
 
                       {viewMode === "kibana" && (
                         <>
@@ -1156,60 +1335,34 @@ export function TraceExplorer({
                         </>
                       )}
 
-                      {/* Nút xuất Báo cáo Flow & Payload Markdown độc lập */}
-                      <button
-                        className="te-btn"
-                        style={{
-                          height: 28,
-                          fontSize: 11,
-                          padding: "0 8px",
-                          gap: 4,
-                          background: "var(--color-bg-secondary, rgba(255,255,255,0.06))",
-                          borderColor: "var(--color-accent, #3b82f6)",
-                          color: "var(--color-accent, #60a5fa)",
-                          fontWeight: 500,
-                        }}
-                        onClick={() => {
-                          const report = formatFlowPayloadReport(activeSelection.conversation, activeSelection.trace);
-                          const filename = generateExportFilename(
-                            activeSelection.isAllTurns ? "flow_report_conv" : "flow_report_turn",
-                            targetId,
-                            "md"
-                          );
-                          downloadFile(report, filename, "text/markdown");
-                          showToast(`✓ Đã tải báo cáo Flow: ${filename}`);
-                        }}
-                        title="Tải báo cáo chi tiết Flow và nội dung Message Payload thực tế (Markdown)"
-                      >
-                        <span>📑 Flow (.md)</span>
-                      </button>
-
-                      {/* Nút xuất Báo cáo Debug Pipeline Data Raw Markdown */}
-                      <button
-                        className="te-btn"
-                        style={{
-                          height: 28,
-                          fontSize: 11,
-                          padding: "0 8px",
-                          gap: 4,
-                          background: "rgba(99, 102, 241, 0.15)",
-                          borderColor: "#6366f1",
-                          color: "#a5b4fc",
-                          fontWeight: 500,
-                        }}
+                      {/* Nút xuất Báo cáo Debug Conversation Markdown và Menus Export (chỉ hiển thị khi ở Kibana hoặc Debug Conversation) */}
+                      {viewMode !== "console" && (
+                        <>
+                          <button
+                            className="te-btn"
+                            style={{
+                              height: 28,
+                              fontSize: 11,
+                              padding: "0 10px",
+                              gap: 4,
+                              background: "rgba(99, 102, 241, 0.15)",
+                              borderColor: "#6366f1",
+                              color: "#a5b4fc",
+                              fontWeight: 500,
+                            }}
                         onClick={() => {
                           const report = formatDebugConversationReport(activeSelection.conversation, activeSelection.trace);
                           const filename = generateExportFilename(
-                            activeSelection.isAllTurns ? "debug_pipeline_conv" : "debug_pipeline_turn",
+                            activeSelection.isAllTurns ? "debug_conversation_conv" : "debug_conversation_turn",
                             targetId,
                             "md"
                           );
                           downloadFile(report, filename, "text/markdown");
-                          showToast(`✓ Đã tải báo cáo Debug Pipeline: ${filename}`);
+                          showToast(`✓ Đã tải báo cáo Debug Conversation: ${filename}`);
                         }}
-                        title="Tải báo cáo phân tích dữ liệu Message thực tế qua 4 điểm chạm của toàn bộ cuộc trò chuyện (Markdown)"
+                        title="Tải báo cáo Debug Conversation (Markdown) với dữ liệu thô 4 Step"
                       >
-                        <span>🔍 Debug (.md)</span>
+                        <span>Xuất Debug (.md)</span>
                       </button>
 
                       {/* Dropdown Menu: Copy Log ▾ */}
@@ -1222,9 +1375,9 @@ export function TraceExplorer({
                             setIsDownloadMenuOpen(false);
                             setIsColumnPickerOpen(false);
                           }}
-                          title={`Sao chép các nội dung và báo cáo`}
+                          title={`Sao chép nội dung báo cáo`}
                         >
-                          <span>📋 Copy ▾</span>
+                          <span>Copy ▾</span>
                         </button>
 
                         {isCopyMenuOpen ? (
@@ -1239,11 +1392,11 @@ export function TraceExplorer({
                                 onClick={() => {
                                   const text = formatDebugConversationReport(activeSelection.conversation, activeSelection.trace);
                                   navigator.clipboard.writeText(text);
-                                  showToast(`✓ Đã sao chép Debug Pipeline Report (.md)`);
+                                  showToast(`✓ Đã sao chép Debug Conversation Report (.md)`);
                                   setIsCopyMenuOpen(false);
                                 }}
                               >
-                                <span>Debug Pipeline Report (4 Điểm Chạm Raw)</span>
+                                <span>Debug Conversation (4 Step Raw)</span>
                                 <span className="te-menu-item-subtitle">.md</span>
                               </button>
                               <button
@@ -1514,33 +1667,43 @@ export function TraceExplorer({
                           </>
                         ) : null}
                       </div>
+                      </>
+                      )}
                     </div>
 
                     <div className="te-action-bar-right" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <button
-                        className={`te-btn ${isVietnameseEvents ? "active" : ""}`}
-                        style={{
-                          height: 26,
-                          fontSize: 11,
-                          padding: "0 8px",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                          background: isVietnameseEvents ? "rgba(59, 130, 246, 0.15)" : "transparent",
-                          borderColor: isVietnameseEvents ? "var(--color-accent, #3b82f6)" : "var(--color-border-subtle, #333)",
-                          color: isVietnameseEvents ? "var(--color-accent, #60a5fa)" : "var(--color-text-secondary, #aaa)",
-                        }}
-                        onClick={() => setIsVietnameseEvents((prev) => !prev)}
-                        title="Bật/Tắt chế độ hiển thị sự kiện tiếng Việt và giải nghĩa dòng chảy hệ thống"
-                      >
-                        <span>🇻🇳 {isVietnameseEvents ? "Tiếng Việt" : "Tiếng Anh"}</span>
-                      </button>
+                      {viewMode === "console" ? (
+                        <span style={{ fontSize: 11, color: "var(--color-text-secondary, #94a3b8)", whiteSpace: "nowrap" }}>
+                          {filteredConsoleRecords.length} dòng log console
+                        </span>
+                      ) : (
+                        <>
+                          <button
+                            className={`te-btn ${isVietnameseEvents ? "active" : ""}`}
+                            style={{
+                              height: 26,
+                              fontSize: 11,
+                              padding: "0 8px",
+                              borderRadius: 4,
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              background: isVietnameseEvents ? "rgba(59, 130, 246, 0.15)" : "transparent",
+                              borderColor: isVietnameseEvents ? "var(--color-accent, #3b82f6)" : "var(--color-border-subtle, #333)",
+                              color: isVietnameseEvents ? "var(--color-accent, #60a5fa)" : "var(--color-text-secondary, #aaa)",
+                            }}
+                            onClick={() => setIsVietnameseEvents((prev) => !prev)}
+                            title="Bật/Tắt chế độ hiển thị sự kiện tiếng Việt và giải nghĩa dòng chảy hệ thống"
+                          >
+                            <span>🇻🇳 {isVietnameseEvents ? "Tiếng Việt" : "Tiếng Anh"}</span>
+                          </button>
 
-                      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", whiteSpace: "nowrap" }}>
-                        {sortedSpans.length} events
-                      </span>
+                          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", whiteSpace: "nowrap" }}>
+                            {sortedSpans.length} events
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -1938,7 +2101,7 @@ export function TraceExplorer({
                   </tbody>
                 </table>
               </div>
-            ) : (
+            ) : viewMode === "debug_flow" ? (
               <div className="te-debug-flow-container">
                 {(() => {
                   const targetTraces = activeSelection.isAllTurns
@@ -1960,105 +2123,138 @@ export function TraceExplorer({
                     const turnIdx = activeSelection.isAllTurns
                       ? traceIdx + 1
                       : activeSelection.conversation.traces.findIndex((t) => t.traceId === trace.traceId) + 1 || 1;
-                    const inspection = extractDebugInspectionFromTrace(trace, turnIdx);
 
-                    return (
-                      <div key={trace.traceId} className="te-debug-turn-card">
-                        {/* Header của Turn */}
-                        <div className="te-debug-turn-header">
-                          <div className="te-debug-turn-title">
-                            <span className="te-turn-badge">Turn #{inspection.turnIndex}</span>
-                            <span className="te-turn-model">{inspection.model}</span>
-                            <span className="te-turn-duration">{inspection.durationMs}ms</span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <div
-                              className="te-turn-status-badge"
-                              style={{
-                                background:
-                                  inspection.completionType === "tool_call"
-                                    ? "rgba(245, 158, 11, 0.15)"
-                                    : "rgba(16, 185, 129, 0.15)",
-                                color:
-                                  inspection.completionType === "tool_call"
-                                    ? "#fbbf24"
-                                    : "#34d399",
-                                borderColor:
-                                  inspection.completionType === "tool_call"
-                                    ? "rgba(245, 158, 11, 0.3)"
-                                    : "rgba(16, 185, 129, 0.3)",
-                              }}
-                            >
-                              {inspection.completionType === "tool_call"
-                                ? "⚡ Phát hiện Tool Call (Vòng lặp công cụ)"
-                                : "✅ Trả lời kết luận (Final Answer)"}
+                    try {
+                      const inspection = extractDebugInspectionFromTrace(trace, turnIdx);
+                      const reason = String(inspection.terminalReason || "");
+                      const isParseFailed = reason.includes("parse_failed");
+                      const isError = reason.includes("error") || reason.includes("blocked");
+                      const stepsList = Array.isArray(inspection.steps) ? inspection.steps : [];
+
+                      return (
+                        <div key={trace.traceId} className="te-debug-turn-card">
+                          {/* Header của Turn */}
+                          <div className="te-debug-turn-header">
+                            <div className="te-debug-turn-title">
+                              <span className="te-turn-badge">Turn #{inspection.turnIndex}</span>
+                              <span className="te-turn-model">{inspection.model}</span>
+                              <span className="te-turn-duration">{inspection.durationMs}ms</span>
                             </div>
-                            <button
-                              className="te-btn"
-                              style={{ height: 24, fontSize: 11, padding: "0 8px" }}
-                              onClick={() => {
-                                const allKeys = inspection.stations.map((s) => `${inspection.turnIndex}_${s.stationIndex}`);
-                                const isAllCollapsed = allKeys.every((k) => collapsedStationKeys.has(k));
-                                setCollapsedStationKeys((prev) => {
-                                  const next = new Set(prev);
-                                  if (isAllCollapsed) {
-                                    allKeys.forEach((k) => next.delete(k));
-                                  } else {
-                                    allKeys.forEach((k) => next.add(k));
-                                  }
-                                  return next;
-                                });
-                              }}
-                              title="Thu gọn hoặc mở rộng tất cả các trạm của Turn này"
-                            >
-                              <span>
-                                {inspection.stations.every((s) => collapsedStationKeys.has(`${inspection.turnIndex}_${s.stationIndex}`))
-                                  ? "▼ Mở tất cả"
-                                  : "▶ Thu gọn"}
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Diễn giải bước tiếp theo của Codex */}
-                        {inspection.nextActionExplanation ? (
-                          <div className="te-next-action-box">
-                            <span className="te-next-action-icon">💡</span>
-                            <div className="te-next-action-text">
-                              <strong>Dự kiến Codex xử lý:</strong> {inspection.nextActionExplanation}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div
+                                className="te-turn-status-badge"
+                                style={{
+                                  background:
+                                    inspection.completionType === "tool_call"
+                                      ? "rgba(245, 158, 11, 0.15)"
+                                      : (isParseFailed || isError
+                                        ? "rgba(239, 68, 68, 0.15)"
+                                        : "rgba(16, 185, 129, 0.15)"),
+                                  color:
+                                    inspection.completionType === "tool_call"
+                                      ? "#fbbf24"
+                                      : (isParseFailed || isError
+                                        ? "#f87171"
+                                        : "#34d399"),
+                                  borderColor:
+                                    inspection.completionType === "tool_call"
+                                      ? "rgba(245, 158, 11, 0.3)"
+                                      : (isParseFailed || isError
+                                        ? "rgba(239, 68, 68, 0.3)"
+                                        : "rgba(16, 185, 129, 0.3)"),
+                                }}
+                              >
+                                {inspection.completionType === "tool_call"
+                                  ? "TOOL_CALL"
+                                  : (isParseFailed
+                                    ? "PARSE_FAILED (FALLBACK)"
+                                    : "FINAL_ANSWER")}
+                              </div>
+                              <button
+                                className="te-btn"
+                                style={{ height: 24, fontSize: 11, padding: "0 8px" }}
+                                onClick={() => {
+                                  const allKeys = stepsList.map((s) => `${inspection.turnIndex}_${s.stepIndex}`);
+                                  const isAllCollapsed = allKeys.every((k) => collapsedStationKeys.has(k));
+                                  setCollapsedStationKeys((prev) => {
+                                    const next = new Set(prev);
+                                    if (isAllCollapsed) {
+                                      allKeys.forEach((k) => next.delete(k));
+                                    } else {
+                                      allKeys.forEach((k) => next.add(k));
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                title="Thu gọn hoặc mở rộng tất cả các bước của Turn này"
+                              >
+                                <span>
+                                  {stepsList.every((s) => collapsedStationKeys.has(`${inspection.turnIndex}_${s.stepIndex}`))
+                                    ? "▼ Mở tất cả"
+                                    : "▶ Thu gọn"}
+                                </span>
+                              </button>
                             </div>
                           </div>
-                        ) : null}
 
-                        {/* 4 Điểm chạm dữ liệu message thực tế */}
-                        <div className="te-stations-list">
-                          {inspection.stations.map((st) => {
-                            const stationKey = `${inspection.turnIndex}_${st.stationIndex}`;
-                            const isCopied = copiedStationKey === stationKey;
-                            const isCollapsed = collapsedStationKeys.has(stationKey);
+                          {/* Banner chẩn đoán kỹ thuật: Lý do kết thúc / dừng lượt */}
+                          <div style={{
+                            padding: "8px 12px",
+                            background: isParseFailed
+                              ? "rgba(239, 68, 68, 0.12)"
+                              : "var(--color-bg-secondary, rgba(255,255,255,0.03))",
+                            borderBottom: "1px solid var(--color-border-subtle, rgba(255,255,255,0.06))",
+                            fontSize: 11,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                            color: "var(--color-text-secondary, #94a3b8)",
+                          }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <span style={{ fontWeight: 600, color: "var(--color-text-primary, #f1f5f9)" }}>Lý do kết thúc:</span>
+                              <code style={{
+                                color: isParseFailed ? "#f87171" : "#a5b4fc",
+                                background: isParseFailed ? "rgba(239, 68, 68, 0.2)" : "rgba(99, 102, 241, 0.15)",
+                                padding: "1px 6px",
+                                borderRadius: 3,
+                                fontWeight: 600,
+                              }}>
+                                {inspection.terminalReason || "unknown"}
+                              </code>
+                            </div>
+                            <div>
+                              <span style={{ fontWeight: 600, color: "var(--color-text-primary, #f1f5f9)" }}>Chẩn đoán:</span> {inspection.terminalExplanation}
+                            </div>
+                          </div>
+
+                          {/* 4 Step dữ liệu message thực tế */}
+                          <div className="te-stations-list">
+                            {stepsList.map((st) => {
+                              const stepKey = `${inspection.turnIndex}_${st.stepIndex}`;
+                              const isCopied = copiedStationKey === stepKey;
+                              const isCollapsed = collapsedStationKeys.has(stepKey);
 
                             return (
-                              <div key={st.stationIndex} className="te-station-card">
+                              <div key={st.stepIndex} className="te-station-card">
                                 <div
                                   className="te-station-header"
                                   onClick={() => {
                                     setCollapsedStationKeys((prev) => {
                                       const next = new Set(prev);
-                                      if (next.has(stationKey)) next.delete(stationKey);
-                                      else next.add(stationKey);
+                                      if (next.has(stepKey)) next.delete(stepKey);
+                                      else next.add(stepKey);
                                       return next;
                                     });
                                   }}
-                                  title={isCollapsed ? "Click để mở rộng xem dữ liệu thô" : "Click để thu gọn trạm"}
+                                  title={isCollapsed ? "Click để mở rộng xem dữ liệu thô" : "Click để thu gọn bước"}
                                 >
                                   <div className="te-station-header-left">
                                     <span className="te-station-toggle-icon">
                                       {isCollapsed ? "▶" : "▼"}
                                     </span>
-                                    <span className="te-station-icon">{st.stationIcon}</span>
                                     <div className="te-station-title-group">
                                       <div className="te-station-name-row">
-                                        <span className="te-station-name">{st.stationName}</span>
+                                        <span className="te-station-name">{st.stepName}</span>
                                         <span className={`te-station-status-pill te-status-${st.status}`}>
                                           {st.status.toUpperCase()}
                                         </span>
@@ -2082,13 +2278,13 @@ export function TraceExplorer({
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         navigator.clipboard.writeText(st.rawContent);
-                                        setCopiedStationKey(stationKey);
-                                        showToast(`✓ Đã sao chép Raw ${st.stationName}`);
+                                        setCopiedStationKey(stepKey);
+                                        showToast(`✓ Đã sao chép Raw ${st.stepName}`);
                                         setTimeout(() => setCopiedStationKey(null), 2000);
                                       }}
-                                      title="Sao chép toàn bộ văn bản RAW 100% của trạm này vào Clipboard"
+                                      title="Sao chép toàn bộ văn bản RAW của bước này"
                                     >
-                                      {isCopied ? "✓ Đã chép!" : "📋 Copy Raw"}
+                                      {isCopied ? "✓ Đã chép!" : "Copy Raw"}
                                     </button>
                                   </div>
                                 </div>
@@ -2112,8 +2308,68 @@ export function TraceExplorer({
                         </div>
                       </div>
                     );
-                  });
+                  } catch (renderErr) {
+                    console.error("[TraceExplorer] Lỗi khi render turn:", renderErr);
+                    return (
+                      <div key={trace.traceId} className="te-debug-turn-card" style={{ padding: 16, borderColor: "#ef4444" }}>
+                        <div style={{ color: "#f87171", fontWeight: 600, marginBottom: 8 }}>
+                          Lỗi hiển thị Turn #{turnIdx} (Trace: {trace.traceId})
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--color-text-secondary, #94a3b8)" }}>
+                          {renderErr instanceof Error ? renderErr.message : String(renderErr)}
+                        </div>
+                      </div>
+                    );
+                  }
+                });
                 })()}
+              </div>
+            ) : (
+              <div className="te-console-terminal-wrapper">
+                <div
+                  ref={consoleContainerRef}
+                  className={`te-console-terminal-screen ${consoleWrap ? "is-wrap" : "is-nowrap"}`}
+                >
+                  {filteredConsoleRecords.length === 0 ? (
+                    <div style={{ color: "#64748b", fontStyle: "italic", textAlign: "center", marginTop: 60 }}>
+                      {consoleSearch
+                        ? `Không tìm thấy dòng log console nào khớp với từ khóa "${consoleSearch}"`
+                        : "(Chưa có log console hoặc màn hình đã được xóa sạch)"}
+                    </div>
+                  ) : (
+                    <div className="te-console-content">
+                      {filteredConsoleRecords.map((r, idx) => {
+                        const time = new Date(r.at).toLocaleTimeString();
+                        const rawLine = (r.detail?.line as string) || (r.detail?.message as string) || "";
+                        const isError = r.level === "error" || rawLine.includes("[error]") || rawLine.includes("error=");
+                        const isCompleted = rawLine.includes("[completed]");
+                        const isStart = rawLine.includes("[start]") || rawLine.includes("[busy]");
+                        const isAbort = rawLine.includes("[abort]") || rawLine.includes("[warn]");
+
+                        let textColor = "#e2e8f0";
+                        if (isError) textColor = "#f87171";
+                        else if (isCompleted) textColor = "#34d399";
+                        else if (isStart) textColor = "#60a5fa";
+                        else if (isAbort) textColor = "#fbbf24";
+
+                        return (
+                          <div
+                            key={`${r.at}-${idx}`}
+                            className="te-console-row"
+                            style={{ color: textColor }}
+                          >
+                            <span className="te-console-time">
+                              [{time}]
+                            </span>
+                            <span className="te-console-text">
+                              {rawLine}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             </>

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
+import { compileM365Prompt, compileM365HybridForwardPrompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
 import { M365ToolCallDetector, M365MarkdownBuffer, normalizeMarkdownFences } from "../src/adapters/m365-copilot/markdown";
 import { M365ToolBridge, normalizeFileContent } from "../src/adapters/m365-copilot/tool-bridge";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
@@ -524,4 +524,188 @@ const b = \\{\\
     expect(finalResult.markdown).toContain("Đúng hướng.");
     expect(finalResult.delta).toContain("chrome.storage.local");
   });
+
+  test("Phase 14: compileM365HybridForwardPrompt combines protocol directive and raw codex json without coercive output format directive", () => {
+    const parsed: CodexParsedRequest = {
+      modelId: "m365-copilot/think",
+      stream: true,
+      context: {
+        messages: [{
+          role: "user",
+          content: "chỉnh sửa và thêm comment cho file này giúp tôi",
+          timestamp: Date.now(),
+        }],
+      },
+      options: {},
+    };
+    const rawBody = {
+      model: "m365-copilot/think",
+      input: [{ role: "user", content: "chỉnh sửa file" }],
+    };
+
+    const prompt = compileM365HybridForwardPrompt(parsed, rawBody);
+    expect(prompt).toContain("TEXT INTERACTION PROTOCOL");
+    expect(prompt).not.toContain("sandbox /mnt/data");
+    expect(prompt).toContain("<tool_call>");
+    expect(prompt).toContain("<custom_tool_call");
+    expect(prompt).toContain("[YÊU CẦU CỦA NGƯỜI DÙNG]");
+    expect(prompt).toContain("chỉnh sửa file");
+    // Khẳng định loại bỏ hoàn toàn dòng lệnh ép buộc tool call
+    expect(prompt).not.toContain("[Yêu cầu định dạng đầu ra]");
+  });
+
+  test("Phase 15: M365OutputTranslator cleans user raw response with unescaped quotes, 2-star End Patch, and BizChat suffix", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const rawUserSnippet = `<tool_call> {"name":"apply_patch","arguments":{"patch":"*** Begin Patch\\n*** Update File: .github/workflows/ci.yml\\n@@\\n if (-not :Is64BitOperatingSystem) {\\n throw \\"The Windows CI runner must be 64-bit\\"\\n }\\n** End Patch"}} </tool_call>\\n\\nProvide your feedback on BizChat`;
+
+    const translator = new M365OutputTranslator();
+    const result = translator.translate(rawUserSnippet);
+
+    expect(result.type).toBe("tool_call");
+    if (result.type === "tool_call") {
+      expect(result.tool_calls.length).toBe(1);
+      const call = result.tool_calls[0];
+      expect(call.function.name).toBe("apply_patch");
+      const args = JSON.parse(call.function.arguments);
+      expect(args.input).toContain("*** Begin Patch");
+      expect(args.input).toContain("*** End Patch");
+      expect(args.input).toContain("throw \"The Windows CI runner must be 64-bit\"");
+      expect(args.input).not.toContain("BizChat");
+      expect(args.input).not.toContain("}} </tool_call>");
+      expect(args.input.endsWith("*** End Patch")).toBe(true);
+    }
+  });
+
+  test("Phase 15b: M365OutputTranslator translates custom_tool_call name=apply_patch cleanly", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const rawSnippet = `<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** Update File: test.txt\n@@\n-old\n+new\n*** End Patch\n</custom_tool_call>`;
+
+    const translator = new M365OutputTranslator();
+    const result = translator.translate(rawSnippet);
+
+    expect(result.type).toBe("tool_call");
+    if (result.type === "tool_call") {
+      expect(result.tool_calls.length).toBe(1);
+      const call = result.tool_calls[0];
+      expect(call.function.name).toBe("apply_patch");
+      const args = JSON.parse(call.function.arguments);
+      expect(args.input).toContain("*** Begin Patch");
+      expect(args.input).toContain("*** End Patch");
+      expect(args.input.endsWith("*** End Patch")).toBe(true);
+    }
+  });
+
+  test("Phase 15c: Natural conversational greeting translates to final_answer without false-positive tool call", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const naturalReply = "Xin chào! Tôi là Trợ lý lập trình AI của bạn. Tôi có thể giúp gì cho dự án hôm nay?";
+
+    const translator = new M365OutputTranslator();
+    const result = translator.translate(naturalReply);
+
+    expect(result.type).toBe("final_answer");
+    if (result.type === "final_answer") {
+      expect(result.content).toBe(naturalReply);
+    }
+  });
+
+  test("Phase 16: M365ToolBridge maps newly added tools correctly", () => {
+    // 1. write_stdin
+    const mappedStdin = M365ToolBridge.mapToolCall({
+      name: "write_stdin",
+      arguments: JSON.stringify({ session_id: 101, chars: "\u0003", yield_time_ms: 1000 }),
+    });
+    expect(mappedStdin.name).toBe("write_stdin");
+    expect(JSON.parse(mappedStdin.arguments)).toEqual({
+      session_id: 101,
+      chars: "\u0003",
+      yield_time_ms: 1000,
+    });
+
+    // 2. view_image
+    const mappedViewImage = M365ToolBridge.mapToolCall({
+      name: "view_image",
+      arguments: JSON.stringify({ path: "assets/logo.png", detail: "original" }),
+    });
+    expect(mappedViewImage.name).toBe("view_image");
+    expect(JSON.parse(mappedViewImage.arguments)).toEqual({
+      path: "assets/logo.png",
+      detail: "original",
+    });
+
+    // 3. request_user_input
+    const mappedUserInput = M365ToolBridge.mapToolCall({
+      name: "request_user_input",
+      arguments: JSON.stringify({
+        questions: [{
+          id: "q1",
+          header: "Auth",
+          question: "Which auth?",
+          options: [{ label: "JWT", description: "Use tokens" }],
+        }],
+      }),
+    });
+    expect(mappedUserInput.name).toBe("request_user_input");
+    const parsedUserInput = JSON.parse(mappedUserInput.arguments);
+    expect(parsedUserInput.questions.length).toBe(1);
+    expect(parsedUserInput.questions[0].id).toBe("q1");
+
+    // 4. create_goal
+    const mappedCreateGoal = M365ToolBridge.mapToolCall({
+      name: "create_goal",
+      arguments: JSON.stringify({ objective: "Build feature A", token_budget: 50000 }),
+    });
+    expect(mappedCreateGoal.name).toBe("create_goal");
+    expect(JSON.parse(mappedCreateGoal.arguments)).toEqual({
+      objective: "Build feature A",
+      token_budget: 50000,
+    });
+
+    // 5. update_goal
+    const mappedUpdateGoal = M365ToolBridge.mapToolCall({
+      name: "update_goal",
+      arguments: JSON.stringify({ status: "complete" }),
+    });
+    expect(mappedUpdateGoal.name).toBe("update_goal");
+    expect(JSON.parse(mappedUpdateGoal.arguments)).toEqual({
+      status: "complete",
+    });
+
+    // 6. get_goal
+    const mappedGetGoal = M365ToolBridge.mapToolCall({
+      name: "get_goal",
+      arguments: "{}",
+    });
+    expect(mappedGetGoal.name).toBe("get_goal");
+    expect(JSON.parse(mappedGetGoal.arguments)).toEqual({});
+
+    // 7. exec_command
+    const mappedExec = M365ToolBridge.mapToolCall({
+      name: "exec_command",
+      arguments: JSON.stringify({ cmd: "pytest", workdir: "/app" }),
+    });
+    expect(mappedExec.name).toBe("exec_command");
+    expect(JSON.parse(mappedExec.arguments).cmd).toBe("pytest");
+    expect(JSON.parse(mappedExec.arguments).workdir).toBe("/app");
+  });
+
+  test("Phase 17: M365OutputTranslator translates XML tool_call for view_image and request_user_input", () => {
+    const { M365OutputTranslator } = require("../src/adapters/m365-copilot/output-translator");
+    const translator = new M365OutputTranslator();
+
+    const snippet1 = `<tool_call>\n{"name": "view_image", "arguments": {"path": "diagram.png"}}\n</tool_call>`;
+    const res1 = translator.translate(snippet1);
+    expect(res1.type).toBe("tool_call");
+    if (res1.type === "tool_call") {
+      expect(res1.tool_calls[0].function.name).toBe("view_image");
+      expect(JSON.parse(res1.tool_calls[0].function.arguments).path).toBe("diagram.png");
+    }
+
+    const snippet2 = `<tool_call>\n{"name": "request_user_input", "arguments": {"questions": []}}\n</tool_call>`;
+    const res2 = translator.translate(snippet2);
+    expect(res2.type).toBe("tool_call");
+    if (res2.type === "tool_call") {
+      expect(res2.tool_calls[0].function.name).toBe("request_user_input");
+    }
+  });
 });
+

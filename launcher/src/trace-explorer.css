@@ -1537,4 +1537,104 @@
   color: inherit;
 }
 
+/* Console Logs Terminal Styles */
+.te-console-terminal-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--color-background-surface);
+  padding: 8px 12px 12px 12px;
+}
+
+.te-console-terminal-screen {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: #0d1117;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 6px);
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-y: auto;
+  user-select: text;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.te-console-terminal-screen::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.te-console-terminal-screen::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.te-console-terminal-screen::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.te-console-terminal-screen::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Chế độ Wrap Text (tự động xuống dòng, ẩn cuộn ngang) */
+.te-console-terminal-screen.is-wrap {
+  overflow-x: hidden;
+}
+
+.te-console-terminal-screen.is-wrap .te-console-content {
+  width: 100%;
+}
+
+.te-console-terminal-screen.is-wrap .te-console-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* Chế độ Cuộn Ngang (giữ nguyên định dạng dòng, cuộn ngang mượt mà khi log dài) */
+.te-console-terminal-screen.is-nowrap {
+  overflow-x: auto;
+}
+
+.te-console-terminal-screen.is-nowrap .te-console-content {
+  width: max-content;
+  min-width: 100%;
+}
+
+.te-console-terminal-screen.is-nowrap .te-console-text {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.te-console-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.te-console-row {
+  display: flex;
+  gap: 10px;
+  padding: 1px 0;
+  width: 100%;
+}
+
+.te-console-time {
+  color: #475569;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.te-console-text {
+  flex: 1;
+  min-width: 0;
+}
+
 

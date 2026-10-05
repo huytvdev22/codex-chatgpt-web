@@ -1,14 +1,19 @@
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
-import { compileM365Prompt } from "./prompt";
+import { compileM365Prompt, compileM365HybridForwardPrompt } from "./prompt";
+import { CodexRawPayload } from "./codex-raw-payload";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
 import { M365OutputTranslator, maskArgumentsForLog } from "./output-translator";
 import { emitStructuredEvent } from "../../observability/emitter";
+import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
+import path from "node:path";
+import { homedir } from "node:os";
 import type { TraceContext } from "../../observability/types";
+import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 
 export * from "./bash-translator";
 export * from "./output-translator";
@@ -158,15 +163,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
       throw new DOMException("M365 Copilot turn aborted before start", "AbortError");
     }
 
-    // 1. Xác định định danh phiên trò chuyện và kiểm tra xem có phải cuộc trò chuyện mới
-    const rawBody = parsed._rawBody as Record<string, any> | undefined;
-    const clientMeta = rawBody?.client_metadata as Record<string, any> | undefined;
-    const turnMeta = clientMeta?.["x-codex-turn-metadata"];
-    const parsedTurnMeta = typeof turnMeta === "string" ? (() => { try { return JSON.parse(turnMeta); } catch { return undefined; } })() : turnMeta;
-
+    // 1. Khởi tạo Domain Model 1:1 đại diện cho toàn bộ Raw JSON Request của Codex
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
     const conversationKey = incoming.headers.get("x-codex-conversation-key")
-      || parsedTurnMeta?.thread_id
-      || clientMeta?.thread_id
+      || rawPayload.getThreadId()
       || undefined;
 
     const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
@@ -178,8 +178,21 @@ export class M365CopilotAdapter implements ProviderAdapter {
       this.lastConversationKey = conversationKey;
     }
 
+    // 1.1. Kiểm tra cấu hình Temporary Chat Per Request từ Launcher
+    let isTemporaryPerRequest = false;
+    const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR
+      || path.join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
+    if (descriptorPath) {
+      try {
+        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+        isTemporaryPerRequest = Boolean(descriptor.m365TemporaryChatPerRequest);
+      } catch (err) {
+        console.warn(`[m365-adapter] Không thể đọc descriptor từ ${descriptorPath}:`, err);
+      }
+    }
+    console.log(`[m365-adapter] Chế độ Temporary Chat Per Request: ${isTemporaryPerRequest ? "BẬT (Pure Forwarder)" : "TẮT (Stateful)"}`);
+
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
-    // Hoàn tất lượt ngay lập tức mà không gọi lại M365 Copilot
     const allMsgs = parsed.context.messages || [];
     const lastMsg = allMsgs[allMsgs.length - 1];
     if (isAssistantFinalAnswer(lastMsg)) {
@@ -193,6 +206,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         traceContext,
         safeDetails: {
           completionType: "final_answer",
+          terminalReason: "already_completed_assistant_reply",
+          terminalExplanation: "Cuộc hội thoại đã kết thúc bằng phản hồi trước đó của trợ lý và không có lệnh mới từ Codex.",
           toolCount: 0,
           inputTokens: 0,
           outputTokens: 0,
@@ -207,8 +222,11 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt (chỉ gửi tin nhắn mới nếu đang tiếp tục cuộc trò chuyện)
+    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì dùng Prompt tối ưu từ Domain Model 1:1
     const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
+    const promptToSend = isTemporaryPerRequest
+      ? compileM365HybridForwardPrompt(parsed, rawPayload)
+      : compiledPrompt;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {
@@ -224,6 +242,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         traceContext,
         safeDetails: {
           completionType: "title_response",
+          terminalReason: "title_request",
+          terminalExplanation: "Codex gửi yêu cầu sinh tiêu đề ngầm, hệ thống đã phản hồi tức thì.",
           toolCount: 0,
           finalAnswer: titleText,
           inputTokens: usage.inputTokens,
@@ -245,7 +265,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
       const toolDetector = new M365ToolCallDetector();
       let streamedAnyText = false;
 
-      const reply = await executeM365Turn(compiledPrompt, {
+      const reply = await executeM365Turn(promptToSend, {
         onChunk: (delta) => {
           const safeText = toolDetector.feed(delta);
           if (safeText) {
@@ -256,7 +276,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         signal: incoming.abortSignal,
         traceId: incoming.headers.get("x-codex-trace-id") || undefined,
         conversationKey,
-        isNewConversation,
+        isNewConversation: isTemporaryPerRequest ? true : isNewConversation,
+        forceTemporaryChat: isTemporaryPerRequest,
         shouldStop: () => toolDetector.hasDetectedToolCall(),
         modelSlug: parsed.modelId,
         traceContext,
@@ -372,6 +393,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
             traceContext,
             safeDetails: {
               completionType: "loop_blocked",
+              terminalReason: "loop_blocked_repeated_tool",
+              terminalExplanation: `Ngắt vòng lặp an toàn: Công cụ ${mappedCalls[0]?.mapped.name} bị gọi lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp với cùng tham số.`,
               toolCount: 0,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
@@ -409,6 +432,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
             traceContext,
             safeDetails: {
               completionType: "loop_blocked",
+              terminalReason: "loop_blocked_max_iterations",
+              terminalExplanation: `Ngắt an toàn: Đã chạm giới hạn tối đa ${MAX_TOOL_ITERATIONS} lượt gọi công cụ liên tiếp trong phiên.`,
               toolCount: 0,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
@@ -442,6 +467,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
           traceContext,
           safeDetails: {
             completionType: "tool_call",
+            terminalReason: "tool_calls_emitted",
+            terminalExplanation: `Bridge Server đã phát lệnh gọi ${detectedToolCalls.length} công cụ về Codex: ${mappedCalls.map(c => c.mapped.name).join(", ")}. Codex sẽ tiếp tục thực thi và mở lượt tiếp theo.`,
             toolCount: detectedToolCalls.length,
             toolCalls: mappedCalls.map(c => ({
               id: c.callId,
@@ -459,6 +486,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
           endTurn: false,
           usage,
         });
+
+        // [DEBUG PIPELINE] STEP 4: Bridge Server ➔ Codex IDE (OUTGOING SSE / TOOL CALLS)
+        logDebugPipelineStation(
+          4,
+          "BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)",
+          mappedCalls.map(c => ({
+            id: c.callId,
+            name: c.mapped.name,
+            arguments: c.mapped.arguments,
+          }))
+        );
 
         console.log(`[M365 TOOL] emitted ${detectedToolCalls.length} tool(s) with stopReason=tool_use`);
         return;
@@ -478,14 +516,31 @@ export class M365CopilotAdapter implements ProviderAdapter {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
       }
+      const isSuspiciousFallback = Boolean(translated.parseDiagnostics?.suspiciousToolDetected);
+      const terminalReason = isSuspiciousFallback
+        ? "parse_failed_fallback_final_answer"
+        : (translated.parseDiagnostics?.terminalReason || "model_final_answer");
+
+      const terminalExplanation = isSuspiciousFallback
+        ? `CẢNH BÁO: M365 có sinh khối công cụ nhưng parser bị lỗi JSON (${translated.parseDiagnostics?.warningMessage || "cú pháp hỏng"}), dẫn đến bị fallback sang văn bản thường làm Codex dừng lại.`
+        : (translated.parseDiagnostics?.warningMessage || "M365 Copilot hoàn tất câu trả lời kết luận (Final Answer). Codex dừng chu trình agent và chờ người dùng.");
+
+      if (isSuspiciousFallback) {
+        console.warn(`[m365-adapter] [PARSER-FALLBACK-WARNING] Phát hiện fallback nguy hiểm sang final_answer:`, translated.parseDiagnostics);
+      }
+      console.log(`[m365-adapter] [turn-completed] terminalReason=${terminalReason} explanation=${terminalExplanation}`);
+
       emitStructuredEvent({
-        level: "info",
+        level: isSuspiciousFallback ? "warning" : "info",
         event: "m365.turn.completed",
         traceContext,
         safeDetails: {
-          completionType: "final_answer",
+          completionType: isSuspiciousFallback ? "parse_failed" : "final_answer",
+          terminalReason,
+          terminalExplanation,
+          ...(translated.parseDiagnostics ? { parseDiagnostics: translated.parseDiagnostics } : {}),
           toolCount: 0,
-          finalAnswer: remainingText || reply || "",
+          finalAnswer: reply || remainingText || "",
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
         },
@@ -496,6 +551,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
         endTurn: true,
         usage,
       });
+
+      // [DEBUG PIPELINE] STEP 4: Bridge Server ➔ Codex IDE (OUTGOING SSE / TOOL CALLS)
+      const step4TextContent = (reply || remainingText || "").trim();
+      logDebugPipelineStation(4, "BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)", step4TextContent || "(Phản hồi hoàn tất)");
     } catch (err: unknown) {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
@@ -508,6 +567,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
           traceContext,
           safeDetails: {
             completionType: "aborted",
+            terminalReason: "client_aborted",
+            terminalExplanation: "Codex gửi tín hiệu abort (người dùng bấm Dừng hoặc ngắt kết nối).",
             toolCount: 0,
             inputTokens: 0,
             outputTokens: 0,
@@ -523,6 +584,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
         traceContext,
         safeDetails: {
           completionType: "error",
+          terminalReason: "error",
+          terminalExplanation: `Gặp lỗi trong quá trình thực thi: ${message}`,
           toolCount: 0,
           inputTokens: 0,
           outputTokens: 0,

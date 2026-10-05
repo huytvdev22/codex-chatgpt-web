@@ -467,12 +467,11 @@ export function formatFlowPayloadReport(
 }
 
 /**
- * Trích xuất dữ liệu thô phục vụ Debug Pipeline qua 6 trạm kiểm soát (Data Flow Inspector)
+ * Trích xuất dữ liệu thô phục vụ Debug Conversation qua 4 Step cốt lõi
  */
 export interface DebugPipelineStation {
-  stationIndex: number;
-  stationName: string;
-  stationIcon: string;
+  stepIndex: number | string;
+  stepName: string;
   summary: string;
   rawTitle: string;
   rawContent: string;
@@ -489,12 +488,36 @@ export interface DebugTurnInspection {
   durationMs: number;
   status: string;
   completionType: "tool_call" | "final_answer" | "unknown";
-  stations: DebugPipelineStation[];
-  nextActionExplanation: string;
+  terminalReason: string;
+  terminalExplanation: string;
+  steps: DebugPipelineStation[];
 }
 
 /**
- * Phân tích và trích xuất dữ liệu các trạm kiểm soát của từng Turn phục vụ Debug Flow
+ * Trích xuất text an toàn từ message content của Codex/OpenAI payload
+ */
+function extractMessageContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          return (item as any).text || (item as any).content || "";
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content && typeof content === "object") {
+    return (content as any).text || (content as any).output || JSON.stringify(content, null, 2);
+  }
+  return "";
+}
+
+/**
+ * Phân tích và trích xuất dữ liệu qua 4 Step của từng Turn phục vụ Debug Conversation
  */
 export function extractDebugInspectionFromTrace(
   trace: TraceGroup,
@@ -502,7 +525,9 @@ export function extractDebugInspectionFromTrace(
 ): DebugTurnInspection {
   const records = trace.records;
   const reqReceived = records.find((r) => r.event === "codex.request.received");
-  const toolResults = records.filter((r) => r.event === "codex.tool_result.received");
+  const toolResults = records.filter(
+    (r) => r.event === "codex.tool_result.received" || r.event === "codex.tool.result"
+  );
   const providerStarted = records.find((r) => r.event === "m365.provider.started");
   const providerFinished = records.find((r) => r.event === "m365.provider.finished");
   const toolDetected = records.filter((r) => r.event === "m365.tool.detected");
@@ -521,111 +546,228 @@ export function extractDebugInspectionFromTrace(
   const completionType = (turnCompletedSafe.completionType as any) || (toolDetected.length > 0 ? "tool_call" : "final_answer");
   const requestId = String(trace.records[0]?.detail?.requestId || reqReceived?.detail?.requestId || "req_unknown");
 
-  const stations: DebugPipelineStation[] = [];
+  // Chẩn đoán lý do kết thúc / dừng lượt
+  let terminalReason = String(turnCompletedSafe.terminalReason || "");
+  let terminalExplanation = String(turnCompletedSafe.terminalExplanation || "");
 
-  // ================= ĐIỂM 1: CODEX ➜ BRIDGE SERVER =================
-  let point1Content = "";
-  let point1Summary = "";
+  if (!terminalReason) {
+    if (loopBlocked) {
+      terminalReason = "loop_blocked";
+      terminalExplanation = "Vòng lặp bị ngắt do vượt ngưỡng an toàn lặp lại.";
+    } else if (completionType === "tool_call" || toolDetected.length > 0) {
+      terminalReason = "tool_calls_emitted";
+      terminalExplanation = `Bridge Server phát lệnh gọi ${toolDetected.length} công cụ về Codex. Codex tiếp tục chu trình agent.`;
+    } else {
+      terminalReason = "model_final_answer";
+      terminalExplanation = "M365 Copilot hoàn tất câu trả lời kết luận (Final Answer). Codex dừng chu trình agent và chờ người dùng.";
+    }
+  }
+
+  const steps: DebugPipelineStation[] = [];
+
+  // ================= STEP 1: NỘI DUNG BRIDGE SERVER NHẬN TỪ CODEX =================
+  // Nguyên tắc: RAW DATA là thông tin gốc 100% server nhận được từ HTTP request của Codex.
+  // Tuyệt đối KHÔNG tự ý chèn chuỗi nhân tạo. Nếu có nhiều nội dung gửi (nhiều tool results
+  // hoặc cả developer instructions và user message), chia nhỏ thành các sub-steps 1.1, 1.2...
+
   const userMessage = (reqSafe.userMessage as string) || (reqSafe.promptPreview as string) || "";
   const actualMessage = (reqSafe.actualMessage as string) || "";
 
   if (toolResults.length > 0) {
-    const parts: string[] = [];
-    parts.push(`[KẾT QUẢ THỰC THI CÔNG CỤ (TOOL RESULT) TỪ CODEX]:`);
-    toolResults.forEach((tr, i) => {
+    if (toolResults.length === 1) {
+      const tr = toolResults[0];
       const s = (tr.detail?.safeDetails as Record<string, unknown>) || {};
-      const callId = s.toolCallId || tr.detail?.toolCallId || `call_${i + 1}`;
-      const out = s.output || s.outputPreview || "(không có nội dung kết quả)";
-      parts.push(`\n--- Tool Result #${i + 1} (Call ID: ${callId}) ---`);
-      parts.push(String(out));
-    });
-    if (userMessage && !userMessage.startsWith("Tool Result")) {
-      parts.push(`\n[CÂU HỎI KÈM THEO]:`);
-      parts.push(userMessage);
-    }
-    point1Content = parts.join("\n");
-    point1Summary = `Codex gửi ${toolResults.length} kết quả thực thi công cụ (Tool Results) lên Bridge Server`;
-  } else if (actualMessage || userMessage) {
-    point1Content = actualMessage || userMessage;
-    point1Summary = `Câu hỏi từ người dùng: "${(actualMessage || userMessage).slice(0, 80).replace(/\n/g, " ")}${(actualMessage || userMessage).length > 80 ? "..." : ""}"`;
-  } else {
-    const rawMsgs = reqSafe.rawMessages as any[];
-    if (Array.isArray(rawMsgs) && rawMsgs.length > 0) {
-      point1Content = JSON.stringify(rawMsgs, null, 2);
-      point1Summary = `Nhận request từ Codex (${rawMsgs.length} messages)`;
+      const callId = String(s.toolCallId || tr.detail?.toolCallId || "call_1");
+      const toolName = String(s.toolName || tr.detail?.toolName || "tool");
+      const rawOut =
+        typeof s.output === "string"
+          ? s.output
+          : typeof s.outputPreview === "string"
+          ? s.outputPreview
+          : s.output != null
+          ? JSON.stringify(s.output, null, 2)
+          : "";
+
+      steps.push({
+        stepIndex: 1,
+        stepName: `Step 1: Nội dung Bridge Server nhận từ Codex (Tool Result - ${toolName})`,
+        summary: `Kết quả thực thi công cụ "${toolName}" (${callId})`,
+        rawTitle: `Dữ liệu thô từ Codex Tool Result (${callId})`,
+        rawContent: rawOut || "(Nội dung kết quả rỗng)",
+        rawFormat: rawOut.trim().startsWith("{") || rawOut.trim().startsWith("[") ? "json" : "text",
+        status: "success",
+        metadata: {
+          "Công cụ": toolName,
+          "Call ID": callId,
+          "Ký tự": rawOut.length,
+        },
+      });
     } else {
-      point1Content = String(reqReceived?.detail?.message || "(Không nhận diện được nội dung tin nhắn thô từ Codex)");
-      point1Summary = `Nhận request từ Codex Client`;
+      // Nhiều kết quả tool: Chia nhỏ thành các sub-steps 1.1, 1.2... bảo toàn dữ liệu thô từng lệnh
+      toolResults.forEach((tr, i) => {
+        const s = (tr.detail?.safeDetails as Record<string, unknown>) || {};
+        const callId = String(s.toolCallId || tr.detail?.toolCallId || `call_${i + 1}`);
+        const toolName = String(s.toolName || tr.detail?.toolName || "tool");
+        const rawOut =
+          typeof s.output === "string"
+            ? s.output
+            : typeof s.outputPreview === "string"
+            ? s.outputPreview
+            : s.output != null
+            ? JSON.stringify(s.output, null, 2)
+            : "";
+
+        steps.push({
+          stepIndex: `1.${i + 1}`,
+          stepName: `Step 1.${i + 1}: Nội dung Bridge Server nhận từ Codex (Tool Result #${i + 1} - ${toolName})`,
+          summary: `Kết quả thực thi công cụ "${toolName}" (${callId}) [${i + 1}/${toolResults.length}]`,
+          rawTitle: `Dữ liệu thô từ Codex Tool Result #${i + 1} (${callId})`,
+          rawContent: rawOut || "(Nội dung kết quả rỗng)",
+          rawFormat: rawOut.trim().startsWith("{") || rawOut.trim().startsWith("[") ? "json" : "text",
+          status: "success",
+          metadata: {
+            "Công cụ": toolName,
+            "Call ID": callId,
+            "Thứ tự": `${i + 1}/${toolResults.length}`,
+            "Ký tự": rawOut.length,
+          },
+        });
+      });
+    }
+  } else {
+    // Không có tool results: Lượt User Prompt / Context / Khởi tạo
+    const rawMsgs = (reqSafe.rawMessages as any[]) || [];
+    const devMsgs = rawMsgs.filter(
+      (m) => m && m.role === "developer" && m.type === "message"
+    );
+    const userMsgs = rawMsgs.filter(
+      (m) => m && (m.role === "user" || (m.type === "message" && !m.role))
+    );
+
+    // Kiểm tra xem có message Developer riêng biệt chứa System Instruction không
+    const devTexts = devMsgs
+      .map((m) => extractMessageContentText(m.content))
+      .filter(Boolean)
+      .filter((t) => !t.startsWith("<codex_apps_client_time_context>"));
+
+    if (devTexts.length > 0 && userMsgs.length > 0) {
+      // Chia nhỏ thành Step 1.1 (Developer Instructions) và Step 1.2 (User Request & Context)
+      const devContent = devTexts.join("\n\n");
+      steps.push({
+        stepIndex: "1.1",
+        stepName: "Step 1.1: Nội dung Bridge Server nhận từ Codex (Chỉ dẫn hệ thống - Developer Instructions)",
+        summary: `Chỉ dẫn hệ thống từ Codex (${devTexts.length} phần tử)`,
+        rawTitle: "Chỉ dẫn hệ thống thô từ Codex (Developer Instructions)",
+        rawContent: devContent,
+        rawFormat: "text",
+        status: "info",
+        metadata: {
+          "Vai trò": "developer",
+          "Ký tự": devContent.length,
+        },
+      });
+
+      const userParts = userMsgs
+        .map((m) => extractMessageContentText(m.content))
+        .filter(Boolean);
+      const userContent = userParts.join("\n\n") || actualMessage || userMessage || "";
+
+      steps.push({
+        stepIndex: "1.2",
+        stepName: "Step 1.2: Nội dung Bridge Server nhận từ Codex (Yêu cầu & Ngữ cảnh IDE - User Request)",
+        summary: `Yêu cầu từ người dùng và ngữ cảnh môi trường IDE (${userContent.length.toLocaleString()} ký tự)`,
+        rawTitle: "Yêu cầu và ngữ cảnh IDE thô từ Codex (User Prompt)",
+        rawContent: userContent,
+        rawFormat: "markdown",
+        status: "success",
+        metadata: {
+          "Vai trò": "user",
+          "Ký tự": userContent.length,
+        },
+      });
+    } else {
+      // Chỉ có 1 loại nội dung hoặc tin nhắn thuần túy
+      let singleContent = "";
+      if (userMsgs.length > 0) {
+        singleContent = userMsgs.map((m) => extractMessageContentText(m.content)).filter(Boolean).join("\n\n");
+      }
+      if (!singleContent) {
+        singleContent = actualMessage || userMessage || "";
+      }
+      if (!singleContent && rawMsgs.length > 0) {
+        singleContent = JSON.stringify(rawMsgs, null, 2);
+      }
+      if (!singleContent) {
+        singleContent = String(reqReceived?.detail?.message || "(Không nhận diện được nội dung tin nhắn thô từ Codex)");
+      }
+
+      steps.push({
+        stepIndex: 1,
+        stepName: "Step 1: Nội dung Bridge Server nhận từ Codex (User Request)",
+        summary: `Yêu cầu nhận từ Codex (${singleContent.length.toLocaleString()} ký tự)`,
+        rawTitle: "Nội dung nhận từ Codex (User Request)",
+        rawContent: singleContent,
+        rawFormat: singleContent.startsWith("{") || singleContent.startsWith("[") ? "json" : "markdown",
+        status: reqReceived ? "success" : "info",
+        metadata: {
+          Model: String(reqSafe.model || trace.modelSlug || "m365-copilot"),
+          "Ký tự": singleContent.length,
+        },
+      });
     }
   }
 
-  stations.push({
-    stationIndex: 1,
-    stationName: "Điểm 1: Codex ➜ Bridge Server (Yêu cầu nhận từ Codex)",
-    stationIcon: "📥",
-    summary: point1Summary,
-    rawTitle: "Nội dung tin nhắn / kết quả thực tế nhận từ Codex",
-    rawContent: point1Content,
-    rawFormat: point1Content.startsWith("{") || point1Content.startsWith("[") ? "json" : "markdown",
-    status: reqReceived ? "success" : "info",
-    metadata: {
-      Model: String(reqSafe.model || trace.modelSlug || "m365-copilot"),
-      "Tool Results": toolResults.length,
-      "Ký tự": point1Content.length,
-    },
-  });
-
-  // ================= ĐIỂM 2: BRIDGE SERVER ➜ M365 COPILOT =================
+  // ================= STEP 2: NỘI DUNG BRIDGE SERVER GỬI LÊN M365 WEB =================
   const rawPrompt =
     (providerStartedSafe.rawPrompt as string) ||
     (providerStartedSafe.injectedPromptPreview as string) ||
     "";
-  const promptBytes = (providerStartedSafe.promptBytes as number) || rawPrompt.length;
+  const promptBytes =
+    (providerStartedSafe.promptBytes as number) ||
+    (rawPrompt ? new TextEncoder().encode(rawPrompt).length : 0);
 
-  stations.push({
-    stationIndex: 2,
-    stationName: "Điểm 2: Bridge Server ➜ M365 Copilot (Prompt tiêm vào M365 Web)",
-    stationIcon: "🚀",
+  steps.push({
+    stepIndex: 2,
+    stepName: "Step 2: Nội dung Bridge Server gửi lên M365 Web",
     summary: rawPrompt
-      ? `Toàn bộ văn bản Prompt thực tế gửi vào chat M365 (${rawPrompt.length.toLocaleString()} ký tự)`
+      ? `Prompt đã tiêm vào ô chat M365 Web (${rawPrompt.length.toLocaleString()} ký tự)`
       : `Đang chuẩn bị gửi prompt tới M365 Copilot`,
-    rawTitle: "Toàn bộ văn bản Prompt thực tế gửi vào ô chat M365 Copilot Web",
+    rawTitle: "Prompt tiêm vào ô chat M365 Web (CDP)",
     rawContent: rawPrompt || "(Chưa có dữ liệu Prompt được gửi)",
     rawFormat: "text",
     status: providerStarted ? "success" : "warning",
     metadata: {
-      "Số ký tự": rawPrompt.length,
+      "Ký tự": rawPrompt.length,
       "Dung lượng": `${promptBytes} bytes`,
       "Phiên M365": providerStartedSafe.isNewConversation ? "New Chat" : "Continue",
     },
   });
 
-  // ================= ĐIỂM 3: M365 COPILOT ➜ BRIDGE SERVER =================
+  // ================= STEP 3: NỘI DUNG THÔ BRIDGE SERVER NHẬN TỪ M365 =================
   const rawResponse =
     (providerFinishedSafe.rawResponse as string) ||
     (providerFinishedSafe.responsePreview as string) ||
     "";
   const durationMs = (providerFinishedSafe.durationMs as number) || trace.durationMs || 0;
 
-  stations.push({
-    stationIndex: 3,
-    stationName: "Điểm 3: M365 Copilot ➜ Bridge Server (Văn bản thô M365 Web phản hồi)",
-    stationIcon: "🌐",
+  steps.push({
+    stepIndex: 3,
+    stepName: "Step 3: Nội dung thô Bridge Server nhận từ M365",
     summary: rawResponse
-      ? `M365 Copilot sinh ${rawResponse.length.toLocaleString()} ký tự Markdown thô trong ${(durationMs / 1000).toFixed(1)}s`
+      ? `Văn bản thô cào từ M365 Web (${rawResponse.length.toLocaleString()} ký tự trong ${(durationMs / 1000).toFixed(1)}s)`
       : `Chưa có phản hồi từ M365 Copilot`,
-    rawTitle: "Toàn bộ nội dung văn bản thô cào từ giao diện M365 Web trước khi parse",
+    rawTitle: "Văn bản thô cào từ giao diện M365 Web trước khi parse",
     rawContent: rawResponse || "(M365 Copilot chưa phản hồi hoặc phản hồi rỗng)",
     rawFormat: "markdown",
     status: providerFinished ? "success" : "warning",
     metadata: {
       "Thời gian sinh": `${durationMs}ms`,
-      "Số ký tự": rawResponse.length,
+      "Ký tự": rawResponse.length,
       "Trạng thái M365": String(providerFinishedSafe.status || "completed"),
     },
   });
 
-  // ================= ĐIỂM 4: BRIDGE SERVER ➜ CODEX =================
+  // ================= STEP 4: NỘI DUNG SAU KHI XỬ LÝ VÀ GỬI VỀ CODEX =================
   let point4Content = "";
   let point4Summary = "";
   let point4Format: "json" | "markdown" | "text" = "markdown";
@@ -650,7 +792,6 @@ export function extractDebugInspectionFromTrace(
     point4Content = JSON.stringify(
       {
         type: "tool_calls",
-        message: "Bridge Server đã chuyển đổi phản hồi của M365 thành OpenAI Tool Calls gửi về Codex:",
         tool_calls: toolsList.map((t: any) => ({
           id: t.id,
           type: "function",
@@ -681,36 +822,25 @@ export function extractDebugInspectionFromTrace(
     } else {
       point4Content = rawResponse || "(Phản hồi hoàn tất)";
     }
-    point4Summary = `Trả lời kết luận hoàn tất gửi về Codex (${point4Content.length.toLocaleString()} ký tự)`;
+    point4Summary = `Trả lời kết luận gửi về Codex (${point4Content.length.toLocaleString()} ký tự)`;
     point4Format = "markdown";
   }
 
-  stations.push({
-    stationIndex: 4,
-    stationName: "Điểm 4: Bridge Server ➜ Codex (Dữ liệu chuyển phát về Codex)",
-    stationIcon: "📤",
+  steps.push({
+    stepIndex: 4,
+    stepName: "Step 4: Nội dung sau khi xử lý và gửi về Codex",
     summary: point4Summary,
-    rawTitle: "Dữ liệu kết quả thực sự chuyển phát về cho Codex IDE",
+    rawTitle: "Dữ liệu chuyển phát về cho Codex IDE",
     rawContent: point4Content,
     rawFormat: point4Format,
     status: loopBlocked ? "error" : "success",
     metadata: {
       "Loại kết quả": completionType === "tool_call" ? "Tool Calls" : "Final Answer",
+      "Lý do kết thúc": terminalReason,
       "Ký tự": point4Content.length,
       "Vòng lặp": `${loopSafe.toolIterations || 1}`,
     },
   });
-
-  // ================= DIỄN GIẢI BƯỚC TIẾP THEO =================
-  let nextActionExplanation = "";
-  if (completionType === "tool_call") {
-    const firstTool = toolDetected[0];
-    const firstToolSafe = (firstTool?.detail?.safeDetails as Record<string, unknown>) || {};
-    const toolName = firstToolSafe.toolName || firstTool?.detail?.toolName || "công cụ";
-    nextActionExplanation = `▶ Codex IDE nhận lệnh \`${toolName}\` qua luồng SSE và sẽ tiến hành thực thi trực tiếp trên máy tính của bạn (chạy terminal, đọc file hoặc áp dụng patch). Sau khi thực thi xong, Codex sẽ tự động mở lượt mới gửi kết quả (\`codex.tool_result.received\`) lên Server Bridge để M365 Copilot đọc và xử lý tiếp.`;
-  } else {
-    nextActionExplanation = `🏁 M365 Copilot đã hoàn tất câu trả lời cuối cùng (Final Answer). Codex IDE in trực tiếp nội dung ra khung trò chuyện cho bạn đọc và dừng chu trình (không gọi thêm công cụ nào nữa).`;
-  }
 
   return {
     turnIndex,
@@ -720,13 +850,14 @@ export function extractDebugInspectionFromTrace(
     durationMs: trace.durationMs,
     status: trace.status,
     completionType,
-    stations,
-    nextActionExplanation,
+    terminalReason,
+    terminalExplanation,
+    steps,
   };
 }
 
 /**
- * Định dạng Báo cáo Debug Conversation chi tiết qua 6 trạm dữ liệu thô (Data Flow Inspector)
+ * Định dạng Báo cáo Debug Conversation chi tiết qua 4 Step dữ liệu thô
  */
 export function formatDebugConversationReport(
   conversation: ConversationGroup,
@@ -735,12 +866,12 @@ export function formatDebugConversationReport(
   const targetTraces = trace ? [trace] : conversation.traces;
   const lines: string[] = [];
 
-  lines.push(`# 🔬 BÁO CÁO DEBUG CONVERSATION: DATA FLOW & RAW PAYLOAD INSPECTOR`);
+  lines.push(`# Debug Conversation Report`);
   lines.push(``);
-  lines.push(`> Báo cáo này kiểm tra toàn bộ dữ liệu thô (DATA RAW) nguyên bản 100% qua từng trạm kiểm soát của pipeline.`);
-  lines.push(`- **Cuộc hội thoại:** \`${conversation.title}\` (ID: \`${conversation.conversationId}\`)`);
-  lines.push(`- **Thời gian xuất:** \`${new Date().toISOString()}\``);
-  lines.push(`- **Tổng số Turn kiểm tra:** \`${targetTraces.length}\``);
+  lines.push(`- **Conversation ID:** \`${conversation.conversationId}\``);
+  lines.push(`- **Title:** \`${conversation.title}\``);
+  lines.push(`- **Exported At:** \`${new Date().toISOString()}\``);
+  lines.push(`- **Total Turns:** \`${targetTraces.length}\``);
   lines.push(``);
   lines.push(`---`);
   lines.push(``);
@@ -748,14 +879,14 @@ export function formatDebugConversationReport(
   targetTraces.forEach((t, idx) => {
     const inspection = extractDebugInspectionFromTrace(t, idx + 1);
 
-    lines.push(`## 🎯 LƯỢT CHAT (TURN) #${inspection.turnIndex} - Request ID: \`${inspection.requestId}\``);
+    lines.push(`## Turn #${inspection.turnIndex} [${inspection.completionType.toUpperCase()}] - Request: \`${inspection.requestId}\``);
     lines.push(`- **Trace ID:** \`${inspection.traceId}\``);
-    lines.push(`- **Model:** \`${inspection.model}\` | **Thời lượng:** \`${(inspection.durationMs / 1000).toFixed(2)}s\``);
-    lines.push(`- **Phân loại kết thúc:** \`${inspection.completionType.toUpperCase()}\` | **Trạng thái:** \`${inspection.status.toUpperCase()}\``);
+    lines.push(`- **Model:** \`${inspection.model}\` | **Duration:** \`${(inspection.durationMs / 1000).toFixed(2)}s\` | **Status:** \`${inspection.status.toUpperCase()}\``);
+    lines.push(`- **Terminal Reason:** \`${inspection.terminalReason}\` (${inspection.terminalExplanation})`);
     lines.push(``);
 
-    inspection.stations.forEach((st) => {
-      lines.push(`### ${st.stationIcon} ${st.stationName}`);
+    inspection.steps.forEach((st) => {
+      lines.push(`### ${st.stepName}`);
       lines.push(`> **Tóm tắt:** ${st.summary}`);
       if (st.metadata) {
         const metaStr = Object.entries(st.metadata)
@@ -764,21 +895,17 @@ export function formatDebugConversationReport(
         lines.push(`> ${metaStr}`);
       }
       lines.push(``);
-      lines.push(`**${st.rawTitle}:**`);
       lines.push(`\`\`\`${st.rawFormat}`);
       lines.push(st.rawContent);
       lines.push(`\`\`\``);
       lines.push(``);
     });
 
-    lines.push(`### 🔮 Bước tiếp theo: Codex IDE sẽ làm gì?`);
-    lines.push(`> ${inspection.nextActionExplanation}`);
-    lines.push(``);
     lines.push(`---`);
     lines.push(``);
   });
 
-  lines.push(`*(Báo cáo Data Flow Inspector được tạo tự động bởi Codex M365 Launcher)*`);
+  lines.push(`*(Báo cáo Debug Conversation được tạo tự động bởi Codex M365 Launcher)*`);
   return lines.join("\n");
 }
 

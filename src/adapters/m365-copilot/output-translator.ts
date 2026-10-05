@@ -1,6 +1,8 @@
 import { BashCommandTranslator } from "./bash-translator";
-import { sanitizeJsonControlChars } from "./markdown";
+import { sanitizeJsonControlChars, sanitizeCodexPatchContent } from "./markdown";
 import { AtomicFileWriter } from "./atomic-file-writer";
+
+export { sanitizeCodexPatchContent };
 
 /**
  * Cấu trúc OpenAI Tool Call chuẩn hóa
@@ -14,20 +16,29 @@ export interface OpenAIToolCall {
   };
 }
 
+export interface ParseDiagnostics {
+  suspiciousToolDetected?: boolean;
+  unclosedTagDetected?: boolean;
+  terminalReason?: string;
+  warningMessage?: string;
+}
+
 /**
  * Kết quả phân tích dịch từ M365 Output Translator
  */
 export type TranslationResult =
   | {
-      type: "tool_call";
-      tool_calls: OpenAIToolCall[];
-      rawResponse: string;
-    }
+    type: "tool_call";
+    tool_calls: OpenAIToolCall[];
+    rawResponse: string;
+    parseDiagnostics?: ParseDiagnostics;
+  }
   | {
-      type: "final_answer";
-      content: string;
-      rawResponse: string;
-    };
+    type: "final_answer";
+    content: string;
+    rawResponse: string;
+    parseDiagnostics?: ParseDiagnostics;
+  };
 
 export interface DetectedToolCall {
   name: string;
@@ -48,32 +59,56 @@ function generateToolCallId(): string {
   return `call_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
 
+import { stripOuterCodeFence } from "./temp-chat/stripCodeFence";
+export { stripOuterCodeFence };
+
 /**
- * Bóc tách code fence ở rìa ngoài cùng (outer boundary) của khối JSON/XML.
- * TUYỆT ĐỐI BẢO TOÀN toàn bộ code fences (```text, ```mermaid) bên trong nội dung!
+ * Chuẩn hóa tên tool: Tự động loại bỏ tiền tố "functions." nếu có
  */
-export function stripOuterCodeFence(raw: string): string {
-  let trimmed = raw.trim();
-  const openMatch = trimmed.match(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n/);
-  if (openMatch) {
-    trimmed = trimmed.slice(openMatch[0].length);
+export function normalizeToolName(name: string): string {
+  if (typeof name === "string" && name.startsWith("functions.")) {
+    return name.slice("functions.".length);
   }
-  const closeMatch = trimmed.match(/\r?\n```[ \t]*$/);
-  if (closeMatch) {
-    trimmed = trimmed.slice(0, trimmed.length - closeMatch[0].length);
+  return name;
+}
+
+
+/**
+ * Tự động cân bằng dấu đóng ngoặc nhọn JSON nếu bị thiếu do Markdown hoặc DOM cắt dở
+ */
+export function balanceJsonBraces(raw: string): string {
+  let inString = false;
+  let escaped = false;
+  let openBraces = 0;
+  let closeBraces = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"' && !escaped) {
+      inString = !inString;
+    } else if (!inString) {
+      if (ch === "{") openBraces++;
+      else if (ch === "}") closeBraces++;
+    }
+    escaped = (ch === "\\" && !escaped);
   }
-  return trimmed.trim();
+  if (openBraces > closeBraces) {
+    return raw + "}".repeat(openBraces - closeBraces);
+  }
+  return raw;
 }
 
 /**
  * Chuẩn hóa và làm sạch chuỗi JSON payload:
  * 1. Bóc outer code fence mà không xâm phạm code fence bên trong.
- * 2. Khôi phục các định danh JSON property bị Turndown escape (ví dụ "read\_file" -> "read_file").
+ * 2. Khôi phục các ký tự bị Markdown/Turndown escape không hợp lệ trong cú pháp JSON
+ *    (ví dụ: "run\_command" -> "run_command", "\[n\]" -> "[n]", "\*" -> "*").
+ *    Trong JSON, chỉ có các escape: \" \\ \/ \b \f \n \r \t \uXXXX là hợp lệ.
+ * 3. Tự động cân bằng ngoặc nhọn nếu mô hình mở nhiều hơn đóng.
  */
 export function cleanJsonPayload(raw: string): string {
   const stripped = stripOuterCodeFence(raw);
-  // Khôi phục các định danh JSON property/value bị Turndown escape: \_ -> _
-  return stripped.replace(/\\_/g, "_");
+  const unescaped = stripped.replace(/\\([_\[\]*~`>#+\-.!|{}()])/g, "$1");
+  return balanceJsonBraces(unescaped);
 }
 
 /**
@@ -105,8 +140,12 @@ export function normalizePatchEnvelope(raw: string): string {
  * *** Begin Patch
  * ...
  * *** End Patch
- * Hỗ trợ nằm trong code block ```patch ... ```, ```diff ... ``` hoặc văn bản trần
- * TUYỆT ĐỐI KHÔNG thực thi khi khối patch chưa hoàn chỉnh (Yêu cầu 4 & 5).
+ * Hỗ trợ:
+ * - Dạng 2 hoặc 3 dấu sao (*** Begin Patch hoặc ** Begin Patch)
+ * - Nằm trong thẻ <custom_tool_call name="apply_patch">
+ * - Nằm trong chuỗi JSON của <tool_call> bị vỡ format
+ * - Nằm trong code block ```patch ... ```, ```diff ... ``` hoặc văn bản trần
+ * Tự động gọt sạch toàn bộ rác XML và BizChat ở đuôi để Lark grammar của Codex IDE luôn parse thành công.
  */
 export class PatchToolCallDetector implements IToolCallDetector {
   readonly priority = 0;
@@ -118,37 +157,49 @@ export class PatchToolCallDetector implements IToolCallDetector {
     // Chuẩn hóa ký tự * bị escape bởi Turndown trước khi tìm kiếm
     const unescaped = rawResponse.replaceAll("\\*", "*");
 
-    // Tìm tất cả các khối hoàn chỉnh: *** Begin Patch ... *** End Patch
-    const matches = [...unescaped.matchAll(/\*{3}\s*Begin Patch([\s\S]*?)\*{3}\s*End Patch/gi)];
+    // 1. Kiểm tra thẻ <custom_tool_call name="apply_patch">...</custom_tool_call> trước
+    const customMatch = unescaped.match(/<\s*custom[\\_]*tool[\\_]*call(?:\s+name=["']apply_patch["'])?\s*>([\s\S]*?)<\s*\/custom[\\_]*tool[\\_]*call\s*>/i);
+    if (customMatch) {
+      const cleanedPatch = sanitizeCodexPatchContent(customMatch[1]);
+      if (cleanedPatch.includes("*** Begin Patch")) {
+        return {
+          name: "apply_patch",
+          arguments: { input: cleanedPatch },
+        };
+      }
+    }
+
+    // 2. Tìm tất cả các khối hoàn chỉnh: *** Begin Patch ... *** End Patch (hỗ trợ cả 2 hoặc 3 dấu sao)
+    const matches = [...unescaped.matchAll(/\*{2,3}\s*Begin Patch([\s\S]*?)\*{2,3}\s*End Patch/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
       for (const m of matches) {
-        const normalized = normalizePatchEnvelope(m[0]);
-        let patch = normalized;
-        const beginIdx = patch.indexOf("*** Begin Patch");
-        if (beginIdx >= 0) patch = patch.slice(beginIdx);
-        const endIdx = patch.lastIndexOf("*** End Patch");
-        if (endIdx >= 0) patch = patch.slice(0, endIdx + "*** End Patch".length);
-
+        const cleanedPatch = sanitizeCodexPatchContent(m[0]);
         calls.push({
           name: "apply_patch",
-          arguments: { input: patch },
+          arguments: { input: cleanedPatch },
         });
       }
       return calls.length === 1 ? calls[0] : calls;
     }
 
-    // Nếu khối patch có Begin Patch và chứa header File (Update/Add/Delete),
+    // 3. Nếu khối patch có Begin Patch và chứa header File (Update/Add/Delete),
     // cho phép auto-close *** End Patch khi stream đã kết thúc
-    const openMatch = unescaped.match(/\*{3}\s*Begin Patch([\s\S]*)$/i);
-    if (openMatch && /\*{3}\s*(?:Update|Add|Delete)\s*File:/i.test(openMatch[1])) {
-      let patch = normalizePatchEnvelope(openMatch[0]);
-      if (!patch.endsWith("*** End Patch")) {
-        patch = `${patch}\n*** End Patch`;
+    const openMatch = unescaped.match(/\*{2,3}\s*Begin Patch([\s\S]*)$/i);
+    if (openMatch && /\*{2,3}\s*(?:Update|Add|Delete)\s*File:/i.test(openMatch[1])) {
+      // Làm sạch rác XML/JSON ở đuôi trước khi auto-close
+      let rawSnippet = openMatch[0];
+      const junkIdx = rawSnippet.search(/["']\}\s*<\s*\/tool|Provide your feedback|BizChat/i);
+      if (junkIdx >= 0) {
+        rawSnippet = rawSnippet.slice(0, junkIdx);
+      }
+      let cleanedPatch = sanitizeCodexPatchContent(rawSnippet);
+      if (!cleanedPatch.endsWith("*** End Patch")) {
+        cleanedPatch = `${cleanedPatch}\n*** End Patch`;
       }
       return {
         name: "apply_patch",
-        arguments: { input: patch },
+        arguments: { input: cleanedPatch },
       };
     }
 
@@ -172,8 +223,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // Không match nếu đang là XML tool_call để nhường cho XmlToolCallDetector nếu nằm trong thẻ
-    const trimmed = rawResponse.trim();
-    if (trimmed.startsWith("<tool_call>") || trimmed.startsWith("<tool\\_call>")) {
+    if (/(?:<|\b)\s*tool[\\_]*call\s*>/i.test(rawResponse)) {
       return null;
     }
 
@@ -242,7 +292,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
 
     // TH1: { "action": "tool_call", "tool": "read_file", "arguments": { ... } }
     if (obj.action === "tool_call" && (obj.tool || obj.name)) {
-      const toolName = String(obj.tool || obj.name);
+      const toolName = normalizeToolName(String(obj.tool || obj.name));
       let args = obj.arguments || obj.args || obj.parameters || {};
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -252,6 +302,7 @@ export class JsonToolCallDetector implements IToolCallDetector {
 
     // TH2: { "name": "read_file", "arguments": { ... } }
     if (typeof obj.name === "string" && (obj.arguments !== undefined || obj.path !== undefined || obj.cmd !== undefined || obj.input !== undefined || obj.patch !== undefined)) {
+      const toolName = normalizeToolName(obj.name);
       let args = obj.arguments || {};
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -261,12 +312,12 @@ export class JsonToolCallDetector implements IToolCallDetector {
         else if (obj.input) args = { input: obj.input };
         else if (obj.patch) args = { input: obj.patch };
       }
-      return { name: obj.name, arguments: args };
+      return { name: toolName, arguments: args };
     }
 
     // TH3: { "tool": "read_file", "path": "pom.xml" }
     if (typeof obj.tool === "string") {
-      const toolName = obj.tool;
+      const toolName = normalizeToolName(obj.tool);
       const args = obj.arguments || { ...obj };
       delete (args as any).tool;
       delete (args as any).action;
@@ -289,15 +340,31 @@ export class XmlToolCallDetector implements IToolCallDetector {
   detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     if (!rawResponse || !rawResponse.trim()) return null;
 
-    // Tìm tất cả các cặp thẻ HOÀN CHỈNH: <tool_call>...</tool_call> hoặc <tool\_call>...</tool\_call>
-    const matches = [...rawResponse.matchAll(/<\s*tool[\\_]*call\s*>([\s\S]*?)<\s*\/tool[\\_]*call\s*>/gi)];
+    // 1. Tìm tất cả các thẻ <custom_tool_call name="...">...</custom_tool_call> (hỗ trợ cả custom_tool_call>)
+    const customMatches = [...rawResponse.matchAll(/(?:<|\b)\s*custom[\\_]*tool[\\_]*call(?:\s+name=["']([^"']+)["'])?\s*>([\s\S]*?)(?:<\s*\/|\/\s*)custom[\\_]*tool[\\_]*call\s*>/gi)];
+    if (customMatches.length > 0) {
+      const calls: DetectedToolCall[] = [];
+      for (const m of customMatches) {
+        const name = m[1] || (m[2].includes("Begin Patch") ? "apply_patch" : "custom_tool");
+        if (name === "apply_patch" || m[2].includes("Begin Patch")) {
+          const cleaned = sanitizeCodexPatchContent(m[2]);
+          calls.push({ name: "apply_patch", arguments: { input: cleaned } });
+        } else {
+          calls.push({ name, arguments: { input: m[2].trim() } });
+        }
+      }
+      if (calls.length > 0) return calls.length === 1 ? calls[0] : calls;
+    }
+
+    // 2. Tìm tất cả các cặp thẻ: <tool_call>...</tool_call>, tool_call>...</tool_call> hoặc /tool_call>
+    const matches = [...rawResponse.matchAll(/(?:<|\b)\s*tool[\\_]*call\s*>([\s\S]*?)(?:<\s*\/|\/\s*)tool[\\_]*call\s*>/gi)];
     if (matches.length > 0) {
       const calls: DetectedToolCall[] = [];
       for (const m of matches) {
         const item = this.parseInnerXml(m[1]);
         if (item) calls.push(item);
       }
-      if (calls.length > 0) return calls;
+      if (calls.length > 0) return calls.length === 1 ? calls[0] : calls;
     }
 
     // Nếu không có thẻ đóng, tool call chưa hoàn chỉnh -> Không được thực thi
@@ -312,7 +379,8 @@ export class XmlToolCallDetector implements IToolCallDetector {
       const sanitized = sanitizeJsonControlChars(clean);
       const parsed = JSON.parse(sanitized);
       if (parsed && typeof parsed === "object") {
-        const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const rawName = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const name = normalizeToolName(rawName);
         let args = parsed.arguments || parsed.args || {};
         if (typeof args === "string") {
           try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -330,15 +398,29 @@ export class XmlToolCallDetector implements IToolCallDetector {
           }
         }
 
+        // Nếu là apply_patch, đảm bảo nội dung patch được làm sạch bằng sanitizeCodexPatchContent
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+
+        if (name === "exec_command" && args && typeof args === "object") {
+          const cmd = args.cmd || args.command || "";
+          args.cmd = String(cmd);
+        }
+
         return { name, arguments: args };
       }
-    } catch {}
+    } catch { }
 
     // 2. Thử parse nguyên bản
     try {
       const parsed = JSON.parse(clean);
       if (parsed && typeof parsed === "object") {
-        const name = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const rawName = typeof parsed.name === "string" ? parsed.name : (parsed.tool || "read_file");
+        const name = normalizeToolName(rawName);
         let args = parsed.arguments || parsed.args || {};
         if (typeof args === "string") {
           try { args = JSON.parse(args); } catch { args = { path: args }; }
@@ -355,11 +437,33 @@ export class XmlToolCallDetector implements IToolCallDetector {
           }
         }
 
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+
+        if (name === "exec_command" && args && typeof args === "object") {
+          const cmd = args.cmd || args.command || "";
+          args.cmd = String(cmd);
+        }
+
         return { name, arguments: args };
       }
-    } catch {}
+    } catch { }
 
-    // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
+    // 3. Cứu hộ trường hợp apply_patch: JSON.parse thất bại vì unescaped quotes bên trong patch
+    if (/\*{2,3}\s*Begin Patch/i.test(innerContent)) {
+      const cleanedPatch = sanitizeCodexPatchContent(innerContent);
+      if (cleanedPatch.includes("*** Begin Patch")) {
+        return {
+          name: "apply_patch",
+          arguments: { input: cleanedPatch },
+        };
+      }
+    }
+
     return null;
   }
 }
@@ -372,7 +476,7 @@ export class BashCommandDetector implements IToolCallDetector {
   readonly priority = 3;
   readonly name = "BashCommandDetector";
 
-  constructor(private readonly translator = new BashCommandTranslator()) {}
+  constructor(private readonly translator = new BashCommandTranslator()) { }
 
   detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     const all = this.translator.translateAll(rawResponse);
@@ -402,7 +506,7 @@ export function maskArgumentsForLog(argsStr: string): string {
       }
       return JSON.stringify(masked);
     }
-  } catch {}
+  } catch { }
   if (argsStr.length > 300) {
     return `${argsStr.slice(0, 150)}... [TRUNCATED ${argsStr.length - 250} chars] ...${argsStr.slice(-100)}`;
   }
@@ -437,7 +541,7 @@ export function maskToolCallsForLog(toolCalls: OpenAIToolCall[]): any[] {
           },
         };
       }
-    } catch {}
+    } catch { }
     return tc;
   });
 }
@@ -474,18 +578,26 @@ export class M365OutputTranslator {
     console.log("\n[M365 RAW RESPONSE]");
     console.log(rawPreview);
 
+    // Tự động lột bỏ lớp vỏ code block ngoài cùng (````markdown ... ```` hoặc ```...```)
+    // để các detector phát hiện công cụ bên trong, hoặc trả về văn bản sạch cho Final Answer
+    const unwrappedResponse = stripOuterCodeFence(rawResponse);
+
     // Nếu phản hồi chứa thẻ <proposed_plan>, đây là bản kế hoạch hoàn chỉnh cho Codex UI duyệt (Final Answer)
-    if (/<proposed[\\_]*plan>[\s\S]*?<\/proposed[\\_]*plan>/i.test(rawResponse)) {
+    if (/<\s*proposed[\\_]*plan\s*>[\s\S]*?<\s*\/proposed[\\_]*plan\s*>/i.test(unwrappedResponse)) {
       return {
         type: "final_answer",
-        content: rawResponse.trim(),
+        content: unwrappedResponse.trim(),
         rawResponse,
+        parseDiagnostics: {
+          terminalReason: "proposed_plan",
+          warningMessage: "Phản hồi chứa bản kế hoạch <proposed_plan>. Trả về Final Answer cho người dùng/Codex duyệt kế hoạch.",
+        },
       };
     }
 
-    // Duyệt qua các detector theo thứ tự ưu tiên
+    // Duyệt qua các detector theo thứ tự ưu tiên (kiểm tra trên unwrappedResponse trước, dự phòng rawResponse)
     for (const detector of this.detectors) {
-      const detected = detector.detect(rawResponse);
+      const detected = detector.detect(unwrappedResponse) || detector.detect(rawResponse);
       if (detected) {
         const callsList = Array.isArray(detected) ? detected : [detected];
         const toolCalls: OpenAIToolCall[] = callsList.map(item => ({
@@ -504,16 +616,51 @@ export class M365OutputTranslator {
           type: "tool_call",
           tool_calls: toolCalls,
           rawResponse,
+          parseDiagnostics: {
+            terminalReason: "tool_calls_emitted",
+            warningMessage: `Phát hiện ${toolCalls.length} tool call hợp lệ: ${toolCalls.map(t => t.function.name).join(", ")}.`,
+          },
         };
       }
     }
 
     // Nếu không khớp với bất kỳ tool call nào, đây là Final Answer
-    const trimmedAnswer = rawResponse.trim();
+    const trimmedAnswer = unwrappedResponse.trim();
+
+    // Kiểm tra chẩn đoán: Có chứa dấu hiệu nghi vấn tool call mà không parse được hay không?
+    const hasSuspiciousXml = /<\s*tool[\\_]*call\s*>/i.test(unwrappedResponse);
+    const hasUnclosedXml = hasSuspiciousXml && !/<\s*\/tool[\\_]*call\s*>/i.test(unwrappedResponse);
+    const hasSuspiciousJson = /"action"\s*:\s*"tool_call"|"name"\s*:\s*"(?:read_file|write_file|apply_patch|exec_command|run_command|write_stdin|view_image|request_user_input|create_goal|update_goal|get_goal)"/i.test(unwrappedResponse);
+    const hasSuspiciousPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(unwrappedResponse);
+
+    let diagnosticWarning = "";
+    if (hasUnclosedXml) {
+      diagnosticWarning = "Phát hiện thẻ <tool_call> chưa được đóng hoàn chỉnh từ M365 (thiếu </tool_call>). Codex dừng do nhận kết quả là văn bản thường.";
+    } else if (hasSuspiciousXml) {
+      diagnosticWarning = "Phát hiện khối <tool_call> hoàn chỉnh nhưng parse JSON thất bại. Codex bị dừng xử lý và chuyển sang Final Answer vì lý do này.";
+    } else if (hasSuspiciousPatch) {
+      diagnosticWarning = "Phát hiện khối *** Begin Patch nhưng khối patch chưa đóng hoặc bị lỗi cấu trúc. Codex dừng xử lý.";
+    } else if (hasSuspiciousJson) {
+      diagnosticWarning = "Phát hiện chuỗi JSON có thuộc tính tool_call nhưng không trích xuất được tham số hợp lệ.";
+    }
+
     return {
       type: "final_answer",
       content: trimmedAnswer,
       rawResponse,
+      ...(diagnosticWarning
+        ? {
+          parseDiagnostics: {
+            suspiciousToolDetected: true,
+            warningMessage: diagnosticWarning,
+          },
+        }
+        : {
+          parseDiagnostics: {
+            terminalReason: "model_final_answer",
+            warningMessage: "M365 Copilot hoàn tất câu trả lời dạng văn bản kết luận (Final Answer).",
+          },
+        }),
     };
   }
 

@@ -69,7 +69,7 @@ export class M365MarkdownBuffer {
 
   constructor(
     private readonly transform: (md: string) => string = md => md
-  ) {}
+  ) { }
 
   /**
    * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
@@ -128,7 +128,17 @@ export class M365MarkdownBuffer {
   }
 
   private commitBlock(block: M365MarkdownBlock): string {
-    const rawMd = m365HtmlToMarkdown(block.html).trim();
+    // Nếu khối là khối công cụ hoặc patch, ưu tiên trích xuất textContent thuần túy (raw text)
+    // để tránh việc Turndown tự động escape các ký tự cú pháp như _ thành \_, [ thành \[, * thành \*
+    let rawMd: string;
+    if (
+      /<\s*tool[\\_]*call\s*>/i.test(block.text) ||
+      /(?:\\?\*){2,3}\s*Begin Patch/i.test(block.text)
+    ) {
+      rawMd = block.text.trim();
+    } else {
+      rawMd = m365HtmlToMarkdown(block.html).trim();
+    }
     const cleanMd = normalizeMarkdownFences(this.transform(rawMd).trim());
     this.committedKeys.add(block.key);
 
@@ -171,12 +181,12 @@ export class M365ToolCallDetector {
 
     while (this.buffer.length > 0) {
       if (!this.inToolCall && !this.inPatch) {
-        // 1. Ưu tiên tìm thẻ mở <tool_call> hoặc <tool\_call> trước
-        const openMatch = this.buffer.match(/<\s*tool[\\_]*call\s*>/i);
+        // 1. Ưu tiên tìm thẻ mở <tool_call>, tool_call>, <custom_tool_call ...>, custom_tool_call>
+        const openMatch = this.buffer.match(/(?:<|\b)\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i);
         if (openMatch && openMatch.index !== undefined) {
           if (openMatch.index > 0) {
             const prefix = this.buffer.slice(0, openMatch.index);
-            const cleanPrefix = prefix.replace(/```(?:xml|json)?/gi, "").trim();
+            const cleanPrefix = prefix.replace(/```(?:xml|json|patch)?/gi, "").trim();
             if (cleanPrefix) {
               emittedText += cleanPrefix;
             }
@@ -186,8 +196,8 @@ export class M365ToolCallDetector {
           continue;
         }
 
-        // 2. Tìm khối patch Codex độc lập: *** Begin Patch hoặc \*\*\* Begin Patch
-        const patchOpenMatch = this.buffer.match(/(?:\\?\*){3}\s*Begin Patch/i);
+        // 2. Tìm khối patch Codex độc lập: *** Begin Patch hoặc \*\*\* Begin Patch (hỗ trợ cả 2 hoặc 3 dấu sao)
+        const patchOpenMatch = this.buffer.match(/(?:\\?\*){2,3}\s*Begin Patch/i);
         if (patchOpenMatch && patchOpenMatch.index !== undefined) {
           if (patchOpenMatch.index > 0) {
             const prefix = this.buffer.slice(0, patchOpenMatch.index);
@@ -207,13 +217,22 @@ export class M365ToolCallDetector {
           break;
         }
 
-        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ mở không
-        const possiblePrefixMatch = this.buffer.match(/<[^>]*$/);
+        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ mở không (hỗ trợ cả dạng <... và tool...)
+        const possiblePrefixMatch = this.buffer.match(/(?:<[^>]*$|\b(?:custom[\\_]*)?tool(?:[\\_]*call)?[^>]*$)/i);
         if (possiblePrefixMatch && possiblePrefixMatch.index !== undefined) {
           const prefixCandidate = possiblePrefixMatch[0].toLowerCase();
           const targetPrefix = "<tool_call>";
           const targetPrefixAlt = "<tool\\_call>";
-          if (targetPrefix.startsWith(prefixCandidate) || targetPrefixAlt.startsWith(prefixCandidate)) {
+          const targetCustom = "<custom_tool_call";
+          const rawToolPrefix = "tool_call>";
+          const rawCustomPrefix = "custom_tool_call";
+          if (
+            targetPrefix.startsWith(prefixCandidate) ||
+            targetPrefixAlt.startsWith(prefixCandidate) ||
+            targetCustom.startsWith(prefixCandidate) ||
+            rawToolPrefix.startsWith(prefixCandidate) ||
+            rawCustomPrefix.startsWith(prefixCandidate)
+          ) {
             if (possiblePrefixMatch.index > 0) {
               emittedText += this.buffer.slice(0, possiblePrefixMatch.index);
               this.buffer = this.buffer.slice(possiblePrefixMatch.index);
@@ -225,7 +244,7 @@ export class M365ToolCallDetector {
         // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của *** Begin Patch không
         const patchPrefixCandidateMatch = this.buffer.match(/(?:\\?\*)+[ \t]*(?:B(?:e(?:g(?:i(?:n)?)?)?)?)?$/i);
         if (patchPrefixCandidateMatch && patchPrefixCandidateMatch.index !== undefined) {
-          if (patchPrefixCandidateMatch[0].length >= 3) {
+          if (patchPrefixCandidateMatch[0].length >= 2) {
             if (patchPrefixCandidateMatch.index > 0) {
               emittedText += this.buffer.slice(0, patchPrefixCandidateMatch.index);
               this.buffer = this.buffer.slice(patchPrefixCandidateMatch.index);
@@ -238,27 +257,19 @@ export class M365ToolCallDetector {
         this.buffer = "";
         break;
       } else if (this.inPatch) {
-        // Đang trong khối patch, tìm *** End Patch hoặc \*\*\* End Patch
-        const patchCloseMatch = this.buffer.match(/(?:\\?\*){3}\s*End Patch/i);
+        // Đang trong khối patch, tìm *** End Patch hoặc \*\*\* End Patch (2 hoặc 3 dấu sao)
+        const patchCloseMatch = this.buffer.match(/(?:\\?\*){2,3}\s*End Patch/i);
         if (patchCloseMatch && patchCloseMatch.index !== undefined) {
           const patchEndIndex = patchCloseMatch.index + patchCloseMatch[0].length;
           this.patchContent += this.buffer.slice(0, patchEndIndex);
           this.inPatch = false;
           this.buffer = this.buffer.slice(patchEndIndex);
 
-          let cleanPatch = this.patchContent
-            .replaceAll("\\*", "*")
-            .replaceAll("\\_", "_")
-            .replaceAll("\\[", "[")
-            .replaceAll("\\]", "]")
-            .replaceAll("\\{", "{")
-            .replaceAll("\\}", "}");
-          const beginIdx = cleanPatch.indexOf("*** Begin Patch");
-          if (beginIdx >= 0) cleanPatch = cleanPatch.slice(beginIdx);
+          const cleanPatch = sanitizeCodexPatchContent(this.patchContent);
 
           this.detectedToolCall = {
             name: "apply_patch",
-            arguments: { input: cleanPatch.trim() },
+            arguments: { input: cleanPatch },
           };
           break;
         }
@@ -267,8 +278,8 @@ export class M365ToolCallDetector {
         this.buffer = "";
         break;
       } else {
-        // Đang trong khối tool call, tìm thẻ đóng </tool_call> hoặc </tool\_call>
-        const closeMatch = this.buffer.match(/<\s*\/tool[\\_]*call\s*>/i);
+        // Đang trong khối tool call, tìm thẻ đóng </tool_call>, /tool_call>, </custom_tool_call>
+        const closeMatch = this.buffer.match(/(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>/i);
         if (closeMatch && closeMatch.index !== undefined) {
           this.toolContent += this.buffer.slice(0, closeMatch.index);
           this.inToolCall = false;
@@ -347,7 +358,11 @@ export class M365ToolCallDetector {
    */
   private cleanToolPayload(raw: string): string {
     const stripped = stripOuterCodeFence(raw);
-    return stripped.replace(/\\_/g, "_");
+    return stripped
+      .replace(/\\_/g, "_")
+      .replace(/^[\s\S]*?(?:<|\b)(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i, "")
+      .replace(/(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>[\s\S]*$/i, "")
+      .trim();
   }
 
   private parseToolPayload(raw: string): ParsedToolCall | null {
@@ -379,12 +394,19 @@ export class M365ToolCallDetector {
           }
         }
 
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+
         return {
           name,
           arguments: args,
         };
       }
-    } catch {}
+    } catch { }
 
     // 2. Thử parse nguyên bản nếu clean khác sanitized
     try {
@@ -410,14 +432,31 @@ export class M365ToolCallDetector {
           }
         }
 
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+
         return {
           name,
           arguments: args,
         };
       }
-    } catch {}
+    } catch { }
 
-    // Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG dùng regex fallback để tự cắt xén JSON dở dang!
+    // 3. Cứu hộ trường hợp apply_patch: JSON.parse thất bại vì unescaped quotes bên trong patch
+    if (/\*{2,3}\s*Begin Patch/i.test(clean)) {
+      const cleanedPatch = sanitizeCodexPatchContent(clean);
+      if (cleanedPatch.includes("*** Begin Patch")) {
+        return {
+          name: "apply_patch",
+          arguments: { input: cleanedPatch },
+        };
+      }
+    }
+
     return null;
   }
 }
@@ -491,4 +530,55 @@ export function stripOuterCodeFence(raw: string): string {
   return trimmed.trim();
 }
 
+/**
+ * Chuẩn hóa và làm sạch triệt để khối Codex Patch:
+ * 1. Bóc tách chính xác từ Begin Patch đến End Patch, loại bỏ hoàn toàn thẻ XML hoặc rác JSON ở đuôi.
+ * 2. Chuẩn hóa header thành `*** Begin Patch` và footer thành `*** End Patch`.
+ * 3. Tự động giải mã unescape \n literal nếu patch bị bọc trong chuỗi JSON/escape string.
+ * 4. Gọt sạch các ký tự escape markdown thừa từ Turndown.
+ */
+export function sanitizeCodexPatchContent(rawPatch: string): string {
+  let patch = rawPatch
+    .replaceAll("\\*", "*")
+    .replaceAll("\\_", "_")
+    .replaceAll("\\[", "[")
+    .replaceAll("\\]", "]")
+    .replaceAll("\\{", "{")
+    .replaceAll("\\}", "}")
+    .replaceAll("\\~", "~");
+
+  // Tìm vị trí bắt đầu Begin Patch (2 hoặc 3 dấu sao)
+  const beginMatch = patch.match(/\*{2,3}\s*Begin Patch/i);
+  if (beginMatch && beginMatch.index !== undefined) {
+    patch = patch.slice(beginMatch.index);
+  }
+
+  // Tìm vị trí kết thúc End Patch (2 hoặc 3 dấu sao)
+  const endMatch = patch.match(/\*{2,3}\s*End Patch/i);
+  if (endMatch && endMatch.index !== undefined) {
+    patch = patch.slice(0, endMatch.index + endMatch[0].length);
+  }
+
+  // Chuẩn hóa Begin Patch và End Patch thành đúng 3 dấu sao
+  patch = patch.replace(/^\*{2,3}\s*Begin Patch/i, "*** Begin Patch");
+  patch = patch.replace(/\*{2,3}\s*End Patch$/i, "*** End Patch");
+
+  // Nếu trong ruột patch chứa các chuỗi \n literal và số dòng thực tế không đủ (hoặc có nhiều \n literal hơn newline thực tế)
+  const literalNewlineCount = (patch.match(/\\n/g) || []).length;
+  const actualNewlineCount = (patch.match(/\n/g) || []).length;
+  if (literalNewlineCount > 0 && (actualNewlineCount < 3 || literalNewlineCount > actualNewlineCount)) {
+    patch = patch
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"');
+  }
+
+  // Khử dấu gạch chéo ngược thừa ở cuối dòng do Turndown
+  patch = patch.replace(/\\+[ \t]*(\r?\n)/g, "$1");
+
+  return patch.trim();
+}
+
 export { chatGptHtmlToMarkdown };
+
