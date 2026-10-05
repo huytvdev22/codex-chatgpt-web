@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../../debug-logger";
 import type { IToolCallDetector, DetectedToolCall } from "./types";
 import { cleanJsonPayload, normalizeToolName } from "./sanitizers";
 import { sanitizeJsonControlChars, sanitizeCodexPatchContent } from "../toolcall-detector";
@@ -11,7 +12,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
   readonly priority = 2;
   readonly name = "XmlToolCallDetector";
 
-  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    /**
+   * Phát hiện các thẻ XML <tool_call> trong văn bản phản hồi.
+   */
+detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    logFunctionInput("translation:detectors:xml-detector", "detect", { rawResponse });
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // 1. Tìm tất cả các thẻ <custom_tool_call name="...">...</custom_tool_call> (hỗ trợ cả custom_tool_call>)
@@ -45,7 +50,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
     return null;
   }
 
-  private parseInnerXml(innerContent: string): DetectedToolCall | null {
+    /**
+   * Phân giải nội dung bên trong thẻ XML <tool_call> thành tên công cụ và tham số.
+   */
+private parseInnerXml(innerContent: string): DetectedToolCall | null {
+    logFunctionInput("translation:detectors:xml-detector", "parseInnerXml", { innerContent });
     const clean = cleanJsonPayload(innerContent);
 
     // 1. Thử parse với sanitizer xử lý raw newlines/control characters

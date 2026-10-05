@@ -1,5 +1,7 @@
+import { logFunctionInput } from "../debug-logger";
 import type { Page } from "playwright-core";
 import type { M365CapabilityMode } from "../../../m365-models";
+export type { M365CapabilityMode };
 export { resolveM365CapabilityMode } from "../../../m365-models";
 
 export interface M365CapabilitySpec {
@@ -55,6 +57,7 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
    * Đảm bảo model mong muốn đang được chọn trên giao diện M365 Copilot
    */
   async ensureMode(page: Page, targetMode: M365CapabilityMode): Promise<boolean> {
+    logFunctionInput("browser:capability-picker", "ensureMode", { page, targetMode });
     const spec = M365_CAPABILITY_SPECS[targetMode];
     if (!spec) {
       console.warn(`[m365-capability] Unknown capability mode: ${targetMode}, skipping switch.`);
@@ -219,6 +222,10 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
 
 export const defaultCapabilityPicker = new M365CapabilityPicker();
 
+/**
+ * Kiểm tra và kích hoạt chế độ năng lực (Capability Mode) mục tiêu trên giao diện M365 Copilot.
+ */
 export async function ensureM365CapabilityMode(page: Page, targetMode: M365CapabilityMode): Promise<boolean> {
+  logFunctionInput("browser:capability-picker", "ensureM365CapabilityMode", { page, targetMode });
   return defaultCapabilityPicker.ensureMode(page, targetMode);
 }

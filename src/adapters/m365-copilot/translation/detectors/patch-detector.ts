@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../../debug-logger";
 import type { IToolCallDetector, DetectedToolCall } from "./types";
 import { sanitizeCodexPatchContent } from "../toolcall-detector";
 
@@ -20,7 +21,11 @@ export class PatchToolCallDetector implements IToolCallDetector {
   readonly priority = 0;
   readonly name = "PatchToolCallDetector";
 
-  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    /**
+   * Phát hiện và phân tích tool call dạng áp bản vá (apply_patch / diff).
+   */
+detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    logFunctionInput("translation:detectors:patch-detector", "detect", { rawResponse });
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // Chuẩn hóa ký tự * bị escape bởi Turndown trước khi tìm kiếm

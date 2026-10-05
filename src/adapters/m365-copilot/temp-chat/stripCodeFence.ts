@@ -1,9 +1,11 @@
+import { logFunctionInput } from "../debug-logger";
 /**
  * Bóc tách code fence ở rìa ngoài cùng (outer boundary) của khối Markdown/JSON/XML.
  * Hỗ trợ các khối mở từ 3 đến 5 dấu backticks (```{3,5}), đặc biệt là ````markdown.
  * TUYỆT ĐỐI BẢO TOÀN toàn bộ code fences (```java, ```diff, ```text) lồng bên trong nội dung!
  */
 export function stripOuterCodeFence(raw: string): string {
+  logFunctionInput("temp-chat:stripCodeFence", "stripOuterCodeFence", { raw });
   if (!raw) return "";
   let trimmed = raw.trim();
 

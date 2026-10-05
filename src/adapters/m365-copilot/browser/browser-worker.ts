@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import { connectLauncherBrowserHost, notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../../launcher-browser-host";
 import { getConfigDir } from "../../../config";
 import { join } from "node:path";
@@ -23,9 +24,16 @@ export interface M365BrowserRunOptions {
   forceTemporaryChat?: boolean;
 }
 
+export type M365TurnOptions = M365BrowserRunOptions;
+export type M365TurnResult = { rawMarkdown: string; blocks: M365MarkdownBlock[] };
+
 let activeM365ConversationKey: string | null = null;
 
+/**
+ * Xác định đường dẫn file descriptor của Launcher Browser Host từ tham số hoặc thư mục cấu hình.
+ */
 function resolveDescriptorPath(customPath?: string): string {
+  logFunctionInput("browser:browser-worker", "resolveDescriptorPath", { customPath });
   if (customPath && existsSync(customPath)) return customPath;
   const home = process.env.CODEX_CHATGPT_WEB_HOME || getConfigDir();
   return join(home, "runtime", "launcher-browser.json");
@@ -39,6 +47,7 @@ export async function executeM365Turn(
   promptText: string,
   options: M365BrowserRunOptions
 ): Promise<string> {
+  logFunctionInput("browser:browser-worker", "executeM365Turn", { promptText, options });
   const descriptorPath = resolveDescriptorPath(options.descriptorPath);
   if (!existsSync(descriptorPath)) {
     throw new Error(
@@ -478,7 +487,11 @@ export async function executeM365Turn(
         const rawBlocks: Array<{ tag: string; html: string; text: string }> = [];
         const inlineNodes: Node[] = [];
 
-        function flushInline() {
+                /**
+         * Đẩy toàn bộ văn bản nội dòng (inline text delta) đang chờ ra ngoài callback stream.
+         */
+function flushInline() {
+          logFunctionInput("browser:browser-worker", "flushInline");
           if (inlineNodes.length === 0) return;
           const temp = document.createElement("p");
           for (const n of inlineNodes) {
@@ -495,7 +508,11 @@ export async function executeM365Turn(
           }
         }
 
-        function processNode(node: Node) {
+                /**
+         * Duyệt đệ quy và trích xuất nội dung văn bản hoặc khối Markdown từ DOM node của tin nhắn Copilot.
+         */
+function processNode(node: Node) {
+          logFunctionInput("browser:browser-worker", "processNode", { node });
           if (node.nodeType === Node.ELEMENT_NODE) {
             const el = node as HTMLElement;
             const tag = el.tagName.toLowerCase();
@@ -845,7 +862,11 @@ export async function executeM365Turn(
   }
 }
 
+/**
+ * Bọc một Promise với giới hạn thời gian chờ (timeout), trả về giá trị fallback nếu quá thời gian.
+ */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  logFunctionInput("browser:browser-worker", "withTimeout", { promise, timeoutMs, fallback });
   let timer: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => resolve(fallback), timeoutMs);

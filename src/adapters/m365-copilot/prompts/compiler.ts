@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import type { CodexParsedRequest } from "../../../types";
 import type { NormalizedCodexRequest, NormalizedTool } from "../normalization/canonical-types";
 import {
@@ -13,7 +14,11 @@ import {
 const MAX_M365_PROMPT_CHARS = 95_000;
 const MAX_TOOL_RESULT_CHARS = 8_000;
 
+/**
+ * Thực hiện xử lý truncateToolResult cho quy trình M365 Copilot Adapter.
+ */
 export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
+  logFunctionInput("prompts:compiler", "truncateToolResult", { content, maxChars });
   if (content.length <= maxChars) return content;
   const half = Math.floor((maxChars - 200) / 2);
   const head = content.slice(0, half);
@@ -69,6 +74,7 @@ export const MINIMAL_TOOL_PROTOCOL = UNIFIED_TOOL_PROTOCOL;
  * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI (như hướng dẫn web browsing, citations, word limits).
  */
 export function cleanToolDescription(name: string, rawDesc?: string): string {
+  logFunctionInput("prompts:compiler", "cleanToolDescription", { name, rawDesc });
   if (!rawDesc) return "No description provided.";
   let desc = rawDesc.trim();
 
@@ -121,6 +127,7 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
  * Sử dụng một định dạng tên công cụ duy nhất từ Codex kèm ví dụ mẫu trực quan.
  */
 export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
+  logFunctionInput("prompts:compiler", "renderDynamicToolDeclarations", { tools });
   if (!tools || tools.length === 0) {
     return `AVAILABLE TOOLS\n(Không có công cụ bổ sung nào được khai báo trong lượt này)\n\n${CANONICAL_TOOL_EXAMPLES}`;
   }
@@ -196,6 +203,7 @@ export function calculatePromptMetrics(sections: {
   userRequest: string;
   finalPrompt: string;
 }): PromptSectionMetrics {
+  logFunctionInput("prompts:compiler", "calculatePromptMetrics", { sections });
   const lengths: Record<string, number> = {
     toolDeclaration: sections.toolDeclaration.length,
     developerInstructions: sections.developerInstructions.length,
@@ -226,7 +234,11 @@ export function calculatePromptMetrics(sections: {
   };
 }
 
+/**
+ * Ghi nhận các chỉ số đo lường chi tiết về kích thước từng phần của prompt đã biên dịch.
+ */
 export function logPromptMetrics(metrics: PromptSectionMetrics): void {
+  logFunctionInput("prompts:compiler", "logPromptMetrics", { metrics });
   console.log(
     `[prompt-metrics]\n` +
     `toolDeclaration=${metrics.toolDeclaration}\n` +
@@ -238,7 +250,11 @@ export function logPromptMetrics(metrics: PromptSectionMetrics): void {
   );
 }
 
+/**
+ * Ghi nhận thông tin kiểm toán (audit log) về số lượng công cụ, lượt hội thoại và kích thước prompt.
+ */
 export function logPromptAudit(audit: PromptAuditData): void {
+  logFunctionInput("prompts:compiler", "logPromptAudit", { audit });
   console.log(
     `[prompt-audit]\n` +
     `threadId=${audit.threadId || "n/a"}\n` +
@@ -259,6 +275,7 @@ export function logPromptAudit(audit: PromptAuditData): void {
  * Kiểm tra xem người dùng có vừa bấm xác nhận triển khai kế hoạch hay không
  */
 export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
+  logFunctionInput("prompts:compiler", "isImplementingPlanRequest", { parsed });
   const messages = parsed.context.messages || [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -285,7 +302,11 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
  * Ghi nhận log: planMode, collaborationMode, finalPromptLength.
  */
 export class M365PromptCompiler {
-  compile(input: PromptCompileInput): PromptCompileResult {
+    /**
+   * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
+   */
+compile(input: PromptCompileInput): PromptCompileResult {
+    logFunctionInput("prompts:compiler", "compile", { input });
     const { normalized, parsed } = input;
 
     // 1. Phân định chính xác Collaboration Mode (Loại bỏ triệt để mâu thuẫn Plan Mode / Default Mode)

@@ -1,4 +1,6 @@
+import { logFunctionInput } from "../debug-logger";
 import { normalizeMarkdownFences, m365HtmlToMarkdown } from "./html-to-markdown";
+export { m365HtmlToMarkdown };
 
 export interface M365MarkdownBlock {
   key: string;
@@ -21,9 +23,13 @@ export class M365MarkdownBuffer {
   private markdown = "";
   private pendingBlocks: M365MarkdownBlock[] = [];
 
-  constructor(
+    /**
+   * Khởi tạo bộ đệm Markdown ngữ nghĩa quản lý commit các khối văn bản và code.
+   */
+constructor(
     private readonly transform: (md: string) => string = md => md
-  ) { }
+  ) {
+    logFunctionInput("translation:semantic-detector", "constructor", { transform }); }
 
   /**
    * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
@@ -32,6 +38,7 @@ export class M365MarkdownBuffer {
    * Không phụ thuộc vào committedIndex đơn điệu để tránh nhảy cóc khi danh sách block bị co giãn.
    */
   observe(blocks: M365MarkdownBlock[]): string {
+    logFunctionInput("translation:semantic-detector", "observe", { blocks });
     this.pendingBlocks = blocks;
     let delta = "";
 
@@ -60,6 +67,7 @@ export class M365MarkdownBuffer {
    * Commit toàn bộ các khối còn lại chưa từng được commit.
    */
   finish(finalBlocks?: M365MarkdownBlock[]): { markdown: string; delta: string } {
+    logFunctionInput("translation:semantic-detector", "finish", { finalBlocks });
     const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
     let delta = "";
 
@@ -77,11 +85,19 @@ export class M365MarkdownBuffer {
     return { markdown: this.markdown, delta };
   }
 
-  getMarkdown(): string {
+    /**
+   * Lấy toàn bộ nội dung Markdown hoàn chỉnh đã được tích lũy trong bộ đệm.
+   */
+getMarkdown(): string {
+    logFunctionInput("translation:semantic-detector", "getMarkdown");
     return this.markdown;
   }
 
-  private commitBlock(block: M365MarkdownBlock): string {
+    /**
+   * Xử lý commit một khối Markdown đã hoàn tất vào chuỗi Markdown chính thức.
+   */
+private commitBlock(block: M365MarkdownBlock): string {
+    logFunctionInput("translation:semantic-detector", "commitBlock", { block });
     // Nếu khối là khối công cụ hoặc patch, ưu tiên trích xuất textContent thuần túy (raw text)
     // để tránh việc Turndown tự động escape các ký tự cú pháp như _ thành \_, [ thành \[, * thành \*
     let rawMd: string;

@@ -1,9 +1,11 @@
+import { logFunctionInput } from "../debug-logger";
 import type { CodexParsedRequest } from "../../../types";
 
 /**
  * Kiểm tra xem request có phải là request sinh tiêu đề (Title Request) ngầm của Codex hay không
  */
 export function isTitleRequest(parsed: CodexParsedRequest, compiledPrompt: string): boolean {
+  logFunctionInput("guards:title-guard", "isTitleRequest", { parsed, compiledPrompt });
   const p = compiledPrompt.toLowerCase();
   if (
     (p.includes("title:") && p.includes("description:")) ||
@@ -33,6 +35,7 @@ export function isTitleRequest(parsed: CodexParsedRequest, compiledPrompt: strin
  * Sinh nội dung phản hồi tiêu đề tức thì (5ms)
  */
 export function generateTitleResponse(compiledPrompt: string): string {
+  logFunctionInput("guards:title-guard", "generateTitleResponse", { compiledPrompt });
   // Trích xuất từ khoá nếu có
   let subject = "Coding Session";
   const match = compiledPrompt.match(/(?:xây dựng|tạo|viết|sửa|debug|tích hợp|hướng dẫn|hàm|file|module)\s+([^.,\n]+)/i);

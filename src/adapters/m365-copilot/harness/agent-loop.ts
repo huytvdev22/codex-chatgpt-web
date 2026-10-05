@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import { M365OutputTranslator, type OpenAIToolCall, type TranslationResult } from "../translation/output-translator";
 import { truncateToolResult } from "../prompts/assembler";
 import * as fs from "node:fs";
@@ -49,12 +50,20 @@ import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } fro
  * Tool Executor mặc định hỗ trợ chạy các công cụ read_file, list_dir, grep_code, git_status, git_diff, run_command, write_file
  */
 export class LocalToolExecutor implements IToolExecutor {
-  constructor(
+    /**
+   * Khởi tạo bộ thực thi công cụ cục bộ với thư mục làm việc và công cụ ghi file.
+   */
+constructor(
     private readonly workingDir: string = process.cwd(),
     private readonly fileWriter: IAtomicFileWriter = defaultAtomicFileWriter
-  ) {}
+  ) {
+    logFunctionInput("harness:agent-loop", "constructor", { workingDir, fileWriter });}
 
-  async execute(name: string, args: Record<string, any>): Promise<string> {
+    /**
+   * Thực thi công cụ được yêu cầu bởi agent trên môi trường máy cục bộ và trả về kết quả chuẩn hóa.
+   */
+async execute(name: string, args: Record<string, any>): Promise<string> {
+    logFunctionInput("harness:agent-loop", "execute", { name, args });
     try {
       switch (name) {
         case "read_file": {
@@ -159,16 +168,21 @@ export class LocalToolExecutor implements IToolExecutor {
  * Tuân thủ Open/Closed Principle (OCP) và Single Responsibility (SRP)
  */
 export class M365AgentLoop {
-  constructor(
+    /**
+   * Khởi tạo vòng lặp tự trị M365 Agent Loop quản lý luồng trao đổi giữa Codex và Copilot.
+   */
+constructor(
     private readonly modelClient: IM365ModelClient,
     private readonly toolExecutor: IToolExecutor = new LocalToolExecutor(),
     private readonly translator: M365OutputTranslator = new M365OutputTranslator()
-  ) {}
+  ) {
+    logFunctionInput("harness:agent-loop", "constructor", { modelClient, toolExecutor, translator });}
 
   /**
    * Khởi chạy vòng lặp Agent đa bước
    */
   async run(initialPrompt: string, options: AgentLoopOptions = {}): Promise<AgentLoopResult> {
+    logFunctionInput("harness:agent-loop", "run", { initialPrompt, options });
     const maxTurns = options.maxTurns ?? 10;
     const messages: AgentMessage[] = [];
     let currentPrompt = initialPrompt;

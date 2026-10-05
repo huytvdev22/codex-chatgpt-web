@@ -1,3 +1,4 @@
+import { logFunctionInput } from "./debug-logger";
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./guards";
@@ -34,7 +35,11 @@ export * from "./tools";
 export * from "./browser";
 export * from "./harness";
 
+/**
+ * Trích xuất thông tin môi trường shell của client từ các tham số hoặc context của request.
+ */
 function extractClientShell(parsed: CodexParsedRequest): string | undefined {
+  logFunctionInput("index", "extractClientShell", { parsed });
   // 1. Kiểm tra trong system prompt
   for (const sp of parsed.context.systemPrompt || []) {
     const match = sp.match(/<shell>([^<]+)<\/shell>/i);
@@ -58,11 +63,15 @@ export class M365CopilotAdapter implements ProviderAdapter {
   private lastConversationKey?: string;
   private readonly translator = new M365OutputTranslator();
 
-  async runTurn(
+    /**
+   * Điều phối toàn bộ vòng đời của một lượt tương tác (turn): chuẩn hóa request, compile prompt, chạy browser worker và dịch kết quả.
+   */
+async runTurn(
     parsed: CodexParsedRequest,
     incoming: IncomingMeta,
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
+    logFunctionInput("index", "runTurn", { parsed, incoming, emit });
     const traceContext: TraceContext | undefined = incoming.traceContext || traceStorage.getStore() || undefined;
 
     if (incoming.abortSignal?.aborted) {
@@ -525,7 +534,11 @@ export class M365CopilotAdapter implements ProviderAdapter {
   }
 }
 
+/**
+ * Factory khởi tạo đối tượng M365CopilotAdapter với đầy đủ các cấu hình và dependencies cần thiết.
+ */
 export function createM365CopilotAdapter(): ProviderAdapter {
+  logFunctionInput("index", "createM365CopilotAdapter");
   return new M365CopilotAdapter();
 }
 

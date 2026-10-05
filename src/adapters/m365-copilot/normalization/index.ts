@@ -7,7 +7,6 @@ export type {
   NormalizedTurn,
   NormalizedExecutionPolicy,
   NormalizedCodexRequest,
-  DynamicToolSectionRenderOptions,
 } from "./canonical-types";
 
 export {

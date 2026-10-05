@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import type { CodexTool } from "../../../types";
 import {
   CommandStrategyResolver,
@@ -48,6 +49,7 @@ export function normalizeFileContent(
   content: string,
   optionsOrUnescape: boolean | string | NormalizeFileContentOptions = true
 ): string {
+  logFunctionInput("tools:tool-bridge", "normalizeFileContent", { content, optionsOrUnescape });
   const options: NormalizeFileContentOptions = typeof optionsOrUnescape === "boolean"
     ? { unescapeNewlines: optionsOrUnescape }
     : typeof optionsOrUnescape === "string"
@@ -315,6 +317,7 @@ export class M365ToolBridge {
     clientTools: CodexTool[] = [],
     options?: MapToolCallOptions | PlatformCommandStrategy
   ): M365MappedToolCall {
+    logFunctionInput("tools:tool-bridge", "mapToolCall", { raw, clientTools, options });
     // Tự động gọt bỏ tiền tố functions. nếu M365 sinh ra theo namespace cũ
     let toolName = raw.name;
     if (typeof toolName === "string" && toolName.startsWith("functions.")) {

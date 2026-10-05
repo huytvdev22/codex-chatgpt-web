@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 /**
  * Giao diện đại diện cho một quy tắc phân tích lệnh Bash/Shell sang Tool Call
  * Tuân thủ Open/Closed Principle (OCP) & Single Responsibility Principle (SRP)
@@ -12,6 +13,7 @@ export interface IBashCommandRule {
  * Loại bỏ tiền tố vỏ bọc lệnh shell như bash -lc, bash -c, sh -c và dấu nháy bao ngoài
  */
 export function stripShellPrefix(cmd: string): string {
+  logFunctionInput("translation:bash-translator", "stripShellPrefix", { cmd });
   let cleaned = cmd.trim();
 
   // Khử code fences nếu có ```bash hoặc ```sh
@@ -39,7 +41,11 @@ export function stripShellPrefix(cmd: string): string {
 export class CatRule implements IBashCommandRule {
   readonly name = "CatRule";
 
-  match(cmd: string): boolean {
+    /**
+   * Kiểm tra xem lệnh bash có khớp với quy tắc đọc file (cat/head/tail) hay không.
+   */
+match(cmd: string): boolean {
+    logFunctionInput("translation:bash-translator", "match", { cmd });
     const trimmed = cmd.trim();
     // 1. cat <file...>: phải bắt đầu bằng 'cat '
     if (/^cat\s+[^\s|;&]+/i.test(trimmed)) {
@@ -52,7 +58,11 @@ export class CatRule implements IBashCommandRule {
     return false;
   }
 
-  translate(cmd: string): Array<{ name: string; arguments: Record<string, any> }> | { name: string; arguments: Record<string, any> } | null {
+    /**
+   * Biên dịch lệnh cat/head/tail thành tool call readFile tương ứng.
+   */
+translate(cmd: string): Array<{ name: string; arguments: Record<string, any> }> | { name: string; arguments: Record<string, any> } | null {
+    logFunctionInput("translation:bash-translator", "translate", { cmd });
     const trimmed = cmd.trim();
     const isCat = /^cat\s+/i.test(trimmed);
     const isType = /^type\s+/i.test(trimmed);
@@ -70,7 +80,11 @@ export class CatRule implements IBashCommandRule {
 
     if (files.length === 0) return null;
 
+    /**
+     * Kiểm tra một chuỗi ký tự có định dạng giống đường dẫn tệp tin hay không.
+     */
     const isPathLike = (s: string): boolean => {
+      logFunctionInput("translation:bash-translator", "isPathLike", { s });
       if (/[^\x20-\x7E]/.test(s)) return false; // Chứa ký tự non-ASCII (tiếng Việt có dấu)
       if (/\.[a-zA-Z0-9_-]+$/.test(s)) return true; // Có đuôi mở rộng file
       if (s.includes("/") || s.includes("\\")) return true; // Có đường dẫn slash
@@ -114,11 +128,19 @@ export class CatRule implements IBashCommandRule {
 export class LsRule implements IBashCommandRule {
   readonly name = "LsRule";
 
-  match(cmd: string): boolean {
+    /**
+   * Kiểm tra xem lệnh bash có khớp với quy tắc liệt kê thư mục (ls) hay không.
+   */
+match(cmd: string): boolean {
+    logFunctionInput("translation:bash-translator", "match", { cmd });
     return /^(?:ls|dir)(?:\s+.*)?$/i.test(cmd);
   }
 
-  translate(cmd: string): { name: string; arguments: Record<string, any> } | null {
+    /**
+   * Biên dịch lệnh ls thành tool call listDir tương ứng.
+   */
+translate(cmd: string): { name: string; arguments: Record<string, any> } | null {
+    logFunctionInput("translation:bash-translator", "translate", { cmd });
     // Tách các cờ options như -la, -l, -a, /w, etc.
     const parts = cmd.split(/\s+/).slice(1);
     const nonFlagArgs = parts.filter(arg => !arg.startsWith("-") && !arg.startsWith("/"));
@@ -137,11 +159,19 @@ export class LsRule implements IBashCommandRule {
 export class GrepRule implements IBashCommandRule {
   readonly name = "GrepRule";
 
-  match(cmd: string): boolean {
+    /**
+   * Kiểm tra xem lệnh bash có khớp với quy tắc tìm kiếm chuỗi (grep/ripgrep) hay không.
+   */
+match(cmd: string): boolean {
+    logFunctionInput("translation:bash-translator", "match", { cmd });
     return /^(?:grep|findstr)\s+/i.test(cmd);
   }
 
-  translate(cmd: string): { name: string; arguments: Record<string, any> } | null {
+    /**
+   * Biên dịch lệnh grep thành tool call grepCode tương ứng.
+   */
+translate(cmd: string): { name: string; arguments: Record<string, any> } | null {
+    logFunctionInput("translation:bash-translator", "translate", { cmd });
     // Trích xuất keyword từ grep [-opts] "keyword" [path] hoặc grep keyword
     const afterCmd = cmd.replace(/^(?:grep|findstr)\s+/i, "").trim();
     // Bỏ qua các flag thông dụng như -r, -rn, -i, -E, /s, /i
@@ -174,11 +204,19 @@ export class GrepRule implements IBashCommandRule {
 export class GitStatusRule implements IBashCommandRule {
   readonly name = "GitStatusRule";
 
-  match(cmd: string): boolean {
+    /**
+   * Kiểm tra xem lệnh bash có phải là git status hay không.
+   */
+match(cmd: string): boolean {
+    logFunctionInput("translation:bash-translator", "match", { cmd });
     return /^git\s+status(?:\s+.*)?$/i.test(cmd);
   }
 
-  translate(_cmd: string): { name: string; arguments: Record<string, any> } {
+    /**
+   * Biên dịch lệnh git status thành tool call tương ứng.
+   */
+translate(_cmd: string): { name: string; arguments: Record<string, any> } {
+    logFunctionInput("translation:bash-translator", "translate", { _cmd });
     return {
       name: "git_status",
       arguments: {},
@@ -192,11 +230,19 @@ export class GitStatusRule implements IBashCommandRule {
 export class GitDiffRule implements IBashCommandRule {
   readonly name = "GitDiffRule";
 
-  match(cmd: string): boolean {
+    /**
+   * Kiểm tra xem lệnh bash có phải là git diff hay không.
+   */
+match(cmd: string): boolean {
+    logFunctionInput("translation:bash-translator", "match", { cmd });
     return /^git\s+diff(?:\s+.*)?$/i.test(cmd);
   }
 
-  translate(cmd: string): { name: string; arguments: Record<string, any> } {
+    /**
+   * Biên dịch lệnh git diff thành tool call tương ứng.
+   */
+translate(cmd: string): { name: string; arguments: Record<string, any> } {
+    logFunctionInput("translation:bash-translator", "translate", { cmd });
     const parts = cmd.split(/\s+/).slice(2);
     const nonFlagArgs = parts.filter(arg => !arg.startsWith("-"));
     const path = nonFlagArgs.length > 0 ? nonFlagArgs[0].replace(/['"]/g, "").trim() : undefined;
@@ -214,11 +260,19 @@ export class GitDiffRule implements IBashCommandRule {
 export class FindRule implements IBashCommandRule {
   readonly name = "FindRule";
 
-  match(cmd: string): boolean {
+    /**
+   * Kiểm tra xem lệnh bash có khớp với quy tắc tìm kiếm tệp (find) hay không.
+   */
+match(cmd: string): boolean {
+    logFunctionInput("translation:bash-translator", "match", { cmd });
     return /^find\s+[^\s]+/i.test(cmd);
   }
 
-  translate(cmd: string): { name: string; arguments: Record<string, any> } | null {
+    /**
+   * Biên dịch lệnh find thành tool call searchFiles tương ứng.
+   */
+translate(cmd: string): { name: string; arguments: Record<string, any> } | null {
+    logFunctionInput("translation:bash-translator", "translate", { cmd });
     const nameMatch = cmd.match(/^find\s+([^\s]+)(?:\s+-(?:i?name)\s+["']?([^"'\s]+)["']?)?/i);
     if (nameMatch) {
       const targetPath = nameMatch[1].replace(/['"]/g, "");
@@ -242,6 +296,7 @@ export class FindRule implements IBashCommandRule {
  * Kiểm tra xem chuỗi có chứa tiền tố shell rõ ràng (bash -lc, bash -c, sh -c, ```bash) hay không
  */
 export function hasExplicitShellPrefix(text: string): boolean {
+  logFunctionInput("translation:bash-translator", "hasExplicitShellPrefix", { text });
   const trimmed = text.trim();
   return (
     /^(?:bash|sh|zsh)\s+-(?:l?c|e)\s+/i.test(trimmed) ||
@@ -254,6 +309,7 @@ export function hasExplicitShellPrefix(text: string): boolean {
  * hướng dẫn, minh họa hoặc ví dụ cho người dùng tự chạy hay không.
  */
 export function isInstructionalOrHypotheticalContext(precedingText: string): boolean {
+  logFunctionInput("translation:bash-translator", "isInstructionalOrHypotheticalContext", { precedingText });
   if (!precedingText) return false;
   const trimmed = precedingText.trim();
   // Lấy 2 dòng cuối cùng trước code block
@@ -286,6 +342,7 @@ const DESTRUCTIVE_COMMAND_PATTERNS = [
  * Các lệnh này TUYỆT ĐỐI không được tự động chạy từ fenced code block thông thường!
  */
 export function isDestructiveCommand(cmd: string): boolean {
+  logFunctionInput("translation:bash-translator", "isDestructiveCommand", { cmd });
   return DESTRUCTIVE_COMMAND_PATTERNS.some(pat => pat.test(cmd));
 }
 
@@ -295,7 +352,11 @@ export function isDestructiveCommand(cmd: string): boolean {
 export class BashCommandTranslator {
   private readonly rules: IBashCommandRule[] = [];
 
-  constructor(customRules?: IBashCommandRule[]) {
+    /**
+   * Khởi tạo bộ biên dịch lệnh bash với các quy tắc mặc định và tùy chọn mở rộng.
+   */
+constructor(customRules?: IBashCommandRule[]) {
+    logFunctionInput("translation:bash-translator", "constructor", { customRules });
     if (customRules && customRules.length > 0) {
       this.rules = [...customRules];
     } else {
@@ -309,7 +370,11 @@ export class BashCommandTranslator {
     }
   }
 
-  registerRule(rule: IBashCommandRule): this {
+    /**
+   * Đăng ký thêm quy tắc biên dịch lệnh bash mới vào danh sách.
+   */
+registerRule(rule: IBashCommandRule): this {
+    logFunctionInput("translation:bash-translator", "registerRule", { rule });
     this.rules.push(rule);
     return this;
   }
@@ -321,6 +386,7 @@ export class BashCommandTranslator {
    * 3. Prose văn bản tự nhiên: tuyệt đối không bị biến thành command, nhưng cũng KHÔNG làm mất command hợp lệ!
    */
   translateAll(rawText: string): Array<{ name: string; arguments: Record<string, any> }> {
+    logFunctionInput("translation:bash-translator", "translateAll", { rawText });
     if (!rawText || !rawText.trim()) return [];
 
     // Nếu văn bản có chứa thẻ XML tool_call hoặc Patch Codex, nhường hoàn toàn cho các detector ưu tiên cao hơn
@@ -384,7 +450,11 @@ export class BashCommandTranslator {
     // 2. Quét các dòng lệnh độc lập ngoài code block
     // Xác định các vùng nằm trong bất kỳ code fence nào (kể cả ``` không phải shell) để bỏ qua
     const allCodeFences = [...rawText.matchAll(/```[\s\S]*?```/g)];
+    /**
+     * Kiểm tra xem vị trí ký tự (index) có đang nằm bên trong một khối code block (fence) hay không.
+     */
     const isInsideAnyFence = (index: number): boolean => {
+      logFunctionInput("translation:bash-translator", "isInsideAnyFence", { index });
       return allCodeFences.some(m => index >= m.index && index < m.index + m[0].length);
     };
 
@@ -435,6 +505,7 @@ export class BashCommandTranslator {
    * Thử dịch một dòng hoặc khối lệnh bash sang Tool Call (trả về tool đầu tiên để tương thích ngược)
    */
   translate(rawText: string): { name: string; arguments: Record<string, any> } | null {
+    logFunctionInput("translation:bash-translator", "translate", { rawText });
     const all = this.translateAll(rawText);
     return all.length > 0 ? all[0] : null;
   }

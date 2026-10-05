@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import type { CodexParsedRequest } from "../../../types";
 import { CodexRawPayload } from "../codex-raw-payload";
 import { CodexPayloadNormalizer } from "../codex-normalizer";
@@ -23,6 +24,7 @@ export { isImplementingPlanRequest, truncateToolResult };
  * TUYỆT ĐỐI KHÔNG coi sự xuất hiện của tool request_user_input là Plan Mode!
  */
 export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
+  logFunctionInput("temp-chat:compileHybridForwardPrompt", "isPlanModeRequest", { parsed });
   if (isImplementingPlanRequest(parsed)) return false;
   const payload = CodexRawPayload.from(parsed._rawBody || parsed);
   return CodexPayloadNormalizer.detectCollaborationMode(payload) === "plan";
@@ -40,6 +42,7 @@ export function compileM365HybridForwardPrompt(
   parsed: CodexParsedRequest,
   rawBody?: unknown
 ): string {
+  logFunctionInput("temp-chat:compileHybridForwardPrompt", "compileM365HybridForwardPrompt", { parsed, rawBody });
   const result = compileM365HybridForwardPromptWithResult(parsed, rawBody);
   return result.finalPrompt;
 }
@@ -51,6 +54,7 @@ export function compileM365HybridForwardPromptWithResult(
   parsed: CodexParsedRequest,
   rawBody?: unknown
 ): PromptCompileResult {
+  logFunctionInput("temp-chat:compileHybridForwardPrompt", "compileM365HybridForwardPromptWithResult", { parsed, rawBody });
   const payload = CodexRawPayload.from(rawBody || parsed._rawBody || parsed);
   const normalized = CodexPayloadNormalizer.normalize(payload);
 

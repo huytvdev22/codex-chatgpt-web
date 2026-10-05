@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../../debug-logger";
 import type { IToolCallDetector, DetectedToolCall } from "./types";
 import { cleanJsonPayload, normalizeToolName } from "./sanitizers";
 
@@ -13,7 +14,11 @@ export class JsonToolCallDetector implements IToolCallDetector {
   readonly priority = 1;
   readonly name = "JsonToolCallDetector";
 
-  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    /**
+   * Phát hiện và trích xuất tool call dạng JSON trong phản hồi của mô hình.
+   */
+detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    logFunctionInput("translation:detectors:json-detector", "detect", { rawResponse });
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // Không match nếu đang là XML tool_call để nhường cho XmlToolCallDetector nếu nằm trong thẻ
@@ -45,7 +50,11 @@ export class JsonToolCallDetector implements IToolCallDetector {
     return null;
   }
 
-  private tryParseJson(jsonStr: string): DetectedToolCall[] | DetectedToolCall | null {
+    /**
+   * Thử phân tích một chuỗi văn bản thành đối tượng JSON hợp lệ.
+   */
+private tryParseJson(jsonStr: string): DetectedToolCall[] | DetectedToolCall | null {
+    logFunctionInput("translation:detectors:json-detector", "tryParseJson", { jsonStr });
     try {
       const clean = cleanJsonPayload(jsonStr);
       const parsed = JSON.parse(clean);
@@ -81,7 +90,11 @@ export class JsonToolCallDetector implements IToolCallDetector {
     return null;
   }
 
-  private extractFromObject(obj: any): DetectedToolCall | null {
+    /**
+   * Trích xuất thông tin tool name và arguments từ một đối tượng JSON đã parse.
+   */
+private extractFromObject(obj: any): DetectedToolCall | null {
+    logFunctionInput("translation:detectors:json-detector", "extractFromObject", { obj });
     if (!obj || typeof obj !== "object") return null;
 
     // TH1: { "action": "tool_call", "tool": "read_file", "arguments": { ... } }

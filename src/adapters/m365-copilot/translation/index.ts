@@ -19,7 +19,6 @@ export {
 export {
   BashCommandTranslator,
   stripShellPrefix,
-  type BashTranslationResult,
   CatRule,
   LsRule,
   GrepRule,

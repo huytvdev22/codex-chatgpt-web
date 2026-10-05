@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import type { PlatformCommandStrategy } from "./types";
 import { PowerShellCommandStrategy } from "./powershell";
 import { PosixCommandStrategy } from "./posix";
@@ -19,6 +20,7 @@ export class CommandStrategyResolver {
    * Đăng ký một chiến lược tùy biến mới (Open for extension).
    */
   static registerStrategy(name: string, strategy: PlatformCommandStrategy): void {
+    logFunctionInput("strategies:resolver", "registerStrategy", { name, strategy });
     this.customStrategies.set(name.toLowerCase(), strategy);
   }
 
@@ -26,6 +28,7 @@ export class CommandStrategyResolver {
    * Giải quyết và trả về chiến lược thực thi phù hợp nhất cho ngữ cảnh hiện tại.
    */
   static resolve(options?: StrategyResolveOptions): PlatformCommandStrategy {
+    logFunctionInput("strategies:resolver", "resolve", { options });
     if (options?.customStrategy) {
       return options.customStrategy;
     }

@@ -1,3 +1,4 @@
+import { logFunctionInput } from "../debug-logger";
 import { stripOuterCodeFence } from "./stripCodeFence";
 
 export interface FastPathExtraction {
@@ -12,6 +13,7 @@ export interface FastPathExtraction {
  * Quét Scriptor Code Block và lấy raw text từ các thẻ [data-line-index] mà không qua Turndown.
  */
 export function extractFastPathFromDom(contentEl: HTMLElement): FastPathExtraction | null {
+  logFunctionInput("temp-chat:fastPathScraper", "extractFastPathFromDom", { contentEl });
   const codeBlockQuery = "div[role='group'][aria-label='Code Preview'], .scriptor-component-code-block, [class*='scriptor-component-code-block']";
   const allLiveCodeElements = Array.from(contentEl.querySelectorAll(codeBlockQuery)) as HTMLElement[];
   const liveCodeBlocks = allLiveCodeElements.filter((el, _, all) => !all.some(other => other !== el && other.contains(el)));
@@ -61,6 +63,7 @@ export function extractFastPathFromDom(contentEl: HTMLElement): FastPathExtracti
  * Phục vụ cho cơ chế chống mất đầu khi trình duyệt kích hoạt DOM Virtualization (cuộn xuống đáy và unmount các dòng trên).
  */
 export function findSuffixPrefixOverlap(existing: string, incoming: string, minOverlap = 10): number {
+  logFunctionInput("temp-chat:fastPathScraper", "findSuffixPrefixOverlap", { existing, incoming, minOverlap });
   if (!existing || !incoming) return 0;
   const maxSearch = Math.min(existing.length, incoming.length, 4000);
   for (let len = maxSearch; len >= minOverlap; len--) {
@@ -81,7 +84,11 @@ export class FastPathStreamBuffer {
   private streamedLength = 0;
   private fullText = "";
 
-  observe(currentRawText?: string | null): string {
+    /**
+   * Thực hiện xử lý FastPathStreamBuffer.observe cho quy trình M365 Copilot Adapter.
+   */
+observe(currentRawText?: string | null): string {
+    logFunctionInput("temp-chat:fastPathScraper", "observe", { currentRawText });
     const text = typeof currentRawText === "string" ? currentRawText : "";
     if (!text) return "";
 
@@ -128,7 +135,11 @@ export class FastPathStreamBuffer {
     return "";
   }
 
-  finish(finalRawText?: string | null): { markdown: string; delta: string } {
+    /**
+   * Thực hiện xử lý FastPathStreamBuffer.finish cho quy trình M365 Copilot Adapter.
+   */
+finish(finalRawText?: string | null): { markdown: string; delta: string } {
+    logFunctionInput("temp-chat:fastPathScraper", "finish", { finalRawText });
     let delta = "";
     if (finalRawText) {
       delta = this.observe(finalRawText);
@@ -139,7 +150,11 @@ export class FastPathStreamBuffer {
     };
   }
 
-  getText(): string {
+    /**
+   * Thực hiện xử lý FastPathStreamBuffer.getText cho quy trình M365 Copilot Adapter.
+   */
+getText(): string {
+    logFunctionInput("temp-chat:fastPathScraper", "getText");
     return this.fullText;
   }
 }
