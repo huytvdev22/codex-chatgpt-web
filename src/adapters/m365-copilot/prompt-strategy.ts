@@ -3,6 +3,7 @@ import type { NormalizedCodexRequest, NormalizedTool } from "./canonical-types";
 import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
+  TOOL_REMINDER_PROMPT,
 } from "./prompts";
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
@@ -65,19 +66,70 @@ QUY TẮC ỨNG XỬ:
 export const MINIMAL_TOOL_PROTOCOL = UNIFIED_TOOL_PROTOCOL;
 
 /**
+ * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI (như hướng dẫn web browsing, citations, word limits).
+ */
+export function cleanToolDescription(name: string, rawDesc?: string): string {
+  if (!rawDesc) return "No description provided.";
+  let desc = rawDesc.trim();
+
+  // Đối với web.run hoặc web: Cắt bỏ toàn bộ phần ví dụ, citations, decision boundary, word limits dài dằng dặc
+  if (name.includes("web") || desc.includes("## Examples") || desc.includes("---")) {
+    desc = desc.split("\n---")[0].split("\n##")[0].trim();
+  }
+
+  // Đối với update_goal hoặc create_goal: Chỉ giữ lại 1-2 câu đầu tiên mô tả chức năng
+  if (name.includes("goal") && desc.length > 250) {
+    const firstSentences = desc.split("\n\n")[0];
+    desc = firstSentences || desc.slice(0, 200);
+  }
+
+  return desc;
+}
+
+/**
+ * Ví dụ mẫu gọi công cụ chuẩn mực cho M365 Copilot bắt chước
+ */
+export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
+1. Sửa code trong file đã có (MẶC ĐỊNH BẮT BUỘC DÙNG apply_patch):
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Update File: src/math.js
+@@ context_anchor @@
+ dòng giữ nguyên
+-dòng xóa
++dòng thêm
+*** End Patch
+</custom_tool_call>
+
+2. Tạo file mới hoặc ghi đè toàn bộ file (Dùng write_file hoặc apply_patch *** Add File:):
+<tool_call>
+{"name": "write_file", "arguments": {"path": "hello.js", "content": "console.log('hello');"}}
+</tool_call>
+
+3. Chạy câu lệnh terminal/CLI không tương tác:
+<tool_call>
+{"name": "exec_command", "arguments": {"command": "npm test"}}
+</tool_call>
+
+4. Đọc file từ dự án:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "package.json"}}
+</tool_call>`;
+
+/**
  * Render Dynamic Tool Declaration trực tiếp từ normalized.activeCodingTools.
- * Sử dụng một định dạng tên công cụ duy nhất từ Codex.
+ * Sử dụng một định dạng tên công cụ duy nhất từ Codex kèm ví dụ mẫu trực quan.
  */
 export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
   if (!tools || tools.length === 0) {
-    return "AVAILABLE TOOLS\n(Không có công cụ bổ sung nào được khai báo trong lượt này)";
+    return `AVAILABLE TOOLS\n(Không có công cụ bổ sung nào được khai báo trong lượt này)\n\n${CANONICAL_TOOL_EXAMPLES}`;
   }
 
   const entries = tools.map(tool => {
     const qualified = tool.identity.namespace
       ? `${tool.identity.namespace}.${tool.identity.name}`
       : tool.identity.name;
-    const desc = tool.description ? tool.description.trim() : "No description provided.";
+    const desc = cleanToolDescription(tool.identity.name, tool.description);
     return `- ${qualified}\n  ${desc}`;
   });
 
@@ -87,7 +139,7 @@ export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
     entries.push("- write_file\n  Tạo file mới hoặc ghi đè nội dung file (tham số: path, content).");
   }
 
-  return `AVAILABLE TOOLS\n\n${entries.join("\n\n")}`;
+  return `AVAILABLE TOOLS\n\n${entries.join("\n\n")}\n\n${CANONICAL_TOOL_EXAMPLES}`;
 }
 
 export interface PromptSectionMetrics {
@@ -120,6 +172,7 @@ export interface PromptCompileInput {
   parsed: CodexParsedRequest;
   isPlanMode?: boolean;
   isImplementingPlan?: boolean;
+  isNewConversation?: boolean;
 }
 
 export interface PromptCompileResult {
@@ -213,8 +266,8 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
       const text = typeof msg.content === "string"
         ? msg.content
         : Array.isArray(msg.content)
-        ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
-        : "";
+          ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
+          : "";
       if (/PLEASE IMPLEMENT THIS PLAN/i.test(text) || /Yes, implement this plan/i.test(text)) {
         return true;
       }
@@ -245,6 +298,85 @@ export class M365PromptCompiler {
       : (normalized.collaborationMode || "default");
 
     const isPlanMode = !isImplementingPlan && collaborationMode === "plan";
+    const isNewConversation = input.isNewConversation ?? true;
+
+    // -------------------------------------------------------------
+    // CHẾ ĐỘ INCREMENTAL ROUNDTRIP (STATEFUL MODE - LƯỢT TIẾP THEO)
+    // Tối ưu hóa cực hạn: Chỉ gửi delta (lời nhắc thực thi, tool_result mới, user instruction mới)
+    // Giảm 95% token, model phản hồi nhanh tức thì, không bị quá tải ngữ cảnh!
+    // -------------------------------------------------------------
+    if (!isNewConversation) {
+      const incrementalSections: string[] = [];
+
+      const reminderSection = isImplementingPlan
+        ? IMPLEMENT_PLAN_PROMPT
+        : (isPlanMode ? `${PLAN_MODE_PROMPT}\n\n${TOOL_REMINDER_PROMPT}` : TOOL_REMINDER_PROMPT);
+      incrementalSections.push(reminderSection);
+
+      // Bổ sung danh sách tools THẲNG TỪ RAW CỦA CODEX GỬI LÊN (activeCodingTools)
+      const dynamicToolsText = renderDynamicToolDeclarations(normalized.activeCodingTools);
+      incrementalSections.push(dynamicToolsText);
+
+      let toolResultsContent = "";
+      if (normalized.trailingToolResults.length > 0) {
+        const resultBlocks = normalized.trailingToolResults.map(res =>
+          `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
+        );
+        toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (apply_patch hoặc write_file nếu sửa/tạo file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
+        incrementalSections.push(toolResultsContent);
+      }
+
+      let userReqContent = "";
+      if (normalized.latestUserInstruction) {
+        userReqContent = `[YÊU CẦU CỦA NGƯỜI DÙNG]:\n${normalized.latestUserInstruction}`;
+        incrementalSections.push(userReqContent);
+      }
+
+      // Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
+      incrementalSections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
+
+      const finalPrompt = incrementalSections.join("\n\n").trim();
+
+      console.log(
+        `planMode=${isPlanMode}\n` +
+        `collaborationMode=${collaborationMode}\n` +
+        `finalPromptLength=${finalPrompt.length}\n` +
+        `mode=incremental_stateful`
+      );
+
+      const metrics = calculatePromptMetrics({
+        toolDeclaration: `${reminderSection}\n\n${dynamicToolsText}`,
+        developerInstructions: "",
+        history: "",
+        toolResults: toolResultsContent,
+        environment: "",
+        userRequest: userReqContent,
+        finalPrompt,
+      });
+
+      const audit: PromptAuditData = {
+        threadId: normalized.threadId,
+        turnId: normalized.turnId,
+        toolsCount: normalized.activeCodingTools.length,
+        developerRulesCount: 0,
+        historyTurns: 0,
+        toolResultsCount: normalized.trailingToolResults.length,
+        toolPromptChars: reminderSection.length + dynamicToolsText.length,
+        historyChars: 0,
+        developerChars: 0,
+        environmentChars: 0,
+        finalPromptChars: finalPrompt.length,
+      };
+
+      return {
+        finalPrompt,
+        metrics,
+        audit,
+        collaborationMode,
+        isPlanMode,
+        isImplementingPlan,
+      };
+    }
 
     const sections: string[] = [];
 

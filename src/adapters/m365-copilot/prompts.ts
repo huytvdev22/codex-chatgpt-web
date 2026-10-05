@@ -196,7 +196,7 @@ export const IMPLEMENT_PLAN_PROMPT = `[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING 
 Người dùng ĐÃ PHÊ DUYỆT bản kế hoạch và yêu cầu bắt đầu thực thi code ngay!
 BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
 1. Hãy bắt đầu ngay bằng cách xuất khối <custom_tool_call name="apply_patch"> hoặc <tool_call> cho bước đầu tiên:
-   - Tạo file mới hoặc sửa file: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file hoặc *** Update File: path/to/file) hoặc công cụ write_file.
+   - Tạo file mới hoặc sửa file: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file hoặc *** Update File: path/to/file) hoặc công cụ write_file. Nếu là dự án mới hoặc tạo file mới: Dùng write_file.
    - TUYỆT ĐỐI NGHIÊM CẤM: Không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
    - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, git status, mkdir -p ...).
 2. Sau khi file được tạo/sửa và nhận kết quả toolResult, tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command) để kiểm tra tính đúng đắn.
@@ -211,8 +211,9 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
 - NẾU CẦN THỰC HIỆN BƯỚC KẾ TIẾP: Hãy tiếp tục in khối <tool_call> hoặc câu lệnh shell tương ứng.
 - NẾU ĐÃ HOÀN TẤT HOẶC ĐÃ ĐỦ THÔNG TIN: BẠN HÃY TRẢ LỜI KẾT QUẢ / KẾT LUẬN CHI TIẾT CHO NGƯỜI DÙNG VÀ TUYỆT ĐỐI KHÔNG IN THÊM BẤT KỲ KHỐI <tool_call> HAY CÂU LỆNH SHELL NÀO NỮA.
 - TUYỆT ĐỐI KHÔNG từ chối với lý do không có công cụ IDE hoặc không có quyền truy cập máy tính; không yêu cầu người dùng tự gõ lệnh hay tải file thủ công.
-- Tạo file mới hoặc sửa file: Ưu tiên sử dụng apply_patch (với *** Add File: hoặc *** Update File:) hoặc công cụ write_file. TUYỆT ĐỐI KHÔNG dùng cat <<EOF hay heredoc shell để tạo file trong exec_command.
-- Lệnh exec_command chỉ dùng cho các câu lệnh CLI không tương tác (như npm install, npm test, git, mkdir -p).
+- QUY TẮC CẬP NHẬT FILE: Khi chỉnh sửa hoặc cập nhật file đã có (Update File), bạn MẶC ĐỊNH BẮT BUỘC sử dụng công cụ apply_patch với cú pháp Freeform (*** Begin Patch ... *** Update File: ... *** End Patch). Khi tạo file mới: Sử dụng apply_patch (với *** Add File:) hoặc write_file.
+- NGHIÊM CẤM TUYỆT ĐỐI: Không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
+- Lệnh exec_command chỉ dùng cho các câu lệnh CLI không tương tác (như npm install, npm test, git status, git diff, mkdir -p ...).
 - Khi kết quả tool_result có mã thoát 0 (Process exited with code 0) hoặc output rỗng: Thao tác trước đó đã THÀNH CÔNG (lệnh thực thi không sinh output ra stdout hoặc file đã được tạo). Hãy tự tin tiếp tục ngay bước tiếp theo hoặc đưa ra câu trả lời kết luận nếu đã xong!`;
 
 /**

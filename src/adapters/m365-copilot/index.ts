@@ -3,6 +3,8 @@ import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse } from "./title-guard";
 import { compileM365Prompt, compileM365HybridForwardPrompt } from "./prompt";
 import { CodexRawPayload } from "./codex-raw-payload";
+import { CodexPayloadNormalizer } from "./codex-normalizer";
+import { promptCompiler } from "./prompt-strategy";
 import { executeM365Turn } from "./browser-worker";
 import { M365ToolCallDetector } from "./markdown";
 import { M365ToolBridge } from "./tool-bridge";
@@ -222,11 +224,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt: Nếu ở chế độ Temporary Per Request thì dùng Prompt tối ưu từ Domain Model 1:1
-    const compiledPrompt = compileM365Prompt(parsed, isNewConversation);
-    const promptToSend = isTemporaryPerRequest
-      ? compileM365HybridForwardPrompt(parsed, rawPayload)
-      : compiledPrompt;
+    // 2. Biên dịch prompt duy nhất: Tái sử dụng 100% dữ liệu từ Raw Content & Normalizer cho cả Stateful và Stateless
+    const effectiveIsNewConversation = isTemporaryPerRequest ? true : isNewConversation;
+    const payload = CodexRawPayload.from(rawPayload || parsed._rawBody || parsed);
+    const normalized = CodexPayloadNormalizer.normalize(payload);
+    const compileResult = promptCompiler.compile({
+      normalized,
+      parsed,
+      isNewConversation: effectiveIsNewConversation,
+    });
+    const promptToSend = compileResult.finalPrompt;
+    const compiledPrompt = promptToSend;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {

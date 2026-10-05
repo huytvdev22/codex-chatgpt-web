@@ -9,6 +9,10 @@ import {
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
 } from "./prompts";
+import {
+  MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
+  MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
+} from "./temp-chat/prompts";
 
 // Re-export để đảm bảo 100% tương thích ngược cho các module và tests đang import từ ./prompt
 export {
@@ -213,6 +217,10 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
       parts.push(OUTPUT_FORMAT_HINTS.default);
     }
   }
+
+  // Tinh túy 1: Luôn luôn kết thúc bằng chỉ thị 4-Backtick Markdown Envelope cho MỌI lượt
+  const formatPrompt = isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT;
+  parts.push(formatPrompt);
 
   let finalPrompt = parts.join("\n\n").trim();
 

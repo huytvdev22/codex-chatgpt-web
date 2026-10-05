@@ -298,7 +298,28 @@ export async function executeM365Turn(
           return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false, detectedWebError };
         }
 
+        const isNewAiMessage = messages.length > before.count;
         const lastMsg = messages[messages.length - 1] as HTMLElement;
+        const lastHtml = lastMsg ? (lastMsg.innerHTML || "") : "";
+        const contentChanged = before.count > 0 && lastHtml !== before.lastHtml;
+
+        // Tinh túy 2 (Stateful Safe Guard): Nếu ở chế độ Stateful (before.count > 0),
+        // chưa xuất hiện tin nhắn AI mới VÀ tin nhắn cũ chưa hề thay đổi nội dung:
+        // Đang trong giai đoạn chờ M365 nhận lệnh và khởi tạo lượt mới.
+        // TUYỆT ĐỐI không đọc nhầm tin nhắn cũ của lượt trước để tránh kết thúc sớm!
+        if (before.count > 0 && !isNewAiMessage && !contentChanged) {
+          const isEditorBusy = Boolean(stopBtn) || editorDisabled;
+          return {
+            isGenerating: isEditorBusy,
+            blocks: [],
+            rawHtml: "",
+            isNew: false,
+            hasContent: false,
+            detectedWebError,
+            fastPathRawText: null,
+          };
+        }
+
         // Chú ý: KHÔNG dùng .fai-StatusMessage hay .fai-BebopMessageStatus vì đây là status card tồn tại vĩnh viễn trong DOM sau khi Copilot tìm kiếm xong!
         // Chỉ dùng shimmer thực sự (đang animate loading) hoặc role="progressbar"
         const hasActiveShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i]:not(.fai-StatusMessage):not(.fai-BebopMessageStatus), [role="progressbar"]'));
