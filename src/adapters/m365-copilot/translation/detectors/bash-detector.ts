@@ -1,0 +1,19 @@
+import type { IToolCallDetector, DetectedToolCall } from "./types";
+import { BashCommandTranslator } from "../bash-translator";
+
+/**
+ * Bộ phát hiện Bash Command (Ưu tiên C)
+ * Hỗ trợ một hoặc nhiều lệnh shell (cat file1 file2, cat file1\ncat file2, git status, v.v.)
+ */
+export class BashCommandDetector implements IToolCallDetector {
+  readonly priority = 3;
+  readonly name = "BashCommandDetector";
+
+  constructor(private readonly translator = new BashCommandTranslator()) { }
+
+  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+    const all = this.translator.translateAll(rawResponse);
+    if (all.length === 0) return null;
+    return all.length === 1 ? all[0] : all;
+  }
+}

@@ -41,5 +41,10 @@ export {
   normalizePatchEnvelope,
   normalizeToolName,
   maskArgumentsForLog,
+  maskToolCallsForLog,
   balanceJsonBraces,
 } from "./output-translator";
+
+export * from "./detectors";
+export * from "./log-masker";
+

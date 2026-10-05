@@ -30,6 +30,8 @@
     "dev:chat": "bun run src/cli.ts dev chat",
     "test": "bun test ./tests",
     "audit": "bun audit",
+    "check:circular": "node scripts/check-circular-deps.js",
+    "check:architecture": "node scripts/check-circular-deps.js && bun test tests/m365-architecture-integrity.test.ts",
     "check-version": "bun run scripts/check-version.ts",
     "typecheck": "bun x --no-install --bun tsc --noEmit",
     "licenses": "bun run scripts/generate-third-party-notices.ts --include-launcher",
