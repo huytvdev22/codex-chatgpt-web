@@ -1,14 +1,22 @@
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
-import { isTitleRequest, generateTitleResponse } from "./title-guard";
-import { compileM365Prompt, compileM365HybridForwardPrompt } from "./prompt";
-import { CodexRawPayload } from "./codex-raw-payload";
-import { CodexPayloadNormalizer } from "./codex-normalizer";
-import { promptCompiler } from "./prompt-strategy";
-import { executeM365Turn } from "./browser-worker";
-import { M365ToolCallDetector } from "./markdown";
-import { M365ToolBridge } from "./tool-bridge";
-import { M365OutputTranslator, maskArgumentsForLog } from "./output-translator";
+import { isTitleRequest, generateTitleResponse } from "./guards";
+import { compileM365Prompt, compileM365HybridForwardPrompt, promptCompiler } from "./prompts/index";
+import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
+import { executeM365Turn } from "./browser";
+import { M365ToolCallDetector, M365OutputTranslator, maskArgumentsForLog } from "./translation";
+import { M365ToolBridge } from "./tools";
+import {
+  conversationGuard,
+  cleanExpiredConversationGuards,
+  MAX_TOOL_ITERATIONS,
+  MAX_IDENTICAL_TOOL_CALLS,
+  stableSortValue,
+  stableToolFingerprint,
+  isToolCallPart,
+  isAssistantFinalAnswer,
+  type ConversationGuardState,
+} from "./session";
 import { emitStructuredEvent } from "../../observability/emitter";
 import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
@@ -17,11 +25,14 @@ import { homedir } from "node:os";
 import type { TraceContext } from "../../observability/types";
 import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 
-export * from "./bash-translator";
-export * from "./output-translator";
-export * from "./agent-loop";
-export * from "./tool-bridge";
-export * from "./capability-picker";
+export * from "./session";
+export * from "./guards";
+export * from "./normalization";
+export * from "./prompts/index";
+export * from "./translation";
+export * from "./tools";
+export * from "./browser";
+export * from "./harness";
 
 function extractClientShell(parsed: CodexParsedRequest): string | undefined {
   // 1. Kiểm tra trong system prompt
@@ -40,102 +51,6 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
     if (match) return match[1].trim();
   }
   return undefined;
-}
-
-export function stableSortValue(value: unknown): unknown {
-  if (value === null || typeof value !== "object") {
-    if (typeof value === "string") {
-      return value.replace(/\\/g, "/").trim();
-    }
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(stableSortValue);
-  }
-  const obj = value as Record<string, unknown>;
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(obj).sort()) {
-    sorted[key] = stableSortValue(obj[key]);
-  }
-  return sorted;
-}
-
-export function stableToolFingerprint(name: string, rawArgs: unknown): string {
-  let parsedArgs = rawArgs;
-  if (typeof rawArgs === "string") {
-    try {
-      parsedArgs = JSON.parse(rawArgs);
-    } catch {
-      parsedArgs = rawArgs.trim();
-    }
-  }
-  const normalized = stableSortValue(parsedArgs);
-  return `${name.trim()}:${JSON.stringify(normalized)}`;
-}
-
-export function isToolCallPart(part: unknown): boolean {
-  if (!part || typeof part !== "object") return false;
-  const p = part as Record<string, unknown>;
-  const typeStr = typeof p.type === "string" ? p.type.toLowerCase() : "";
-  return (
-    typeStr === "toolcall" ||
-    typeStr === "tool_call" ||
-    typeStr === "function_call" ||
-    typeStr === "functioncall" ||
-    typeStr === "custom_tool_call" ||
-    typeStr === "tool_search_call" ||
-    p.call_id !== undefined ||
-    p.callId !== undefined ||
-    p.function !== undefined
-  );
-}
-
-export function isAssistantFinalAnswer(msg: CodexMessage | undefined): boolean {
-  if (!msg || msg.role !== "assistant") return false;
-
-  // 1. Nếu content là string: Kiểm tra xem có chứa XML tool_call serialize không
-  if (typeof msg.content === "string") {
-    if (/<tool[\\_]*call>/i.test(msg.content)) {
-      return false;
-    }
-    return true;
-  }
-
-  // 2. Nếu content là structured parts: Kiểm tra toàn bộ schema biến thể của tool call
-  if (Array.isArray(msg.content)) {
-    const hasToolCall = msg.content.some(isToolCallPart);
-    return !hasToolCall;
-  }
-
-  return true;
-}
-
-interface ConversationGuardState {
-  toolIterations: number;
-  lastToolFingerprint?: string;
-  identicalToolCount: number;
-  updatedAt: number;
-}
-
-export const MAX_TOOL_ITERATIONS = 100;
-export const MAX_IDENTICAL_TOOL_CALLS = 10;
-const GUARD_TTL_MS = 15 * 60 * 1000; // 15 phút
-
-export const conversationGuard = new Map<string, ConversationGuardState>();
-
-export function cleanExpiredConversationGuards(now = Date.now()): void {
-  for (const [key, state] of conversationGuard.entries()) {
-    if (now - state.updatedAt > GUARD_TTL_MS) {
-      conversationGuard.delete(key);
-    }
-  }
-  if (conversationGuard.size > 1000) {
-    const entries = [...conversationGuard.entries()]
-      .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
-    for (let i = 0; i < Math.min(200, entries.length); i++) {
-      conversationGuard.delete(entries[i][0]);
-    }
-  }
 }
 
 export class M365CopilotAdapter implements ProviderAdapter {

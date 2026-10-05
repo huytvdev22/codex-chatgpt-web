@@ -1,0 +1,91 @@
+import type { CodexMessage } from "../../../types";
+import type { ConversationGuardState } from "./conversation-state";
+
+export const MAX_TOOL_ITERATIONS = 100;
+export const MAX_IDENTICAL_TOOL_CALLS = 10;
+export const GUARD_TTL_MS = 15 * 60 * 1000; // 15 phút
+
+export const conversationGuard = new Map<string, ConversationGuardState>();
+
+export function cleanExpiredConversationGuards(now = Date.now()): void {
+  for (const [key, state] of conversationGuard.entries()) {
+    if (now - state.updatedAt > GUARD_TTL_MS) {
+      conversationGuard.delete(key);
+    }
+  }
+  if (conversationGuard.size > 1000) {
+    const entries = [...conversationGuard.entries()]
+      .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+    for (let i = 0; i < Math.min(200, entries.length); i++) {
+      conversationGuard.delete(entries[i][0]);
+    }
+  }
+}
+
+export function stableSortValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "string") {
+      return value.replace(/\\/g, "/").trim();
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(stableSortValue);
+  }
+  const obj = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    sorted[key] = stableSortValue(obj[key]);
+  }
+  return sorted;
+}
+
+export function stableToolFingerprint(name: string, rawArgs: unknown): string {
+  let parsedArgs = rawArgs;
+  if (typeof rawArgs === "string") {
+    try {
+      parsedArgs = JSON.parse(rawArgs);
+    } catch {
+      parsedArgs = rawArgs.trim();
+    }
+  }
+  const normalized = stableSortValue(parsedArgs);
+  return `${name.trim()}:${JSON.stringify(normalized)}`;
+}
+
+export function isToolCallPart(part: unknown): boolean {
+  if (!part || typeof part !== "object") return false;
+  const p = part as Record<string, unknown>;
+  const typeStr = typeof p.type === "string" ? p.type.toLowerCase() : "";
+  return (
+    typeStr === "toolcall" ||
+    typeStr === "tool_call" ||
+    typeStr === "function_call" ||
+    typeStr === "functioncall" ||
+    typeStr === "custom_tool_call" ||
+    typeStr === "tool_search_call" ||
+    p.call_id !== undefined ||
+    p.callId !== undefined ||
+    p.function !== undefined
+  );
+}
+
+export function isAssistantFinalAnswer(msg: CodexMessage | undefined): boolean {
+  if (!msg || msg.role !== "assistant") return false;
+
+  // 1. Nếu content là string: Kiểm tra xem có chứa XML tool_call serialize không
+  if (typeof msg.content === "string") {
+    if (/<tool[\\_]*call>/i.test(msg.content)) {
+      return false;
+    }
+    return true;
+  }
+
+  // 2. Nếu content là structured parts: Kiểm tra toàn bộ schema biến thể của tool call
+  if (Array.isArray(msg.content)) {
+    const hasToolCall = msg.content.some(isToolCallPart);
+    return !hasToolCall;
+  }
+
+  return true;
+}
