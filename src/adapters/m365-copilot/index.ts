@@ -12,6 +12,7 @@ import {
   cleanExpiredConversationGuards,
   MAX_TOOL_ITERATIONS,
   MAX_IDENTICAL_TOOL_CALLS,
+  getMaxIdenticalToolCalls,
   stableSortValue,
   stableToolFingerprint,
   isToolCallPart,
@@ -305,9 +306,11 @@ async runTurn(
           },
         });
 
-        // 1. Kiểm tra lặp lại cùng một tool call quá 3 lần liên tiếp
-        if (guardState.identicalToolCount >= MAX_IDENTICAL_TOOL_CALLS) {
-          console.warn(`[m365-guard] Ngắt vòng lặp: Công cụ bị gọi lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp.`);
+        // 1. Kiểm tra lặp lại cùng một tool call quá giới hạn liên tiếp (phân biệt read vs write)
+        const currentToolName = mappedCalls[0]?.mapped.name || "unknown";
+        const maxIdenticalAllowed = getMaxIdenticalToolCalls(currentToolName);
+        if (guardState.identicalToolCount >= maxIdenticalAllowed) {
+          console.warn(`[m365-guard] Ngắt vòng lặp: Công cụ ${currentToolName} bị gọi lặp lại ${maxIdenticalAllowed} lần liên tiếp.`);
           conversationGuard.delete(cKey);
           emitStructuredEvent({
             level: "error",
@@ -315,8 +318,9 @@ async runTurn(
             traceContext,
             safeDetails: {
               reason: "repeated_tool_call",
-              toolName: mappedCalls[0]?.mapped.name,
+              toolName: currentToolName,
               identicalCount: guardState.identicalToolCount,
+              maxAllowed: maxIdenticalAllowed,
             },
           });
           emitStructuredEvent({
@@ -326,7 +330,7 @@ async runTurn(
             safeDetails: {
               completionType: "loop_blocked",
               terminalReason: "loop_blocked_repeated_tool",
-              terminalExplanation: `Ngắt vòng lặp an toàn: Công cụ ${mappedCalls[0]?.mapped.name} bị gọi lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp với cùng tham số.`,
+              terminalExplanation: `Ngắt vòng lặp an toàn: Công cụ ${currentToolName} bị gọi lặp lại ${maxIdenticalAllowed} lần liên tiếp với cùng tham số.`,
               toolCount: 0,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
@@ -334,7 +338,7 @@ async runTurn(
           });
           emit({
             type: "text_delta",
-            text: `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${mappedCalls[0].mapped.name}\` đã được yêu cầu lặp lại ${MAX_IDENTICAL_TOOL_CALLS} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
+            text: `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${currentToolName}\` đã được yêu cầu lặp lại ${maxIdenticalAllowed} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
           });
           emit({
             type: "done",

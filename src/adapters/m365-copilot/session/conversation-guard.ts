@@ -4,7 +4,35 @@ import type { ConversationGuardState } from "./conversation-state";
 
 export const MAX_TOOL_ITERATIONS = 100;
 export const MAX_IDENTICAL_TOOL_CALLS = 10;
+export const MAX_IDENTICAL_READ_TOOL_CALLS = 20;
+export const MAX_IDENTICAL_WRITE_TOOL_CALLS = 6;
 export const GUARD_TTL_MS = 15 * 60 * 1000; // 15 phút
+
+export const READ_ONLY_TOOLS = new Set([
+  "read_file",
+  "list_dir",
+  "grep_code",
+  "git_status",
+  "git_diff",
+  "view_file",
+  "grep_search",
+  "read_url_content",
+]);
+
+/**
+ * Kiểm tra xem công cụ có phải là read-only (chỉ đọc, không làm thay đổi trạng thái file system / process) hay không.
+ */
+export function isReadOnlyTool(name?: string): boolean {
+  if (!name || typeof name !== "string") return false;
+  return READ_ONLY_TOOLS.has(name.trim().toLowerCase());
+}
+
+/**
+ * Lấy giới hạn số lần lặp liên tiếp tối đa cho phép dựa trên loại công cụ (Read vs Write).
+ */
+export function getMaxIdenticalToolCalls(name?: string): number {
+  return isReadOnlyTool(name) ? MAX_IDENTICAL_READ_TOOL_CALLS : MAX_IDENTICAL_WRITE_TOOL_CALLS;
+}
 
 export const conversationGuard = new Map<string, ConversationGuardState>();
 

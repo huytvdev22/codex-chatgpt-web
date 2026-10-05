@@ -5,5 +5,6 @@ export {
   type IM365ModelClient,
   type AgentMessage,
   type AgentLoopOptions,
+  type AgentLoopRetryOptions,
   type AgentLoopResult,
 } from "./agent-loop";

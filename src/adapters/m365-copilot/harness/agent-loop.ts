@@ -25,16 +25,27 @@ export interface AgentMessage {
   content: string;
   toolCallId?: string;
   toolName?: string;
+  isError?: boolean;
+}
+
+export interface AgentLoopRetryOptions {
+  maxRetries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  perTurnTimeoutMs?: number;
+  retryableErrors?: string[];
 }
 
 export interface AgentLoopOptions {
   maxTurns?: number;
   conversationKey?: string;
+  retryOptions?: AgentLoopRetryOptions;
   onTurnStart?: (turnIndex: number, prompt: string) => void;
   onRawResponse?: (turnIndex: number, raw: string) => void;
   onToolCall?: (turnIndex: number, toolCalls: OpenAIToolCall[]) => void;
-  onToolResult?: (turnIndex: number, toolName: string, result: string) => void;
+  onToolResult?: (turnIndex: number, toolName: string, result: string, isError?: boolean) => void;
   onFinalAnswer?: (turnIndex: number, answer: string) => void;
+  onTurnRetry?: (turnIndex: number, attempt: number, error: Error, delayMs: number) => void;
 }
 
 export interface AgentLoopResult {
@@ -42,6 +53,7 @@ export interface AgentLoopResult {
   turns: number;
   messages: AgentMessage[];
   status: "completed" | "max_turns_exceeded" | "failed";
+  error?: string;
 }
 
 import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../tools/atomic-file-writer";
@@ -168,22 +180,107 @@ async execute(name: string, args: Record<string, any>): Promise<string> {
  * Tuân thủ Open/Closed Principle (OCP) và Single Responsibility (SRP)
  */
 export class M365AgentLoop {
-    /**
+  /**
    * Khởi tạo vòng lặp tự trị M365 Agent Loop quản lý luồng trao đổi giữa Codex và Copilot.
    */
-constructor(
+  constructor(
     private readonly modelClient: IM365ModelClient,
     private readonly toolExecutor: IToolExecutor = new LocalToolExecutor(),
     private readonly translator: M365OutputTranslator = new M365OutputTranslator()
   ) {
-    logFunctionInput("harness:agent-loop", "constructor", { modelClient, toolExecutor, translator });}
+    logFunctionInput("harness:agent-loop", "constructor", { modelClient, toolExecutor, translator });
+  }
+
+  private isRetryableError(err: unknown, retryableKeywords: string[]): boolean {
+    if (!err) return false;
+    const msg = String((err as any)?.message || err).toLowerCase();
+    return retryableKeywords.some(keyword => msg.includes(keyword.toLowerCase()));
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async callWithTimeout(
+    prompt: string,
+    context: { turnIndex: number; conversationKey?: string },
+    timeoutMs: number
+  ): Promise<string> {
+    if (!timeoutMs || timeoutMs <= 0) {
+      return this.modelClient.call(prompt, context);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Model call timed out after ${timeoutMs}ms (per-turn timeout)`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([
+        this.modelClient.call(prompt, context),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private async callWithRetry(
+    prompt: string,
+    context: { turnIndex: number; conversationKey?: string },
+    options: AgentLoopOptions
+  ): Promise<string> {
+    const retryOpts = options.retryOptions || {};
+    const maxRetries = Math.max(1, retryOpts.maxRetries ?? 3);
+    const baseDelayMs = retryOpts.baseDelayMs ?? 2000;
+    const maxDelayMs = retryOpts.maxDelayMs ?? 30000;
+    const timeoutMs = retryOpts.perTurnTimeoutMs ?? 180000;
+    const retryableErrors = retryOpts.retryableErrors ?? [
+      "timeout",
+      "quota",
+      "rate_limit",
+      "network",
+      "fetch",
+      "econnreset",
+      "etimedout",
+      "socket hang up",
+      "503",
+      "429",
+      "502",
+      "504",
+      "temporarily unavailable",
+    ];
+
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.callWithTimeout(prompt, context, timeoutMs);
+      } catch (err: any) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const isRetryable = this.isRetryableError(err, retryableErrors);
+
+        if (attempt < maxRetries && isRetryable) {
+          const delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+          options.onTurnRetry?.(context.turnIndex, attempt, lastError, delay);
+          await this.sleep(delay);
+          continue;
+        }
+
+        throw lastError;
+      }
+    }
+
+    throw lastError || new Error("M365 Model Call thất bại sau số lần thử lại tối đa");
+  }
 
   /**
    * Khởi chạy vòng lặp Agent đa bước
    */
   async run(initialPrompt: string, options: AgentLoopOptions = {}): Promise<AgentLoopResult> {
     logFunctionInput("harness:agent-loop", "run", { initialPrompt, options });
-    const maxTurns = options.maxTurns ?? 10;
+    const maxTurns = options.maxTurns ?? 30;
     const messages: AgentMessage[] = [];
     let currentPrompt = initialPrompt;
     let turnCount = 0;
@@ -194,11 +291,27 @@ constructor(
       turnCount++;
       options.onTurnStart?.(turnCount, currentPrompt);
 
-      // 1. Gửi prompt cho M365
-      const rawResponse = await this.modelClient.call(currentPrompt, {
-        turnIndex: turnCount,
-        conversationKey: options.conversationKey,
-      });
+      // 1. Gửi prompt cho M365 kèm cơ chế retry + timeout
+      let rawResponse: string;
+      try {
+        rawResponse = await this.callWithRetry(
+          currentPrompt,
+          {
+            turnIndex: turnCount,
+            conversationKey: options.conversationKey,
+          },
+          options
+        );
+      } catch (err: any) {
+        const errorMsg = `M365 Model Call thất bại sau khi thử lại: ${err?.message || String(err)}`;
+        return {
+          finalAnswer: errorMsg,
+          turns: turnCount,
+          messages,
+          status: "failed",
+          error: errorMsg,
+        };
+      }
 
       options.onRawResponse?.(turnCount, rawResponse);
 
@@ -238,24 +351,48 @@ constructor(
           parsedArgs = { raw: argsJson };
         }
 
-        const rawResult = await this.toolExecutor.execute(name, parsedArgs);
+        let rawResult: string;
+        let isToolError = false;
+        try {
+          rawResult = await this.toolExecutor.execute(name, parsedArgs);
+          if (
+            typeof rawResult === "string" &&
+            (rawResult.startsWith("Lỗi:") ||
+              rawResult.startsWith("Command error:") ||
+              rawResult.startsWith("Error:") ||
+              rawResult.includes("[ERROR]"))
+          ) {
+            isToolError = true;
+          }
+        } catch (err: any) {
+          rawResult = `Lỗi thực thi công cụ ${name}: ${err?.message || String(err)}`;
+          isToolError = true;
+        }
+
         const truncatedResult = truncateToolResult(rawResult);
 
         console.log("\n[TOOL RESULT]");
-        console.log(`Tool: ${name} (${call.id})`);
+        console.log(`Tool: ${name} (${call.id})${isToolError ? " [ERROR]" : ""}`);
         console.log(truncatedResult);
 
-        options.onToolResult?.(turnCount, name, truncatedResult);
+        options.onToolResult?.(turnCount, name, truncatedResult, isToolError);
         messages.push({
           role: "tool_result",
           toolCallId: call.id,
           toolName: name,
           content: truncatedResult,
+          isError: isToolError,
         });
 
-        toolResultsPromptParts.push(
-          `<tool_result name="${name}" tool_call_id="${call.id}">\n${truncatedResult}\n</tool_result>`
-        );
+        if (isToolError) {
+          toolResultsPromptParts.push(
+            `<tool_result name="${name}" tool_call_id="${call.id}" status="error">\n${truncatedResult}\n</tool_result>\n<system_hint>Thực thi công cụ "${name}" không thành công. Hãy phân tích kỹ thông báo lỗi trên, xem lại đường dẫn/tham số hoặc thử phương án thay thế, tránh lặp lại cùng một thao tác lỗi.</system_hint>`
+          );
+        } else {
+          toolResultsPromptParts.push(
+            `<tool_result name="${name}" tool_call_id="${call.id}" status="success">\n${truncatedResult}\n</tool_result>`
+          );
+        }
       }
 
       // 5. Chuẩn bị prompt tiếp theo chứa tool result gửi lại cho M365
