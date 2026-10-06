@@ -8,3 +8,9 @@ export {
   type AgentLoopRetryOptions,
   type AgentLoopResult,
 } from "./agent-loop";
+
+export {
+  CognitiveEvaluator,
+  type CognitiveTurnEvaluation,
+  type CognitiveSessionMetrics,
+} from "./cognitive-evaluator";

@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
   M365AgentLoop,
+  CognitiveEvaluator,
   type IM365ModelClient,
   type IToolExecutor,
   type AgentLoopOptions,
 } from "../src/adapters/m365-copilot/harness";
+import {
+  M365OutputTranslator,
+  extractCognitiveBlocks,
+} from "../src/adapters/m365-copilot/translation";
 import {
   isReadOnlyTool,
   getMaxIdenticalToolCalls,
@@ -209,5 +214,139 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
 
     expect(fp1).not.toBe(fp2);
     expect(fp1).toBe(fp3);
+  });
+
+  // =========================================================================
+  // 6. Cognitive Envelope & Thought Extraction Tests
+  // =========================================================================
+  test("extractCognitiveBlocks bóc tách chính xác thinking, narrative và cleanedText", () => {
+    const raw = `<thought>
+Phân tích: Cần đọc file index.ts để kiểm tra entry point.
+Mục tiêu: Đọc 50 dòng đầu.
+</thought>
+Để đánh giá toàn diện, tôi sẽ đọc file index.ts trước:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/index.ts", "end_line": 50}}
+</tool_call>`;
+
+    const cognitive = extractCognitiveBlocks(raw);
+    expect(cognitive.thinking).toContain("Phân tích: Cần đọc file index.ts");
+    expect(cognitive.thinking).toContain("Mục tiêu: Đọc 50 dòng đầu.");
+    expect(cognitive.narrative).toBe("Để đánh giá toàn diện, tôi sẽ đọc file index.ts trước:");
+    expect(cognitive.cleanedText).not.toContain("<thought>");
+  });
+
+  test("M365OutputTranslator dịch Cognitive Envelope thành tool_call có thinking và narrative", () => {
+    const translator = new M365OutputTranslator();
+    const raw = `<thought>
+Khảo sát cấu trúc adapter M365 Copilot.
+Bước 1: Đọc agent-loop.ts.
+</thought>
+Bây giờ tôi cần xem file agent-loop.ts để hiểu flow:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/adapters/m365-copilot/harness/agent-loop.ts"}}
+</tool_call>`;
+
+    const result = translator.translate(raw);
+    expect(result.type).toBe("tool_call");
+    if (result.type === "tool_call") {
+      expect(result.thinking).toContain("Khảo sát cấu trúc adapter M365 Copilot");
+      expect(result.narrative).toBe("Bây giờ tôi cần xem file agent-loop.ts để hiểu flow:");
+      expect(result.tool_calls.length).toBe(1);
+      expect(result.tool_calls[0].function.name).toBe("read_file");
+    }
+  });
+
+  test("M365OutputTranslator bóc tách thinking trong Final Answer và làm sạch content", () => {
+    const translator = new M365OutputTranslator();
+    const raw = `<thought>
+Đã có đầy đủ dữ liệu phân tích từ 3 file. Giờ kết luận cho người dùng.
+</thought>
+Dự án M365 Copilot có kiến trúc modular rất tốt.`;
+
+    const result = translator.translate(raw);
+    expect(result.type).toBe("final_answer");
+    if (result.type === "final_answer") {
+      expect(result.thinking).toBe("Đã có đầy đủ dữ liệu phân tích từ 3 file. Giờ kết luận cho người dùng.");
+      expect(result.content).toBe("Dự án M365 Copilot có kiến trúc modular rất tốt.");
+      expect(result.content).not.toContain("<thought>");
+    }
+  });
+
+  test("Agent Loop nhận thinking và narrative qua callbacks và lưu vào AgentMessage", async () => {
+    let capturedThinking = "";
+    let capturedNarrative = "";
+
+    const cognitiveModelClient: IM365ModelClient = {
+      async call(prompt: string, context?: { turnIndex: number }) {
+        if (context?.turnIndex === 1) {
+          return `<thought>
+Tôi cần xem git status để nắm các file thay đổi.
+</thought>
+Tôi sẽ kiểm tra trạng thái Git hiện tại:
+<tool_call>
+{"name": "git_status", "arguments": {}}
+</tool_call>`;
+        }
+        return `<thought>
+Git tree clean, tôi sẽ kết luận.
+</thought>
+Hệ thống hoàn toàn sạch sẽ.`;
+      },
+    };
+
+    const mockToolExecutor: IToolExecutor = {
+      execute: () => "M src/index.ts",
+    };
+
+    const loop = new M365AgentLoop(cognitiveModelClient, mockToolExecutor);
+    const result = await loop.run("Kiểm tra git", {
+      onThinking(turn, thinking) {
+        if (turn === 1) capturedThinking = thinking;
+      },
+      onNarrative(turn, narrative) {
+        if (turn === 1) capturedNarrative = narrative;
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(capturedThinking).toContain("Tôi cần xem git status");
+    expect(capturedNarrative).toBe("Tôi sẽ kiểm tra trạng thái Git hiện tại:");
+
+    // Kiểm tra messages lưu trữ thinking
+    const assistantMsg1 = result.messages.find((m) => m.role === "assistant" && m.thinking);
+    expect(assistantMsg1).toBeDefined();
+    expect(assistantMsg1?.thinking).toContain("Tôi cần xem git status");
+    expect(assistantMsg1?.narrative).toBe("Tôi sẽ kiểm tra trạng thái Git hiện tại:");
+  });
+
+  test("CognitiveEvaluator tính toán chính xác chỉ số nhận thức của phiên", () => {
+    const evaluator = new CognitiveEvaluator();
+    const mockResult: any = {
+      status: "completed",
+      turns: 2,
+      messages: [
+        { role: "user", content: "Phân tích file" },
+        {
+          role: "assistant",
+          content: '{"tool_calls":[]}',
+          thinking: "Cần kiểm tra mã nguồn trước khi kết luận.",
+          narrative: "Tôi sẽ đọc file trước:",
+        },
+        { role: "tool_result", content: "file content", isError: false },
+        {
+          role: "assistant",
+          content: "Phân tích hoàn tất.",
+          thinking: "Đã có đủ dữ liệu, đưa ra câu trả lời.",
+        },
+      ],
+    };
+
+    const metrics = evaluator.evaluateSession(mockResult);
+    expect(metrics.totalTurns).toBe(2);
+    expect(metrics.thoughtAdherenceRate).toBe(1.0); // 100% turn có thought
+    expect(metrics.narrativeClarityRate).toBe(0.5); // 1/2 turn có narrative
+    expect(metrics.toolSuccessRate).toBe(1.0);      // 100% tool thành công
+    expect(metrics.overallCognitiveScore).toBeGreaterThanOrEqual(80);
   });
 });

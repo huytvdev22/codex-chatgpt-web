@@ -388,6 +388,17 @@ async runTurn(
           return;
         }
 
+        // Cognitive Loop: Phát khối suy nghĩ nội tâm (thinking) và lời dẫn dắt (narrative) trước tool calls
+        if (translated.thinking) {
+          console.log(`[M365 COGNITIVE] emit thinking: ${translated.thinking.slice(0, 100)}...`);
+          emit({ type: "thinking_delta", thinking: translated.thinking });
+        }
+
+        if (translated.narrative) {
+          console.log(`[M365 COGNITIVE] emit narrative: ${translated.narrative}`);
+          emit({ type: "text_delta", text: translated.narrative });
+        }
+
         for (const { mapped, callId } of mappedCalls) {
           console.log(`[M365 TOOL] emit tool call: ${mapped.name} (${callId})`);
           console.log(`[M365 TOOL] arguments=${maskArgumentsForLog(mapped.arguments)}`);
@@ -406,6 +417,8 @@ async runTurn(
             terminalReason: "tool_calls_emitted",
             terminalExplanation: `Bridge Server đã phát lệnh gọi ${detectedToolCalls.length} công cụ về Codex: ${mappedCalls.map(c => c.mapped.name).join(", ")}. Codex sẽ tiếp tục thực thi và mở lượt tiếp theo.`,
             toolCount: detectedToolCalls.length,
+            thinking: translated.thinking ? true : false,
+            narrative: translated.narrative ? true : false,
             toolCalls: mappedCalls.map(c => ({
               id: c.callId,
               name: c.mapped.name,
@@ -438,8 +451,15 @@ async runTurn(
         return;
       }
 
-      if (remainingText) {
-        emit({ type: "text_delta", text: remainingText });
+      // Xử lý nhánh Final Answer: Phát thinking (nếu có) trước khi phát text kết luận
+      if (translated.thinking) {
+        console.log(`[M365 COGNITIVE] emit final answer thinking: ${translated.thinking.slice(0, 100)}...`);
+        emit({ type: "thinking_delta", thinking: translated.thinking });
+      }
+
+      const finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
+      if (finalText) {
+        emit({ type: "text_delta", text: finalText });
         streamedAnyText = true;
       }
 

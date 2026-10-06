@@ -30,6 +30,7 @@ export {
 
 export {
   M365OutputTranslator,
+  extractCognitiveBlocks,
   type OpenAIToolCall,
   type TranslationResult,
   type BaseToolCallDetector,

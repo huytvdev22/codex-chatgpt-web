@@ -25,6 +25,8 @@ export interface AgentMessage {
   content: string;
   toolCallId?: string;
   toolName?: string;
+  thinking?: string;
+  narrative?: string;
   isError?: boolean;
 }
 
@@ -42,6 +44,8 @@ export interface AgentLoopOptions {
   retryOptions?: AgentLoopRetryOptions;
   onTurnStart?: (turnIndex: number, prompt: string) => void;
   onRawResponse?: (turnIndex: number, raw: string) => void;
+  onThinking?: (turnIndex: number, thinking: string) => void;
+  onNarrative?: (turnIndex: number, narrative: string) => void;
   onToolCall?: (turnIndex: number, toolCalls: OpenAIToolCall[]) => void;
   onToolResult?: (turnIndex: number, toolName: string, result: string, isError?: boolean) => void;
   onFinalAnswer?: (turnIndex: number, answer: string) => void;
@@ -318,10 +322,24 @@ export class M365AgentLoop {
       // 2. Chuyển dịch phản hồi qua Output Translator
       const translation = this.translator.translate(rawResponse);
 
+      if (translation.thinking) {
+        console.log(`\n[THOUGHT] (turn ${turnCount})\n${translation.thinking}`);
+        options.onThinking?.(turnCount, translation.thinking);
+      }
+
+      if (translation.narrative) {
+        console.log(`\n[NARRATIVE] (turn ${turnCount})\n${translation.narrative}`);
+        options.onNarrative?.(turnCount, translation.narrative);
+      }
+
       // 3. Phân nhánh: Final Answer hay Tool Call
       if (translation.type === "final_answer") {
         options.onFinalAnswer?.(turnCount, translation.content);
-        messages.push({ role: "assistant", content: translation.content });
+        messages.push({
+          role: "assistant",
+          content: translation.content,
+          thinking: translation.thinking,
+        });
 
         return {
           finalAnswer: translation.content,
@@ -336,7 +354,13 @@ export class M365AgentLoop {
       options.onToolCall?.(turnCount, toolCalls);
       messages.push({
         role: "assistant",
-        content: JSON.stringify({ tool_calls: toolCalls }),
+        content: JSON.stringify({
+          ...(translation.thinking ? { thinking: translation.thinking } : {}),
+          ...(translation.narrative ? { narrative: translation.narrative } : {}),
+          tool_calls: toolCalls,
+        }),
+        thinking: translation.thinking,
+        narrative: translation.narrative,
       });
 
       // 4. Thực thi từng tool call và thu thập kết quả

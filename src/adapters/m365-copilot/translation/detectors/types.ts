@@ -25,12 +25,15 @@ export type TranslationResult =
     type: "tool_call";
     tool_calls: OpenAIToolCall[];
     rawResponse: string;
+    thinking?: string;
+    narrative?: string;
     parseDiagnostics?: ParseDiagnostics;
   }
   | {
     type: "final_answer";
     content: string;
     rawResponse: string;
+    thinking?: string;
     parseDiagnostics?: ParseDiagnostics;
   };
 
