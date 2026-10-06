@@ -251,10 +251,18 @@ export async function executeM365Turn(
         }
       }
       const aiMessages = aiList.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
+
+      // Đánh dấu thuộc tính baseline lên tất cả các tin nhắn AI đã tồn tại trước lượt gửi này
+      aiMessages.forEach((msg) => {
+        msg.setAttribute("data-codex-turn-baseline", "true");
+      });
+
+      const lastEl = aiMessages.length > 0 ? (aiMessages[aiMessages.length - 1] as HTMLElement) : null;
       return {
         aiCount: aiMessages.length,
         count: aiMessages.length,
-        lastHtml: aiMessages.length > 0 ? (aiMessages[aiMessages.length - 1] as HTMLElement).innerHTML : "",
+        lastText: lastEl ? (lastEl.textContent?.trim() || "") : "",
+        lastHtml: lastEl ? (lastEl.innerHTML || "") : "",
       };
     });
 
@@ -438,13 +446,27 @@ export async function executeM365Turn(
           return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false, detectedWebError, fastPathRawText: null };
         }
 
-        const hasNewAiMessage = aiMessages.length > baselineCount;
+        const lastMsg = aiMessages[aiMessages.length - 1] as HTMLElement;
+        const currentLastText = lastMsg ? (lastMsg.textContent?.trim() || "") : "";
+        const currentLastHtml = lastMsg ? (lastMsg.innerHTML || "") : "";
+        const isGenerating = Boolean(stopBtn);
 
-        // Tinh túy 2 (Stateful Safe Guard): Nếu ở chế độ Stateful (baselineCount > 0),
-        // bắt buộc phải chờ đến khi xuất hiện tin nhắn AI MỚI (aiMessages.length > baselineCount).
-        // TUYỆT ĐỐI không đọc nhầm tin nhắn cũ của lượt trước dù DOM cũ có thay đổi!
-        if (baselineCount > 0 && !hasNewAiMessage) {
-          const isEditorBusy = Boolean(stopBtn) || editorDisabled;
+        // Nhận diện tin nhắn cũ (Stateful Safe Guard chống đọc nhầm tin nhắn lượt trước):
+        // Phần tử cuối cùng CHỈ bị coi là tin nhắn cũ khi hội tụ đủ 3 điều kiện:
+        // 1. baselineCount > 0 (chế độ có hội thoại trước đó)
+        // 2. Mang thuộc tính baseline (đã tồn tại trong DOM từ trước khi gửi prompt)
+        // 3. VÀ nội dung (text & html) hoàn toàn không đổi so với thời điểm trước khi gửi prompt.
+        // Bất kỳ sự thay đổi nào (text mới, element mới không có baseline attribute, hoặc count tăng)
+        // đều xác nhận tin nhắn hiện tại thuộc về lượt mới, chống chịu 100% hiện tượng Virtual Scrolling / DOM Recycling.
+        const isMarkedBaseline = Boolean(lastMsg && (lastMsg.hasAttribute("data-codex-turn-baseline") || lastMsg.closest("[data-codex-turn-baseline]")));
+        const isContentUnchanged = Boolean(
+          (!before.lastText || currentLastText === before.lastText) &&
+          (!before.lastHtml || currentLastHtml === before.lastHtml)
+        );
+        const isLastMsgOld = baselineCount > 0 && isMarkedBaseline && isContentUnchanged;
+
+        if (isLastMsgOld) {
+          const isEditorBusy = isGenerating || editorDisabled;
           return {
             isGenerating: isEditorBusy,
             blocks: [],
@@ -455,12 +477,6 @@ export async function executeM365Turn(
             fastPathRawText: null,
           };
         }
-
-        const lastMsg = aiMessages[aiMessages.length - 1] as HTMLElement;
-
-        // NGUỒN SỰ THẬT DUY NHẤT: Khi M365 đang sinh, nút Stop generating luôn hiển thị trên ô chat.
-        // Khi M365 sinh xong, nút Stop generating biến mất và ô chat chỉ còn nút mic (Start dictation).
-        const isGenerating = Boolean(stopBtn);
 
         // Ưu tiên cao nhất: lấy markdown-reply có type="Chat" hoặc có text (bỏ qua thẻ Progress rỗng)
         const markdownReplies = Array.from(lastMsg.querySelectorAll('[data-testid="markdown-reply"]')) as HTMLElement[];
@@ -714,7 +730,7 @@ export async function executeM365Turn(
 
         const rawHtml = clone.innerHTML || "";
         const hasContent = blocks.length > 0 || Boolean(fastPathRawText && fastPathRawText.length > 0);
-        const isNew = (aiMessages.length > baselineCount) || isGenerating;
+        const isNew = !isLastMsgOld;
         return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText };
       }, beforeState);
 
@@ -843,6 +859,7 @@ export async function executeM365Turn(
       const toolCallFullyClosed = /(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
       const planFullyClosed = /<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
       const patchFullyClosed = /(?:\\?\*){2,3}\s*End Patch/i.test(combinedText) || /<\s*\/\s*custom_tool_call\s*>/i.test(combinedText);
+      const m365ResponseFullyClosed = /(?:<\s*\/|\/\s*)m365[\\_]*response\s*>/i.test(combinedText);
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
       // 1. Nếu có thẻ tool_call, patch hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
@@ -856,7 +873,7 @@ export async function executeM365Turn(
       const minStableTime = isLongResponse ? 6000 : 3000;
       const minStableCycles = isLongResponse ? 24 : 8;
 
-      const hasFullyClosedMarker = toolCallFullyClosed || planFullyClosed || patchFullyClosed;
+      const hasFullyClosedMarker = toolCallFullyClosed || planFullyClosed || patchFullyClosed || m365ResponseFullyClosed;
       const hasAnyUnclosedMarker = hasUnclosedToolCall || hasUnclosedPatch || hasUnclosedPlan;
       const timeSinceChange = Date.now() - lastTextChangeAt;
       const deadlockTimeoutMs = hasAnyUnclosedMarker ? 30_000 : 8_000;
