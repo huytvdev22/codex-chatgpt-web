@@ -219,4 +219,24 @@ describe("M365 Safe File Reading & Command Guardrail Tests", () => {
       expect(args.cmd).toContain("powershell -NoProfile -EncodedCommand");
     });
   });
+
+  describe("6. Phase 2: System Prompts & Templates Safe Reading Orientation", () => {
+    test("UNIFIED_TOOL_PROTOCOL chứa chỉ dẫn Safe Reading, hạn mức 150 dòng và cấm batch shell/recursive scan", async () => {
+      const { UNIFIED_TOOL_PROTOCOL } = await import("../src/adapters/m365-copilot/prompts");
+      expect(UNIFIED_TOOL_PROTOCOL).toContain("ĐỌC FILE AN TOÀN (SAFE READING)");
+      expect(UNIFIED_TOOL_PROTOCOL).toContain("150 dòng");
+      expect(UNIFIED_TOOL_PROTOCOL).toContain("NGHIÊM CẤM");
+      expect(UNIFIED_TOOL_PROTOCOL).toContain("tree /F");
+    });
+
+    test("PLAN_MODE_PROMPT và IMPLEMENT_PLAN_PROMPT hướng dẫn Safe Reading chuẩn xác", async () => {
+      const { PLAN_MODE_PROMPT, IMPLEMENT_PLAN_PROMPT, TOOL_REMINDER_PROMPT } = await import(
+        "../src/adapters/m365-copilot/prompts"
+      );
+      expect(PLAN_MODE_PROMPT).toContain("SAFE READING");
+      expect(PLAN_MODE_PROMPT).toContain("tối đa 1-3 tệp");
+      expect(IMPLEMENT_PLAN_PROMPT).toContain("QUY TẮC ĐỌC FILE");
+      expect(TOOL_REMINDER_PROMPT).toContain("QUY TẮC ĐỌC FILE AN TOÀN");
+    });
+  });
 });

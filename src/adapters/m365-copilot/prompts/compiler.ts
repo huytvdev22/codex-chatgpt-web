@@ -89,6 +89,11 @@ QUY TẮC PHÂN ĐỊNH ỨNG XỬ:
 
 QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
 - TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> hoặc công cụ write_file.
+- ĐỌC FILE AN TOÀN (SAFE READING):
+  + Sử dụng read_file. Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng).
+  + Khi đọc tệp dài, bắt buộc chỉ định tham số {"start_line": ..., "end_line": ...} (phạm vi tối đa 150 dòng).
+  + NGHIÊM CẤM dùng script shell lặp duyệt mảng đọc tệp (foreach... Get-Content, for... cat) trong exec_command.
+  + NGHIÊM CẤM quét toàn bộ cây thư mục đệ quy (tree /F, Get-ChildItem -Recurse, ls -R). Hãy dùng list_dir (depth=1) hoặc search_files / grep_code.
 - NGHIÊM CẤM TUYỆT ĐỐI: Không được dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo file hoặc ghi đè nội dung file trong exec_command.
 - PHẠM VI CỦA exec_command: Chỉ dùng để chạy các câu lệnh dòng lệnh không tương tác (như: npm install, npm test, git status, git diff, mkdir -p ..., node server.js).
 - Tuyệt đối không tự chế tên công cụ hoặc dùng các tên alias không có trong danh sách AVAILABLE TOOLS dưới đây.`;
@@ -143,9 +148,9 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
 {"name": "exec_command", "arguments": {"command": "npm test"}}
 </tool_call>
 
-4. Đọc file từ dự án:
+4. Đọc file từ dự án (Tối đa 1-3 tệp, tổng <= 150 dòng, có phân trang):
 <tool_call>
-{"name": "read_file", "arguments": {"path": "package.json"}}
+{"name": "read_file", "arguments": {"path": "package.json", "start_line": 1, "end_line": 150}}
 </tool_call>`;
 
 /**
