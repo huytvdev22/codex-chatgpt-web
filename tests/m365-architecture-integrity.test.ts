@@ -27,6 +27,8 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.M365AgentLoop).toBeDefined();
     expect(rootModule.M365OutputTranslator).toBeDefined();
     expect(rootModule.executeM365Turn).toBeDefined();
+    expect(rootModule.M365CopilotDriver).toBeDefined();
+    expect(rootModule.registerPageDriver).toBeDefined();
 
     // Normalization & Guards
     expect(rootModule.CodexPayloadNormalizer).toBeDefined();
