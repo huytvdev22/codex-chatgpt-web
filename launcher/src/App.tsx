@@ -1661,7 +1661,7 @@ function ActivitySurface({
           onExportLogs={async () => {
             try {
               if (api?.exportLogs) {
-                await api.exportLogs();
+                await api!.exportLogs();
               }
             } catch (cause) {
               setError(messageOf(cause));
