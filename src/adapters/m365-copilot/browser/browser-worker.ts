@@ -204,6 +204,7 @@ export async function executeM365Turn(
       if (!editor) throw new Error("Không tìm thấy ô nhập liệu của M365 Copilot!");
       // Reset cache tích lũy dòng code của lượt trước
       delete (window as any).__m365_code_lines_cache;
+      delete (window as any).__m365_code_lines_cache_by_block;
       editor.focus();
 
       // Xoá nội dung cũ nếu có
@@ -360,16 +361,22 @@ export async function executeM365Turn(
           }
         } catch { }
 
-        // Khởi tạo bộ nhớ đệm tích lũy dòng code theo data-line-index trên window để chống mất dòng khi virtual scrolling
+        // Khởi tạo bộ nhớ đệm tích lũy dòng code theo data-line-index trên window theo từng block để chống mất dòng khi virtual scrolling
         const win = window as any;
-        if (!win.__m365_code_lines_cache) {
-          win.__m365_code_lines_cache = new Map<number, string>();
+        if (!win.__m365_code_lines_cache_by_block) {
+          win.__m365_code_lines_cache_by_block = new Map<number, Map<number, string>>();
         }
 
         const codeData = liveCodeBlocks.map((block, blockIdx) => {
           const langEl = block.querySelector("[data-testid='one-copilot-code-identity'] span, [class*='code-identity' i] span");
           let lang = langEl?.textContent?.trim().toLowerCase() || "";
           if (lang === "plain text" || lang === "text") lang = "plain";
+
+          let blockCache = win.__m365_code_lines_cache_by_block.get(blockIdx);
+          if (!blockCache) {
+            blockCache = new Map<number, string>();
+            win.__m365_code_lines_cache_by_block.set(blockIdx, blockCache);
+          }
 
           // Lấy chính xác code từ các thẻ data-line-index
           const lineEls = Array.from(block.querySelectorAll("[data-line-index]"));
@@ -381,18 +388,19 @@ export async function executeM365Turn(
               if (idxAttr !== null) {
                 const idx = parseInt(idxAttr, 10);
                 if (!isNaN(idx)) {
-                  win.__m365_code_lines_cache.set(idx, (el.textContent || "").replace(/\u00a0/g, " "));
+                  blockCache.set(idx, (el.textContent || "").replace(/\u00a0/g, " "));
                 }
               }
             });
 
-            // Ghép lại toàn bộ các dòng từ dòng 0 đến dòng lớn nhất từng thấy
-            const keys = Array.from(win.__m365_code_lines_cache.keys()) as number[];
+            // Ghép lại toàn bộ các dòng từ dòng nhỏ nhất đến dòng lớn nhất từng thấy
+            const keys = (Array.from(blockCache.keys()) as number[]).sort((a, b) => a - b);
             if (keys.length > 0) {
-              const maxIdx = Math.max(...keys);
+              const minIdx = keys[0];
+              const maxIdx = keys[keys.length - 1];
               const assembled: string[] = [];
-              for (let i = 0; i <= maxIdx; i++) {
-                assembled.push(win.__m365_code_lines_cache.get(i) ?? "");
+              for (let i = minIdx; i <= maxIdx; i++) {
+                assembled.push(blockCache.get(i) ?? "");
               }
               codeText = assembled.join("\n");
             } else {
@@ -606,12 +614,20 @@ export async function executeM365Turn(
         }, undefined, options.signal).catch(() => { });
       }
 
-      // Định kỳ cuộn trang và các container Code Preview xuống đáy để kích thích trình duyệt render DOM liên tục
+      // Định kỳ cuộn trang và các container Code Preview xuống để kích thích Monaco render các dòng tiếp theo
       if (attempts % 4 === 0) {
         await page.evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
           document.querySelectorAll("[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block").forEach(el => {
-            try { el.scrollTop = el.scrollHeight; } catch {}
+            try {
+              const scrollEl = el as HTMLElement;
+              const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
+              if (maxScroll > 0 && scrollEl.scrollTop < maxScroll) {
+                // Cuộn tịnh tiến 350px mỗi lần thay vì nhảy vọt một bước xuống đáy,
+                // đảm bảo Monaco kịp render các dòng trung gian vào DOM để cache thu thập đủ.
+                scrollEl.scrollTop = Math.min(maxScroll, scrollEl.scrollTop + 350);
+              }
+            } catch {}
           });
         }).catch(() => {});
       }
@@ -691,8 +707,11 @@ export async function executeM365Turn(
       // Nếu M365 đã dừng sinh và văn bản không đổi:
       // 1. Nếu có thẻ tool_call, patch hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
       // 2. Nếu đang có khối mở dở dang: Chờ ổn định để xem M365 có viết tiếp không
-      // 3. Phá vỡ DEADLOCK: Nếu M365 đã dừng sinh (!status.isGenerating) VÀ văn bản bất động quá 8.0 giây (hoặc 32 chu kỳ):
-      //    BẮT BUỘC coi là đã hoàn tất (settled) kể cả khi patch/tool call chưa đóng (để tránh treo người dùng 10 phút).
+      // 3. Phá vỡ DEADLOCK an toàn:
+      //    - Nếu đang có khối mở dở dang (unclosed patch, unclosed tool call, unclosed plan):
+      //      Tuyệt đối KHÔNG ngắt sớm sau 8s vì mô hình reasoning/think có thể pause giữa các file tới 15-25s.
+      //      Chỉ kích hoạt hard deadlock breaker khi bất động ít nhất 30 giây (120 chu kỳ polling).
+      //    - Nếu không có khối dở dang: 8 giây (32 chu kỳ).
       const isLongResponse = combinedText.length > 2000;
       const minStableTime = isLongResponse ? 6000 : 3000;
       const minStableCycles = isLongResponse ? 24 : 8;
@@ -700,11 +719,13 @@ export async function executeM365Turn(
       const hasFullyClosedMarker = toolCallFullyClosed || planFullyClosed || patchFullyClosed;
       const hasAnyUnclosedMarker = hasUnclosedToolCall || hasUnclosedPatch || hasUnclosedPlan;
       const timeSinceChange = Date.now() - lastTextChangeAt;
+      const deadlockTimeoutMs = hasAnyUnclosedMarker ? 30_000 : 8_000;
+      const deadlockCycles = hasAnyUnclosedMarker ? 120 : 32;
 
       const isSettled = !status.isGenerating && (
         (hasFullyClosedMarker && (stableCycles >= 4 || timeSinceChange >= 1000)) ||
         (!hasAnyUnclosedMarker && (stableCycles >= minStableCycles || timeSinceChange >= minStableTime)) ||
-        (timeSinceChange >= 8000 || stableCycles >= 32) // Hard deadlock breaker: Model đã dừng sinh và bất động 8s
+        (timeSinceChange >= deadlockTimeoutMs || stableCycles >= deadlockCycles)
       );
 
       if (status.hasContent && !status.isGenerating && isSettled) {

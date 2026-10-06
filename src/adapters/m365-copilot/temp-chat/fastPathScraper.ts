@@ -149,6 +149,13 @@ finish(finalRawText?: string | null): { markdown: string; delta: string } {
     let delta = "";
     if (finalRawText) {
       delta = this.observe(finalRawText);
+      if (finalRawText.length > this.fullText.length) {
+        if (!delta) {
+          delta = finalRawText.slice(this.streamedLength);
+        }
+        this.fullText = finalRawText;
+        this.streamedLength = finalRawText.length;
+      }
     }
     return {
       markdown: this.fullText,

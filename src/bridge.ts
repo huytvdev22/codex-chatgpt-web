@@ -597,11 +597,14 @@ export function bridgeToResponsesSSE(
             }
             case "tool_call_delta": {
               if (currentToolCall) {
-                currentToolCall.args += event.arguments;
+                const deltaArgs = typeof event.arguments === "string"
+                  ? event.arguments
+                  : JSON.stringify(event.arguments ?? {});
+                currentToolCall.args += deltaArgs;
                 if (!currentToolCall.freeform && !currentToolCall.toolSearch) {
                   emit("response.function_call_arguments.delta", {
                     item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
-                    delta: event.arguments,
+                    delta: deltaArgs,
                   });
                 }
                 if (currentToolCall.freeform) {

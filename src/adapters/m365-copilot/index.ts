@@ -389,7 +389,7 @@ async runTurn(
         }
 
         // Cognitive Loop: Phát khối suy nghĩ nội tâm (thinking) và lời dẫn dắt (narrative) trước tool calls
-        if (translated.thinking) {
+        if (translated.thinking && !streamedAnyText) {
           console.log(`[M365 COGNITIVE] emit thinking: ${translated.thinking.slice(0, 100)}...`);
           emit({ type: "thinking_delta", thinking: translated.thinking });
         }
@@ -415,8 +415,12 @@ async runTurn(
           console.log(`[M365 TOOL] emit tool call: ${mapped.name} (${callId})`);
           console.log(`[M365 TOOL] arguments=${maskArgumentsForLog(mapped.arguments)}`);
 
+          const serializedArgs = typeof mapped.arguments === "string"
+            ? mapped.arguments
+            : JSON.stringify(mapped.arguments ?? {});
+
           emit({ type: "tool_call_start", id: callId, name: mapped.name });
-          emit({ type: "tool_call_delta", arguments: mapped.arguments });
+          emit({ type: "tool_call_delta", arguments: serializedArgs });
           emit({ type: "tool_call_end" });
         }
 
@@ -463,8 +467,8 @@ async runTurn(
         return;
       }
 
-      // Xử lý nhánh Final Answer: Phát thinking (nếu có) trước khi phát text kết luận
-      if (translated.thinking) {
+      // Xử lý nhánh Final Answer: Phát thinking (nếu có) trước khi phát text kết luận nếu chưa từng stream text
+      if (translated.thinking && !streamedAnyText) {
         console.log(`[M365 COGNITIVE] emit final answer thinking: ${translated.thinking.slice(0, 100)}...`);
         emit({ type: "thinking_delta", thinking: translated.thinking });
       }
