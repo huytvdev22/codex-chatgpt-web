@@ -27,7 +27,7 @@ const DEFAULT_STATE = Object.freeze({
   mcpGuideStep: 0,
   sessionRefreshReminderAt: null,
   selectedProvider: "m365",
-  m365TemporaryChatPerRequest: false,
+  m365TemporaryChatPerRequest: true,
 });
 
 function nextSessionRefreshReminderAt(now = Date.now()) {

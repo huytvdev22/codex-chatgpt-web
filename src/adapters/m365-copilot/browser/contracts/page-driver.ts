@@ -93,4 +93,7 @@ export interface PageDriver {
 
   /** Kiểm tra xem driver này có thể phục vụ request cụ thể hay không */
   canHandle?(options: { providerId?: string; modelSlug?: string }): boolean;
+
+  /** Dọn dẹp / xóa cuộc trò chuyện tạm thời để tránh tích tụ rác trên sidebar Chats */
+  cleanupEphemeralThread?(page: Page): Promise<void>;
 }

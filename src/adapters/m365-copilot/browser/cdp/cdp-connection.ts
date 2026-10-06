@@ -51,16 +51,16 @@ export async function connectCdpSurface(
 }
 
 /**
- * Thông báo khởi động turn tới Launcher.
+ * Thông báo khởi động turn tới Launcher và nhận thông tin lease cấp phát Tab.
  */
 export async function notifyCdpTurnStart(
   descriptorPath: string,
   traceId: string,
   options: { conversationKey?: string; connectorIdentity?: string },
   signal?: AbortSignal
-): Promise<void> {
+): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean } | undefined> {
   logFunctionInput("browser:cdp:cdp-connection", "notifyCdpTurnStart", { descriptorPath, traceId, options });
-  await notifyLauncherTurn(
+  const result = await notifyLauncherTurn(
     descriptorPath,
     {
       phase: "start",
@@ -73,6 +73,7 @@ export async function notifyCdpTurnStart(
     undefined,
     signal
   );
+  return result;
 }
 
 /**
@@ -104,9 +105,10 @@ export async function notifyCdpTurnEnd(
   descriptorPath: string,
   traceId: string,
   status: "completed" | "failed" | "aborted",
+  options?: { retain?: boolean },
   signal?: AbortSignal
 ): Promise<void> {
-  logFunctionInput("browser:cdp:cdp-connection", "notifyCdpTurnEnd", { descriptorPath, traceId, status });
+  logFunctionInput("browser:cdp:cdp-connection", "notifyCdpTurnEnd", { descriptorPath, traceId, status, options });
   await notifyLauncherTurn(
     descriptorPath,
     {
@@ -114,7 +116,8 @@ export async function notifyCdpTurnEnd(
       traceId,
       helperPid: process.pid,
       status,
-      retain: true,
+      retain: options?.retain ?? true,
+      connectorBound: options?.retain ?? true,
     },
     undefined,
     signal

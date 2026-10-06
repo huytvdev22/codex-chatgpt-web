@@ -378,7 +378,7 @@ class BrowserHost {
     this.manualTerminalSignals = new Map();
     this.manualCompletionSignals = new Map();
     this.interactionModeOverride = null;
-    this.m365TemporaryChatPerRequest = false;
+    this.m365TemporaryChatPerRequest = true;
     this.selectedTabId = "home";
     this.manualOperation = null;
     this.loginOperation = null;
@@ -684,9 +684,11 @@ class BrowserHost {
     const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
+    const isM365 = this.provider === "m365" || connectorIdentity === "m365-copilot";
+    const partition = isM365 ? "persist:codex-m365-copilot" : this.partition;
     const view = new WebContentsView({
       webPreferences: {
-        partition: this.partition,
+        partition,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -694,6 +696,9 @@ class BrowserHost {
         backgroundThrottling: false,
       },
     });
+    const label = isM365 ? (ordinal === 1 ? "M365 Copilot" : `M365 Copilot ${ordinal}`) : `ChatGPT ${ordinal}`;
+    const pageTitle = isM365 ? "M365 Copilot" : "ChatGPT";
+    const initialUrl = isM365 ? M365_CHAT_URL : IDLE_BROWSER_URL;
     const tab = {
       id,
       surfaceId,
@@ -705,11 +710,11 @@ class BrowserHost {
       view,
       status: "running",
       ordinal,
-      label: `ChatGPT ${ordinal}`,
-      pageTitle: "ChatGPT",
-      url: IDLE_BROWSER_URL,
+      label,
+      pageTitle,
+      url: initialUrl,
       loading: true,
-      message: "ChatGPT is working",
+      message: isM365 ? "M365 Copilot is working" : "ChatGPT is working",
       interactionMode: "automatic",
       initializingSurface: true,
       bootstrapReady: false,
@@ -739,7 +744,9 @@ class BrowserHost {
     try {
       signal?.throwIfAborted();
       await Promise.race([(async () => {
-        await loadCommittedBrowserSurface(tab.view.webContents, IDLE_BROWSER_URL);
+        const isM365 = this.provider === "m365" || tab.connectorIdentity === "m365-copilot";
+        const targetUrl = isM365 ? M365_CHAT_URL : IDLE_BROWSER_URL;
+        await loadCommittedBrowserSurface(tab.view.webContents, targetUrl);
         signal?.throwIfAborted();
         await this.markTurnTabSurface(tab);
       })(), aborted]);

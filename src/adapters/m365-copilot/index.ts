@@ -129,14 +129,16 @@ async runTurn(
       }
     }
 
-    // 1.1. Kiểm tra cấu hình Temporary Chat Per Request từ Launcher
-    let isTemporaryPerRequest = false;
+    // 1.1. Mặc định mở cuộc trò chuyện tạm thời (Temporary Chat) trên mọi tab để tránh rác sidebar
+    let isTemporaryPerRequest = true;
     const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR
       || path.join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
     if (descriptorPath) {
       try {
         const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        isTemporaryPerRequest = Boolean(descriptor.m365TemporaryChatPerRequest);
+        if (typeof (descriptor as any).m365TemporaryChatPerRequest === "boolean") {
+          isTemporaryPerRequest = Boolean((descriptor as any).m365TemporaryChatPerRequest);
+        }
       } catch (err) {
         console.warn(`[m365-adapter] Không thể đọc descriptor từ ${descriptorPath}:`, err);
       }

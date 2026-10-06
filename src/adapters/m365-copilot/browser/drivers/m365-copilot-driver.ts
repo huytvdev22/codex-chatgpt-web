@@ -83,14 +83,18 @@ export class M365CopilotDriver implements PageDriver {
 
     if (shouldStartNewChat) {
       if (page.url().includes("/chat/c/")) {
-        console.log(`[m365-driver] Điều hướng về /chat từ thread cũ: ${page.url()}`);
-        await page
-          .goto("https://m365.cloud.microsoft/chat", {
-            waitUntil: "domcontentloaded",
-            timeout: 15_000,
-          })
-          .catch(() => {});
-        await new Promise((r) => setTimeout(r, 400));
+        console.log(`[m365-driver] Dọn dẹp thread cũ trước khi mở phiên mới: ${page.url()}`);
+        if (isTemporaryMode) {
+          await this.cleanupEphemeralThread(page);
+        } else {
+          await page
+            .goto("https://m365.cloud.microsoft/chat", {
+              waitUntil: "domcontentloaded",
+              timeout: 15_000,
+            })
+            .catch(() => {});
+          await new Promise((r) => setTimeout(r, 400));
+        }
       }
 
       await page
@@ -858,6 +862,82 @@ export class M365CopilotDriver implements PageDriver {
             });
         })
         .catch(() => {});
+    }
+  }
+
+  /**
+   * Tự động dọn dẹp / xóa cuộc trò chuyện tạm thời trên M365 Copilot để bảo đảm không lưu rác vào sidebar Chats.
+   */
+  async cleanupEphemeralThread(page: Page): Promise<void> {
+    logFunctionInput("browser:drivers:m365-copilot", "cleanupEphemeralThread");
+    try {
+      if (!page.url().includes("/chat/c/")) return;
+
+      console.log(`[m365-driver] Đang tự động dọn dẹp cuộc trò chuyện tạm thời: ${page.url()}`);
+      await page
+        .evaluate(async () => {
+          // 1. Tìm nút 'More options' / 'Tùy chọn khác' của thread hiện tại trong danh sách Chats
+          const activeItem =
+            document.querySelector(
+              '[aria-current="page"], [aria-selected="true"], .fai-ChatHistoryItem--selected, [data-is-selected="true"]'
+            ) || document.querySelector('nav a[href*="/chat/c/"]')?.parentElement;
+
+          let moreBtn = activeItem?.querySelector(
+            'button[aria-label*="More" i], button[aria-label*="Tùy chọn" i], button:has(svg[data-icon-name="More"]), [data-icon-name="More"]'
+          ) as HTMLElement | null;
+
+          if (!moreBtn) {
+            moreBtn = document.querySelector(
+              'button[aria-label*="More options" i], button[aria-label*="Cuộc trò chuyện" i] button'
+            ) as HTMLElement | null;
+          }
+
+          if (moreBtn) {
+            moreBtn.click();
+            await new Promise((r) => setTimeout(r, 150));
+
+            // 2. Click mục Delete trong context menu
+            const deleteItem = Array.from(
+              document.querySelectorAll('[role="menuitem"], button, .ms-ContextualMenu-item')
+            ).find((el) =>
+              /delete|xóa/i.test(el.textContent || el.getAttribute("aria-label") || "")
+            ) as HTMLElement | null;
+
+            if (deleteItem) {
+              deleteItem.click();
+              await new Promise((r) => setTimeout(r, 150));
+
+              // 3. Confirm dialog xác nhận xóa
+              const confirmBtn = Array.from(
+                document.querySelectorAll('button[type="button"], button')
+              ).find((b) => {
+                const text = (
+                  b.textContent ||
+                  b.getAttribute("aria-label") ||
+                  ""
+                )
+                  .trim()
+                  .toLowerCase();
+                return text === "delete" || text === "xóa";
+              }) as HTMLElement | null;
+
+              if (confirmBtn) {
+                confirmBtn.click();
+              }
+            }
+          }
+        })
+        .catch(() => {});
+
+      await page
+        .goto("https://m365.cloud.microsoft/chat", {
+          waitUntil: "domcontentloaded",
+          timeout: 10_000,
+        })
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+    } catch (err) {
+      console.warn(`[m365-driver] Dọn dẹp thread tạm thời thất bại (bỏ qua):`, err);
     }
   }
 }

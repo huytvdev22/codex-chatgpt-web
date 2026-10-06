@@ -40,9 +40,10 @@ export async function executeTurnWithDriver(
   // Khóa tuần tự giữa các cửa sổ VS Code để chống tranh chấp DOM
   const releaseTurnLock = await globalBrowserTurnMutex.acquire(options.signal);
 
+  let targetSurfaceId: string | undefined = undefined;
   if (options.traceId) {
     try {
-      await notifyCdpTurnStart(
+      const lease = await notifyCdpTurnStart(
         descriptorPath,
         options.traceId,
         {
@@ -51,12 +52,16 @@ export async function executeTurnWithDriver(
         },
         options.signal
       );
+      if (lease?.surfaceId) {
+        targetSurfaceId = lease.surfaceId;
+        console.log(`[orchestrator] Đã nhận được Tab Surface riêng từ Launcher: ${targetSurfaceId}`);
+      }
     } catch {
       // Bỏ qua lỗi start nếu launcher chưa phản hồi
     }
   }
 
-  const connection = await connectCdpSurface(descriptorPath, undefined, options.signal);
+  const connection = await connectCdpSurface(descriptorPath, targetSurfaceId, options.signal);
   const { browser, page } = connection;
   let finalStatus: "completed" | "failed" | "aborted" = "failed";
   const startTime = Date.now();
@@ -405,10 +410,15 @@ export async function executeTurnWithDriver(
     // [DEBUG PIPELINE] STEP 3: Web Browser ➔ Bridge Server (RAW RESPONSE SCRAPING)
     logDebugPipelineStation(3, `${driver.name.toUpperCase()} ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)`, fullMarkdown);
 
-    // Ghi nhớ URL thread sau khi turn hoàn tất để khôi phục cho cửa sổ này trong các lượt sau
-    if (options.conversationKey && driver.recordConversationThread) {
+    // Ghi nhớ URL thread sau khi turn hoàn tất nếu không phải temporary chat
+    if (!options.forceTemporaryChat && options.conversationKey && driver.recordConversationThread) {
       const currentUrl = page.url();
       driver.recordConversationThread(options.conversationKey, currentUrl);
+    }
+
+    // Nếu là phiên trò chuyện tạm thời: Tự động dọn dẹp sạch thread trên M365 để không để lại rác trên sidebar Chats
+    if (options.forceTemporaryChat && driver.cleanupEphemeralThread) {
+      await driver.cleanupEphemeralThread(page);
     }
 
     return fullMarkdown;
@@ -449,10 +459,12 @@ export async function executeTurnWithDriver(
   } finally {
     try {
       if (options.traceId) {
+        const isTemporary = Boolean(options.forceTemporaryChat);
         const notifyPromise = notifyCdpTurnEnd(
           descriptorPath,
           options.traceId,
           finalStatus,
+          { retain: !isTemporary },
           undefined
         ).catch(() => {});
         await withTimeout(notifyPromise, 2000, undefined);
