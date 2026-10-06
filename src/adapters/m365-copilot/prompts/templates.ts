@@ -46,8 +46,9 @@ BẠN BẮT BUỘC PHẢI TUÂN THỦ CÁC QUY TẮC SAU:
 export const IMPLEMENT_PLAN_PROMPT = `[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]
 Người dùng ĐÃ PHÊ DUYỆT bản kế hoạch và yêu cầu bắt đầu thực thi code ngay!
 BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
-1. Hãy bắt đầu ngay bằng cách xuất khối <custom_tool_call name="apply_patch"> hoặc <tool_call> cho bước đầu tiên:
-   - Tạo file mới hoặc sửa file: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file hoặc *** Update File: path/to/file) hoặc công cụ write_file. Nếu là dự án mới hoặc tạo file mới: Dùng write_file.
+1. Hãy bắt đầu ngay bằng cách xuất khối <custom_tool_call name="apply_patch"> cho bước đầu tiên:
+   - Tạo file mới hoặc sửa file: Ưu tiên sử dụng tuyệt đối <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file khi tạo file mới hoặc *** Update File: path/to/file khi sửa file). BẮT BUỘC luôn dùng apply_patch thay vì write_file. TUYỆT ĐỐI KHÔNG dùng write_file.
+   - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Tuyệt đối không gộp nhiều file trong một khối patch. Phải làm tuần tự từng file (sửa file 1 -> chờ kết quả -> sửa file 2).
    - TUYỆT ĐỐI NGHIÊM CẤM: Không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
    - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, git status, mkdir -p ...).
    - QUY TẮC ĐỌC FILE: Dùng read_file (tối đa 1-3 tệp, tổng <= 150 dòng). Tuyệt đối không chạy script lặp đọc hàng loạt tệp hoặc quét đệ quy (tree /F, Get-ChildItem -Recurse).
@@ -63,7 +64,8 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
 - NẾU CẦN THỰC HIỆN BƯỚC KẾ TIẾP: Hãy tiếp tục in khối <tool_call> hoặc câu lệnh shell tương ứng.
 - NẾU ĐÃ HOÀN TẤT HOẶC ĐÃ ĐỦ THÔNG TIN: BẠN HÃY TRẢ LỜI KẾT QUẢ / KẾT LUẬN CHI TIẾT CHO NGƯỜI DÙNG VÀ TUYỆT ĐỐI KHÔNG IN THÊM BẤT KỲ KHỐI <tool_call> HAY CÂU LỆNH SHELL NÀO NỮA.
 - TUYỆT ĐỐI KHÔNG từ chối với lý do không có công cụ IDE hoặc không có quyền truy cập máy tính; không yêu cầu người dùng tự gõ lệnh hay tải file thủ công.
-- QUY TẮC CẬP NHẬT FILE: Khi chỉnh sửa hoặc cập nhật file đã có (Update File), bạn MẶC ĐỊNH BẮT BUỘC sử dụng công cụ apply_patch với cú pháp Freeform (*** Begin Patch ... *** Update File: ... *** End Patch). Khi tạo file mới: Sử dụng apply_patch (với *** Add File:) hoặc write_file.
+- QUY TẮC THAO TÁC FILE: BẮT BUỘC LUÔN DÙNG apply_patch THAY VÌ write_file cho mọi thao tác file (dùng *** Update File: ... khi sửa file và *** Add File: ... khi tạo file mới). TUYỆT ĐỐI KHÔNG dùng write_file.
+- NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Tuyệt đối không gộp nhiều file vào cùng một patch. Phải thao tác tuần tự từng file.
 - QUY TẮC ĐỌC FILE AN TOÀN (SAFE READING):
   + Sử dụng read_file để đọc mã nguồn (mỗi lần tối đa 1-3 tệp, tổng số dòng <= 150 dòng). Khi đọc tiếp các đoạn sau, chỉ định start_line và end_line tương ứng.
   + NGHIÊM CẤM dùng script shell lặp đọc hàng loạt tệp (foreach... Get-Content) hoặc quét đệ quy toàn bộ thư mục (tree /F, Get-ChildItem -Recurse, ls -R). Hãy dùng list_dir (depth=1) hoặc search_files / grep_code.
@@ -76,8 +78,8 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
  */
 export const TOOL_RESULT_HINTS = {
   planMode: `Sau khi nhận được kết quả công cụ trên, hãy phân tích kỹ lưỡng. LƯU Ý QUAN TRỌNG: Bạn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE). TUYỆT ĐỐI KHÔNG ĐƯỢC gọi công cụ chỉnh sửa code (apply_patch, write_file). Nếu đã đủ thông tin khảo sát, bạn HÃY XUẤT NGAY BẢN KẾ HOẠCH ĐƯỢC BỌC TRONG THẺ <proposed_plan>...</proposed_plan> bằng tiếng Việt để người dùng duyệt. Nếu cần đọc thêm file khác để lập kế hoạch, hãy tiếp tục in khối <tool_call> đọc file (dùng read_file, tối đa 1-3 tệp, tổng <= 150 dòng).`,
-  implementPlan: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <tool_call> hoặc apply_patch mới (apply_patch hoặc write_file nếu tạo/sửa file, hoặc exec_command để chạy test/lệnh). TUYỆT ĐỐI KHÔNG dùng cat <<EOF để tạo file. Tuyệt đối không từ chối, hãy xuất ngay khối công cụ tiếp theo hoặc trả lời kết quả nếu đã hoàn thành toàn bộ.`,
-  default: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối <tool_call> mới (apply_patch, write_file, exec_command). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`,
+  implementPlan: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Kế hoạch đã được duyệt, hãy tiếp tục thực hiện bước tiếp theo bằng khối <custom_tool_call name="apply_patch"> hoặc công cụ mới (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command để chạy test/lệnh). TUYỆT ĐỐI KHÔNG dùng cat <<EOF để tạo file. Tuyệt đối không từ chối, hãy xuất ngay khối công cụ tiếp theo hoặc trả lời kết quả nếu đã hoàn thành toàn bộ.`,
+  default: `Sau khi nhận được kết quả công cụ trên, hãy đọc và phân tích kỹ lưỡng (lưu ý: mã thoát 0 hoặc output rỗng nghĩa là bước trước đã hoàn thành thành công). Nếu bạn cần tiếp tục thực hiện thêm bước khác, hãy in ra khối công cụ mới (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành đầy đủ nhiệm vụ, hãy trả lời kết quả cho người dùng.`,
 };
 
 /**
@@ -85,6 +87,6 @@ export const TOOL_RESULT_HINTS = {
  */
 export const OUTPUT_FORMAT_HINTS = {
   planMode: `[Yêu cầu định dạng đầu ra]: Đang ở chế độ Plan Mode. Nếu bạn cần đọc file hoặc kiểm tra cấu trúc mã nguồn trước khi lên kế hoạch, hãy xuất khối <tool_call> tương ứng (read_file tối đa 1-3 tệp <= 150 dòng, list_dir). Nếu đã có đủ ngữ cảnh, bạn PHẢI XUẤT NGAY bản kế hoạch hoàn chỉnh được bọc trong thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt. TUYỆT ĐỐI KHÔNG gọi công cụ sửa file (apply_patch, write_file).`,
-  implementPlan: `[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay khối công cụ tạo hoặc sửa file (apply_patch hoặc write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn. TUYỆT ĐỐI KHÔNG dùng cat <<EOF hay heredoc shell.`,
+  implementPlan: `[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay khối công cụ tạo hoặc sửa file (luôn dùng apply_patch thay vì write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn. TUYỆT ĐỐI KHÔNG dùng cat <<EOF hay heredoc shell.`,
   default: `[Yêu cầu định dạng đầu ra]: Hãy xuất ngay khối công cụ tương ứng (hoặc câu lệnh terminal tương ứng nếu là lệnh shell) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`,
 };

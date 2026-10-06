@@ -68,8 +68,9 @@ QUY TẮC PHÂN ĐỊNH ỨNG XỬ:
    - Kèm 1 câu dẫn dắt mô tả hành động sắp làm.
    - Xuất khối <tool_call> chứa JSON tham số tương ứng.
 
-3. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE (apply_patch):
-   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON):
+3. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE (BẮT BUỘC LUÔN DÙNG apply_patch THAY VÌ write_file):
+   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG dùng write_file):
+   a) Khi chỉnh sửa file đã có (Update File):
    <m365Response>
    <thought>
    [Suy luận nội tâm: phân tích nguyên nhân lỗi và phương án sửa chữa mã nguồn]
@@ -85,10 +86,25 @@ QUY TẮC PHÂN ĐỊNH ỨNG XỬ:
    *** End Patch
    </custom_tool_call>
    </m365Response>
-   (Khi tạo file mới: Sử dụng *** Add File: path/to/file.ext thay vì Update File).
+
+   b) Khi tạo file mới hoàn toàn (Add File):
+   <m365Response>
+   <thought>
+   [Suy luận nội tâm: mô tả file cần tạo mới]
+   </thought>
+   [Một câu dẫn dắt mô tả việc tạo file mới]
+   <custom_tool_call name="apply_patch">
+   *** Begin Patch
+   *** Add File: path/to/file.ext
+   +nội dung dòng 1
+   +nội dung dòng 2
+   *** End Patch
+   </custom_tool_call>
+   </m365Response>
 
 QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
-- TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> hoặc công cụ write_file.
+- TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng tuyệt đối <custom_tool_call name="apply_patch"> cho cả tạo file mới (*** Add File:) lẫn sửa file (*** Update File:). BẮT BUỘC luôn dùng apply_patch thay vì write_file. TUYỆT ĐỐI KHÔNG sử dụng write_file.
+- NGUYÊN TẮC ĐỘC LẬP TỪNG FILE (SINGLE FILE PER TURN): Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. TUYỆT ĐỐI KHÔNG gộp việc ghi/sửa nhiều file trong cùng 1 khối patch và không gọi nhiều patch cùng lúc. Hãy thao tác tuần tự từng file (sửa file 1 -> chờ IDE xác nhận -> sửa file 2).
 - ĐỌC FILE AN TOÀN (SAFE READING):
   + Sử dụng read_file. Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng).
   + Khi đọc tệp dài, bắt buộc chỉ định tham số {"start_line": ..., "end_line": ...} (phạm vi tối đa 150 dòng).
@@ -127,7 +143,7 @@ export function cleanToolDescription(name: string, rawDesc?: string): string {
  * Ví dụ mẫu gọi công cụ chuẩn mực cho M365 Copilot bắt chước
  */
 export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
-1. Sửa code trong file đã có (MẶC ĐỊNH BẮT BUỘC DÙNG apply_patch):
+1. Sửa code trong file đã có (BẮT BUỘC DÙNG apply_patch *** Update File:):
 <custom_tool_call name="apply_patch">
 *** Begin Patch
 *** Update File: src/math.js
@@ -138,10 +154,13 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
 *** End Patch
 </custom_tool_call>
 
-2. Tạo file mới hoặc ghi đè toàn bộ file (Dùng write_file hoặc apply_patch *** Add File:):
-<tool_call>
-{"name": "write_file", "arguments": {"path": "hello.js", "content": "console.log('hello');"}}
-</tool_call>
+2. Tạo file mới hoàn toàn (BẮT BUỘC DÙNG apply_patch *** Add File:, THAY VÌ write_file):
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Add File: hello.js
++console.log('hello');
+*** End Patch
+</custom_tool_call>
 
 3. Chạy câu lệnh terminal/CLI không tương tác:
 <tool_call>
@@ -174,7 +193,7 @@ export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
   // Nếu trong danh sách chưa có write_file, bổ sung công cụ write_file do Tool Bridge hỗ trợ
   const hasWriteFile = tools.some(t => t.identity.name === "write_file");
   if (!hasWriteFile) {
-    entries.push("- write_file\n  Tạo file mới hoặc ghi đè nội dung file (tham số: path, content).");
+    entries.push("- write_file\n  Tạo file mới hoặc ghi đè nội dung file (LƯU Ý: Khuyến nghị luôn dùng apply_patch thay vì write_file).");
   }
 
   return `AVAILABLE TOOLS\n\n${entries.join("\n\n")}\n\n${CANONICAL_TOOL_EXAMPLES}`;
@@ -374,7 +393,7 @@ compile(input: PromptCompileInput): PromptCompileResult {
         const resultBlocks = normalized.trailingToolResults.map(res =>
           `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
         );
-        toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (apply_patch hoặc write_file nếu sửa/tạo file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
+        toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
         incrementalSections.push(toolResultsContent);
       }
 
@@ -505,7 +524,7 @@ compile(input: PromptCompileInput): PromptCompileResult {
       const resultBlocks = normalized.trailingToolResults.map(res =>
         `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
       );
-      toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng. Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
+      toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
       sections.push(toolResultsContent);
     }
 
