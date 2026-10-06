@@ -36,37 +36,6 @@ export * from "./tools";
 export * from "./browser";
 export * from "./harness";
 
-// Request Lifecycle Manager: Chống duplicate consume theo requestId
-interface RequestLifecycleState {
-  requestId: string;
-  consumed: boolean;
-  createdAt: number;
-}
-const requestLifecycleStates = new Map<string, RequestLifecycleState>();
-
-function markRequestConsumed(requestId: string): boolean {
-  const now = Date.now();
-  for (const [id, s] of requestLifecycleStates.entries()) {
-    if (now - s.createdAt > 30 * 60 * 1000) {
-      requestLifecycleStates.delete(id);
-    }
-  }
-
-  let state = requestLifecycleStates.get(requestId);
-  if (!state) {
-    state = { requestId, consumed: false, createdAt: now };
-    requestLifecycleStates.set(requestId, state);
-  }
-
-  if (state.consumed) {
-    console.warn(`[M365] Bỏ qua duplicate consume cho requestId=${requestId}`);
-    return false;
-  }
-
-  state.consumed = true;
-  return true;
-}
-
 /**
  * Trích xuất thông tin môi trường shell của client từ các tham số hoặc context của request.
  */
@@ -123,10 +92,15 @@ async runTurn(
 
     // 1. Khởi tạo Domain Model 1:1 đại diện cho toàn bộ Raw JSON Request của Codex
     const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const requestId = incoming.headers.get("x-codex-trace-id")
-      || incoming.headers.get("x-request-id")
-      || rawPayload.getTurnId()
-      || `req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    let turnConsumed = false;
+    const markTurnConsumed = (): boolean => {
+      if (turnConsumed) {
+        console.warn(`[m365-adapter] Lượt này đã được consume trước đó. Bỏ qua emit trùng lặp.`);
+        return false;
+      }
+      turnConsumed = true;
+      return true;
+    };
 
     const conversationKey = incoming.headers.get("x-codex-conversation-key")
       || rawPayload.getThreadId()
@@ -199,7 +173,7 @@ async runTurn(
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
     if (isTitleRequest(parsed, compiledPrompt)) {
-      if (!markRequestConsumed(requestId)) {
+      if (!markTurnConsumed()) {
         return;
       }
       const titleText = generateTitleResponse(compiledPrompt);
@@ -449,8 +423,8 @@ async runTurn(
           }
         }
 
-        if (!markRequestConsumed(requestId)) {
-          console.warn(`[M365 TOOL] requestId=${requestId} đã được consume trước đó. Bỏ qua tool emit trùng lặp.`);
+        if (!markTurnConsumed()) {
+          console.warn(`[M365 TOOL] Lượt này đã được consume trước đó. Bỏ qua tool emit trùng lặp.`);
           return;
         }
 
@@ -560,8 +534,8 @@ async runTurn(
       }
       console.log(`[m365-adapter] [turn-completed] terminalReason=${terminalReason} explanation=${terminalExplanation}`);
 
-      if (!markRequestConsumed(requestId)) {
-        console.warn(`[M365 FINAL] requestId=${requestId} đã được consume trước đó. Bỏ qua final answer emit trùng lặp.`);
+      if (!markTurnConsumed()) {
+        console.warn(`[M365 FINAL] Lượt này đã được consume trước đó. Bỏ qua final answer emit trùng lặp.`);
         return;
       }
 
