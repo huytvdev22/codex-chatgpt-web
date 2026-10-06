@@ -5,7 +5,9 @@ import {
   type PlatformCommandStrategy,
   type StrategyResolveOptions,
 } from "./command-strategies";
+import { SafeCommandGuard } from "./safe-command-guard";
 
+export { SafeCommandGuard } from "./safe-command-guard";
 export * from "./command-strategies";
 
 export interface M365RawToolCall {
@@ -116,15 +118,7 @@ export function normalizeFileContent(
 
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   read_file: (args, strategy) => {
-    const targetPath = args.path || args.file || args.filename || "package.json";
-    const startLine = parseInt(String(args.start_line || args.start || 0), 10) || 0;
-    const endLine = parseInt(String(args.end_line || args.end || 0), 10) || 0;
-
-    const cmd = strategy.readFile(String(targetPath), { startLine, endLine });
-    return {
-      name: "exec_command",
-      args: { cmd },
-    };
+    return SafeCommandGuard.handleReadFile(args, strategy);
   },
 
   list_dir: (args, strategy) => {
@@ -292,13 +286,18 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     };
   },
 
-  exec_command: (args) => {
-    const cmd = args.cmd || args.command || "";
+  exec_command: (args, strategy) => {
+    const cmd = String(args.cmd || args.command || "");
+    const validation = SafeCommandGuard.validateShellCommand(cmd);
+    const platform = strategy?.platformName === "posix" ? "posix" : "powershell";
+    const finalCmd = validation.allowed
+      ? cmd
+      : SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
     return {
       name: "exec_command",
       args: {
         ...args,
-        cmd: String(cmd),
+        cmd: finalCmd,
       },
     };
   },
@@ -371,6 +370,15 @@ export class M365ToolBridge {
       }
     }
 
+    // Xác định strategy theo Dependency Inversion Principle
+    let strategy: PlatformCommandStrategy;
+    if (options && typeof (options as any).readFile === "function") {
+      strategy = options as PlatformCommandStrategy;
+    } else {
+      const opts = (options || {}) as MapToolCallOptions;
+      strategy = opts.strategy || CommandStrategyResolver.resolve(opts);
+    }
+
     // Nếu client đã có sẵn công cụ trùng tên (và không phải read_file hay apply_patch), giữ nguyên
     if (hasExactTool && toolName !== "read_file" && toolName !== "apply_patch") {
       if (toolName === "write_file") {
@@ -380,22 +388,19 @@ export class M365ToolBridge {
         parsedArgs.content = normalizeFileContent(rawContent, { unescapeNewlines: shouldUnescape, targetPath });
       }
       if (toolName === "exec_command") {
-        const cmd = parsedArgs.cmd || parsedArgs.command || "";
-        parsedArgs.cmd = String(cmd);
+        const cmd = String(parsedArgs.cmd || parsedArgs.command || "");
+        const validation = SafeCommandGuard.validateShellCommand(cmd);
+        if (!validation.allowed) {
+          const platform = strategy.platformName === "posix" ? "posix" : "powershell";
+          parsedArgs.cmd = SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
+        } else {
+          parsedArgs.cmd = cmd;
+        }
       }
       return {
         name: toolName,
         arguments: JSON.stringify(parsedArgs),
       };
-    }
-
-    // Xác định strategy theo Dependency Inversion Principle
-    let strategy: PlatformCommandStrategy;
-    if (options && typeof (options as any).readFile === "function") {
-      strategy = options as PlatformCommandStrategy;
-    } else {
-      const opts = (options || {}) as MapToolCallOptions;
-      strategy = opts.strategy || CommandStrategyResolver.resolve(opts);
     }
 
     // Nếu có handler ánh xạ tương ứng

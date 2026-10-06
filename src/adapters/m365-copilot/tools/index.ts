@@ -14,4 +14,10 @@ export {
   TOOL_HANDLERS,
 } from "./tool-bridge";
 
+export {
+  SafeCommandGuard,
+  type StructuredRefusalPayload,
+  type CommandValidationResult,
+} from "./safe-command-guard";
+
 export * from "./command-strategies";

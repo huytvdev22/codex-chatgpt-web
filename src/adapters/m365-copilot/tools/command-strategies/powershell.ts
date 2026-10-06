@@ -50,11 +50,14 @@ try {
   $tot = $lines.Count;
   $isPaged = ($rStart -gt 0) -or ($rEnd -gt 0);
   $s = if ($rStart -gt 0) { [Math]::Max(1, $rStart) } else { 1 };
-  $e = if ($rEnd -gt 0) { [Math]::Min($tot, $rEnd) } elseif ($isPaged) { $tot } else { [Math]::Min($tot, 300) };
+  $e = if ($rEnd -gt 0) { [Math]::Min($tot, [Math]::Min($rEnd, $s + 149)) } elseif ($isPaged) { [Math]::Min($tot, $s + 149) } else { [Math]::Min($tot, 150) };
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
   Write-Output "[File: $p ($s-$e/$tot lines)]";
   for ($i = $s; $i -le $e; $i++) {
     Write-Output ("{0}: {1}" -f $i, $lines[$i - 1]);
+  }
+  if ($e -lt $tot) {
+    Write-Output "[NOTE: File continues. To read the next chunk, specify start_line=$($e + 1), end_line=$([Math]::Min($tot, $e + 150))]";
   }
 } catch {
   [Console]::Error.WriteLine("Cannot read file: $($_.Exception.Message)");
