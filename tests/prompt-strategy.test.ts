@@ -225,4 +225,75 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(planResult.finalPrompt).toContain("write_file");
     expect(planResult.finalPrompt).toContain("TUYỆT ĐỐI NGHIÊM CẤM: Không dùng các lệnh shell (cat <<EOF");
   });
+
+  test("Chiến lược 1: Khai báo toàn bộ Core Coding Tools kèm schema chi tiết và lọc sạch OpenAI boilerplate", () => {
+    const rawWithBoilerplate: CodexRawRequestWire = {
+      model: "m365-copilot/think",
+      tools: [
+        {
+          type: "function",
+          name: "exec_command",
+          description: "Runs a command in a PTY\nWindows safety rules:\n- Do not compose destructive filesystem commands across shells.",
+        },
+        {
+          type: "function",
+          name: "update_goal",
+          description: "Update the existing goal.\nSet status to ¨C11C again.\nSet status to ¨C12C.",
+        },
+      ],
+      input: [
+        {
+          type: "message",
+          role: "developer",
+          content:
+            "You are Codex, an agent based on GPT-6. You and the user share one workspace...\n" +
+            "# Personality\nAs Codex, you are a curious...\n" +
+            "# Rules for getting work done\n- When you search for text or files, you reach first for rg or rg --files... ¨C24C\n" +
+            "Tuân thủ nghiêm ngặt kiến trúc module và nguyên lý SOLID.",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "giúp tôi review source code nhanh sau đó tạo file readme",
+        },
+      ],
+    };
+
+    const payload = CodexRawPayload.from(rawWithBoilerplate);
+    const normalized = CodexPayloadNormalizer.normalize(payload);
+
+    // 1. Kiểm tra developerInstructions đã lọc sạch OpenAI persona nhưng giữ lại quy tắc của dự án
+    const devText = (normalized.developerInstructions || []).join("\n");
+    expect(devText).not.toContain("You are Codex");
+    expect(devText).not.toContain("# Personality");
+    expect(devText).not.toContain("# Rules for getting work done");
+    expect(devText).not.toContain("¨C24C");
+    expect(devText).toContain("Tuân thủ nghiêm ngặt kiến trúc module và nguyên lý SOLID.");
+
+    // 2. Kiểm tra Dynamic Tool Declarations chứa đầy đủ schema tham số cho core coding tools
+    const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
+    expect(dynamicText).toContain("- read_file");
+    expect(dynamicText).toContain("path (string, BẮT BUỘC)");
+    expect(dynamicText).toContain("TUYỆT ĐỐI KHÔNG truyền mảng \"paths\"");
+    expect(dynamicText).toContain("- list_dir");
+    expect(dynamicText).toContain("- search_files");
+    expect(dynamicText).toContain("pattern (string, BẮT BUỘC)");
+    expect(dynamicText).toContain("- grep_code");
+    expect(dynamicText).toContain("query (string, BẮT BUỘC)");
+    expect(dynamicText).toContain("- git_status");
+    expect(dynamicText).toContain("- git_diff");
+    expect(dynamicText).toContain("- exec_command");
+    expect(dynamicText).toContain("- apply_patch");
+
+    // 3. Kiểm tra cleanToolDescription đã cắt Windows safety rules và token rác trong update_goal
+    expect(dynamicText).not.toContain("Windows safety rules:");
+    expect(dynamicText).not.toContain("¨C11C");
+    expect(dynamicText).not.toContain("¨C12C");
+
+    // 4. Kiểm tra CANONICAL_TOOL_EXAMPLES có đầy đủ ví dụ cho core tools
+    expect(dynamicText).toContain('{"name": "list_dir", "arguments": {"path": "."}}');
+    expect(dynamicText).toContain('{"name": "search_files", "arguments": {"pattern": "*.js", "path": "."}}');
+    expect(dynamicText).toContain('{"name": "grep_code", "arguments": {"query":');
+    expect(dynamicText).toContain('{"name": "git_status", "arguments": {}}');
+  });
 });

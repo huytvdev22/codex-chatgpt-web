@@ -147,13 +147,13 @@ export class SafeCommandGuard {
    * Kẹp khoảng dòng đọc file an toàn (mặc định tối đa 150 dòng)
    */
   static clampReadFileRange(
-    args: { start_line?: any; end_line?: any; start?: any; end?: any },
+    args: { start_line?: any; end_line?: any; startline?: any; endline?: any; start?: any; end?: any },
     maxLines = SafeCommandGuard.MAX_TOTAL_LINES
   ): { startLine: number; endLine: number } {
     logFunctionInput("tools:safe-command-guard", "clampReadFileRange", { args, maxLines });
-    const rawStart = parseInt(String(args.start_line || args.start || 1), 10) || 1;
+    const rawStart = parseInt(String(args.start_line || args.startline || args.start || 1), 10) || 1;
     const startLine = Math.max(1, rawStart);
-    let rawEnd = parseInt(String(args.end_line || args.end || 0), 10) || 0;
+    let rawEnd = parseInt(String(args.end_line || args.endline || args.end || 0), 10) || 0;
 
     if (rawEnd <= 0) {
       return {

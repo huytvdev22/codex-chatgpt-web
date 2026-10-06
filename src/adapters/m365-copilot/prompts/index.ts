@@ -9,6 +9,7 @@ export {
 export {
   UNIFIED_TOOL_PROTOCOL,
   MINIMAL_TOOL_PROTOCOL,
+  CORE_CODING_TOOLS_DECLARATION,
   CANONICAL_TOOL_EXAMPLES,
   cleanToolDescription,
   renderDynamicToolDeclarations,

@@ -67,7 +67,7 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
 - QUY TẮC THAO TÁC FILE: BẮT BUỘC LUÔN DÙNG apply_patch THAY VÌ write_file cho mọi thao tác file (dùng *** Update File: ... khi sửa file và *** Add File: ... khi tạo file mới). TUYỆT ĐỐI KHÔNG dùng write_file.
 - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Tuyệt đối không gộp nhiều file vào cùng một patch. Phải thao tác tuần tự từng file.
 - QUY TẮC ĐỌC FILE AN TOÀN (SAFE READING):
-  + Sử dụng read_file để đọc mã nguồn (mỗi lần tối đa 1-3 tệp, tổng số dòng <= 150 dòng). Khi đọc tiếp các đoạn sau, chỉ định start_line và end_line tương ứng.
+  + Sử dụng read_file để đọc mã nguồn (tham số path là 1 tệp tin duy nhất, TUYỆT ĐỐI KHÔNG truyền mảng paths; mỗi lần đọc tối đa 1-3 tệp, tổng số dòng <= 150 dòng). Khi đọc tiếp các đoạn sau, chỉ định start_line và end_line tương ứng.
   + NGHIÊM CẤM dùng script shell lặp đọc hàng loạt tệp (foreach... Get-Content) hoặc quét đệ quy toàn bộ thư mục (tree /F, Get-ChildItem -Recurse, ls -R). Hãy dùng list_dir (depth=1) hoặc search_files / grep_code.
 - NGHIÊM CẤM TUYỆT ĐỐI: Không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
 - Lệnh exec_command chỉ dùng cho các câu lệnh CLI không tương tác (như npm install, npm test, git status, git diff, mkdir -p ...).

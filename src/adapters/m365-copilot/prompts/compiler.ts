@@ -106,7 +106,7 @@ QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
 - TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng tuyệt đối <custom_tool_call name="apply_patch"> cho cả tạo file mới (*** Add File:) lẫn sửa file (*** Update File:). BẮT BUỘC luôn dùng apply_patch thay vì write_file. TUYỆT ĐỐI KHÔNG sử dụng write_file.
 - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE (SINGLE FILE PER TURN): Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. TUYỆT ĐỐI KHÔNG gộp việc ghi/sửa nhiều file trong cùng 1 khối patch và không gọi nhiều patch cùng lúc. Hãy thao tác tuần tự từng file (sửa file 1 -> chờ IDE xác nhận -> sửa file 2).
 - ĐỌC FILE AN TOÀN (SAFE READING):
-  + Sử dụng read_file. Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng).
+  + Sử dụng read_file với tham số path là 1 tệp tin duy nhất (TUYỆT ĐỐI KHÔNG truyền mảng paths). Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng).
   + Khi đọc tệp dài, bắt buộc chỉ định tham số {"start_line": ..., "end_line": ...} (phạm vi tối đa 150 dòng).
   + NGHIÊM CẤM dùng script shell lặp duyệt mảng đọc tệp (foreach... Get-Content, for... cat) trong exec_command.
   + NGHIÊM CẤM quét toàn bộ cây thư mục đệ quy (tree /F, Get-ChildItem -Recurse, ls -R). Hãy dùng list_dir (depth=1) hoặc search_files / grep_code.
@@ -118,12 +118,102 @@ QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
 export const MINIMAL_TOOL_PROTOCOL = UNIFIED_TOOL_PROTOCOL;
 
 /**
- * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI (như hướng dẫn web browsing, citations, word limits).
+ * Danh mục chuẩn các công cụ lập trình cốt lõi (Core Coding Tools) do ToolBridge hỗ trợ.
+ * Khai báo đầy đủ tên công cụ, mô tả chi tiết, schema tham số và ràng buộc an toàn,
+ * đảm bảo M365 Copilot luôn nắm rõ cú pháp và không phải suy đoán tham số.
+ */
+export const CORE_CODING_TOOLS_DECLARATION = `- read_file
+  Đọc nội dung tệp mã nguồn từ dự án cục bộ (tối đa 1-3 tệp mỗi lượt, tổng số dòng <= 150 dòng).
+  Tham số:
+  + path (string, BẮT BUỘC): Đường dẫn đến 1 tệp tin duy nhất (tuyệt đối hoặc tương đối). TUYỆT ĐỐI KHÔNG truyền mảng "paths", chỉ truyền 1 chuỗi đường dẫn.
+  + start_line (number, tùy chọn, mặc định 1): Dòng bắt đầu đọc (1-indexed).
+  + end_line (number, tùy chọn): Dòng kết thúc đọc (phạm vi: end_line - start_line + 1 <= 150).
+
+- list_dir
+  Xem danh sách tệp và thư mục con ở cấp thư mục hiện tại (depth=1, không quét đệ quy).
+  Tham số:
+  + path (string, tùy chọn, mặc định "."): Đường dẫn thư mục cần xem danh sách.
+
+- search_files
+  Tìm kiếm tệp theo mẫu tên (glob pattern) trong thư mục dự án.
+  Tham số:
+  + pattern (string, BẮT BUỘC): Mẫu tên tệp cần tìm kiếm (ví dụ: "*.js", "*.html", "src/*.ts").
+  + path (string, tùy chọn, mặc định "."): Đường dẫn thư mục bắt đầu tìm kiếm.
+
+- grep_code
+  Tìm kiếm từ khóa văn bản hoặc biểu thức regex trong nội dung các tệp mã nguồn của dự án.
+  Tham số:
+  + query (string, BẮT BUỘC): Từ khóa văn bản hoặc biểu thức cần tìm trong code.
+  + path (string, tùy chọn, mặc định "."): Thư mục tìm kiếm (mặc định toàn bộ dự án).
+
+- git_status
+  Xem nhanh trạng thái thay đổi Git của dự án (các tệp đã sửa, thêm mới, unstaged/staged).
+  Tham số:
+  Không có tham số (truyền đối số rỗng {}).
+
+- git_diff
+  Xem thay đổi chi tiết dạng unified diff của Git.
+  Tham số:
+  + path (string, tùy chọn): Đường dẫn tệp cụ thể cần xem diff (nếu bỏ trống sẽ diff toàn bộ dự án).
+
+- exec_command
+  Thực thi câu lệnh dòng lệnh/CLI không tương tác trong terminal của dự án (như: npm test, npm install, node server.js, mkdir -p ...).
+  Tham số:
+  + command (string, BẮT BUỘC): Câu lệnh CLI cần chạy.
+  Lưu ý an toàn: TUYỆT ĐỐI KHÔNG dùng để tạo/sửa file hoặc script duyệt mảng đọc file (foreach Get-Content).
+
+- apply_patch
+  Tạo file mới hoặc chỉnh sửa file đã có trong dự án (ƯU TIÊN TUYỆT ĐỐI CHO MỌI THAO TÁC FILE).
+  ĐỊNH DẠNG ĐẶC BIỆT: Đây là công cụ FREEFORM, BẮT BUỘC dùng khối <custom_tool_call name="apply_patch">*** Begin Patch ... *** End Patch</custom_tool_call> (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG dùng write_file).
+  Quy tắc: Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT.
+
+- write_file
+  Tạo file mới hoặc ghi đè nội dung file.
+  Tham số:
+  + path (string, BẮT BUỘC): Đường dẫn tệp tin cần tạo hoặc ghi đè.
+  + content (string, BẮT BUỘC): Nội dung tệp tin.
+  LƯU Ý: Khuyến nghị luôn dùng apply_patch thay vì write_file.`;
+
+const CORE_TOOL_NAMES = new Set([
+  "read_file",
+  "readfile",
+  "list_dir",
+  "listdir",
+  "search_files",
+  "searchfiles",
+  "grep_code",
+  "grepcode",
+  "git_status",
+  "gitstatus",
+  "git_diff",
+  "gitdiff",
+  "exec_command",
+  "execcommand",
+  "apply_patch",
+  "applypatch",
+  "write_file",
+  "writefile",
+  "run_command",
+]);
+
+/**
+ * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI và control tokens rác.
  */
 export function cleanToolDescription(name: string, rawDesc?: string): string {
   logFunctionInput("prompts:compiler", "cleanToolDescription", { name, rawDesc });
   if (!rawDesc) return "No description provided.";
   let desc = rawDesc.trim();
+
+  // Khử các token placeholder rác dạng ¨C...C
+  desc = desc.replace(/¨C[a-zA-Z0-9_-]+C/g, "").replace(/\s{2,}/g, " ").trim();
+
+  // Đối với exec_command: Rút gọn các quy tắc Windows safety rules dông dài lặp lại
+  if (name.includes("exec_command") || name.includes("execcommand")) {
+    const firstPart = desc.split(/Windows safety rules:/i)[0].trim();
+    if (firstPart) {
+      desc = firstPart;
+    }
+  }
 
   // Đối với web.run hoặc web: Cắt bỏ toàn bộ phần ví dụ, citations, decision boundary, word limits dài dằng dặc
   if (name.includes("web") || desc.includes("## Examples") || desc.includes("---")) {
@@ -131,12 +221,18 @@ export function cleanToolDescription(name: string, rawDesc?: string): string {
   }
 
   // Đối với update_goal hoặc create_goal: Chỉ giữ lại 1-2 câu đầu tiên mô tả chức năng
-  if (name.includes("goal") && desc.length > 250) {
+  if (name.includes("goal") && desc.length > 200) {
     const firstSentences = desc.split("\n\n")[0];
     desc = firstSentences || desc.slice(0, 200);
   }
 
-  return desc;
+  // Đối với request_user_input hoặc request_user_input_async: Giữ 1-2 câu đầu mô tả chức năng
+  if (name.includes("request_user_input") && desc.length > 250) {
+    const firstSentences = desc.split("\n\n")[0];
+    desc = firstSentences || desc.slice(0, 200);
+  }
+
+  return desc.trim();
 }
 
 /**
@@ -170,33 +266,54 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
 4. Đọc file từ dự án (Tối đa 1-3 tệp, tổng <= 150 dòng, có phân trang):
 <tool_call>
 {"name": "read_file", "arguments": {"path": "package.json", "start_line": 1, "end_line": 150}}
+</tool_call>
+
+5. Xem cấu trúc thư mục (Cấp hiện tại, depth=1):
+<tool_call>
+{"name": "list_dir", "arguments": {"path": "."}}
+</tool_call>
+
+6. Tìm kiếm tệp theo mẫu tên (glob pattern):
+<tool_call>
+{"name": "search_files", "arguments": {"pattern": "*.js", "path": "."}}
+</tool_call>
+
+7. Tìm kiếm từ khóa mã nguồn trong dự án:
+<tool_call>
+{"name": "grep_code", "arguments": {"query": "function calculateTotal", "path": "."}}
+</tool_call>
+
+8. Kiểm tra trạng thái thay đổi Git:
+<tool_call>
+{"name": "git_status", "arguments": {}}
 </tool_call>`;
 
 /**
  * Render Dynamic Tool Declaration trực tiếp từ normalized.activeCodingTools.
- * Sử dụng một định dạng tên công cụ duy nhất từ Codex kèm ví dụ mẫu trực quan.
+ * Luôn bao gồm đầy đủ schema của Core Coding Tools và bổ sung các tool mở rộng từ client.
  */
 export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
   logFunctionInput("prompts:compiler", "renderDynamicToolDeclarations", { tools });
-  if (!tools || tools.length === 0) {
-    return `AVAILABLE TOOLS\n(Không có công cụ bổ sung nào được khai báo trong lượt này)\n\n${CANONICAL_TOOL_EXAMPLES}`;
-  }
 
-  const entries = tools.map(tool => {
+  const additionalEntries: string[] = [];
+  for (const tool of tools || []) {
+    const rawName = tool.identity.name;
     const qualified = tool.identity.namespace
-      ? `${tool.identity.namespace}.${tool.identity.name}`
-      : tool.identity.name;
-    const desc = cleanToolDescription(tool.identity.name, tool.description);
-    return `- ${qualified}\n  ${desc}`;
-  });
-
-  // Nếu trong danh sách chưa có write_file, bổ sung công cụ write_file do Tool Bridge hỗ trợ
-  const hasWriteFile = tools.some(t => t.identity.name === "write_file");
-  if (!hasWriteFile) {
-    entries.push("- write_file\n  Tạo file mới hoặc ghi đè nội dung file (LƯU Ý: Khuyến nghị luôn dùng apply_patch thay vì write_file).");
+      ? `${tool.identity.namespace}.${rawName}`
+      : rawName;
+    if (CORE_TOOL_NAMES.has(rawName) || CORE_TOOL_NAMES.has(qualified)) {
+      continue;
+    }
+    const desc = cleanToolDescription(rawName, tool.description);
+    additionalEntries.push(`- ${qualified}\n  ${desc}`);
   }
 
-  return `AVAILABLE TOOLS\n\n${entries.join("\n\n")}\n\n${CANONICAL_TOOL_EXAMPLES}`;
+  let toolListText = CORE_CODING_TOOLS_DECLARATION;
+  if (additionalEntries.length > 0) {
+    toolListText += `\n\n${additionalEntries.join("\n\n")}`;
+  }
+
+  return `AVAILABLE TOOLS\n\n${toolListText}\n\n${CANONICAL_TOOL_EXAMPLES}`;
 }
 
 export interface PromptSectionMetrics {
@@ -474,9 +591,12 @@ compile(input: PromptCompileInput): PromptCompileResult {
             !sp.startsWith("<environment_context>") &&
             !sp.includes("spawn_agent") &&
             !sp.includes("You are Codex, a coding assistant") &&
+            !sp.includes("You are Codex") &&
             !sp.includes("<permissions") &&
             !sp.includes("<sandbox")
         )
+        .map(sp => sp.replace(/¨C[a-zA-Z0-9_-]+C/g, "").trim())
+        .filter(sp => sp.length > 0)
         .join("\n\n");
       if (filteredSystem) {
         devInstructionsContent = `[System Instructions]:\n${filteredSystem}`;
@@ -493,10 +613,15 @@ compile(input: PromptCompileInput): PromptCompileResult {
 
     // 6. Chỉ thị của Dự án / Developer Rules (Đã được lọc sạch permissions và sandbox instructions)
     if (normalized.developerInstructions && normalized.developerInstructions.length > 0) {
-      const devRules = normalized.developerInstructions.map(r => `- ${r}`).join("\n");
-      const devBlock = `[CHỈ THỊ CỦA DỰ ÁN / DEVELOPER RULES]:\n${devRules}`;
-      devInstructionsContent = devInstructionsContent ? `${devInstructionsContent}\n\n${devBlock}` : devBlock;
-      sections.push(devBlock);
+      const cleanedRules = normalized.developerInstructions
+        .map(r => r.replace(/¨C[a-zA-Z0-9_-]+C/g, "").trim())
+        .filter(r => r.length > 0);
+      if (cleanedRules.length > 0) {
+        const devRules = cleanedRules.map(r => `- ${r}`).join("\n");
+        const devBlock = `[CHỈ THỊ CỦA DỰ ÁN / DEVELOPER RULES]:\n${devRules}`;
+        devInstructionsContent = devInstructionsContent ? `${devInstructionsContent}\n\n${devBlock}` : devBlock;
+        sections.push(devBlock);
+      }
     }
 
     // 7. Lịch sử trao đổi đầy đủ

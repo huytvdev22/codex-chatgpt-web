@@ -344,7 +344,30 @@ export class CodexPayloadNormalizer {
           .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
           .trim();
 
-        if (text && !text.includes("You are Codex, a coding assistant")) {
+        // 1. Loại bỏ các token placeholder rác dạng ¨C...C
+        text = text.replace(/¨C[a-zA-Z0-9_-]+C/g, "");
+
+        // 2. Lọc bỏ boilerplate system instructions mặc định của OpenAI Codex
+        const isCodexBuiltInBoilerplate =
+          text.includes("You are Codex") ||
+          text.includes("# Rules for getting work done") ||
+          text.includes("# Personality\nAs Codex") ||
+          text.includes("Exercise caution when escaping text for execcommand calls");
+
+        if (isCodexBuiltInBoilerplate) {
+          text = text
+            .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Personality[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# When to ask the user for permission[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Autonomy and persistence[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Working with the user[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .trim();
+        }
+
+        if (text && text.length > 5 && !text.includes("You are Codex")) {
           developerInstructions.push(text);
         }
         continue;

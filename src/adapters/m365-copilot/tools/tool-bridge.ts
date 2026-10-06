@@ -301,6 +301,17 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       },
     };
   },
+
+  // Aliases tương thích cao (phòng trường hợp M365 Copilot gọi không dấu gạch dưới)
+  readfile: (args, strategy) => TOOL_HANDLERS.read_file(args, strategy),
+  listdir: (args, strategy) => TOOL_HANDLERS.list_dir(args, strategy),
+  searchfiles: (args, strategy) => TOOL_HANDLERS.search_files(args, strategy),
+  grepcode: (args, strategy) => TOOL_HANDLERS.grep_code(args, strategy),
+  gitstatus: (args, strategy) => TOOL_HANDLERS.git_status(args, strategy),
+  gitdiff: (args, strategy) => TOOL_HANDLERS.git_diff(args, strategy),
+  execcommand: (args, strategy) => TOOL_HANDLERS.exec_command(args, strategy),
+  applypatch: (args, strategy) => TOOL_HANDLERS.apply_patch(args, strategy),
+  writefile: (args, strategy) => TOOL_HANDLERS.write_file(args, strategy),
 };
 
 /**
@@ -337,7 +348,7 @@ export class M365ToolBridge {
     const hasExactTool = clientTools.some((t) => t.name === toolName || t.name === raw.name);
 
     // Xử lý riêng biệt cho apply_patch (công cụ native của Codex để hiển thị diff +X -Y và Undo)
-    if (toolName === "apply_patch") {
+    if (toolName === "apply_patch" || toolName === "applypatch") {
       const rawPatch = typeof parsedArgs === "string"
         ? parsedArgs
         : (parsedArgs.input || parsedArgs.patch || parsedArgs.content || "");
