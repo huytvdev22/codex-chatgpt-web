@@ -28,8 +28,8 @@ export const CHAT_SELECTORS = {
   editor: '#m365-chat-editor-target-element',
   inputWrapper: '.fai-BebopLiteChatInput__inputWrapper',
   actions: '.fai-BebopLiteChatInput__actions',
-  sendButton: 'button[type="submit"][aria-label="Send"], button[aria-label="Send"], .fai-SendButton:not(:has(.fai-SendButton__stopIcon))',
-  stopButton: 'button[type="submit"][aria-label="Stop generating"], button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"]',
+  sendButton: 'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))',
+  stopButton: 'button[type="submit"][aria-label="Stop generating"], button[aria-label="Stop generating"], button[aria-label*="Stop generating" i], button[aria-label*="Dừng tạo" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]',
   dictationButton: 'button[aria-label="Start dictation"]',
 };
 
@@ -198,7 +198,7 @@ export async function executeM365Turn(
     await page.evaluate(async () => {
       const isIdle = () => {
         const stopBtn = document.querySelector(
-          'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+          'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
         );
         const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
         const isEditorDisabled = editor?.getAttribute("aria-disabled") === "true";
@@ -207,20 +207,26 @@ export async function executeM365Turn(
 
       if (isIdle()) return;
 
-      // Chờ tối đa 4000ms cho M365 tự settle xong lượt trước nếu đang hoàn tất token
+      // Kiên nhẫn chờ tối đa 12000ms cho M365 tự hoàn tất sinh lượt trước và chuyển về Trạng thái 1
       const start = Date.now();
-      while (Date.now() - start < 4000) {
-        await new Promise(r => setTimeout(r, 200));
+      while (Date.now() - start < 12000) {
+        await new Promise(r => setTimeout(r, 250));
         if (isIdle()) return;
       }
 
-      // Nếu sau 4s vẫn còn nút Stop (kẹt do tool call break sớm), giải phóng editor bằng nút Stop
+      // Tuyệt đối KHÔNG tự ý click nút Stop bừa bãi! Chỉ giải phóng nếu kẹt cứng quá 12s,
+      // và khi click xong, PHẢI CHỜ cho tới khi nút Stop biến mất hoàn toàn và ô chat quay về Trạng thái 1
       const stopBtn = document.querySelector(
-        'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+        'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
       ) as HTMLButtonElement | null;
       if (stopBtn) {
         stopBtn.click();
-        await new Promise(r => setTimeout(r, 300));
+        const stopClickAt = Date.now();
+        while (Date.now() - stopClickAt < 3000) {
+          await new Promise(r => setTimeout(r, 200));
+          if (isIdle()) break;
+        }
+        await new Promise(r => setTimeout(r, 800)); // Chờ thêm để BizChat render xong thông báo dừng (nếu có)
       }
     }).catch(() => { });
 
@@ -299,12 +305,14 @@ export async function executeM365Turn(
     // VÒNG LẶP GỬI & XÁC NHẬN CHẮC CHẮN (Guaranteed Submission Loop)
     let promptSubmitted = false;
     for (let submitAttempt = 0; submitAttempt < 10; submitAttempt++) {
-      // 1. Kiểm tra xem M365 đã chuyển sang trạng thái "Stop generating" hoặc editor đã sạch chưa
+      // 1. Kiểm tra xem M365 đã chuyển sang trạng thái "Stop generating" (Trạng thái 3) hoặc editor đã được gửi sạch chưa
       promptSubmitted = await page.evaluate(() => {
         const stopBtn = document.querySelector(
-          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]'
+          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
         );
-        const sendBtn = document.querySelector('button[aria-label="Send"], .fai-SendButton:not(:has(.fai-SendButton__stopIcon))');
+        const sendBtn = document.querySelector(
+          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
+        );
         const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
         const editorText = editor?.textContent?.trim() || "";
         return Boolean(stopBtn) || (!sendBtn && editorText.length === 0);
@@ -315,20 +323,31 @@ export async function executeM365Turn(
         break;
       }
 
-      // 2. Thử kích hoạt nút Send bằng Playwright Native Pointer Click (tác động trực tiếp từ Chrome CDP)
+      // 2. Thử kích hoạt nút Send bằng Playwright Native Pointer Click
+      // CHÚ Ý: Selector CHỈ ĐƯỢC CHỌN nút Send, TUYỆT ĐỐI KHÔNG DÙNG .fai-SendButton thuần túy!
       try {
         const sendLocator = page.locator(
-          'button[aria-label="Send"], button[type="submit"]:has(.fai-SendButton__sendIcon), .fai-BebopLiteChatInput__send button, .fai-SendButton'
+          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
         ).first();
         if (await sendLocator.count() > 0 && await sendLocator.isVisible()) {
           await sendLocator.click({ force: true, timeout: 500 });
+          // Kiểm tra ngay: Nếu sau click nút đã chuyển sang Stop generating thì BREAK NGAY LẬP TỨC!
+          await new Promise(r => setTimeout(r, 200));
+          const isNowGenerating = await page.evaluate(() => {
+            return Boolean(document.querySelector('button[aria-label="Stop generating"], .fai-SendButton__stopIcon'));
+          });
+          if (isNowGenerating) {
+            console.log(`[m365-worker] [send] Playwright pointer click thành công, M365 đã chuyển sang Stop generating ở lần thử ${submitAttempt + 1}`);
+            promptSubmitted = true;
+            break;
+          }
         }
       } catch {}
 
-      // 3. Dự phòng trong DOM: Dispatch đầy đủ chuỗi sự kiện pointer/mouse/click và submit form
-      await page.evaluate(() => {
+      // 3. Dự phòng trong DOM: Dispatch sự kiện CHỈ KHI NÚT LÀ NÚT SEND (Loại trừ 100% nút Stop!)
+      const domSendSuccess = await page.evaluate(() => {
         const sendBtn = document.querySelector(
-          'button[aria-label="Send"], button[type="submit"]:has(.fai-SendButton__sendIcon), .fai-SendButton'
+          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
         ) as HTMLButtonElement | null;
         if (sendBtn && !sendBtn.disabled) {
           sendBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
@@ -340,18 +359,38 @@ export async function executeM365Turn(
           if (form && typeof (form as any).requestSubmit === "function") {
             (form as any).requestSubmit(sendBtn);
           }
+          return true;
         }
-      }).catch(() => {});
+        return false;
+      }).catch(() => false);
 
-      // 4. Dự phòng phím tắt gửi trong ô chat: Control+Enter và Enter
-      await page.evaluate(() => {
-        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]') as HTMLElement;
-        if (editor) {
-          editor.focus();
+      if (domSendSuccess) {
+        await new Promise(r => setTimeout(r, 200));
+        const isNowGenerating = await page.evaluate(() => {
+          return Boolean(document.querySelector('button[aria-label="Stop generating"], .fai-SendButton__stopIcon'));
+        });
+        if (isNowGenerating) {
+          console.log(`[m365-worker] [send] DOM send dispatch thành công ở lần thử ${submitAttempt + 1}`);
+          promptSubmitted = true;
+          break;
         }
-      }).catch(() => {});
-      await page.keyboard.press("Control+Enter");
-      await page.keyboard.press("Enter");
+      }
+
+      // 4. Dự phòng phím tắt gửi trong ô chat: Control+Enter và Enter (chỉ khi chưa chuyển sang Stop)
+      const shouldPressEnter = await page.evaluate(() => {
+        const isStopPresent = Boolean(document.querySelector('button[aria-label="Stop generating"], .fai-SendButton__stopIcon'));
+        return !isStopPresent;
+      });
+      if (shouldPressEnter) {
+        await page.evaluate(() => {
+          const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]') as HTMLElement;
+          if (editor) {
+            editor.focus();
+          }
+        }).catch(() => {});
+        await page.keyboard.press("Control+Enter");
+        await page.keyboard.press("Enter");
+      }
 
       await new Promise(r => setTimeout(r, 300));
     }
@@ -458,12 +497,13 @@ export async function executeM365Turn(
         // 3. VÀ nội dung (text & html) hoàn toàn không đổi so với thời điểm trước khi gửi prompt.
         // Bất kỳ sự thay đổi nào (text mới, element mới không có baseline attribute, hoặc count tăng)
         // đều xác nhận tin nhắn hiện tại thuộc về lượt mới, chống chịu 100% hiện tượng Virtual Scrolling / DOM Recycling.
+        const isCancellationMessage = /(?:I've stopped generating|stopped generating the response|đã dừng tạo phản hồi|dừng tạo câu trả lời)/i.test(currentLastText);
         const isMarkedBaseline = Boolean(lastMsg && (lastMsg.hasAttribute("data-codex-turn-baseline") || lastMsg.closest("[data-codex-turn-baseline]")));
         const isContentUnchanged = Boolean(
           (!before.lastText || currentLastText === before.lastText) &&
           (!before.lastHtml || currentLastHtml === before.lastHtml)
         );
-        const isLastMsgOld = baselineCount > 0 && isMarkedBaseline && isContentUnchanged;
+        const isLastMsgOld = (baselineCount > 0 && isMarkedBaseline && isContentUnchanged) || isCancellationMessage;
 
         if (isLastMsgOld) {
           const isEditorBusy = isGenerating || editorDisabled;
@@ -728,10 +768,15 @@ export async function executeM365Turn(
           };
         });
 
+        // Trạng thái 1 (IDLE): Trong .fai-BebopLiteChatInput__actions hoàn toàn không còn bất kỳ button submit nào
+        const actionsEl = document.querySelector('.fai-BebopLiteChatInput__actions');
+        const hasSubmitBtn = Boolean(actionsEl?.querySelector('button[type="submit"], .fai-SendButton'));
+        const isInputActionsIdle = Boolean(actionsEl) && !hasSubmitBtn && !stopBtn;
+
         const rawHtml = clone.innerHTML || "";
-        const hasContent = blocks.length > 0 || Boolean(fastPathRawText && fastPathRawText.length > 0);
+        const hasContent = (blocks.length > 0 || Boolean(fastPathRawText && fastPathRawText.length > 0)) && !isCancellationMessage;
         const isNew = !isLastMsgOld;
-        return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText };
+        return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText, isInputActionsIdle };
       }, beforeState);
 
       // Quản lý chuyển trạng thái State Machine:
@@ -880,11 +925,14 @@ export async function executeM365Turn(
       const deadlockCycles = hasAnyUnclosedMarker ? 120 : 32;
 
       // Khi M365 đã có nội dung và không còn nút Stop generating (!status.isGenerating):
+      // - Chuyển sang Trạng thái 1 (Trạng thái rảnh tuyệt đối): Trong .fai-BebopLiteChatInput__actions không còn nút submit/stop
       // - Chuyển trạng thái hoàn thành: hasSeenGenerating === true && !status.isGenerating && (Date.now() - completedCandidateAt >= stableCompletionMs)
       // - Nếu có khối đóng tool_call / plan / patch: kết thúc ngay lập tức (stableCycles >= 1)
       const isStopDismissedStable = hasSeenGenerating && !status.isGenerating && completedCandidateAt !== null && (Date.now() - completedCandidateAt >= stableCompletionMs);
+      const isState1Idle = Boolean((status as any).isInputActionsIdle) && !status.isGenerating && (stableCycles >= 1);
 
       const isSettled = !status.isGenerating && (
+        isState1Idle ||
         isStopDismissedStable ||
         (hasFullyClosedMarker && stableCycles >= 1) ||
         (!hasAnyUnclosedMarker && (stableCycles >= minStableCycles || timeSinceChange >= minStableTime)) ||
@@ -892,7 +940,7 @@ export async function executeM365Turn(
       );
 
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [completed] attempts=${attempts} durationMs=${attempts * pollIntervalMs} hasSeenGenerating=${hasSeenGenerating} timeSinceCandidate=${completedCandidateAt ? Date.now() - completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
+        console.log(`[m365-worker] [completed] attempts=${attempts} durationMs=${attempts * pollIntervalMs} hasSeenGenerating=${hasSeenGenerating} isState1Idle=${Boolean((status as any).isInputActionsIdle)} timeSinceCandidate=${completedCandidateAt ? Date.now() - completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
         break;
       }
 
