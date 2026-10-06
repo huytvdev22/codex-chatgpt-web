@@ -1,10 +1,10 @@
 # Kiến Trúc Microsoft 365 Copilot Adapter (m365-copilot)
 
 > **Tài liệu kiến trúc kỹ thuật chính thức**  
-> **Phiên bản:** 2.0 (Hậu tái cấu trúc Kiến trúc Phân hệ Modular & Bẻ gãy Chu kỳ Phụ thuộc)  
+> **Phiên bản:** 2.1 (XML Response Envelope & Cognitive Loop)  
 > **Áp dụng cho:** `src/adapters/m365-copilot/`  
 > **Trạng thái:** Active / Production-Ready  
-> **CI Cycle Gate:** Passed (0 circular dependencies / 69 modules)
+> **CI Cycle Gate:** Passed (0 circular dependencies / 71 TypeScript modules)
 
 ---
 
@@ -103,10 +103,12 @@ Trong hệ thống `codex-chatgpt-web`, adapter thực hiện nhiệm vụ:
 
 - **Pure Forwarder vs. Stateful Mode:** Hỗ trợ cả 2 chế độ:
   - *Stateful Mode (Incremental Roundtrip):* Giữ nguyên ngữ cảnh phiên trò chuyện Copilot, mỗi turn kế tiếp chỉ gửi delta lời nhắc và kết quả công cụ mới (tiết kiệm đến 95% token tiêu thụ).
-  - *Pure Forwarder Mode (Temporary Chat Per Request):* Mỗi request tạo một lượt chat tạm thời mới, gửi toàn bộ snapshot ngữ cảnh rút gọn kèm phong bì bắt buộc 4-backtick.
+  - *Pure Forwarder Mode (Temporary Chat Per Request):* Mỗi request tạo một lượt chat tạm thời mới và gửi toàn bộ snapshot ngữ cảnh rút gọn kèm giao thức XML Response Envelope.
 - **Fast-Path Streaming Scraper:** Trích xuất streaming text trực tiếp từ Scriptor Code Preview DOM qua `[data-line-index]`, không qua thư viện Turndown, cho độ trễ chỉ vài mili-giây và bảo toàn 100% định dạng code.
 - **Zero-Latency Title Guard:** Đánh chặn các yêu cầu sinh tiêu đề ngầm từ Codex IDE và trả lời tức thì sau 5ms, giải phóng 100% tải browser cho tác vụ này.
-- **Unified Multi-Grammar Tool Translation:** Phát hiện và chuyển ngữ đồng thời 4 định dạng tool call do AI sinh ra: Codex Unified Patch, JSON Schema, XML `<tool_call>`, và câu lệnh shell/bash trực tiếp.
+- **XML Response Envelope:** Yêu cầu phản hồi của mô hình nằm trong phần tử gốc ``, với phần suy luận `<thought>`, nội dung Markdown và thao tác công cụ được phân tách rõ ràng.
+- **Unified Multi-Grammar Tool Translation:** Phát hiện và chuyển ngữ Codex Unified Patch, JSON Schema, XML `<tool_call>`, XML `<custom_tool_call>` và câu lệnh shell/bash trực tiếp.
+- **Cognitive Loop Evaluation:** Đánh giá từng lượt phản hồi dựa trên mức tuân thủ `<thought>`, độ rõ ràng của phần diễn giải, tỷ lệ thực thi công cụ thành công và trạng thái hoàn thành của phiên.
 - **Loop & Recursion Guard:** Phát hiện và ngắt các chu kỳ lặp lại công cụ giống hệt nhau (ngưỡng 10 lần) hoặc số vòng lặp tối đa trong phiên (ngưỡng 100 vòng) để bảo vệ tài nguyên người dùng.
 - **Cross-Platform OS Shell Strategies:** Tự động điều chỉnh cú pháp chạy lệnh giữa môi trường POSIX (Linux/macOS) và Windows PowerShell.
 - **Atomic File Staging:** Hỗ trợ tạo và sửa file dung lượng lớn vượt giới hạn dòng lệnh hệ điều hành thông qua file staging và kiểm tra băm SHA256 an toàn.
@@ -438,10 +440,13 @@ src/adapters/m365-copilot/
 - **Nhiệm vụ:**
   - Cung cấp một môi trường runtime độc lập (Standalone Test Harness) để kiểm thử, đánh giá chuẩn (benchmarking) và đo lường khả năng lập trình tự động của M365 Copilot mà không phụ thuộc vào toàn bộ tiến trình Codex IDE hay Network Server.
   - Triển khai vòng lặp tự trị đa lượt: Model -> Output Translation -> Local Tool Execution -> Truncate -> Model.
+  - Đánh giá Cognitive Loop theo từng lượt và toàn phiên thông qua mức tuân thủ giao thức, độ rõ ràng của phần diễn giải, tỷ lệ thành công của công cụ và trạng thái hoàn thành.
 - **Public Classes / Functions / Types:**
   - `class M365AgentLoop`: Vòng lặp điều phối chính.
   - `class LocalToolExecutor`: Trình thực thi công cụ cục bộ mô phỏng trực tiếp trên đĩa (hỗ trợ `read_file`, `list_dir`, `grep_code`, `git_status`, `git_diff`, `run_command`, `write_file`).
-  - `interface IToolExecutor`, `IM365ModelClient`, `AgentLoopOptions`, `AgentLoopResult`.
+  - `class CognitiveEvaluator`: Bộ đánh giá cấu trúc và hiệu quả nhận thức của từng lượt phản hồi và toàn bộ phiên.
+  - `interface IToolExecutor`, `IM365ModelClient`, `AgentLoopOptions`, `AgentLoopRetryOptions`, `AgentLoopResult`.
+  - `type CognitiveTurnEvaluation`, `CognitiveSessionMetrics`.
 - **Được phép phụ thuộc:**
   - `../translation/output-translator`
   - `../prompts/assembler`
@@ -452,7 +457,8 @@ src/adapters/m365-copilot/
 
 - **Nhiệm vụ:**
   - Triển khai chế độ chuyển tiếp phi trạng thái (Stateless Pure Forwarder Mode): mỗi lượt tương tác mở một cuộc trò chuyện tạm thời mới.
-  - Yêu cầu Copilot bao bọc 100% nội dung phản hồi trong một phong bì code block 4-backtick (` ````markdown `) duy nhất (`MANDATORY_4_BACKTICK_MARKDOWN_PROMPT`).
+  - Biên dịch prompt chuyển tiếp theo giao thức XML Response Envelope với phần tử gốc ``.
+  - Quy định `<thought>` cho phần phân tích, `<tool_call>` cho lời gọi công cụ dạng JSON và `<custom_tool_call name="apply_patch">` cho Unified Patch dạng freeform.
   - Cung cấp thuật toán `FastPathStreamBuffer`: trích xuất tức thì các dòng code live DOM từ thẻ `[data-line-index]`, giải quyết triệt để độ trễ do ảo hóa DOM và bỏ qua quá trình parse HTML nặng nề của Turndown.
   - Cung cấp hàm `stripOuterCodeFence` để bóc bỏ an toàn lớp 4-backtick ngoài cùng mà vẫn giữ nguyên vẹn các code fence con 3-backtick bên trong mã nguồn người dùng.
 - **Public Classes / Functions:**
@@ -460,7 +466,7 @@ src/adapters/m365-copilot/
   - `class FastPathStreamBuffer`
   - `stripOuterCodeFence(raw: string): string`
   - `compileM365HybridForwardPrompt(parsed, rawBody): string`
-  - Hằng số: `MANDATORY_4_BACKTICK_MARKDOWN_PROMPT`, `MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT`.
+  - Hằng số và prompt builder cho XML Response Envelope, tool call JSON và Unified Patch freeform.
 - **Được phép phụ thuộc:**
   - `../normalization/*`
   - `../prompts/compiler` (qua facade `../prompt-strategy`)

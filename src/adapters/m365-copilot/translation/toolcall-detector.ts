@@ -15,6 +15,183 @@ export interface M365ToolCallDetectorOptions {
   renderThinkingInText?: boolean;
 }
 
+/**
+ * Các loại marker có thể xuất hiện khi detector đang ở trạng thái văn bản thường (ngoài mọi khối nội bộ).
+ */
+type OutsideMarkerKind = "rootOpen" | "rootClose" | "strayClose" | "thoughtOpen" | "toolOpen" | "patchOpen";
+
+interface OutsideMarkerMatch {
+  kind: OutsideMarkerKind;
+  index: number;
+  length: number;
+}
+
+interface StepResult {
+  emitted: string;
+  continueLoop: boolean;
+}
+
+/**
+ * Danh sách marker theo thứ tự ưu tiên khi trùng vị trí. Marker được chọn là marker xuất hiện SỚM NHẤT trong buffer,
+ * tránh trường hợp một marker ở cuối buffer (vd: </m365Response>) làm toàn bộ text phía trước bị emit nguyên văn.
+ * Nhánh dạng thiếu dấu `<` (vd: `tool_call>`, `m365Response>`) có lookbehind chặn dấu `/` để không nhận nhầm thẻ đóng.
+ */
+const OUTSIDE_MARKERS: ReadonlyArray<{ kind: OutsideMarkerKind; pattern: RegExp }> = [
+  { kind: "rootClose", pattern: /(?:<\s*\/|\/)\s*m365[\\_]*response\s*>/i },
+  { kind: "strayClose", pattern: /(?:<\s*\/|\/)\s*(?:(?:custom[\\_]*)?tool[\\_]*call|thought|thinking)\s*>/i },
+  { kind: "rootOpen", pattern: /(?:<\s*|(?<!\/\s*)\b)m365[\\_]*response(?:\s+[^>]*)?>/i },
+  { kind: "thoughtOpen", pattern: /<\s*(?:thought|thinking)\s*>/i },
+  { kind: "toolOpen", pattern: /(?:<\s*|(?<!\/\s*)\b)(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i },
+  { kind: "patchOpen", pattern: /(?:\\?\*){2,3}\s*Begin Patch/i },
+];
+
+const THOUGHT_CLOSE_RE = /<\s*\/\s*(?:thought|thinking)\s*>/i;
+const TOOL_CLOSE_RE = /(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>/i;
+const PATCH_CLOSE_RE = /(?:\\?\*){2,3}\s*End Patch/i;
+const PATCH_CLOSE_PARTIAL_RE = /(?:\\?\*)+[ \t]*(?:E(?:n(?:d(?:[ \t]*(?:P(?:a(?:t(?:c(?:h)?)?)?)?)?)?)?)?)?$/i;
+const PATCH_OPEN_PARTIAL_RE = /(?:\\?\*)+[ \t]*(?:B(?:e(?:g(?:i(?:n(?:[ \t]*(?:P(?:a(?:t(?:c(?:h)?)?)?)?)?)?)?)?)?)?)?$/i;
+const FENCE_ONLY_RE = /^```(?:xml|json|patch|diff|markdown)?$/i;
+const FENCE_TOKEN_RE = /```(?:xml|json|patch|diff|markdown)?/gi;
+
+/** Tên thẻ nội bộ đã chuẩn hóa (bỏ `_`, `\`, viết thường) không bao giờ được hiển thị cho người dùng. */
+const INTERNAL_TAG_NAMES = ["m365response", "thought", "thinking", "toolcall", "customtoolcall"];
+const MAX_PARTIAL_TAG_LENGTH = 256;
+const MAX_PARTIAL_CLOSE_LENGTH = 48;
+
+/**
+ * Tìm marker xuất hiện sớm nhất trong buffer (khi trùng vị trí, ưu tiên theo thứ tự OUTSIDE_MARKERS).
+ */
+function findEarliestOutsideMarker(buffer: string): OutsideMarkerMatch | null {
+  let best: OutsideMarkerMatch | null = null;
+  for (const { kind, pattern } of OUTSIDE_MARKERS) {
+    const match = buffer.match(pattern);
+    if (!match || match.index === undefined) continue;
+    if (!best || match.index < best.index) {
+      best = { kind, index: match.index, length: match[0].length };
+    }
+  }
+  return best;
+}
+
+/**
+ * Trả về vị trí bắt đầu của một thẻ nội bộ dở dang ở cuối text (vd: `<`, `</`, `<thou`, `<custom_tool_call name="x`),
+ * hoặc -1 nếu đuôi text không thể là thẻ nội bộ.
+ */
+function findPartialInternalTagStart(text: string): number {
+  const lt = text.lastIndexOf("<");
+  if (lt === -1) return -1;
+  const tail = text.slice(lt + 1);
+  if (tail.includes(">") || tail.length > MAX_PARTIAL_TAG_LENGTH) return -1;
+
+  const body = tail.replace(/^\s*\/?\s*/, "");
+  const rawName = body.match(/^[A-Za-z0-9\\_]*/)?.[0] ?? "";
+  const rest = body.slice(rawName.length);
+  const name = rawName.replace(/[\\_]/g, "").toLowerCase();
+
+  if (rest.length === 0) {
+    // Tên thẻ còn đang được stream: giữ lại nếu có thể là tiền tố của một thẻ nội bộ
+    return INTERNAL_TAG_NAMES.some(n => n.startsWith(name)) ? lt : -1;
+  }
+  // Tên thẻ đã hoàn chỉnh và đang stream phần thuộc tính: chỉ giữ lại nếu là thẻ nội bộ
+  return /^\s/.test(rest) && INTERNAL_TAG_NAMES.includes(name) ? lt : -1;
+}
+
+/**
+ * Trả về vị trí bắt đầu của thẻ tool call dạng thiếu dấu `<` còn dở dang ở cuối text (vd: `tool_ca`), hoặc -1.
+ */
+function findPartialBareToolTagStart(text: string): number {
+  const rawToolPrefix = "tool_call>";
+  const rawCustomPrefix = "custom_tool_call";
+  for (const match of text.matchAll(/\b(?:custom[\\_]*)?tool/gi)) {
+    if (match.index === undefined) continue;
+    const suffix = text.slice(match.index);
+    if (suffix.includes(">") || suffix.length > MAX_PARTIAL_TAG_LENGTH) continue;
+    const candidate = suffix.replace(/\\/g, "").toLowerCase();
+    const isPrefixOfTag = rawToolPrefix.startsWith(candidate) || `${rawCustomPrefix}>`.startsWith(candidate);
+    const isTagWithAttributes = candidate.startsWith(`${rawCustomPrefix} `);
+    if (isPrefixOfTag || isTagWithAttributes) {
+      return match.index;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Tính vị trí cần tạm giữ ở cuối buffer khi đang ở trạng thái văn bản thường (chờ chunk tiếp theo để xác định marker).
+ * Trả về -1 nếu toàn bộ buffer an toàn để emit.
+ */
+function findOutsideHoldIndex(buffer: string): number {
+  if (FENCE_ONLY_RE.test(buffer.trim())) return 0;
+
+  const patchMatch = buffer.match(PATCH_OPEN_PARTIAL_RE);
+  const tickMatch = buffer.match(/`{1,5}$/);
+  const candidates = [
+    findPartialInternalTagStart(buffer),
+    findPartialBareToolTagStart(buffer),
+    patchMatch && patchMatch.index !== undefined && patchMatch[0].length >= 1 ? patchMatch.index : -1,
+    tickMatch && tickMatch.index !== undefined ? tickMatch.index : -1,
+  ].filter(index => index >= 0);
+
+  return candidates.length > 0 ? Math.min(...candidates) : -1;
+}
+
+/**
+ * Trả về vị trí bắt đầu của thẻ đóng thought đang dở dang ở cuối text (vd: `<`, `</`, `</thou`),
+ * hoặc text.length nếu không có.
+ */
+function findPartialThoughtCloseStart(text: string): number {
+  const ltIndex = text.lastIndexOf("<");
+  if (ltIndex >= 0) {
+    const tail = text.slice(ltIndex);
+    if (!tail.includes(">") && tail.length <= MAX_PARTIAL_CLOSE_LENGTH) {
+      const body = tail.replace(/^<\s*\/?\s*/, "").replace(/[\\_]/g, "").toLowerCase();
+      if ("thought".startsWith(body) || "thinking".startsWith(body)) {
+        return ltIndex;
+      }
+    }
+  }
+  return text.length;
+}
+
+/**
+ * Trả về vị trí bắt đầu của thẻ đóng tool đang dở dang ở cuối text (vd: `<`, `</`, `</tool_call`, hoặc `/tool`),
+ * hoặc text.length nếu không có. Đảm bảo không tách rời `<` khỏi `/` khi chuỗi kết thúc bằng `</`.
+ */
+function findPartialToolCloseStart(text: string): number {
+  const ltIndex = text.lastIndexOf("<");
+  if (ltIndex >= 0) {
+    const tail = text.slice(ltIndex);
+    if (!tail.includes(">") && tail.length <= MAX_PARTIAL_CLOSE_LENGTH) {
+      const body = tail.replace(/^<\s*\/?\s*/, "").replace(/[\\_]/g, "").toLowerCase();
+      if ("customtoolcall".startsWith(body) || "toolcall".startsWith(body)) {
+        return ltIndex;
+      }
+    }
+  }
+
+  const slashIndex = text.lastIndexOf("/");
+  if (slashIndex >= 0) {
+    const tail = text.slice(slashIndex);
+    if (!tail.includes(">") && tail.length <= MAX_PARTIAL_CLOSE_LENGTH) {
+      const body = tail.replace(/^\/\s*/, "").replace(/[\\_]/g, "").toLowerCase();
+      if (body.length > 0 && ("customtoolcall".startsWith(body) || "toolcall".startsWith(body))) {
+        return slashIndex;
+      }
+    }
+  }
+
+  return text.length;
+}
+
+/**
+ * Làm sạch đoạn văn bản đứng trước một khối nội bộ (root/tool/patch): bỏ code fence bao ngoài và khoảng trắng đuôi.
+ * Không trim đầu chuỗi để tránh dính chữ giữa các chunk.
+ */
+function cleanPrefixBeforeBlock(prefix: string): string {
+  const withoutFences = prefix.replace(FENCE_TOKEN_RE, "");
+  return withoutFences.trim() ? withoutFences.trimEnd() : "";
+}
+
 export class M365ToolCallDetector {
   private buffer = "";
   private inToolCall = false;
@@ -42,216 +219,150 @@ export class M365ToolCallDetector {
 
     let emittedText = "";
 
-    while (this.buffer.length > 0) {
-      if (!this.inToolCall && !this.inPatch && !this.inThought) {
-        // 1. Nuốt sạch thẻ mở root <m365Response> hoặc <m365_response>
-        const rootOpenMatch = this.buffer.match(/(?:<|\b)\s*m365[\\_]*response(?:\s+[^>]*)?>/i);
-        if (rootOpenMatch && rootOpenMatch.index !== undefined) {
-          if (rootOpenMatch.index > 0) {
-            const prefix = this.buffer.slice(0, rootOpenMatch.index);
-            const cleanPrefix = prefix.replace(/```(?:xml|json|patch|markdown)?/gi, "").trim();
-            if (cleanPrefix) {
-              emittedText += cleanPrefix;
-            }
-          }
-          this.buffer = this.buffer.slice(rootOpenMatch.index + rootOpenMatch[0].length).replace(/^\r?\n/, "");
-          continue;
-        }
-
-        // 2. Nuốt sạch thẻ đóng root </m365Response>
-        const rootCloseMatch = this.buffer.match(/(?:<\s*\/|\/\s*)m365[\\_]*response\s*>/i);
-        if (rootCloseMatch && rootCloseMatch.index !== undefined) {
-          if (rootCloseMatch.index > 0) {
-            emittedText += this.buffer.slice(0, rootCloseMatch.index);
-          }
-          this.buffer = this.buffer.slice(rootCloseMatch.index + rootCloseMatch[0].length);
-          continue;
-        }
-
-        // 3. Nhận diện thẻ mở suy nghĩ nội tâm <thought> hoặc <thinking>
-        const thoughtOpenMatch = this.buffer.match(/<\s*(?:thought|thinking)\s*>/i);
-        if (thoughtOpenMatch && thoughtOpenMatch.index !== undefined) {
-          if (thoughtOpenMatch.index > 0) {
-            emittedText += this.buffer.slice(0, thoughtOpenMatch.index);
-          }
-          this.inThought = true;
-          this.buffer = this.buffer.slice(thoughtOpenMatch.index + thoughtOpenMatch[0].length);
-          continue;
-        }
-
-        // 4. Ưu tiên tìm thẻ mở <tool_call>, tool_call>, <custom_tool_call ...>, custom_tool_call>
-        const openMatch = this.buffer.match(/(?:<|\b)\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i);
-        if (openMatch && openMatch.index !== undefined) {
-          if (openMatch.index > 0) {
-            const prefix = this.buffer.slice(0, openMatch.index);
-            const cleanPrefix = prefix.replace(/```(?:xml|json|patch)?/gi, "").trim();
-            if (cleanPrefix) {
-              emittedText += cleanPrefix;
-            }
-          }
-          this.inToolCall = true;
-          this.buffer = this.buffer.slice(openMatch.index + openMatch[0].length);
-          continue;
-        }
-
-        // 5. Tìm khối patch Codex độc lập: *** Begin Patch hoặc \*\*\* Begin Patch (hỗ trợ cả 2 hoặc 3 dấu sao)
-        const patchOpenMatch = this.buffer.match(/(?:\\?\*){2,3}\s*Begin Patch/i);
-        if (patchOpenMatch && patchOpenMatch.index !== undefined) {
-          if (patchOpenMatch.index > 0) {
-            const prefix = this.buffer.slice(0, patchOpenMatch.index);
-            const cleanPrefix = prefix.replace(/```(?:patch|diff)?/gi, "").trim();
-            if (cleanPrefix) {
-              emittedText += cleanPrefix;
-            }
-          }
-          this.inPatch = true;
-          this.buffer = this.buffer.slice(patchOpenMatch.index);
-          continue;
-        }
-
-        // Tạm hoãn emit nếu buffer chỉ là code fence ``` hoặc ```patch/xml để chờ thẻ mở
-        const trimmed = this.buffer.trim();
-        if (/^```(?:xml|json|patch|diff|markdown)?$/i.test(trimmed)) {
-          break;
-        }
-
-        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ root <m365Response> không
-        const rootPrefixMatch = this.buffer.match(/<\s*(?:\/?\s*m(?:3(?:6(?:5(?:[\\_]*(?:r(?:e(?:s(?:p(?:o(?:n(?:s(?:e)?)?)?)?)?)?)?)?)?)?)?)?)?$/i);
-        if (rootPrefixMatch && rootPrefixMatch.index !== undefined) {
-          if (rootPrefixMatch.index > 0) {
-            emittedText += this.buffer.slice(0, rootPrefixMatch.index);
-            this.buffer = this.buffer.slice(rootPrefixMatch.index);
-          }
-          break;
-        }
-
-        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ thought không
-        const thoughtPrefixMatch = this.buffer.match(/<\s*(?:t(?:h(?:o(?:u(?:g(?:h(?:t)?)?)?)?)?|i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?$/i);
-        if (thoughtPrefixMatch && thoughtPrefixMatch.index !== undefined) {
-          if (thoughtPrefixMatch.index > 0) {
-            emittedText += this.buffer.slice(0, thoughtPrefixMatch.index);
-            this.buffer = this.buffer.slice(thoughtPrefixMatch.index);
-          }
-          break;
-        }
-
-        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ mở không (hỗ trợ cả dạng <... và tool...)
-        const possiblePrefixMatch = this.buffer.match(/(?:<[^>]*$|\b(?:custom[\\_]*)?tool(?:[\\_]*call)?[^>]*$)/i);
-        if (possiblePrefixMatch && possiblePrefixMatch.index !== undefined) {
-          const prefixCandidate = possiblePrefixMatch[0].toLowerCase();
-          const targetPrefix = "<tool_call>";
-          const targetPrefixAlt = "<tool\\_call>";
-          const targetCustom = "<custom_tool_call";
-          const rawToolPrefix = "tool_call>";
-          const rawCustomPrefix = "custom_tool_call";
-          if (
-            targetPrefix.startsWith(prefixCandidate) ||
-            targetPrefixAlt.startsWith(prefixCandidate) ||
-            targetCustom.startsWith(prefixCandidate) ||
-            rawToolPrefix.startsWith(prefixCandidate) ||
-            rawCustomPrefix.startsWith(prefixCandidate)
-          ) {
-            if (possiblePrefixMatch.index > 0) {
-              emittedText += this.buffer.slice(0, possiblePrefixMatch.index);
-              this.buffer = this.buffer.slice(possiblePrefixMatch.index);
-            }
-            break;
-          }
-        }
-
-        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của *** Begin Patch không
-        const patchPrefixCandidateMatch = this.buffer.match(/(?:\\?\*)+[ \t]*(?:B(?:e(?:g(?:i(?:n)?)?)?)?)?$/i);
-        if (patchPrefixCandidateMatch && patchPrefixCandidateMatch.index !== undefined) {
-          if (patchPrefixCandidateMatch[0].length >= 2) {
-            if (patchPrefixCandidateMatch.index > 0) {
-              emittedText += this.buffer.slice(0, patchPrefixCandidateMatch.index);
-              this.buffer = this.buffer.slice(patchPrefixCandidateMatch.index);
-            }
-            break;
-          }
-        }
-
-        // Tạm hoãn emit nếu đuôi buffer kết thúc bằng dấu backticks dở dang (chờ xem có phải code fence mở/đóng)
-        const trailingTickMatch = this.buffer.match(/`{1,5}$/);
-        if (trailingTickMatch && trailingTickMatch.index !== undefined) {
-          if (trailingTickMatch.index > 0) {
-            emittedText += this.buffer.slice(0, trailingTickMatch.index);
-            this.buffer = this.buffer.slice(trailingTickMatch.index);
-          }
-          break;
-        }
-
-        emittedText += this.buffer;
-        this.buffer = "";
-        break;
-      } else if (this.inThought) {
-        // Đang trong khối suy nghĩ nội tâm, tìm thẻ đóng </thought> hoặc </thinking>
-        const thoughtCloseMatch = this.buffer.match(/<\s*\/\s*(?:thought|thinking)\s*>/i);
-        if (thoughtCloseMatch && thoughtCloseMatch.index !== undefined) {
-          this.thoughtContent += this.buffer.slice(0, thoughtCloseMatch.index);
-          this.inThought = false;
-
-          // Nếu được bật renderThinkingInText: Render khối suy nghĩ dạng văn bản thuần túy với icon 💭
-          if (this.options.renderThinkingInText && !this.renderedThinking) {
-            const cleanThought = this.thoughtContent.trim();
-            if (cleanThought) {
-              emittedText += `💭 ${cleanThought}\n\n`;
-              this.renderedThinking = true;
-            }
-          }
-
-          const afterClose = this.buffer.slice(thoughtCloseMatch.index + thoughtCloseMatch[0].length);
-          this.buffer = afterClose.replace(/^\r?\n/, "");
-          continue;
-        }
-
-        this.thoughtContent += this.buffer;
-        this.buffer = "";
-        break;
-      } else if (this.inPatch) {
-        // Đang trong khối patch, tìm *** End Patch hoặc \*\*\* End Patch (2 hoặc 3 dấu sao)
-        const patchCloseMatch = this.buffer.match(/(?:\\?\*){2,3}\s*End Patch/i);
-        if (patchCloseMatch && patchCloseMatch.index !== undefined) {
-          const patchEndIndex = patchCloseMatch.index + patchCloseMatch[0].length;
-          this.patchContent += this.buffer.slice(0, patchEndIndex);
-          this.inPatch = false;
-          this.buffer = this.buffer.slice(patchEndIndex);
-
-          const cleanPatch = sanitizeCodexPatchContent(this.patchContent);
-
-          this.detectedToolCall = {
-            name: "apply_patch",
-            arguments: { input: cleanPatch },
-          };
-          break;
-        }
-
-        this.patchContent += this.buffer;
-        this.buffer = "";
-        break;
-      } else {
-        // Đang trong khối tool call, tìm thẻ đóng </tool_call>, /tool_call>, </custom_tool_call>
-        const closeMatch = this.buffer.match(/(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>/i);
-        if (closeMatch && closeMatch.index !== undefined) {
-          this.toolContent += this.buffer.slice(0, closeMatch.index);
-          this.inToolCall = false;
-          this.buffer = this.buffer.slice(closeMatch.index + closeMatch[0].length);
-
-          const toolCall = this.parseToolPayload(this.toolContent);
-          if (toolCall) {
-            this.detectedToolCall = toolCall;
-            break;
-          }
-          continue;
-        }
-
-        this.toolContent += this.buffer;
-        this.buffer = "";
-        break;
-      }
+    while (this.buffer.length > 0 && !this.detectedToolCall) {
+      const step = this.inThought
+        ? this.consumeThought()
+        : this.inPatch
+          ? this.consumePatch()
+          : this.inToolCall
+            ? this.consumeToolCall()
+            : this.consumeOutside();
+      emittedText += step.emitted;
+      if (!step.continueLoop) break;
     }
 
     return emittedText;
+  }
+
+  /**
+   * Xử lý buffer khi đang ở trạng thái văn bản thường: tìm marker sớm nhất (root/thought/tool/patch),
+   * emit phần văn bản an toàn phía trước và chuyển trạng thái. Nếu chưa có marker hoàn chỉnh,
+   * tạm giữ phần đuôi có thể là thẻ dở dang để chờ chunk tiếp theo.
+   */
+  private consumeOutside(): StepResult {
+    const marker = findEarliestOutsideMarker(this.buffer);
+    if (marker) {
+      const prefix = this.buffer.slice(0, marker.index);
+      const rest = this.buffer.slice(marker.index + marker.length);
+      switch (marker.kind) {
+        case "rootOpen":
+          // Nuốt sạch thẻ mở root <m365Response> hoặc <m365_response>
+          this.buffer = rest.replace(/^\r?\n/, "");
+          return { emitted: cleanPrefixBeforeBlock(prefix), continueLoop: true };
+        case "rootClose":
+        case "strayClose":
+          // Nuốt sạch thẻ đóng root </m365Response> và các thẻ đóng nội bộ mồ côi
+          this.buffer = rest;
+          return { emitted: prefix, continueLoop: true };
+        case "thoughtOpen":
+          this.inThought = true;
+          this.buffer = rest;
+          return { emitted: prefix, continueLoop: true };
+        case "toolOpen":
+          this.inToolCall = true;
+          this.toolContent = "";
+          this.buffer = rest;
+          return { emitted: cleanPrefixBeforeBlock(prefix), continueLoop: true };
+        case "patchOpen":
+          // Giữ nguyên marker *** Begin Patch trong buffer để đưa vào patchContent
+          this.inPatch = true;
+          this.buffer = this.buffer.slice(marker.index);
+          return { emitted: cleanPrefixBeforeBlock(prefix), continueLoop: true };
+      }
+    }
+
+    const holdIndex = findOutsideHoldIndex(this.buffer);
+    if (holdIndex === -1) {
+      const emitted = this.buffer;
+      this.buffer = "";
+      return { emitted, continueLoop: false };
+    }
+    const emitted = this.buffer.slice(0, holdIndex);
+    this.buffer = this.buffer.slice(holdIndex);
+    return { emitted, continueLoop: false };
+  }
+
+  /**
+   * Xử lý buffer khi đang trong khối suy nghĩ nội tâm, tìm thẻ đóng </thought> hoặc </thinking>.
+   */
+  private consumeThought(): StepResult {
+    const thoughtCloseMatch = this.buffer.match(THOUGHT_CLOSE_RE);
+    if (thoughtCloseMatch && thoughtCloseMatch.index !== undefined) {
+      this.thoughtContent += this.buffer.slice(0, thoughtCloseMatch.index);
+      this.inThought = false;
+
+      let emitted = "";
+      // Nếu được bật renderThinkingInText: Render khối suy nghĩ dạng văn bản thuần túy với icon 💭
+      if (this.options.renderThinkingInText && !this.renderedThinking) {
+        const cleanThought = this.thoughtContent.trim();
+        if (cleanThought) {
+          emitted = `💭 ${cleanThought}\n\n`;
+          this.renderedThinking = true;
+        }
+      }
+
+      const afterClose = this.buffer.slice(thoughtCloseMatch.index + thoughtCloseMatch[0].length);
+      this.buffer = afterClose.replace(/^\r?\n/, "");
+      return { emitted, continueLoop: true };
+    }
+
+    // Giữ lại đuôi có thể là thẻ đóng bị cắt giữa 2 chunk (vd: "</thou" + "ght>")
+    const holdIndex = findPartialThoughtCloseStart(this.buffer);
+    this.thoughtContent += this.buffer.slice(0, holdIndex);
+    this.buffer = this.buffer.slice(holdIndex);
+    return { emitted: "", continueLoop: false };
+  }
+
+  /**
+   * Xử lý buffer khi đang trong khối patch, tìm *** End Patch hoặc \*\*\* End Patch (2 hoặc 3 dấu sao).
+   */
+  private consumePatch(): StepResult {
+    const patchCloseMatch = this.buffer.match(PATCH_CLOSE_RE);
+    if (patchCloseMatch && patchCloseMatch.index !== undefined) {
+      const patchEndIndex = patchCloseMatch.index + patchCloseMatch[0].length;
+      this.patchContent += this.buffer.slice(0, patchEndIndex);
+      this.inPatch = false;
+      this.buffer = this.buffer.slice(patchEndIndex);
+
+      this.detectedToolCall = {
+        name: "apply_patch",
+        arguments: { input: sanitizeCodexPatchContent(this.patchContent) },
+      };
+      return { emitted: "", continueLoop: false };
+    }
+
+    // Giữ lại đuôi có thể là marker kết thúc bị cắt giữa 2 chunk (vd: "*** En" + "d Patch")
+    const partialMatch = this.buffer.match(PATCH_CLOSE_PARTIAL_RE);
+    const holdIndex = partialMatch && partialMatch.index !== undefined ? partialMatch.index : this.buffer.length;
+    this.patchContent += this.buffer.slice(0, holdIndex);
+    this.buffer = this.buffer.slice(holdIndex);
+    return { emitted: "", continueLoop: false };
+  }
+
+  /**
+   * Xử lý buffer khi đang trong khối tool call, tìm thẻ đóng </tool_call>, /tool_call>, </custom_tool_call>.
+   */
+  private consumeToolCall(): StepResult {
+    const closeMatch = this.buffer.match(TOOL_CLOSE_RE);
+    if (closeMatch && closeMatch.index !== undefined) {
+      this.toolContent += this.buffer.slice(0, closeMatch.index);
+      this.inToolCall = false;
+      this.buffer = this.buffer.slice(closeMatch.index + closeMatch[0].length);
+
+      const toolCall = this.parseToolPayload(this.toolContent);
+      this.toolContent = "";
+      if (toolCall) {
+        this.detectedToolCall = toolCall;
+        return { emitted: "", continueLoop: false };
+      }
+      return { emitted: "", continueLoop: true };
+    }
+
+    // Giữ lại đuôi có thể là thẻ đóng bị cắt giữa 2 chunk (vd: "</custom_tool_" + "call>")
+    const holdIndex = findPartialToolCloseStart(this.buffer);
+    this.toolContent += this.buffer.slice(0, holdIndex);
+    this.buffer = this.buffer.slice(holdIndex);
+    return { emitted: "", continueLoop: false };
   }
 
   /**
@@ -276,7 +387,9 @@ export class M365ToolCallDetector {
     }
 
     if (!this.inToolCall && !this.inPatch && !this.detectedToolCall) {
-      remainingText += this.buffer;
+      // Bỏ thẻ nội bộ dở dang ở cuối stream (vd: "</" hoặc "<custom_tool_call name=...") để không rò rỉ ra UI
+      const partialTagStart = findPartialInternalTagStart(this.buffer);
+      remainingText += partialTagStart >= 0 ? this.buffer.slice(0, partialTagStart) : this.buffer;
       this.buffer = "";
     } else if (this.inToolCall && !this.detectedToolCall) {
       // Thẻ <tool_call> chưa đóng -> Stream bị ngắt giữa JSON arguments.
