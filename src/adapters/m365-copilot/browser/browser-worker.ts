@@ -185,14 +185,67 @@ export async function executeM365Turn(
       });
     }
 
-    // Đọc số lượng và nội dung tin nhắn hiện tại trước khi gửi
+    // 3.2. Đảm bảo M365 Copilot đã sẵn sàng (Idle), không còn bận sinh từ lượt trước
+    await page.evaluate(async () => {
+      const isIdle = () => {
+        const stopBtn = document.querySelector(
+          'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+        );
+        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
+        const isEditorDisabled = editor?.getAttribute("aria-disabled") === "true";
+        return !stopBtn && !isEditorDisabled;
+      };
+
+      if (isIdle()) return;
+
+      // Chờ tối đa 4000ms cho M365 tự settle xong lượt trước nếu đang hoàn tất token
+      const start = Date.now();
+      while (Date.now() - start < 4000) {
+        await new Promise(r => setTimeout(r, 200));
+        if (isIdle()) return;
+      }
+
+      // Nếu sau 4s vẫn còn nút Stop (kẹt do tool call break sớm), giải phóng editor bằng nút Stop
+      const stopBtn = document.querySelector(
+        'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+      ) as HTMLButtonElement | null;
+      if (stopBtn) {
+        stopBtn.click();
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }).catch(() => { });
+
+    // Đọc số lượng và nội dung tin nhắn AI hiện tại trước khi gửi
     const beforeState = await page.evaluate(() => {
-      const messages = Array.from(document.querySelectorAll(
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>(
         ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
       ));
+      const aiList: HTMLElement[] = [];
+      for (const el of candidates) {
+        if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) {
+          continue;
+        }
+        const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+        if (ariaLabel.includes("you said") || ariaLabel.includes("bạn đã nói")) {
+          continue;
+        }
+        const isExplicitAi = el.matches(".fai-CopilotMessage, [data-content='ai-message']");
+        const hasAiMarkers = Boolean(
+          el.querySelector(".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']")
+        );
+        const heading = el.querySelector(".fai-CopilotMessage__accessibleHeading, [class*='heading' i], h2, h3, h4");
+        const headingText = (heading?.textContent || "").toLowerCase();
+        const isCopilotHeading = headingText.includes("copilot");
+
+        if (isExplicitAi || hasAiMarkers || isCopilotHeading) {
+          aiList.push(el);
+        }
+      }
+      const aiMessages = aiList.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
       return {
-        count: messages.length,
-        lastHtml: messages.length > 0 ? (messages[messages.length - 1] as HTMLElement).innerHTML : "",
+        aiCount: aiMessages.length,
+        count: aiMessages.length,
+        lastHtml: aiMessages.length > 0 ? (aiMessages[aiMessages.length - 1] as HTMLElement).innerHTML : "",
       };
     });
 
@@ -223,29 +276,67 @@ export async function executeM365Turn(
       editor.dispatchEvent(new Event("change", { bubbles: true }));
     }, promptText);
 
-    // Chờ ngắn để React cập nhật trạng thái nút Gửi
-    await new Promise(r => setTimeout(r, 250));
+    // Chờ ngắn để React cập nhật DOM và hiển thị nút Send
+    await new Promise(r => setTimeout(r, 300));
 
-    // Thử click nút Send (.fai-SendButton / aria-label="Send")
-    let sent = false;
-    for (let i = 0; i < 5; i++) {
-      sent = await page.evaluate(() => {
+    // VÒNG LẶP GỬI & XÁC NHẬN CHẮC CHẮN (Guaranteed Submission Loop)
+    let promptSubmitted = false;
+    for (let submitAttempt = 0; submitAttempt < 10; submitAttempt++) {
+      // 1. Kiểm tra xem M365 đã chuyển sang trạng thái "Stop generating" hoặc editor đã sạch chưa
+      promptSubmitted = await page.evaluate(() => {
+        const stopBtn = document.querySelector(
+          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]'
+        );
+        const sendBtn = document.querySelector('button[aria-label="Send"], .fai-SendButton:not(:has(.fai-SendButton__stopIcon))');
+        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
+        const editorText = editor?.textContent?.trim() || "";
+        return Boolean(stopBtn) || (!sendBtn && editorText.length === 0);
+      });
+
+      if (promptSubmitted) {
+        console.log(`[m365-worker] [send] Đã xác nhận prompt được gửi thành công ở lần thử ${submitAttempt + 1}`);
+        break;
+      }
+
+      // 2. Thử kích hoạt nút Send bằng Playwright Native Pointer Click (tác động trực tiếp từ Chrome CDP)
+      try {
+        const sendLocator = page.locator(
+          'button[aria-label="Send"], button[type="submit"]:has(.fai-SendButton__sendIcon), .fai-BebopLiteChatInput__send button, .fai-SendButton'
+        ).first();
+        if (await sendLocator.count() > 0 && await sendLocator.isVisible()) {
+          await sendLocator.click({ force: true, timeout: 500 });
+        }
+      } catch {}
+
+      // 3. Dự phòng trong DOM: Dispatch đầy đủ chuỗi sự kiện pointer/mouse/click và submit form
+      await page.evaluate(() => {
         const sendBtn = document.querySelector(
-          '.fai-SendButton, button[aria-label="Send"], button[aria-label*="Send" i], button[aria-label*="Submit" i]'
+          'button[aria-label="Send"], button[type="submit"]:has(.fai-SendButton__sendIcon), .fai-SendButton'
         ) as HTMLButtonElement | null;
         if (sendBtn && !sendBtn.disabled) {
+          sendBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+          sendBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+          sendBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+          sendBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
           sendBtn.click();
-          return true;
+          const form = sendBtn.closest("form");
+          if (form && typeof (form as any).requestSubmit === "function") {
+            (form as any).requestSubmit(sendBtn);
+          }
         }
-        return false;
-      });
-      if (sent) break;
-      await new Promise(r => setTimeout(r, 200));
-    }
+      }).catch(() => {});
 
-    // Nếu click chưa xong, fallback phím Enter native của CDP
-    if (!sent) {
+      // 4. Dự phòng phím tắt gửi trong ô chat: Control+Enter và Enter
+      await page.evaluate(() => {
+        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]') as HTMLElement;
+        if (editor) {
+          editor.focus();
+        }
+      }).catch(() => {});
+      await page.keyboard.press("Control+Enter");
       await page.keyboard.press("Enter");
+
+      await new Promise(r => setTimeout(r, 300));
     }
 
     // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
@@ -283,14 +374,37 @@ export async function executeM365Turn(
       // Trích xuất các khối ngữ nghĩa (Semantic Blocks) đã được làm sạch và chuẩn hóa khối code
       const status = await page.evaluate((before) => {
         const stopBtn = document.querySelector(
-          'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
+          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]'
         );
         const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
         const editorDisabled = editor?.getAttribute("aria-disabled") === "true";
 
-        const messages = Array.from(document.querySelectorAll(
+        // Lọc danh sách tin nhắn AI độc quyền (loại trừ hoàn toàn User message)
+        const candidates = Array.from(document.querySelectorAll<HTMLElement>(
           ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
         ));
+        const aiList: HTMLElement[] = [];
+        for (const el of candidates) {
+          if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) {
+            continue;
+          }
+          const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+          if (ariaLabel.includes("you said") || ariaLabel.includes("bạn đã nói")) {
+            continue;
+          }
+          const isExplicitAi = el.matches(".fai-CopilotMessage, [data-content='ai-message']");
+          const hasAiMarkers = Boolean(
+            el.querySelector(".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']")
+          );
+          const heading = el.querySelector(".fai-CopilotMessage__accessibleHeading, [class*='heading' i], h2, h3, h4");
+          const headingText = (heading?.textContent || "").toLowerCase();
+          const isCopilotHeading = headingText.includes("copilot");
+
+          if (isExplicitAi || hasAiMarkers || isCopilotHeading) {
+            aiList.push(el);
+          }
+        }
+        const aiMessages = aiList.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
 
         // Quét thông báo lỗi hệ thống hoặc quota từ M365 Web
         let detectedWebError = "";
@@ -304,20 +418,18 @@ export async function executeM365Turn(
           }
         }
 
-        if (messages.length === 0) {
-          return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false, detectedWebError };
+        const baselineCount = typeof before.aiCount === "number" ? before.aiCount : before.count;
+
+        if (aiMessages.length === 0) {
+          return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false, detectedWebError, fastPathRawText: null };
         }
 
-        const isNewAiMessage = messages.length > before.count;
-        const lastMsg = messages[messages.length - 1] as HTMLElement;
-        const lastHtml = lastMsg ? (lastMsg.innerHTML || "") : "";
-        const contentChanged = before.count > 0 && lastHtml !== before.lastHtml;
+        const hasNewAiMessage = aiMessages.length > baselineCount;
 
-        // Tinh túy 2 (Stateful Safe Guard): Nếu ở chế độ Stateful (before.count > 0),
-        // chưa xuất hiện tin nhắn AI mới VÀ tin nhắn cũ chưa hề thay đổi nội dung:
-        // Đang trong giai đoạn chờ M365 nhận lệnh và khởi tạo lượt mới.
-        // TUYỆT ĐỐI không đọc nhầm tin nhắn cũ của lượt trước để tránh kết thúc sớm!
-        if (before.count > 0 && !isNewAiMessage && !contentChanged) {
+        // Tinh túy 2 (Stateful Safe Guard): Nếu ở chế độ Stateful (baselineCount > 0),
+        // bắt buộc phải chờ đến khi xuất hiện tin nhắn AI MỚI (aiMessages.length > baselineCount).
+        // TUYỆT ĐỐI không đọc nhầm tin nhắn cũ của lượt trước dù DOM cũ có thay đổi!
+        if (baselineCount > 0 && !hasNewAiMessage) {
           const isEditorBusy = Boolean(stopBtn) || editorDisabled;
           return {
             isGenerating: isEditorBusy,
@@ -330,10 +442,11 @@ export async function executeM365Turn(
           };
         }
 
-        // Chú ý: KHÔNG dùng .fai-StatusMessage hay .fai-BebopMessageStatus vì đây là status card tồn tại vĩnh viễn trong DOM sau khi Copilot tìm kiếm xong!
-        // Chỉ dùng shimmer thực sự (đang animate loading) hoặc role="progressbar"
-        const hasActiveShimmer = Boolean(lastMsg.querySelector('.fai-Shimmer, [class*="shimmer" i]:not(.fai-StatusMessage):not(.fai-BebopMessageStatus), [role="progressbar"]'));
-        const isGenerating = Boolean(stopBtn) || editorDisabled || hasActiveShimmer;
+        const lastMsg = aiMessages[aiMessages.length - 1] as HTMLElement;
+
+        // NGUỒN SỰ THẬT DUY NHẤT: Khi M365 đang sinh, nút Stop generating luôn hiển thị trên ô chat.
+        // Khi M365 sinh xong, nút Stop generating biến mất và ô chat chỉ còn nút mic (Start dictation).
+        const isGenerating = Boolean(stopBtn);
 
         // Ưu tiên cao nhất: lấy markdown-reply có type="Chat" hoặc có text (bỏ qua thẻ Progress rỗng)
         const markdownReplies = Array.from(lastMsg.querySelectorAll('[data-testid="markdown-reply"]')) as HTMLElement[];
@@ -587,7 +700,7 @@ export async function executeM365Turn(
 
         const rawHtml = clone.innerHTML || "";
         const hasContent = blocks.length > 0 || Boolean(fastPathRawText && fastPathRawText.length > 0);
-        const isNew = (messages.length > before.count) || isGenerating;
+        const isNew = (aiMessages.length > baselineCount) || isGenerating;
         return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText };
       }, beforeState);
 
@@ -722,8 +835,12 @@ export async function executeM365Turn(
       const deadlockTimeoutMs = hasAnyUnclosedMarker ? 30_000 : 8_000;
       const deadlockCycles = hasAnyUnclosedMarker ? 120 : 32;
 
+      // Khi M365 đã có nội dung và không còn nút Stop generating (!status.isGenerating):
+      // - Nếu có khối đóng tool_call / plan / patch: kết thúc ngay lập tức (stableCycles >= 1)
+      // - Nếu M365 đã từng sinh (seenGenerating) và nút Stop đã biến mất: kết thúc ngay sau 1-2 chu kỳ (250-500ms)
       const isSettled = !status.isGenerating && (
-        (hasFullyClosedMarker && (stableCycles >= 4 || timeSinceChange >= 1000)) ||
+        (hasFullyClosedMarker && stableCycles >= 1) ||
+        (seenGenerating && stableCycles >= 2) ||
         (!hasAnyUnclosedMarker && (stableCycles >= minStableCycles || timeSinceChange >= minStableTime)) ||
         (timeSinceChange >= deadlockTimeoutMs || stableCycles >= deadlockCycles)
       );
