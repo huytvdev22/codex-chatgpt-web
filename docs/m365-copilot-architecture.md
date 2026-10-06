@@ -66,7 +66,8 @@ src/adapters/m365-copilot/
 │   └── engine/                      # Động cơ điều phối dùng chung (Shared Engine)
 │       ├── index.ts                 # Export engine
 │       ├── orchestrator.ts          # executeTurnWithDriver: streaming loop, delta, settlement
-│       └── driver-registry.ts       # Registry quản lý và đăng ký PageDriver
+│       ├── driver-registry.ts       # Registry quản lý và phân giải PageDriver động
+│       └── turn-mutex.ts            # TurnMutex FIFO tuần tự hóa tương tác đa cửa sổ VS Code
 │
 ├── translation/                     # [Subsystem 6] Dịch thuật đầu ra & phát hiện Tool Calls
 │   ├── index.ts                     # Explicit public exports
@@ -117,14 +118,113 @@ src/adapters/m365-copilot/
 
 ---
 
-## 3. Trách nhiệm vắn tắt của các phân hệ
+## 3. Mô hình luồng tổng quan giữa các thành phần (System Flow)
+
+```mermaid
+flowchart TD
+    subgraph Client ["Khách hàng (Client Layer)"]
+        VSCodeA["VS Code (Project A)"]
+        VSCodeB["VS Code (Project B)"]
+    end
+
+    subgraph Adapter ["M365 Copilot Adapter Core"]
+        direction TB
+        Entry["Adapter Entry (runTurn)"]
+        TG{"TitleGuard?"}
+        TitleResp["Trả về Title trong 5ms"]
+        
+        Norm["Normalization Layer<br/>(CodexPayloadNormalizer)"]
+        Sess["Multi-Session State<br/>(activeConversations Map)"]
+        LG{"LoopGuard OK?"}
+        TermLoop["Ngắt chu kỳ lặp"]
+        
+        PromptEngine["Prompt Engineering<br/>(Templates + Dynamic Tools + Assembler)"]
+    end
+
+    subgraph BrowserSubsystem ["Browser Subsystem (Page Driver Architecture)"]
+        direction TB
+        Mutex["TurnMutex Queue (FIFO)<br/>Tuần tự hóa đa cửa sổ"]
+        Registry["Driver Registry<br/>(resolvePageDriver)"]
+        Orchestrator["Turn Orchestrator<br/>(executeTurnWithDriver)"]
+        CDP["CDP Connection<br/>(Playwright CDP)"]
+        Driver["Page Driver (M365CopilotDriver)<br/>• DOM Selectors & Scraper<br/>• ProseMirror Paste & Submit<br/>• Thread URL History"]
+    end
+
+    subgraph LiveTarget ["Mục tiêu thực thi"]
+        Launcher["Electron Launcher WebContents<br/>(Copilot Web Interface)"]
+    end
+
+    subgraph TranslationSubsystem ["Output Translation & Streaming"]
+        direction TB
+        Detector["ToolCallDetector<br/>(Lọc rò rỉ syntax khi stream)"]
+        StreamDelta["Text Delta Stream"]
+        Translator["Output Translator<br/>(Patch | JSON | XML | Bash Detectors)"]
+        ToolCallOut["OpenAI Tool Calls Event"]
+    end
+
+    subgraph Execution ["Công cụ Client (Tools)"]
+        ToolBridge["M365ToolBridge<br/>(Ghi file SHA256 / Shell Execution)"]
+    end
+
+    %% Tương tác
+    VSCodeA -->|"Request (Headers + Key A)"| Entry
+    VSCodeB -->|"Request (Headers + Key B)"| Entry
+    
+    Entry --> TG
+    TG -->|"Là Title Request"| TitleResp -->|"Hoàn tất"| VSCodeA
+    TG -->|"Request bình thường"| Norm
+    
+    Norm --> Sess
+    Sess --> LG
+    LG -->|"Vượt ngưỡng MAX_TOOL_ITERATIONS"| TermLoop
+    LG -->|"Hợp lệ"| PromptEngine
+    
+    PromptEngine -->|"Compiled Prompt"| Mutex
+    Mutex --> Registry
+    Registry -->|"Resolved Driver"| Orchestrator
+    Orchestrator <-->|"Playwright Session"| CDP
+    CDP <-->|"Chrome DevTools Protocol"| Launcher
+    Orchestrator <-->|"DOM Actions & Scraping"| Driver
+    Driver <-->|"Trực tiếp can thiệp DOM"| Launcher
+    
+    Driver -->|"Live Text Chunks"| Detector
+    Detector -->|"Safe Content"| StreamDelta -->|"SSE Stream"| VSCodeA
+    
+    Driver -->|"Final Raw Markdown"| Translator
+    Translator --> ToolCallOut -->|"Invoke Tools"| ToolBridge
+    ToolBridge -->|"Tool Result Output"| VSCodeA
+```
+
+### Các giai đoạn xử lý chính:
+
+1. **Ingress & Chặn ngắt sớm (Guard & Normalization)**:
+   - Tiếp nhận request từ Codex IDE. `TitleGuard` đánh chặn ngay các request sinh tên hội thoại ngầm và phản hồi trong **5ms** mà không kích hoạt browser.
+   - `CodexPayloadNormalizer` trích xuất payload thành mô hình Canonical bất biến.
+2. **Cách ly phiên đa cửa sổ & Chống lặp vô hạn (Session)**:
+   - `activeConversations Map` ghi nhận độc lập trạng thái của từng cửa sổ VS Code, bảo toàn thread URL riêng mà không làm đè hay reset session lẫn nhau.
+   - `ConversationGuard` kiểm soát fingerprint của các lượt gọi công cụ, ngắt sớm nếu phát hiện vòng lặp vô hạn.
+3. **Biên dịch Prompt (Prompt Engineering)**:
+   - Kết hợp chỉ dẫn hệ thống tĩnh, dynamic tool schemas và cắt tỉa ngữ cảnh an toàn trước khi chuyển giao.
+4. **Điều phối tuần tự hóa & Thực thi Driver (Browser Engine)**:
+   - `TurnMutex` (FIFO) đảm bảo chỉ duy nhất một cửa sổ thao tác với DOM tại một thời điểm, các cửa sổ khác tự động xếp hàng đợi an toàn.
+   - `DriverRegistry` tự động phân giải `PageDriver` tương ứng (M365 Copilot, Copilot Studio, Bing...).
+   - `PageDriver` thực hiện paste ProseMirror, bấm nút submit và quan sát Live DOM.
+5. **Streaming an toàn & Dịch thuật đa ngữ pháp (Translation)**:
+   - `ToolCallDetector` nuốt trọn các thẻ cú pháp tool call trong quá trình streaming để không rò rỉ rác ra UI người dùng.
+   - `M365OutputTranslator` dịch toàn bộ phản hồi từ M365 (Codex Patch, JSON, XML, Bash command) sang OpenAI Tool Call tiêu chuẩn.
+6. **Thực thi công cụ (Tool Bridge)**:
+   - `M365ToolBridge` thực thi các tác vụ file an toàn (kèm băm SHA256) và lệnh shell POSIX/PowerShell để trả kết quả về cho Codex IDE.
+
+---
+
+## 4. Trách nhiệm vắn tắt của các phân hệ
 
 | Phân hệ | Vai trò chính |
 | :--- | :--- |
 | **`normalization`** | Lưu giữ snapshot bất biến `CodexRawPayload` và chuẩn hóa thành `NormalizedCodexRequest`. |
 | **`guards`** | Đánh chặn yêu cầu sinh tiêu đề ngầm trong 5ms (`TitleGuard`), giải phóng tải trình duyệt. |
 | **`prompts`** | Biên dịch chỉ dẫn công cụ động và đóng gói prompt theo khuôn mẫu an toàn. |
-| **`browser`** | Động cơ điều phối CDP (`TurnOrchestrator`), quản lý kết nối Launcher và thực thi qua `PageDriver`. |
+| **`browser`** | Động cơ điều phối CDP (`TurnOrchestrator`), `TurnMutex` đa cửa sổ và thực thi qua `PageDriver`. |
 | **`translation`** | Phát hiện tool call khi stream và dịch đa ngữ pháp (Patch, JSON, XML, Bash) sang OpenAI Tool Call. |
 | **`tools`** | Cầu nối công cụ phía client (`M365ToolBridge`), ghi file an toàn SHA256 và sinh lệnh shell đa nền tảng. |
 | **`session`** | Theo dõi loop guard (`MAX_TOOL_ITERATIONS = 100`, `MAX_IDENTICAL_TOOL_CALLS = 10`), TTL cleanup 15 phút. |
@@ -133,7 +233,7 @@ src/adapters/m365-copilot/
 
 ---
 
-## 4. Quy tắc phụ thuộc (Dependency Rules)
+## 5. Quy tắc phụ thuộc (Dependency Rules)
 
 ```text
 normalization ──> canonical-types
@@ -152,7 +252,7 @@ session       ──> internal state & pure types
 
 ---
 
-## 5. Mở rộng trang web mới qua PageDriver
+## 6. Mở rộng trang web mới qua PageDriver
 
 Để tích hợp một trang web chat AI mới:
 1. Tạo file mới: `src/adapters/m365-copilot/browser/drivers/<ten-trang>-driver.ts` triển khai interface `PageDriver`.
