@@ -146,7 +146,17 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
   try {
     result = JSON.parse(stdout);
   } catch {
-    throw new Error("Codex bridge route command returned invalid JSON");
+    const trimmed = typeof stdout === "string" ? stdout.trim() : "";
+    const match = trimmed.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        result = JSON.parse(match[0]);
+      } catch {
+        throw new Error("Codex bridge route command returned invalid JSON");
+      }
+    } else {
+      throw new Error("Codex bridge route command returned invalid JSON");
+    }
   }
   if (typeof result?.active !== "boolean") {
     throw new Error("Codex bridge route command did not report its active state");

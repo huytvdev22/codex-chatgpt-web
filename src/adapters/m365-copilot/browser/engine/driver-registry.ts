@@ -1,6 +1,5 @@
 import type { PageDriver } from "../contracts/page-driver";
 import { m365CopilotDriver } from "../drivers/m365-copilot-driver";
-import { logFunctionInput } from "../../debug-logger";
 
 const registry = new Map<string, PageDriver>();
 let defaultDriverId = "m365-copilot";
@@ -12,7 +11,6 @@ registry.set(m365CopilotDriver.id, m365CopilotDriver);
  * Đăng ký một PageDriver vào hệ sinh thái.
  */
 export function registerPageDriver(driver: PageDriver): void {
-  logFunctionInput("browser:engine:driver-registry", "registerPageDriver", { id: driver.id, name: driver.name });
   registry.set(driver.id, driver);
 }
 
@@ -20,7 +18,6 @@ export function registerPageDriver(driver: PageDriver): void {
  * Lấy PageDriver theo định danh.
  */
 export function getPageDriver(id: string): PageDriver | undefined {
-  logFunctionInput("browser:engine:driver-registry", "getPageDriver", { id });
   return registry.get(id);
 }
 
@@ -46,7 +43,6 @@ export function resolvePageDriver(options?: {
   modelSlug?: string;
 } | string): PageDriver {
   const normalizedOpts = typeof options === "string" ? { providerId: options } : options;
-  logFunctionInput("browser:engine:driver-registry", "resolvePageDriver", { options: normalizedOpts });
 
   // 1. Ưu tiên providerId nếu được chỉ định tường minh
   if (normalizedOpts?.providerId) {

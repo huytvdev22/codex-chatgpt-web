@@ -15,10 +15,6 @@ export {
   type M365TurnResult,
 };
 
-// Đăng ký M365CopilotDriver mặc định vào Driver Registry
-const defaultM365Driver = new M365CopilotDriver();
-registerPageDriver(defaultM365Driver);
-
 /**
  * Thực thi một lượt hội thoại với Microsoft 365 Copilot nhúng trong Launcher Desktop.
  * Facade điều phối cuộc gọi tới Turn Orchestrator cùng driver được phân giải tự động.
