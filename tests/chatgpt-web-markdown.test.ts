@@ -120,3 +120,22 @@ test("preserving plan markers does not rewrite mentions or literal code", () => 
     "```", "<proposed\\_plan>", "</proposed\\_plan>", "```",
   ].join("\n"));
 });
+
+test("preserves script and style tags while removing buttons", () => {
+  const html = [
+    "<p>Before script</p>",
+    '<script src="./js/app.js?v=3"></script>',
+    "<script>console.log('inline');</script>",
+    "<style>.test { color: blue; }</style>",
+    "<button>Copy code</button>",
+    "<p>After script</p>",
+  ].join("");
+
+  const md = chatGptHtmlToMarkdown(html);
+  expect(md).toContain('<script src="./js/app.js?v=3"></script>');
+  expect(md).toContain("<script>console.log('inline');</script>");
+  expect(md).toContain("<style>.test { color: blue; }</style>");
+  expect(md).not.toContain("<button>");
+  expect(md).not.toContain("Copy code");
+});
+
