@@ -195,7 +195,7 @@ async runTurn(
 
     // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
-      const toolDetector = new M365ToolCallDetector();
+      const toolDetector = new M365ToolCallDetector({ renderThinkingInText: true });
       let streamedAnyText = false;
 
       const reply = await executeM365Turn(promptToSend, {
@@ -394,10 +394,22 @@ async runTurn(
           emit({ type: "thinking_delta", thinking: translated.thinking });
         }
 
-        if (translated.narrative && !streamedAnyText) {
-          console.log(`[M365 COGNITIVE] emit narrative: ${translated.narrative}`);
-          emit({ type: "text_delta", text: translated.narrative });
-          streamedAnyText = true;
+        if (!streamedAnyText) {
+          let preToolText = "";
+          if (translated.thinking) {
+            const cleanThought = translated.thinking.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            preToolText += `<small style="color: #888;">💭 <i>${cleanThought}</i></small>\n\n`;
+          }
+          if (translated.narrative) {
+            preToolText += translated.narrative;
+          } else if (remainingText) {
+            preToolText += remainingText;
+          }
+          if (preToolText) {
+            console.log(`[M365 COGNITIVE] emit pre-tool text: ${preToolText.slice(0, 100)}...`);
+            emit({ type: "text_delta", text: preToolText });
+            streamedAnyText = true;
+          }
         }
 
         for (const { mapped, callId } of mappedCalls) {
@@ -466,7 +478,12 @@ async runTurn(
         }
       } else {
         // Fallback an toàn: Nếu chưa từng stream chunk nào qua onChunk, emit toàn bộ câu trả lời hoàn chỉnh
-        const finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
+        let finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
+        finalText = finalText.replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "").trim();
+        if (translated.thinking && !finalText.includes("<small")) {
+          const cleanThought = translated.thinking.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          finalText = `<small style="color: #888;">💭 <i>${cleanThought}</i></small>\n\n${finalText}`;
+        }
         if (finalText) {
           emit({ type: "text_delta", text: finalText });
           streamedAnyText = true;

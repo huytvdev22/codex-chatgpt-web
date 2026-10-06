@@ -386,5 +386,65 @@ Hệ thống hoàn toàn sạch sẽ.`;
     expect(emitted).toBe("Xin chào anh Huy! Mình có thể hỗ trợ anh.\n");
     expect(remainingText).toBe("");
   });
+
+  test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ m365Response, định dạng thought chữ nhỏ và giữ nguyên Markdown", () => {
+    const detector = new M365ToolCallDetector({ renderThinkingInText: true });
+    const rawStream = [
+      "<m365Response>\n<thought>\n",
+      "Liên kết `app.js` trong `index.html` hiện đã đúng, ",
+      "khả năng cao lỗi nằm trong cú pháp `app.js`.\n</thought>\n",
+      "Tôi sẽ kiểm tra `app.js` bằng Node.js và hiển thị toàn bộ nội dung:\n",
+      "<tool_call>\n",
+      '{"name": "read_file", "arguments": {"path": "app.js"}}\n',
+      "</tool_call>\n</m365Response>",
+    ];
+
+    let fullEmittedText = "";
+    for (const chunk of rawStream) {
+      fullEmittedText += detector.feed(chunk);
+    }
+    const { remainingText, toolCall } = detector.finish();
+    fullEmittedText += remainingText;
+
+    // 1. Không hiển thị thẻ <m365Response> hay </m365Response>
+    expect(fullEmittedText).not.toContain("<m365Response>");
+    expect(fullEmittedText).not.toContain("</m365Response>");
+
+    // 2. Không hiển thị thẻ thô <thought> hay </thought>
+    expect(fullEmittedText).not.toContain("<thought>");
+    expect(fullEmittedText).not.toContain("</thought>");
+
+    // 3. Khối thought được bao bọc dưới dạng chữ nhỏ với icon 💭
+    expect(fullEmittedText).toContain('<small style="color: #888;">💭 <i>');
+    expect(fullEmittedText).toContain("Liên kết `app.js` trong `index.html` hiện đã đúng");
+
+    // 4. Phần text Markdown ở giữa giữ nguyên vẹn
+    expect(fullEmittedText).toContain("Tôi sẽ kiểm tra `app.js` bằng Node.js và hiển thị toàn bộ nội dung:");
+
+    // 5. Tool call được nhận diện chính xác
+    expect(toolCall).toBeDefined();
+    expect(toolCall?.name).toBe("read_file");
+    expect(toolCall?.arguments).toEqual({ path: "app.js" });
+  });
+
+  test("M365OutputTranslator làm sạch hoàn toàn envelope m365Response trong Final Answer", () => {
+    const translator = new M365OutputTranslator();
+    const raw = `<m365Response>
+<thought>
+Đã kiểm tra file app.js và sửa lỗi thành công. Giờ thông báo kết quả.
+</thought>
+Tôi đã sửa xong lỗi cú pháp trong file \`app.js\`. Mọi test đều đã vượt qua!
+</m365Response>`;
+
+    const result = translator.translate(raw);
+    expect(result.type).toBe("final_answer");
+    if (result.type === "final_answer") {
+      expect(result.thinking).toBe("Đã kiểm tra file app.js và sửa lỗi thành công. Giờ thông báo kết quả.");
+      expect(result.content).toBe("Tôi đã sửa xong lỗi cú pháp trong file `app.js`. Mọi test đều đã vượt qua!");
+      expect(result.content).not.toContain("<m365Response>");
+      expect(result.content).not.toContain("</m365Response>");
+      expect(result.content).not.toContain("<thought>");
+    }
+  });
 });
 

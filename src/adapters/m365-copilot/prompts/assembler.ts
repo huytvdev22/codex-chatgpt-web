@@ -3,13 +3,13 @@ import type { CodexContentPart, CodexParsedRequest } from "../../../types";
 import { CodexRawPayload } from "../normalization/codex-raw-payload";
 import { CodexPayloadNormalizer } from "../normalization/codex-normalizer";
 import {
-  TOOL_DECLARATION_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
 } from "./templates";
+import { UNIFIED_TOOL_PROTOCOL } from "./compiler";
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
   MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
@@ -17,7 +17,6 @@ import {
 
 // Re-export để đảm bảo 100% tương thích ngược cho các module và tests đang import từ ./prompt
 export {
-  TOOL_DECLARATION_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
@@ -154,7 +153,7 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
   // Luôn inject định nghĩa tool hoặc lời nhắc thực thi công cụ
   const hasToolResultInTurn = messages.some(m => m.role === "toolResult");
   if (!hasToolResultInTurn) {
-    parts.push(`[Tool Instructions]:\n${TOOL_DECLARATION_PROMPT}`);
+    parts.push(`[Tool Instructions]:\n${UNIFIED_TOOL_PROTOCOL}`);
   } else {
     // Khi có toolResult trong lượt hiện tại, vẫn nhắc lại cơ chế tool calling để Copilot không bao giờ "thoát vai" hay từ chối
     parts.push(`[Tool Instructions]:\n${TOOL_REMINDER_PROMPT}`);

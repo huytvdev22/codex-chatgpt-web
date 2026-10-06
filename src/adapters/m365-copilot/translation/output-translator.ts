@@ -58,8 +58,11 @@ export function extractCognitiveBlocks(rawText: string): {
   logFunctionInput("translation:output-translator", "extractCognitiveBlocks", { rawTextLength: rawText.length });
   let thinking: string | undefined;
 
+  // 0. Gọt bỏ thẻ bọc envelope <m365Response>...</m365Response>
+  const textWithoutEnvelope = rawText.replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "");
+
   // 1. Trích xuất nội dung thẻ <thought>...</thought> hoặc <thinking>...</thinking>
-  const thoughtMatch = rawText.match(/<\s*(?:thought|thinking)\s*>([\s\S]*?)<\s*\/(?:thought|thinking)\s*>/i);
+  const thoughtMatch = textWithoutEnvelope.match(/<\s*(?:thought|thinking)\s*>([\s\S]*?)<\s*\/(?:thought|thinking)\s*>/i);
   if (thoughtMatch) {
     const rawThought = thoughtMatch[1].trim();
     if (rawThought.length > 0) {
@@ -68,7 +71,7 @@ export function extractCognitiveBlocks(rawText: string): {
   }
 
   // 2. Làm sạch chuỗi bằng cách xóa bỏ khối thought
-  const textWithoutThought = rawText.replace(/<\s*(?:thought|thinking)\s*>[\s\S]*?<\s*\/(?:thought|thinking)\s*>/gi, "").trim();
+  const textWithoutThought = textWithoutEnvelope.replace(/<\s*(?:thought|thinking)\s*>[\s\S]*?<\s*\/(?:thought|thinking)\s*>/gi, "").trim();
 
   // 3. Trích xuất narrative (lời dẫn dắt bước đi) bằng cách loại bỏ các khối tool call và patch
   let textWithoutTools = textWithoutThought

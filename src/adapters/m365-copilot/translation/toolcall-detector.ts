@@ -11,6 +11,10 @@ export interface ParsedToolCall {
  * Hỗ trợ nhận diện partial chunks, streaming incremental, unescape Turndown markdown escapes (\_ -> _),
  * và loại bỏ code fences nếu có.
  */
+export interface M365ToolCallDetectorOptions {
+  renderThinkingInText?: boolean;
+}
+
 export class M365ToolCallDetector {
   private buffer = "";
   private inToolCall = false;
@@ -19,7 +23,13 @@ export class M365ToolCallDetector {
   private patchContent = "";
   private inThought = false;
   private thoughtContent = "";
+  private renderedThinking = false;
   private detectedToolCall: ParsedToolCall | null = null;
+  private options: M365ToolCallDetectorOptions;
+
+  constructor(options?: M365ToolCallDetectorOptions) {
+    this.options = options || {};
+  }
 
   /**
    * Đưa chunk mới vào detector.
@@ -34,7 +44,31 @@ export class M365ToolCallDetector {
 
     while (this.buffer.length > 0) {
       if (!this.inToolCall && !this.inPatch && !this.inThought) {
-        // 1. Nhận diện thẻ mở suy nghĩ nội tâm <thought> hoặc <thinking>
+        // 1. Nuốt sạch thẻ mở root <m365Response> hoặc <m365_response>
+        const rootOpenMatch = this.buffer.match(/(?:<|\b)\s*m365[\\_]*response(?:\s+[^>]*)?>/i);
+        if (rootOpenMatch && rootOpenMatch.index !== undefined) {
+          if (rootOpenMatch.index > 0) {
+            const prefix = this.buffer.slice(0, rootOpenMatch.index);
+            const cleanPrefix = prefix.replace(/```(?:xml|json|patch|markdown)?/gi, "").trim();
+            if (cleanPrefix) {
+              emittedText += cleanPrefix;
+            }
+          }
+          this.buffer = this.buffer.slice(rootOpenMatch.index + rootOpenMatch[0].length).replace(/^\r?\n/, "");
+          continue;
+        }
+
+        // 2. Nuốt sạch thẻ đóng root </m365Response>
+        const rootCloseMatch = this.buffer.match(/(?:<\s*\/|\/\s*)m365[\\_]*response\s*>/i);
+        if (rootCloseMatch && rootCloseMatch.index !== undefined) {
+          if (rootCloseMatch.index > 0) {
+            emittedText += this.buffer.slice(0, rootCloseMatch.index);
+          }
+          this.buffer = this.buffer.slice(rootCloseMatch.index + rootCloseMatch[0].length);
+          continue;
+        }
+
+        // 3. Nhận diện thẻ mở suy nghĩ nội tâm <thought> hoặc <thinking>
         const thoughtOpenMatch = this.buffer.match(/<\s*(?:thought|thinking)\s*>/i);
         if (thoughtOpenMatch && thoughtOpenMatch.index !== undefined) {
           if (thoughtOpenMatch.index > 0) {
@@ -45,7 +79,7 @@ export class M365ToolCallDetector {
           continue;
         }
 
-        // 2. Ưu tiên tìm thẻ mở <tool_call>, tool_call>, <custom_tool_call ...>, custom_tool_call>
+        // 4. Ưu tiên tìm thẻ mở <tool_call>, tool_call>, <custom_tool_call ...>, custom_tool_call>
         const openMatch = this.buffer.match(/(?:<|\b)\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i);
         if (openMatch && openMatch.index !== undefined) {
           if (openMatch.index > 0) {
@@ -60,7 +94,7 @@ export class M365ToolCallDetector {
           continue;
         }
 
-        // 3. Tìm khối patch Codex độc lập: *** Begin Patch hoặc \*\*\* Begin Patch (hỗ trợ cả 2 hoặc 3 dấu sao)
+        // 5. Tìm khối patch Codex độc lập: *** Begin Patch hoặc \*\*\* Begin Patch (hỗ trợ cả 2 hoặc 3 dấu sao)
         const patchOpenMatch = this.buffer.match(/(?:\\?\*){2,3}\s*Begin Patch/i);
         if (patchOpenMatch && patchOpenMatch.index !== undefined) {
           if (patchOpenMatch.index > 0) {
@@ -77,7 +111,17 @@ export class M365ToolCallDetector {
 
         // Tạm hoãn emit nếu buffer chỉ là code fence ``` hoặc ```patch/xml để chờ thẻ mở
         const trimmed = this.buffer.trim();
-        if (/^```(?:xml|json|patch|diff)?$/i.test(trimmed)) {
+        if (/^```(?:xml|json|patch|diff|markdown)?$/i.test(trimmed)) {
+          break;
+        }
+
+        // Kiểm tra xem đuôi buffer có thể là tiền tố dở dang của thẻ root <m365Response> không
+        const rootPrefixMatch = this.buffer.match(/<\s*(?:\/?\s*m(?:3(?:6(?:5(?:[\\_]*(?:r(?:e(?:s(?:p(?:o(?:n(?:s(?:e)?)?)?)?)?)?)?)?)?)?)?)?)?$/i);
+        if (rootPrefixMatch && rootPrefixMatch.index !== undefined) {
+          if (rootPrefixMatch.index > 0) {
+            emittedText += this.buffer.slice(0, rootPrefixMatch.index);
+            this.buffer = this.buffer.slice(rootPrefixMatch.index);
+          }
           break;
         }
 
@@ -146,6 +190,16 @@ export class M365ToolCallDetector {
         if (thoughtCloseMatch && thoughtCloseMatch.index !== undefined) {
           this.thoughtContent += this.buffer.slice(0, thoughtCloseMatch.index);
           this.inThought = false;
+
+          // Nếu được bật renderThinkingInText: Render khối suy nghĩ chữ nhỏ trang nhã trên giao diện
+          if (this.options.renderThinkingInText && !this.renderedThinking) {
+            const cleanThought = this.thoughtContent.trim();
+            if (cleanThought) {
+              emittedText += `<small style="color: #888;">💭 <i>${cleanThought.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</i></small>\n\n`;
+              this.renderedThinking = true;
+            }
+          }
+
           const afterClose = this.buffer.slice(thoughtCloseMatch.index + thoughtCloseMatch[0].length);
           this.buffer = afterClose.replace(/^\r?\n/, "");
           continue;
@@ -212,26 +266,36 @@ export class M365ToolCallDetector {
       this.thoughtContent += this.buffer;
       this.buffer = "";
       this.inThought = false;
+      if (this.options.renderThinkingInText && !this.renderedThinking) {
+        const cleanThought = this.thoughtContent.trim();
+        if (cleanThought) {
+          remainingText += `<small style="color: #888;">💭 <i>${cleanThought.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</i></small>\n\n`;
+          this.renderedThinking = true;
+        }
+      }
     }
 
     if (!this.inToolCall && !this.inPatch && !this.detectedToolCall) {
-      remainingText = this.buffer;
+      remainingText += this.buffer;
       this.buffer = "";
     } else if (this.inToolCall && !this.detectedToolCall) {
       // Thẻ <tool_call> chưa đóng -> Stream bị ngắt giữa JSON arguments.
       // Không được tự sửa hay thực thi dở dang!
-      remainingText = `<tool_call>${this.toolContent}${this.buffer}`;
+      remainingText += `<tool_call>${this.toolContent}${this.buffer}`;
       this.toolContent = "";
       this.buffer = "";
     } else if (this.inPatch && !this.detectedToolCall) {
       // Khối patch chưa có *** End Patch -> Dở dang, không thực thi.
-      remainingText = `${this.patchContent}${this.buffer}`;
+      remainingText += `${this.patchContent}${this.buffer}`;
       this.patchContent = "";
       this.buffer = "";
     }
 
-    // Làm sạch trailing backticks dở dang ở cuối câu trả lời nếu có
-    remainingText = remainingText.replace(/(?:\r?\n\s*)?`{1,5}\s*$/g, "").trimEnd();
+    // Làm sạch thẻ root </m365Response> và trailing backticks dở dang ở cuối câu trả lời nếu có
+    remainingText = remainingText
+      .replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "")
+      .replace(/(?:\r?\n\s*)?`{1,5}\s*$/g, "")
+      .trimEnd();
 
     return {
       remainingText,

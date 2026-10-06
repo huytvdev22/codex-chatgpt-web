@@ -21,7 +21,6 @@ describe("M365 Tool Calling PoC Tests", () => {
     };
 
     const prompt = compileM365Prompt(parsed, true);
-    expect(prompt).toContain("read_file(path");
     expect(prompt).toContain("<tool_call>");
     expect(prompt).toContain("</tool_call>");
     expect(prompt).toContain("Read pom.xml");
@@ -263,10 +262,8 @@ describe("M365 Tool Calling PoC Tests", () => {
     };
 
     const prompt = compileM365Prompt(parsed, true);
-    expect(prompt).toContain("QUY TẮC ĐỊNH DẠNG ĐẦU RA");
+    expect(prompt).toContain("QUY TẮC ĐỊNH DẠNG");
     expect(prompt).toContain("write_file");
-    expect(prompt).toContain("MULTI-STEP");
-    expect(prompt).toContain("node --check server.js");
     expect(prompt).toContain("[Yêu cầu định dạng đầu ra]");
     expect(prompt).toContain("hoặc tự chạy trong sandbox /mnt/data.");
     expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]");
@@ -544,7 +541,7 @@ const b = \\{\\
     };
 
     const prompt = compileM365HybridForwardPrompt(parsed, rawBody);
-    expect(prompt).toContain("TEXT INTERACTION PROTOCOL");
+    expect(prompt).toContain("XML RESPONSE ENVELOPE");
     expect(prompt).not.toContain("sandbox /mnt/data");
     expect(prompt).toContain("<tool_call>");
     expect(prompt).toContain("<custom_tool_call");
