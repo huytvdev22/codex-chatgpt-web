@@ -1,7 +1,7 @@
 import { logFunctionInput } from "../debug-logger";
 import { executeTurnWithDriver } from "./engine/orchestrator";
 import { M365CopilotDriver, CHAT_SELECTORS } from "./drivers/m365-copilot-driver";
-import { registerPageDriver, getPageDriver } from "./engine/driver-registry";
+import { registerPageDriver, getPageDriver, resolvePageDriver } from "./engine/driver-registry";
 import type {
   M365BrowserRunOptions,
   M365TurnOptions,
@@ -21,7 +21,7 @@ registerPageDriver(defaultM365Driver);
 
 /**
  * Thực thi một lượt hội thoại với Microsoft 365 Copilot nhúng trong Launcher Desktop.
- * Facade điều phối cuộc gọi tới Turn Orchestrator cùng M365CopilotDriver.
+ * Facade điều phối cuộc gọi tới Turn Orchestrator cùng driver được phân giải tự động.
  * Giữ nguyên 100% contract và signature cũ để bảo toàn tương thích ngược.
  */
 export async function executeM365Turn(
@@ -32,6 +32,9 @@ export async function executeM365Turn(
     promptLength: promptText.length,
     options,
   });
-  const driver = getPageDriver("m365-copilot") || defaultM365Driver;
+  const driver = resolvePageDriver({
+    providerId: options.providerId,
+    modelSlug: options.modelSlug,
+  });
   return executeTurnWithDriver(driver, promptText, options);
 }

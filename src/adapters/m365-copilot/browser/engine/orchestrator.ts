@@ -13,6 +13,7 @@ import {
   withTimeout,
 } from "../cdp";
 import type { PageDriver, M365BrowserRunOptions } from "../contracts/page-driver";
+import { globalBrowserTurnMutex } from "./turn-mutex";
 
 /**
  * Điều phối toàn bộ vòng đời thực thi một lượt hội thoại (Turn Orchestration)
@@ -35,6 +36,9 @@ export async function executeTurnWithDriver(
       `Không tìm thấy runtime descriptor của Launcher tại: ${descriptorPath}. Vui lòng đảm bảo ứng dụng Codex Desktop đang mở!`
     );
   }
+
+  // Khóa tuần tự giữa các cửa sổ VS Code để chống tranh chấp DOM
+  const releaseTurnLock = await globalBrowserTurnMutex.acquire(options.signal);
 
   if (options.traceId) {
     try {
@@ -401,6 +405,12 @@ export async function executeTurnWithDriver(
     // [DEBUG PIPELINE] STEP 3: Web Browser ➔ Bridge Server (RAW RESPONSE SCRAPING)
     logDebugPipelineStation(3, `${driver.name.toUpperCase()} ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)`, fullMarkdown);
 
+    // Ghi nhớ URL thread sau khi turn hoàn tất để khôi phục cho cửa sổ này trong các lượt sau
+    if (options.conversationKey && driver.recordConversationThread) {
+      const currentUrl = page.url();
+      driver.recordConversationThread(options.conversationKey, currentUrl);
+    }
+
     return fullMarkdown;
   } catch (err) {
     if (options.signal?.aborted) {
@@ -437,17 +447,21 @@ export async function executeTurnWithDriver(
     }
     throw err;
   } finally {
-    if (options.traceId) {
-      const notifyPromise = notifyCdpTurnEnd(
-        descriptorPath,
-        options.traceId,
-        finalStatus,
-        undefined
-      ).catch(() => {});
-      await withTimeout(notifyPromise, 2000, undefined);
+    try {
+      if (options.traceId) {
+        const notifyPromise = notifyCdpTurnEnd(
+          descriptorPath,
+          options.traceId,
+          finalStatus,
+          undefined
+        ).catch(() => {});
+        await withTimeout(notifyPromise, 2000, undefined);
+      }
+      console.log(`[orchestrator] [cleanup] closing browser connection (timeout 3000ms)...`);
+      await withTimeout(browser.close().catch(() => {}), 3000, undefined);
+      console.log(`[orchestrator] [cleanup] browser closed`);
+    } finally {
+      releaseTurnLock();
     }
-    console.log(`[orchestrator] [cleanup] closing browser connection (timeout 3000ms)...`);
-    await withTimeout(browser.close().catch(() => {}), 3000, undefined);
-    console.log(`[orchestrator] [cleanup] browser closed`);
   }
 }

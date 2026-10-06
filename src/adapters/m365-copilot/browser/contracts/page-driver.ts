@@ -11,6 +11,7 @@ export interface M365BrowserRunOptions {
   isNewConversation?: boolean;
   shouldStop?: () => boolean;
   modelSlug?: string;
+  providerId?: string;
   traceContext?: TraceContext;
   forceTemporaryChat?: boolean;
 }
@@ -83,4 +84,13 @@ export interface PageDriver {
 
   /** Hành động định kỳ trong chu kỳ polling (vd: cuộn trang, kích hoạt virtual scroll) */
   periodicAction?(page: Page, attempt: number): Promise<void>;
+
+  /** Ghi nhận URL thread sau khi turn hoàn tất để khôi phục chính xác cho các cửa sổ VS Code khác nhau */
+  recordConversationThread?(conversationKey: string, threadUrl: string): void;
+
+  /** Lấy URL thread đã lưu của một conversationKey */
+  getSavedThreadUrl?(conversationKey: string): string | undefined;
+
+  /** Kiểm tra xem driver này có thể phục vụ request cụ thể hay không */
+  canHandle?(options: { providerId?: string; modelSlug?: string }): boolean;
 }

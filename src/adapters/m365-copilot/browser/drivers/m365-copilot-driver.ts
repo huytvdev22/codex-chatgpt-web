@@ -29,7 +29,19 @@ export class M365CopilotDriver implements PageDriver {
   readonly name = "Microsoft 365 Copilot";
   readonly selectors = CHAT_SELECTORS;
 
-  private activeConversationKey: string | null = null;
+  private readonly conversationThreads = new Map<string, string>();
+  private currentActiveKey: string | null = null;
+
+  recordConversationThread(conversationKey: string, threadUrl: string): void {
+    if (conversationKey && threadUrl && threadUrl.startsWith("http") && !threadUrl.endsWith("/chat")) {
+      this.conversationThreads.set(conversationKey, threadUrl);
+      console.log(`[m365-driver] Đã ghi nhớ URL thread cho cửa sổ [${conversationKey}]: ${threadUrl}`);
+    }
+  }
+
+  getSavedThreadUrl(conversationKey: string): string | undefined {
+    return this.conversationThreads.get(conversationKey);
+  }
 
   async ensureReady(page: Page, _options: DriverTurnOptions): Promise<void> {
     logFunctionInput("browser:drivers:m365-copilot", "ensureReady");
@@ -45,12 +57,25 @@ export class M365CopilotDriver implements PageDriver {
   async prepareNewChat(page: Page, options: DriverTurnOptions): Promise<void> {
     logFunctionInput("browser:drivers:m365-copilot", "prepareNewChat", { options });
     const isTemporaryMode = Boolean(options.forceTemporaryChat);
+    const conversationKey = options.conversationKey;
+    const savedThreadUrl = conversationKey ? this.conversationThreads.get(conversationKey) : undefined;
+
+    // Nếu cuộc hội thoại này đã có thread URL đã lưu và đang không ở đúng thread đó:
+    if (!isTemporaryMode && !options.isNewConversation && savedThreadUrl) {
+      const currentUrl = page.url();
+      if (!currentUrl.includes(savedThreadUrl)) {
+        console.log(`[m365-driver] Khôi phục chính xác phiên của cửa sổ [${conversationKey}] tại: ${savedThreadUrl}`);
+        await page.goto(savedThreadUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 400));
+        this.currentActiveKey = conversationKey || null;
+      }
+      return;
+    }
+
     const shouldStartNewChat =
       isTemporaryMode ||
       options.isNewConversation ||
-      (options.conversationKey &&
-        this.activeConversationKey &&
-        options.conversationKey !== this.activeConversationKey);
+      (conversationKey && !savedThreadUrl);
 
     console.log(
       `[m365-driver] Trạng thái phiên: isTemporaryMode=${isTemporaryMode}, shouldStartNewChat=${shouldStartNewChat}`
@@ -114,9 +139,9 @@ export class M365CopilotDriver implements PageDriver {
         await new Promise((r) => setTimeout(r, 300));
       }
 
-      this.activeConversationKey = options.conversationKey || null;
+      this.currentActiveKey = options.conversationKey || null;
     } else if (options.conversationKey) {
-      this.activeConversationKey = options.conversationKey;
+      this.currentActiveKey = options.conversationKey;
     }
 
     // Đảm bảo editor đã xuất hiện
@@ -836,3 +861,6 @@ export class M365CopilotDriver implements PageDriver {
     }
   }
 }
+
+/** Singleton instance mặc định của M365CopilotDriver */
+export const m365CopilotDriver = new M365CopilotDriver();

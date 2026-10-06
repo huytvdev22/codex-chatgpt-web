@@ -61,7 +61,7 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
 
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
-  private lastConversationKey?: string;
+  private readonly activeConversations = new Map<string, { lastSeenAt: number; turnCount: number }>();
   private readonly translator = new M365OutputTranslator();
 
     /**
@@ -107,12 +107,26 @@ async runTurn(
       || undefined;
 
     const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
-    const isNewConversation = !hasPriorAssistantReply || (
-      Boolean(conversationKey) && Boolean(this.lastConversationKey) && this.lastConversationKey !== conversationKey
-    );
+    const isKnownConversation = Boolean(conversationKey && this.activeConversations.has(conversationKey));
+    const isNewConversation = !hasPriorAssistantReply || (Boolean(conversationKey) && !isKnownConversation);
 
     if (conversationKey) {
-      this.lastConversationKey = conversationKey;
+      const prev = this.activeConversations.get(conversationKey);
+      this.activeConversations.set(conversationKey, {
+        lastSeenAt: Date.now(),
+        turnCount: (prev?.turnCount ?? 0) + 1,
+      });
+
+      // Tự động dọn dẹp các session không hoạt động sau 2 giờ nếu danh sách mở rộng quá 100 entries
+      if (this.activeConversations.size > 100) {
+        const now = Date.now();
+        const twoHours = 2 * 60 * 60 * 1000;
+        for (const [key, state] of this.activeConversations.entries()) {
+          if (now - state.lastSeenAt > twoHours) {
+            this.activeConversations.delete(key);
+          }
+        }
+      }
     }
 
     // 1.1. Kiểm tra cấu hình Temporary Chat Per Request từ Launcher
@@ -225,6 +239,7 @@ async runTurn(
         isNewConversation: isTemporaryPerRequest ? true : isNewConversation,
         forceTemporaryChat: isTemporaryPerRequest,
         modelSlug: parsed.modelId,
+        providerId: incoming.headers.get("x-codex-provider") || undefined,
         traceContext,
       });
 
