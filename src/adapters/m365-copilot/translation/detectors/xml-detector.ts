@@ -55,6 +55,37 @@ detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
    */
 private parseInnerXml(innerContent: string): DetectedToolCall | null {
     logFunctionInput("translation:detectors:xml-detector", "parseInnerXml", { innerContent });
+    const trimmed = innerContent.trim();
+
+    // 0. Ưu tiên cao nhất: Thử parse trực tiếp JSON gốc nguyên bản không qua bất kỳ sanitizer nào
+    try {
+      const directParsed = JSON.parse(trimmed);
+      if (directParsed && typeof directParsed === "object") {
+        const rawName = typeof directParsed.name === "string" ? directParsed.name : (directParsed.tool || "read_file");
+        const name = normalizeToolName(rawName);
+        let args = directParsed.arguments || directParsed.args || {};
+        if (typeof args === "string") {
+          try { args = JSON.parse(args); } catch { args = { path: args }; }
+        }
+        if (name === "write_file") {
+          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
+            return null;
+          }
+        }
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+        if (name === "exec_command" && args && typeof args === "object") {
+          const cmd = args.cmd || args.command || "";
+          args.cmd = String(cmd);
+        }
+        return { name, arguments: args };
+      }
+    } catch { }
+
     const clean = cleanJsonPayload(innerContent);
 
     // 1. Thử parse với sanitizer xử lý raw newlines/control characters

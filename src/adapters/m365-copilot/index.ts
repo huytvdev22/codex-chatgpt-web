@@ -397,8 +397,7 @@ async runTurn(
         if (!streamedAnyText) {
           let preToolText = "";
           if (translated.thinking) {
-            const cleanThought = translated.thinking.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            preToolText += `<small style="color: #888;">💭 <i>${cleanThought}</i></small>\n\n`;
+            preToolText += `💭 ${translated.thinking.trim()}\n\n`;
           }
           if (translated.narrative) {
             preToolText += translated.narrative;
@@ -480,9 +479,8 @@ async runTurn(
         // Fallback an toàn: Nếu chưa từng stream chunk nào qua onChunk, emit toàn bộ câu trả lời hoàn chỉnh
         let finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
         finalText = finalText.replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "").trim();
-        if (translated.thinking && !finalText.includes("<small")) {
-          const cleanThought = translated.thinking.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-          finalText = `<small style="color: #888;">💭 <i>${cleanThought}</i></small>\n\n${finalText}`;
+        if (translated.thinking && !finalText.includes("💭")) {
+          finalText = `💭 ${translated.thinking.trim()}\n\n${finalText}`;
         }
         if (finalText) {
           emit({ type: "text_delta", text: finalText });

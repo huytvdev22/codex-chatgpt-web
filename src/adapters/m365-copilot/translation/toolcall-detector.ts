@@ -191,11 +191,11 @@ export class M365ToolCallDetector {
           this.thoughtContent += this.buffer.slice(0, thoughtCloseMatch.index);
           this.inThought = false;
 
-          // Nếu được bật renderThinkingInText: Render khối suy nghĩ chữ nhỏ trang nhã trên giao diện
+          // Nếu được bật renderThinkingInText: Render khối suy nghĩ dạng văn bản thuần túy với icon 💭
           if (this.options.renderThinkingInText && !this.renderedThinking) {
             const cleanThought = this.thoughtContent.trim();
             if (cleanThought) {
-              emittedText += `<small style="color: #888;">💭 <i>${cleanThought.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</i></small>\n\n`;
+              emittedText += `💭 ${cleanThought}\n\n`;
               this.renderedThinking = true;
             }
           }
@@ -269,7 +269,7 @@ export class M365ToolCallDetector {
       if (this.options.renderThinkingInText && !this.renderedThinking) {
         const cleanThought = this.thoughtContent.trim();
         if (cleanThought) {
-          remainingText += `<small style="color: #888;">💭 <i>${cleanThought.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</i></small>\n\n`;
+          remainingText += `💭 ${cleanThought}\n\n`;
           this.renderedThinking = true;
         }
       }
@@ -360,6 +360,36 @@ getToolCall(): ParsedToolCall | null {
    */
 private parseToolPayload(raw: string): ParsedToolCall | null {
     logFunctionInput("translation:toolcall-detector", "parseToolPayload", { raw });
+    const trimmed = raw.trim();
+
+    // 0. Ưu tiên cao nhất: Thử parse trực tiếp JSON gốc nguyên bản không qua bất kỳ sanitizer nào
+    try {
+      const directParsed = JSON.parse(trimmed);
+      if (directParsed && typeof directParsed === "object") {
+        const name = typeof directParsed.name === "string" ? directParsed.name : "read_file";
+        let args = directParsed.arguments || directParsed.args || {};
+        if (typeof args === "string") {
+          try { args = JSON.parse(args); } catch { args = { path: args }; }
+        }
+        if (name === "write_file") {
+          if (!args || typeof args !== "object" || !args.path || args.content === undefined) {
+            return null;
+          }
+        }
+        if (name === "apply_patch" && args && typeof args === "object") {
+          const rawP = args.input || args.patch;
+          if (typeof rawP === "string") {
+            args = { input: sanitizeCodexPatchContent(rawP) };
+          }
+        }
+        if (name === "exec_command" && args && typeof args === "object") {
+          const cmd = args.cmd || args.command || "";
+          args.cmd = String(cmd);
+        }
+        return { name, arguments: args };
+      }
+    } catch { }
+
     const clean = this.cleanToolPayload(raw);
 
     // 1. Thử parse với sanitizer xử lý raw newlines/control characters và trailing backslash
@@ -489,13 +519,11 @@ export function sanitizeJsonControlChars(raw: string): string {
       } else if (ch === "\t") {
         out += "\\t";
       } else {
-        // Nếu ký tự trước là '\' nhưng ký tự hiện tại không phải là escape sequence hợp lệ trong JSON:
-        // Cụ thể là các ký tự do Turndown/Markdown vô tình escape: '[', ']', '{', '}', '*', '_'
-        if (escaped && /^[\[\]{}*_~]/.test(ch)) {
-          if (out.endsWith("\\")) {
-            out = out.slice(0, -1);
-          }
-          out += ch;
+        // Nếu ký tự trước là '\' nhưng ký tự hiện tại không phải là escape sequence hợp lệ trong JSON (" \ / b f n r t u):
+        // (Ví dụ: shell scripts \(, \), regex \., \s, \d, hoặc Markdown \[, \], \*, \_)
+        // Tự động escape backslash để chuỗi trở thành literal backslash hợp lệ trong JSON, không làm JSON.parse bị crash
+        if (escaped && !/^[\\/"bfnrtu]/.test(ch)) {
+          out += "\\" + ch;
           escaped = false;
           continue;
         }

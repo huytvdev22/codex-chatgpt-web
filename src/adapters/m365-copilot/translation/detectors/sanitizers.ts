@@ -50,15 +50,30 @@ export function balanceJsonBraces(raw: string): string {
 /**
  * Chuẩn hóa và làm sạch chuỗi JSON payload:
  * 1. Bóc outer code fence mà không xâm phạm code fence bên trong.
- * 2. Khôi phục các ký tự bị Markdown/Turndown escape không hợp lệ trong cú pháp JSON
- *    (ví dụ: "run\_command" -> "run_command", "\[n\]" -> "[n]", "\*" -> "*").
- *    Trong JSON, chỉ có các escape: \" \\ \/ \b \f \n \r \t \uXXXX là hợp lệ.
- * 3. Tự động cân bằng ngoặc nhọn nếu mô hình mở nhiều hơn đóng.
+ * 2. Ưu tiên giữ nguyên vẹn 100% nếu chuỗi đã là JSON hợp lệ.
+ * 3. Nếu parse lỗi, chỉ khôi phục các ký tự bị Markdown/Turndown escape ngoài ý muốn (_ * ~).
+ *    TUYỆT ĐỐI KHÔNG khử escape dấu ngoặc đơn () hay các ký tự hợp lệ của shell script.
+ * 4. Tự động cân bằng ngoặc nhọn nếu mô hình mở nhiều hơn đóng.
  */
 export function cleanJsonPayload(raw: string): string {
   logFunctionInput("translation:detectors:sanitizers", "cleanJsonPayload", { raw });
-  const stripped = stripOuterCodeFence(raw);
-  const unescaped = stripped.replace(/\\([_\[\]*~`>#+\-.!|{}()])/g, "$1");
+  const stripped = stripOuterCodeFence(raw).trim();
+
+  // Ưu tiên 1: Nếu chuỗi đã là JSON hợp lệ, giữ nguyên vẹn 100%
+  try {
+    JSON.parse(stripped);
+    return stripped;
+  } catch { }
+
+  // Ưu tiên 2: Chỉ unescape các ký tự markdown thuần túy thường bị Turndown chèn vào (_ * ~ ` [ ])
+  // Tránh unescape khi phía trước là ký tự backslash khác (tức là \\char cố ý của JSON)
+  const unescaped = stripped.replace(/\\([_\[\]*~`>#+\-.!|{}])/g, (match, char, offset, fullStr) => {
+    if (offset > 0 && fullStr[offset - 1] === "\\") {
+      return match;
+    }
+    return char;
+  });
+
   return balanceJsonBraces(unescaped);
 }
 

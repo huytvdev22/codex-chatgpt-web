@@ -387,7 +387,7 @@ Hệ thống hoàn toàn sạch sẽ.`;
     expect(remainingText).toBe("");
   });
 
-  test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ m365Response, định dạng thought chữ nhỏ và giữ nguyên Markdown", () => {
+  test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ m365Response, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
     const detector = new M365ToolCallDetector({ renderThinkingInText: true });
     const rawStream = [
       "<m365Response>\n<thought>\n",
@@ -414,8 +414,9 @@ Hệ thống hoàn toàn sạch sẽ.`;
     expect(fullEmittedText).not.toContain("<thought>");
     expect(fullEmittedText).not.toContain("</thought>");
 
-    // 3. Khối thought được bao bọc dưới dạng chữ nhỏ với icon 💭
-    expect(fullEmittedText).toContain('<small style="color: #888;">💭 <i>');
+    // 3. Khối thought được biểu diễn dạng text thuần túy với icon 💭, TUYỆT ĐỐI KHÔNG chứa thẻ HTML <small>
+    expect(fullEmittedText).not.toContain("<small");
+    expect(fullEmittedText).toContain("💭 ");
     expect(fullEmittedText).toContain("Liên kết `app.js` trong `index.html` hiện đã đúng");
 
     // 4. Phần text Markdown ở giữa giữ nguyên vẹn
@@ -425,6 +426,29 @@ Hệ thống hoàn toàn sạch sẽ.`;
     expect(toolCall).toBeDefined();
     expect(toolCall?.name).toBe("read_file");
     expect(toolCall?.arguments).toEqual({ path: "app.js" });
+  });
+
+  test("M365OutputTranslator dịch thành công lệnh shell phức tạp chứa escape dấu ngoặc đơn \\( \\) mà không bị rơi vào fallback", () => {
+    const translator = new M365OutputTranslator();
+    const rawWithShellEscape = `<m365Response>
+<thought>
+Cần khảo sát cấu trúc repository, công nghệ sử dụng, trạng thái Git và các tệp cấu hình chính.
+</thought>
+Tôi sẽ kiểm tra cấu trúc dự án trước:
+<tool_call> {"name":"exec_command","arguments":{"command":"printf '%s\\n' '=== PROJECT MANIFESTS ==='; find . -maxdepth 3 -type f \\( -name 'package.json' -o -name 'pom.xml' \\) -not -path '*/node_modules/*' -print | sort"}} </tool_call>
+</m365Response>`;
+
+    const result = translator.translate(rawWithShellEscape);
+    expect(result.type).toBe("tool_call");
+    if (result.type === "tool_call") {
+      expect(result.tool_calls.length).toBe(1);
+      const call = result.tool_calls[0];
+      expect(call.function.name).toBe("exec_command");
+      const args = JSON.parse(call.function.arguments);
+      expect(args.cmd || args.command).toContain("find . -maxdepth 3 -type f \\( -name 'package.json'");
+      expect(result.thinking).toContain("Cần khảo sát cấu trúc repository");
+      expect(result.narrative).toContain("Tôi sẽ kiểm tra cấu trúc dự án trước:");
+    }
   });
 
   test("M365OutputTranslator làm sạch hoàn toàn envelope m365Response trong Final Answer", () => {
