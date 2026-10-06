@@ -24,6 +24,15 @@ export interface M365BrowserRunOptions {
   forceTemporaryChat?: boolean;
 }
 
+export const CHAT_SELECTORS = {
+  editor: '#m365-chat-editor-target-element',
+  inputWrapper: '.fai-BebopLiteChatInput__inputWrapper',
+  actions: '.fai-BebopLiteChatInput__actions',
+  sendButton: 'button[type="submit"][aria-label="Send"], button[aria-label="Send"], .fai-SendButton:not(:has(.fai-SendButton__stopIcon))',
+  stopButton: 'button[type="submit"][aria-label="Stop generating"], button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"]',
+  dictationButton: 'button[aria-label="Start dictation"]',
+};
+
 export type M365TurnOptions = M365BrowserRunOptions;
 export type M365TurnResult = { rawMarkdown: string; blocks: M365MarkdownBlock[] };
 
@@ -345,6 +354,9 @@ export async function executeM365Turn(
     let fastPathActive = false;
     let lastFastPathText = "";
     let seenGenerating = false;
+    let hasSeenGenerating = false;
+    let completedCandidateAt: number | null = null;
+    const stableCompletionMs = 500;
     let attempts = 0;
     let stableCycles = 0;
     let lastTextChangeAt = Date.now();
@@ -364,7 +376,9 @@ export async function executeM365Turn(
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
       }
 
-      if (options.shouldStop?.()) {
+      // Cấm ngắt sớm khi M365 vẫn đang GENERATING
+      if (options.shouldStop?.() && lastStatus && !lastStatus.isGenerating) {
+        console.log(`[m365-worker] [early-stop-safe] options.shouldStop triggered và M365 đã thoát trạng thái generating.`);
         break;
       }
 
@@ -704,6 +718,19 @@ export async function executeM365Turn(
         return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText };
       }, beforeState);
 
+      // Quản lý chuyển trạng thái State Machine:
+      // READY_TO_SEND -> GENERATING (thấy nút Stop) -> COMPLETED (nút Stop biến mất ổn định trong 500ms)
+      if (status.isGenerating) {
+        hasSeenGenerating = true;
+        seenGenerating = true;
+        completedCandidateAt = null;
+      } else if (hasSeenGenerating) {
+        // Nút Stop đã từng xuất hiện và hiện tại đã biến mất: ghi nhận ứng viên hoàn thành
+        if (completedCandidateAt === null) {
+          completedCandidateAt = Date.now();
+        }
+      }
+
       // Nếu phát hiện lỗi giao diện web của M365 (quota, session hết hạn, error banner), ném lỗi ngay
       if (status.detectedWebError) {
         throw new Error(`[M365 Web Error] ${status.detectedWebError}`);
@@ -836,17 +863,19 @@ export async function executeM365Turn(
       const deadlockCycles = hasAnyUnclosedMarker ? 120 : 32;
 
       // Khi M365 đã có nội dung và không còn nút Stop generating (!status.isGenerating):
+      // - Chuyển trạng thái hoàn thành: hasSeenGenerating === true && !status.isGenerating && (Date.now() - completedCandidateAt >= stableCompletionMs)
       // - Nếu có khối đóng tool_call / plan / patch: kết thúc ngay lập tức (stableCycles >= 1)
-      // - Nếu M365 đã từng sinh (seenGenerating) và nút Stop đã biến mất: kết thúc ngay sau 1-2 chu kỳ (250-500ms)
+      const isStopDismissedStable = hasSeenGenerating && !status.isGenerating && completedCandidateAt !== null && (Date.now() - completedCandidateAt >= stableCompletionMs);
+
       const isSettled = !status.isGenerating && (
+        isStopDismissedStable ||
         (hasFullyClosedMarker && stableCycles >= 1) ||
-        (seenGenerating && stableCycles >= 2) ||
         (!hasAnyUnclosedMarker && (stableCycles >= minStableCycles || timeSinceChange >= minStableTime)) ||
         (timeSinceChange >= deadlockTimeoutMs || stableCycles >= deadlockCycles)
       );
 
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [settled] attempts=${attempts} durationMs=${attempts * pollIntervalMs} toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
+        console.log(`[m365-worker] [completed] attempts=${attempts} durationMs=${attempts * pollIntervalMs} hasSeenGenerating=${hasSeenGenerating} timeSinceCandidate=${completedCandidateAt ? Date.now() - completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
         break;
       }
 
