@@ -70,10 +70,10 @@ export function extractCognitiveBlocks(rawText: string): {
   // 2. Làm sạch chuỗi bằng cách xóa bỏ khối thought
   const textWithoutThought = rawText.replace(/<\s*(?:thought|thinking)\s*>[\s\S]*?<\s*\/(?:thought|thinking)\s*>/gi, "").trim();
 
-  // 3. Trích xuất narrative (lời dẫn dắt bước đi) bằng cách loại bỏ các khối tool call
+  // 3. Trích xuất narrative (lời dẫn dắt bước đi) bằng cách loại bỏ các khối tool call và patch
   let textWithoutTools = textWithoutThought
-    .replace(/<\s*tool[\\_]*call\s*>[\s\S]*?<\s*\/tool[\\_]*call\s*>/gi, "")
-    .replace(/<\s*custom_tool_call[^>]*>[\s\S]*?<\s*\/custom_tool_call\s*>/gi, "");
+    .replace(/(?:<|\b)\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>[\s\S]*?(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>/gi, "")
+    .replace(/(?:\\?\*){2,3}\s*Begin Patch[\s\S]*?(?:\\?\*){2,3}\s*End Patch(?:\s*\\?\*+)?/gi, "");
 
   // Nếu có khối code block bash mang tính thực thi
   textWithoutTools = textWithoutTools.replace(/```(?:bash|sh|zsh|shell)?\s*\n[\s\S]*?```/gi, "");

@@ -42,10 +42,16 @@ export function extractFastPathFromDom(contentEl: HTMLElement): FastPathExtracti
   let rawText = "";
 
   if (lineEls.length > 0) {
-    rawText = lineEls.map(el => (el.textContent || "").replace(/\u00a0/g, " ")).join("\n");
+    const lines = lineEls.map(el => (el.textContent || "").replace(/\u00a0/g, " "));
+    // Khử dòng cuối nếu chỉ chứa từ 1 đến 5 dấu backtick dở dang (do M365 cố gõ đóng code fence)
+    while (lines.length > 0 && /^\s*`{1,5}\s*$/.test(lines[lines.length - 1])) {
+      lines.pop();
+    }
+    rawText = lines.join("\n");
   } else {
     const findRoot = targetBlock.querySelector("[data-virtualized-code-find-root='true'], [role='textbox'][aria-label*='Code editor' i]") || targetBlock.lastElementChild;
     rawText = (findRoot ? (findRoot as HTMLElement).innerText : (targetBlock as HTMLElement).innerText || "").replace(/\u00a0/g, " ");
+    rawText = rawText.replace(/\r?\n\s*`{1,5}\s*$/g, "");
   }
 
   rawText = rawText.replace(/^\n+|\n+$/g, "");

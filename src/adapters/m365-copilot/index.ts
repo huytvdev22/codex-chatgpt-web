@@ -394,9 +394,10 @@ async runTurn(
           emit({ type: "thinking_delta", thinking: translated.thinking });
         }
 
-        if (translated.narrative) {
+        if (translated.narrative && !streamedAnyText) {
           console.log(`[M365 COGNITIVE] emit narrative: ${translated.narrative}`);
           emit({ type: "text_delta", text: translated.narrative });
+          streamedAnyText = true;
         }
 
         for (const { mapped, callId } of mappedCalls) {
@@ -457,10 +458,21 @@ async runTurn(
         emit({ type: "thinking_delta", thinking: translated.thinking });
       }
 
-      const finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
-      if (finalText) {
-        emit({ type: "text_delta", text: finalText });
-        streamedAnyText = true;
+      if (streamedAnyText) {
+        // Đã stream realtime qua onChunk: chỉ xả phần text dở dang còn sót lại trong buffer (nếu có)
+        // Tuyệt đối không emit lại toàn bộ finalText để tránh nhân đôi câu trả lời trên Codex UI
+        if (remainingText) {
+          emit({ type: "text_delta", text: remainingText });
+        }
+      } else {
+        // Fallback an toàn: Nếu chưa từng stream chunk nào qua onChunk, emit toàn bộ câu trả lời hoàn chỉnh
+        const finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
+        if (finalText) {
+          emit({ type: "text_delta", text: finalText });
+          streamedAnyText = true;
+        } else {
+          emit({ type: "text_delta", text: "" });
+        }
       }
 
       // Đảm bảo Responses stream có ít nhất 1 chunk text nếu không có tool calls

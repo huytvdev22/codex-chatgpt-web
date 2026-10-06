@@ -9,6 +9,7 @@ import {
 import {
   M365OutputTranslator,
   extractCognitiveBlocks,
+  M365ToolCallDetector,
 } from "../src/adapters/m365-copilot/translation";
 import {
   isReadOnlyTool,
@@ -349,4 +350,41 @@ Hệ thống hoàn toàn sạch sẽ.`;
     expect(metrics.toolSuccessRate).toBe(1.0);      // 100% tool thành công
     expect(metrics.overallCognitiveScore).toBeGreaterThanOrEqual(80);
   });
+
+  // =========================================================================
+  // 9. M365ToolCallDetector Streaming Cognitive Isolation & Sanitization
+  // =========================================================================
+  test("M365ToolCallDetector nuốt trọn khối <thought> không để rò rỉ vào safeText stream", () => {
+    const detector = new M365ToolCallDetector();
+    const chunk1 = "<thought>\nTôi đang suy nghĩ cách sửa file.\n";
+    const chunk2 = "Cần kiểm tra trước.</thought>\n";
+    const chunk3 = "Tôi sẽ kiểm tra file:\n<tool_call>\n";
+    const chunk4 = '{"name": "read_file", "arguments": {"path": "test.ts"}}\n</tool_call>';
+
+    const safe1 = detector.feed(chunk1);
+    const safe2 = detector.feed(chunk2);
+    const safe3 = detector.feed(chunk3);
+    const safe4 = detector.feed(chunk4);
+
+    // Xác nhận safeText không chứa thẻ <thought> hay nội dung suy nghĩ
+    expect(safe1).toBe("");
+    expect(safe2).toBe("");
+    expect(safe3).toBe("Tôi sẽ kiểm tra file:");
+    expect(safe4).toBe("");
+
+    expect(detector.getThinking()).toContain("Tôi đang suy nghĩ cách sửa file.");
+    expect(detector.hasDetectedToolCall()).toBe(true);
+    expect(detector.getToolCall()?.name).toBe("read_file");
+  });
+
+  test("M365ToolCallDetector tự động gọt sạch dấu backtick dở dang ở cuối finish()", () => {
+    const detector = new M365ToolCallDetector();
+    const emitted = detector.feed("Xin chào anh Huy! Mình có thể hỗ trợ anh.\n`");
+    const { remainingText } = detector.finish();
+
+    // Dấu backtick mồ côi dở dang phải được hoãn và loại bỏ để không làm vỡ Markdown formatting
+    expect(emitted).toBe("Xin chào anh Huy! Mình có thể hỗ trợ anh.\n");
+    expect(remainingText).toBe("");
+  });
 });
+
