@@ -416,6 +416,9 @@ export function augmentNativeModelCatalog(
   if (!Array.isArray(catalog.models)) {
     throw new Error("Native Codex models response is missing a models array");
   }
+  if (catalog.models.length === 0) {
+    throw new Error("Cannot augment models without at least one native template model");
+  }
   const nativeModels = structuredClone(
     catalog.models.filter(model => {
       const s = slug(model);

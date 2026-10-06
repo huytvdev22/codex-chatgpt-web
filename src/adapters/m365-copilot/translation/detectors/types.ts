@@ -34,6 +34,7 @@ export type TranslationResult =
     content: string;
     rawResponse: string;
     thinking?: string;
+    narrative?: string;
     parseDiagnostics?: ParseDiagnostics;
   };
 

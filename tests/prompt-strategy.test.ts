@@ -128,6 +128,8 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     const mockParsed: CodexParsedRequest = {
       modelId: "m365-copilot/think",
+      stream: true,
+      options: {},
       context: {
         messages: [],
         tools: [
@@ -161,6 +163,8 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     const mockParsed: CodexParsedRequest = {
       modelId: "m365-copilot/think",
+      stream: true,
+      options: {},
       context: { messages: [], tools: [] },
       _rawBody: sampleRaw,
     };
@@ -173,6 +177,8 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
   test("Yêu cầu 3 & 4: Format tool duy nhất và in đầy đủ log planMode, collaborationMode, finalPromptLength", () => {
     const mockParsed: CodexParsedRequest = {
       modelId: "m365-copilot/think",
+      stream: true,
+      options: {},
       context: { messages: [], tools: [] },
       _rawBody: sampleRaw,
     };
@@ -209,9 +215,11 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     // 3. Trong forward prompt khi implement plan phải có chỉ thị đúng đắn
     const mockImplementingPlanParsed: CodexParsedRequest = {
       modelId: "m365-copilot/think",
+      stream: true,
+      options: {},
       context: {
         messages: [
-          { role: "user", content: "PLEASE IMPLEMENT THIS PLAN: ## Tóm tắt..." }
+          { role: "user", content: "PLEASE IMPLEMENT THIS PLAN: ## Tóm tắt...", timestamp: Date.now() }
         ],
         tools: []
       },

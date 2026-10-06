@@ -361,6 +361,7 @@ export class CodexPayloadNormalizer {
             .replace(/# When to ask the user for permission[\s\S]*?(?=\n# |\n\[|$)/i, "")
             .replace(/# Autonomy and persistence[\s\S]*?(?=\n# |\n\[|$)/i, "")
             .replace(/# Working with the user[\s\S]*?(?=\n# |\n\[|$)/i, "")
+            .replace(/# Rules for getting work done(?:\n(?:\s*[-*]|\s{2,}).*)*(?=\n# |\n\[|\n<|\n[^\s\-*]|$)/gi, "")
             .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
             .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
             .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")

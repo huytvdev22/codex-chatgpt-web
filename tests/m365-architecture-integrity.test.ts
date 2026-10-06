@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+// @ts-ignore
 import { findCircularDependencies } from "../scripts/check-circular-deps.js";
 
 describe("M365 Copilot Architecture Integrity & CI Gate", () => {
@@ -10,7 +11,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
 
     if (cycles.length > 0) {
       console.error("\n[CI GATE ERROR] Phát hiện Circular Dependency trong kiến trúc:");
-      cycles.forEach((c, idx) => {
+      cycles.forEach((c: any, idx: number) => {
         console.error(`  #${idx + 1}: ${c.join(" -> ")}`);
       });
     }

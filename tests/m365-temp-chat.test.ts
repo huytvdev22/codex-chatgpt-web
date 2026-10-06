@@ -121,9 +121,11 @@ public class App {
     it("luôn đính kèm chỉ thị 4-backtick ở cuối cùng của prompt", () => {
       const dummyRequest: CodexParsedRequest = {
         modelId: "gpt-4o",
+        stream: true,
+        options: {},
         context: {
           messages: [
-            { role: "user", content: "Viết giúp tôi một đoạn code Java" }
+            { role: "user", content: "Viết giúp tôi một đoạn code Java", timestamp: Date.now() }
           ],
         },
       };
@@ -137,9 +139,11 @@ public class App {
     it("kích hoạt Plan Mode và tiêm MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT khi raw request có marker Plan Mode", () => {
       const planRequest: CodexParsedRequest = {
         modelId: "gpt-4o",
+        stream: true,
+        options: {},
         context: {
           messages: [
-            { role: "user", content: "## My request:\nHãy lên kế hoạch chi tiết từng bước để xây dựng một REST API Todos" }
+            { role: "user", content: "## My request:\nHãy lên kế hoạch chi tiết từng bước để xây dựng một REST API Todos", timestamp: Date.now() }
           ],
         },
       };
