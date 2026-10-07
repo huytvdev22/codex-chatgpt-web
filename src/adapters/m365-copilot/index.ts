@@ -25,6 +25,7 @@ import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
 import path from "node:path";
 import { homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 import type { TraceContext } from "../../observability/types";
 import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 
@@ -257,6 +258,12 @@ async runTurn(
       const toolDetector = new M365ToolCallDetector({ renderThinkingInText: true });
       let streamedAnyText = false;
 
+      const rawTurnId = rawPayload.getTurnId();
+      const cleanTurnId = rawTurnId ? rawTurnId.replace(/[^A-Za-z0-9_-]/g, "_") : undefined;
+      const traceId = incoming.headers.get("x-codex-trace-id")
+        || (cleanTurnId && cleanTurnId.length >= 6 ? cleanTurnId : undefined)
+        || `turn_${randomBytes(8).toString("hex")}`;
+
       const reply = await executeM365Turn(promptToSend, {
         onChunk: (delta) => {
           const safeText = toolDetector.feed(delta);
@@ -266,7 +273,7 @@ async runTurn(
           }
         },
         signal: incoming.abortSignal,
-        traceId: incoming.headers.get("x-codex-trace-id") || undefined,
+        traceId,
         conversationKey,
         isNewConversation: isTemporaryPerRequest ? true : isNewConversation,
         forceTemporaryChat: isTemporaryPerRequest,

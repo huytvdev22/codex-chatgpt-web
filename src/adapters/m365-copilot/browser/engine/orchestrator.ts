@@ -56,8 +56,8 @@ export async function executeTurnWithDriver(
         targetSurfaceId = lease.surfaceId;
         console.log(`[orchestrator] Đã nhận được Tab Surface riêng từ Launcher: ${targetSurfaceId}`);
       }
-    } catch {
-      // Bỏ qua lỗi start nếu launcher chưa phản hồi
+    } catch (err) {
+      console.warn(`[orchestrator] Không thể thông báo start turn tới Launcher:`, err);
     }
   }
 
@@ -466,7 +466,9 @@ export async function executeTurnWithDriver(
           finalStatus,
           { retain: !isTemporary },
           undefined
-        ).catch(() => {});
+        ).catch((err) => {
+          console.warn(`[orchestrator] Không thể thông báo end turn tới Launcher:`, err);
+        });
         await withTimeout(notifyPromise, 2000, undefined);
       }
       console.log(`[orchestrator] [cleanup] closing browser connection (timeout 3000ms)...`);
