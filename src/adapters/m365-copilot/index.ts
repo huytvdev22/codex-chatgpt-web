@@ -106,6 +106,20 @@ async runTurn(
       || rawPayload.getThreadId()
       || undefined;
 
+    // =========================================================================
+    // 1. GIẢI THÍCH VỀ BIẾN isNewConversation (TRÁNH HIỂU NHẦM):
+    // - isNewConversation CHỈ ĐƯỢC COI LÀ TRUE TRONG 2 TRƯỜNG HỢP:
+    //   (1) Người dùng bấm "New Chat" trên Codex IDE:
+    //       Lúc này context gửi sang chưa có bất kỳ phản hồi nào của assistant (!hasPriorAssistantReply).
+    //   (2) Lần đầu tiên bắt gặp conversationKey của một cửa sổ VS Code mới (!isKnownConversation).
+    // - TRONG SUỐT QUÁ TRÌNH CHAT TIẾP THEO CỦA CỬA SỔ ĐÓ (Request 2, 3, 4...):
+    //   hasPriorAssistantReply === true và conversationKey đã được ghi nhận -> isNewConversation = FALSE.
+    // - Ý NGHĨA QUAN TRỌNG:
+    //   Khi isNewConversation = false, trình duyệt TUYỆT ĐỐI KHÔNG BẤM NÚT "New Chat",
+    //   KHÔNG reload trang, KHÔNG toggle lại nút Temporary Chat.
+    //   Toàn bộ phiên trò chuyện (kể cả phiên tạm thời) được DUY TRÌ LIÊN TỤC qua các request
+    //   cho đến khi người dùng chủ động bấm "New Chat" trên Codex IDE.
+    // =========================================================================
     const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
     const isKnownConversation = Boolean(conversationKey && this.activeConversations.has(conversationKey));
     const isNewConversation = !hasPriorAssistantReply || (Boolean(conversationKey) && !isKnownConversation);
@@ -129,8 +143,19 @@ async runTurn(
       }
     }
 
-    // 1.1. Mặc định mở cuộc trò chuyện tạm thời (Temporary Chat) trên mọi tab để tránh rác sidebar
-    let isTemporaryPerRequest = true;
+    // =========================================================================
+    // 2. GIẢI THÍCH VỀ CỜ descriptor.m365TemporaryChatPerRequest (TRÁNH HIỂU NHẦM):
+    // - Cờ này đọc từ cấu hình Launcher (mặc định là FALSE trong Launcher setup).
+    // - NẾU BẬT (TRUE): Mỗi request (mỗi turn) sẽ bị cưỡng ép làm mới phiên từ đầu (Stateless Pure Forwarder),
+    //   bọc prompt 4-backtick và reload về /chat ở MỌI REQUEST. Chỉ dùng khi người dùng muốn
+    //   mỗi prompt là 1 lần chat hoàn toàn độc lập không lưu lịch sử ngữ cảnh.
+    // - NẾU TẮT (FALSE - MẶC ĐỊNH): Hệ thống duy trì cuộc trò chuyện liên tục (Stateful Multi-Turn)
+    //   qua các request trong cùng một cửa sổ VS Code. KHÔNG mở chat mới ở mỗi request!
+    // - LƯU Ý BẢN CHẤT: Ngay cả khi cờ này là FALSE, hệ thống VẪN BẬT CUỘC TRÒ CHUYỆN TẠM THỜI (Temporary Chat)
+    //   trên giao diện web M365 Copilot (để không lưu rác vào sidebar Chats) VÀ DUY TRÌ cuộc trò chuyện
+    //   tạm thời đó xuyên suốt các lượt hỏi đáp cho đến khi bấm New Chat trên Codex!
+    // =========================================================================
+    let isTemporaryPerRequest = false;
     const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR
       || path.join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
     if (descriptorPath) {

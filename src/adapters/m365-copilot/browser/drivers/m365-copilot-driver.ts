@@ -18,6 +18,38 @@ export const CHAT_SELECTORS = {
   stopButton:
     'button[type="submit"][aria-label="Stop generating"], button[aria-label="Stop generating"], button[aria-label*="Stop generating" i], button[aria-label*="Dừng tạo" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]',
   dictationButton: 'button[aria-label="Start dictation"]',
+
+  /**
+   * Nút New chat (bắt đầu cuộc trò chuyện mới).
+   */
+  newChatButton:
+    'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]',
+
+  /**
+   * =========================================================================
+   * 3. NÚT TOGGLE CUỘC TRÒ CHUYỆN TẠM THỜI (Temporary Chat) TRÊN M365 COPILOT WEB:
+   * - Element này là một Fluent UI Toggle Button (fui-ToggleButton).
+   * - Trạng thái 1 (Chưa bật - Cuộc trò chuyện thường):
+   *     <button type="button" aria-label="Temporary chat" class="... fui-ToggleButton ..." aria-pressed="false">
+   *     -> Đang lưu lịch sử vào sidebar Chats.
+   * - Trạng thái 2 (Đã bật - Cuộc trò chuyện tạm thời):
+   *     <button type="button" aria-label="Temporary chat" class="... fui-ToggleButton U0s2RHhP ..." aria-pressed="true">
+   *     -> Không lưu lịch sử cuộc trò chuyện vào sidebar.
+   *
+   * [NHẬN ĐỊNH CŨ SAI LẦM]:
+   *   Trước đây dùng:
+   *     const tempBtn = document.querySelector('button[aria-label*="Temporary chat" i]...');
+   *     if (tempBtn) tempBtn.click();
+   *   Cách làm này sai vì đây là Toggle Button! Nếu nút đã ở trạng thái bật (aria-pressed="true"),
+   *   việc click bừa bãi sẽ vô tình TẮT cuộc trò chuyện tạm thời và chuyển về cuộc trò chuyện thường!
+   *
+   * [QUY HOẠCH CHUẨN]:
+   *   Tất cả selector tập trung vào CHAT_SELECTORS.temporaryChatToggle.
+   *   Chỉ click khi aria-pressed === "false". Tuyệt đối KHÔNG click khi aria-pressed === "true".
+   * =========================================================================
+   */
+  temporaryChatToggle:
+    'button[aria-label="Temporary chat"], .fui-ToggleButton[aria-label="Temporary chat"], button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]',
 };
 
 /**
@@ -30,6 +62,7 @@ export class M365CopilotDriver implements PageDriver {
   readonly selectors = CHAT_SELECTORS;
 
   private readonly conversationThreads = new Map<string, string>();
+  private readonly initializedConversations = new Set<string>();
   private currentActiveKey: string | null = null;
 
   recordConversationThread(conversationKey: string, threadUrl: string): void {
@@ -54,6 +87,63 @@ export class M365CopilotDriver implements PageDriver {
     }
   }
 
+  /**
+   * Đảm bảo cuộc trò chuyện đang ở chế độ Tạm thời (Temporary chat).
+   * Kiểm tra thuộc tính aria-pressed của nút toggle:
+   * - Nếu aria-pressed === "true": Giữ nguyên, KHÔNG click lại (tránh toggle ngược về thường).
+   * - Nếu aria-pressed === "false": Click vào nút để bật sang chế độ tạm thời (aria-pressed = "true").
+   */
+  async ensureTemporaryChatActive(page: Page): Promise<boolean> {
+    try {
+      // Đợi nút toggle render nếu trang vừa được mở
+      await page.waitForSelector(CHAT_SELECTORS.temporaryChatToggle, { timeout: 6000 }).catch(() => {});
+
+      const checkState = async () => {
+        return page.evaluate((selector) => {
+          const btn = document.querySelector(selector) as HTMLButtonElement | null;
+          if (!btn) return { exists: false, isPressed: false };
+          return {
+            exists: true,
+            isPressed: btn.getAttribute("aria-pressed") === "true",
+          };
+        }, CHAT_SELECTORS.temporaryChatToggle);
+      };
+
+      const initialState = await checkState();
+      if (!initialState.exists) {
+        console.warn("[m365-driver] Không tìm thấy nút Temporary Chat trên giao diện.");
+        return false;
+      }
+
+      if (initialState.isPressed) {
+        console.log("[m365-driver] Cuộc trò chuyện tạm thời đã được BẬT sẵn (aria-pressed='true'). Giữ nguyên.");
+        return true;
+      }
+
+      // Nếu chưa bật (aria-pressed="false"), thực hiện click để kích hoạt
+      console.log("[m365-driver] Nút Temporary chat đang tắt (aria-pressed='false'). Thực hiện click bật...");
+      const clicked = await page.evaluate((selector) => {
+        const btn = document.querySelector(selector) as HTMLButtonElement | null;
+        if (!btn) return false;
+        btn.click();
+        btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        return true;
+      }, CHAT_SELECTORS.temporaryChatToggle);
+
+      if (clicked) {
+        await new Promise((r) => setTimeout(r, 250));
+        const afterState = await checkState();
+        console.log(`[m365-driver] Đã kích hoạt Cuộc trò chuyện tạm thời. Kết quả xác nhận: aria-pressed=${afterState.isPressed}`);
+        return afterState.isPressed;
+      }
+
+      return false;
+    } catch (err) {
+      console.warn("[m365-driver] Lỗi khi kiểm tra/kích hoạt Temporary Chat:", err);
+      return false;
+    }
+  }
+
   async prepareNewChat(page: Page, options: DriverTurnOptions): Promise<void> {
     logFunctionInput("browser:drivers:m365-copilot", "prepareNewChat", { options });
     const isTemporaryMode = Boolean(options.forceTemporaryChat);
@@ -72,77 +162,59 @@ export class M365CopilotDriver implements PageDriver {
       return;
     }
 
+    // =========================================================================
+    // NGUYÊN TẮC DUY TRÌ PHIÊN TRÒ CHUYỆN TẠM THỜI (TEMPORARY CHAT RETENTION):
+    // - shouldStartNewChat CHỈ LÀ TRUE KHI:
+    //   1. Người dùng bấm "New Chat" trên Codex IDE (options.isNewConversation === true).
+    //   2. Cửa sổ VS Code này mới gửi request lần đầu và chưa được khởi tạo (initializedConversations).
+    //   3. Người dùng chủ động BẬT cờ per-request trong Launcher setup (isTemporaryMode === true).
+    // - NẾU shouldStartNewChat === FALSE (các request tiếp theo của cùng cửa sổ):
+    //   Hệ thống GIỮ NGUYÊN trang hiện tại, KHÔNG bấm New Chat, KHÔNG toggle lại nút.
+    //   Cuộc trò chuyện tạm thời được DUY TRÌ LIÊN TỤC qua các request mà không bị ngắt quãng!
+    // =========================================================================
+    const isFirstTimeForWindow = Boolean(conversationKey && !this.initializedConversations.has(conversationKey));
     const shouldStartNewChat =
       isTemporaryMode ||
       options.isNewConversation ||
-      (conversationKey && !savedThreadUrl);
+      isFirstTimeForWindow;
 
     console.log(
-      `[m365-driver] Trạng thái phiên: isTemporaryMode=${isTemporaryMode}, shouldStartNewChat=${shouldStartNewChat}`
+      `[m365-driver] Trạng thái phiên: isTemporaryMode=${isTemporaryMode}, shouldStartNewChat=${shouldStartNewChat}, isNewConversation=${options.isNewConversation}, isFirstTimeForWindow=${isFirstTimeForWindow}`
     );
 
     if (shouldStartNewChat) {
       if (page.url().includes("/chat/c/")) {
-        console.log(`[m365-driver] Dọn dẹp thread cũ trước khi mở phiên mới: ${page.url()}`);
-        if (isTemporaryMode) {
-          await this.cleanupEphemeralThread(page);
-        } else {
-          await page
-            .goto("https://m365.cloud.microsoft/chat", {
-              waitUntil: "domcontentloaded",
-              timeout: 15_000,
-            })
-            .catch(() => {});
-          await new Promise((r) => setTimeout(r, 400));
-        }
+        console.log(`[m365-driver] Điều hướng về /chat từ thread cũ: ${page.url()}`);
+        await page
+          .goto("https://m365.cloud.microsoft/chat", {
+            waitUntil: "domcontentloaded",
+            timeout: 15_000,
+          })
+          .catch(() => {});
+        await new Promise((r) => setTimeout(r, 400));
       }
 
+      // 1. Click nút New chat
       await page
-        .evaluate(() => {
-          const newChatBtn = document.querySelector(
-            'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]'
-          ) as HTMLElement | null;
+        .evaluate((selector) => {
+          const newChatBtn = document.querySelector(selector) as HTMLElement | null;
           if (newChatBtn) {
             newChatBtn.click();
             newChatBtn.dispatchEvent(
               new MouseEvent("click", { bubbles: true, cancelable: true })
             );
-            return;
           }
-
-          const tempBtn = document.querySelector(
-            'button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]'
-          ) as HTMLButtonElement | null;
-          if (tempBtn) {
-            tempBtn.click();
-            setTimeout(() => {
-              if (tempBtn.getAttribute("aria-pressed") !== "true") {
-                tempBtn.click();
-              }
-            }, 200);
-          }
-        })
+        }, CHAT_SELECTORS.newChatButton)
         .catch(() => {});
 
       await new Promise((r) => setTimeout(r, 400));
 
-      if (isTemporaryMode) {
-        await page
-          .evaluate(() => {
-            const tempBtn = document.querySelector(
-              'button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]'
-            ) as HTMLButtonElement | null;
-            if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
-              tempBtn.click();
-              tempBtn.dispatchEvent(
-                new MouseEvent("click", { bubbles: true, cancelable: true })
-              );
-            }
-          })
-          .catch(() => {});
-        await new Promise((r) => setTimeout(r, 300));
-      }
+      // 2. Kích hoạt Cuộc trò chuyện tạm thời (Temporary chat toggle: aria-pressed="true")
+      await this.ensureTemporaryChatActive(page);
 
+      if (conversationKey) {
+        this.initializedConversations.add(conversationKey);
+      }
       this.currentActiveKey = options.conversationKey || null;
     } else if (options.conversationKey) {
       this.currentActiveKey = options.conversationKey;
@@ -152,19 +224,6 @@ export class M365CopilotDriver implements PageDriver {
     const editorSelector =
       "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']";
     await page.waitForSelector(editorSelector, { timeout: 15_000 });
-
-    if (isTemporaryMode) {
-      await page
-        .evaluate(() => {
-          const tempBtn = document.querySelector(
-            'button[aria-label="Temporary chat"]'
-          ) as HTMLButtonElement | null;
-          if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
-            tempBtn.click();
-          }
-        })
-        .catch(() => {});
-    }
   }
 
   async ensureModelMode(page: Page, modelSlug?: string): Promise<void> {
