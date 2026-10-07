@@ -170,3 +170,40 @@ export function clearProjectSession(projectTag?: string): void {
   }
 }
 
+/**
+ * Kiểm tra toàn diện xem cuộc hội thoại đã từng có phản hồi của trợ lý hoặc tool execution hay chưa.
+ * Hỗ trợ cả hai định dạng:
+ * 1. CodexParsedRequest.context.messages (OpenAI Chat Completion format)
+ * 2. CodexRawPayload.input (OpenAI Responses API wire format)
+ */
+export function checkHasPriorAssistantReply(
+  parsed: CodexParsedRequest,
+  rawPayload?: CodexRawPayload
+): boolean {
+  logFunctionInput("session:conversation-key", "checkHasPriorAssistantReply");
+
+  // 1. Kiểm tra trong parsed.context.messages
+  const messages = parsed.context?.messages || [];
+  if (messages.some(m => m.role === "assistant" || m.role === "toolResult")) {
+    return true;
+  }
+
+  // 2. Kiểm tra trong rawPayload.input (Wire format)
+  if (rawPayload && Array.isArray(rawPayload.input)) {
+    for (const item of rawPayload.input) {
+      if (!item) continue;
+      if (
+        item.role === "assistant" ||
+        item.type === "function_call" ||
+        item.type === "custom_tool_call" ||
+        item.type === "function_call_output" ||
+        item.type === "custom_tool_call_output"
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+

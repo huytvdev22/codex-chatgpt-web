@@ -4,6 +4,7 @@ import {
   extractProjectLabel,
   resolveM365ConversationKey,
   clearProjectSession,
+  checkHasPriorAssistantReply,
 } from "../src/adapters/m365-copilot/session";
 import { CodexRawPayload } from "../src/adapters/m365-copilot/normalization";
 import type { CodexParsedRequest } from "../src/types";
@@ -239,6 +240,81 @@ describe("M365 Composite Conversation Key Tests", () => {
       expect(SHA256_REGEX.test(key1)).toBe(true);
       expect(SHA256_REGEX.test(key2)).toBe(true);
       expect(key1).not.toBe(key2);
+    });
+  });
+
+  describe("checkHasPriorAssistantReply", () => {
+    test("trả về false khi context chỉ có user message và không có assistant", () => {
+      const parsed = createMockParsed([], [
+        { role: "user", content: "Chào bạn" },
+      ]);
+      const rawPayload = createMockRawPayload();
+      expect(checkHasPriorAssistantReply(parsed, rawPayload)).toBe(false);
+    });
+
+    test("trả về true khi context.messages chứa message role assistant", () => {
+      const parsed = createMockParsed([], [
+        { role: "user", content: "Chào bạn" },
+        { role: "assistant", content: "Xin chào!" },
+      ]);
+      const rawPayload = createMockRawPayload();
+      expect(checkHasPriorAssistantReply(parsed, rawPayload)).toBe(true);
+    });
+
+    test("trả về true khi context.messages chứa role toolResult", () => {
+      const parsed = createMockParsed([], [
+        { role: "user", content: "Đọc file" },
+        { role: "toolResult", content: "File content", toolCallId: "call_1" },
+      ]);
+      const rawPayload = createMockRawPayload();
+      expect(checkHasPriorAssistantReply(parsed, rawPayload)).toBe(true);
+    });
+
+    test("trả về true khi rawPayload.input wire format chứa message role assistant", () => {
+      const parsed = createMockParsed();
+      const rawPayload = new CodexRawPayload({
+        model: "gpt-4o",
+        input: [
+          { type: "message", role: "developer", content: "System rule" },
+          { type: "message", role: "user", content: "Yêu cầu 1" },
+          { type: "message", role: "assistant", content: "Tôi đồng ý 5 hướng" },
+          { type: "message", role: "user", content: "Triển khai từ hướng 1 đến 5" },
+        ],
+      });
+      expect(checkHasPriorAssistantReply(parsed, rawPayload)).toBe(true);
+    });
+
+    test("trả về true khi rawPayload.input chứa function_call hoặc function_call_output", () => {
+      const parsed = createMockParsed();
+      const rawPayload = new CodexRawPayload({
+        model: "gpt-4o",
+        input: [
+          { type: "message", role: "user", content: "Chạy lệnh" },
+          { type: "function_call", call_id: "call_abc", name: "exec_command", arguments: {} },
+          { type: "function_call_output", call_id: "call_abc", output: "success" },
+        ],
+      });
+      expect(checkHasPriorAssistantReply(parsed, rawPayload)).toBe(true);
+    });
+  });
+
+  describe("CodexRawPayload.getThreadId fallback", () => {
+    test("trích xuất threadId từ client_metadata.session_id khi không có thread_id", () => {
+      const rawPayload = new CodexRawPayload({
+        model: "gpt-4o",
+        client_metadata: {
+          session_id: "sess_xyz_123",
+        },
+      });
+      expect(rawPayload.getThreadId()).toBe("sess_xyz_123");
+    });
+
+    test("trích xuất threadId từ prompt_cache_key khi client_metadata không có id", () => {
+      const rawPayload = new CodexRawPayload({
+        model: "gpt-4o",
+        prompt_cache_key: "cache_key_999",
+      });
+      expect(rawPayload.getThreadId()).toBe("cache_key_999");
     });
   });
 });

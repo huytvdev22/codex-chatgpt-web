@@ -20,4 +20,5 @@ export {
   extractProjectLabel,
   resolveM365ConversationKey,
   clearProjectSession,
+  checkHasPriorAssistantReply,
 } from "./conversation-key";

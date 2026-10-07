@@ -19,6 +19,7 @@ import {
   isAssistantFinalAnswer,
   resolveM365ConversationKey,
   extractProjectLabel,
+  checkHasPriorAssistantReply,
   type ConversationGuardState,
 } from "./session";
 import { emitStructuredEvent } from "../../observability/emitter";
@@ -62,9 +63,21 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
   return undefined;
 }
 
+/**
+ * Singleton Registry theo dõi các cuộc hội thoại M365 đang active xuyên suốt các request HTTP.
+ * Giúp nhận diện chính xác Turn tiếp theo (Stateful) và tránh bấm nút New Chat ở mỗi request.
+ */
+const globalActiveM365Conversations = new Map<string, { lastSeenAt: number; turnCount: number }>();
+
+export function resetActiveM365ConversationsForTest(): void {
+  globalActiveM365Conversations.clear();
+}
+
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
-  private readonly activeConversations = new Map<string, { lastSeenAt: number; turnCount: number }>();
+  get activeConversations(): Map<string, { lastSeenAt: number; turnCount: number }> {
+    return globalActiveM365Conversations;
+  }
   private readonly translator = new M365OutputTranslator();
 
     /**
@@ -121,15 +134,17 @@ async runTurn(
     //   Khi đó trình duyệt TUYỆT ĐỐI KHÔNG BẤM NÚT "New Chat", KHÔNG reload trang,
     //   KHÔNG toggle lại nút Temporary Chat, phiên chat tạm thời được DUY TRÌ LIÊN TỤC.
     // =========================================================================
-    const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
+    const hasPriorAssistantReply = checkHasPriorAssistantReply(parsed, rawPayload);
     const conversationKey = resolveM365ConversationKey({
       parsed,
       rawPayload,
       headers: incoming.headers,
       hasPriorAssistantReply,
     });
-    const isKnownConversation = Boolean(conversationKey && this.activeConversations.has(conversationKey));
-    const isNewConversation = !hasPriorAssistantReply || (Boolean(conversationKey) && !isKnownConversation);
+    const isKnownConversation = Boolean(conversationKey && globalActiveM365Conversations.has(conversationKey));
+    // isNewConversation CHỈ là true khi context chưa có bất kỳ phản hồi trợ lý nào (vừa bấm New Chat trên IDE).
+    // Khi đã có phản hồi trợ lý (Turn 2 trở đi), đây là phiên tiếp diễn -> TUYỆT ĐỐI không coi là new conversation.
+    const isNewConversation = !hasPriorAssistantReply;
 
     if (conversationKey) {
       const prev = this.activeConversations.get(conversationKey);

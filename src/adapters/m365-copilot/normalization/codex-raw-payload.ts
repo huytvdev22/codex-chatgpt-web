@@ -291,6 +291,12 @@ constructor(raw: CodexRawRequestWire) {
     if (this.client_metadata?.thread_id) {
       return String(this.client_metadata.thread_id);
     }
+    if (this.client_metadata?.session_id) {
+      return String(this.client_metadata.session_id);
+    }
+    if (this.prompt_cache_key) {
+      return String(this.prompt_cache_key);
+    }
     const turnMeta = this.client_metadata?.["x-codex-turn-metadata"];
     if (turnMeta) {
       if (typeof turnMeta === "string") {
