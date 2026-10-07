@@ -56,7 +56,7 @@ export async function connectCdpSurface(
 export async function notifyCdpTurnStart(
   descriptorPath: string,
   traceId: string,
-  options: { conversationKey?: string; connectorIdentity?: string },
+  options: { conversationKey?: string; connectorIdentity?: string; projectLabel?: string },
   signal?: AbortSignal
 ): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean } | undefined> {
   logFunctionInput("browser:cdp:cdp-connection", "notifyCdpTurnStart", { descriptorPath, traceId, options });
@@ -69,7 +69,8 @@ export async function notifyCdpTurnStart(
       conversationKey: options.conversationKey || "",
       connectorIdentity: options.connectorIdentity || "m365-copilot",
       requireRetainedConversation: false,
-    },
+      ...(options.projectLabel ? { projectLabel: options.projectLabel } : {}),
+    } as any,
     undefined,
     signal
   );

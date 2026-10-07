@@ -322,6 +322,7 @@ class BrowserControlServer {
             body.connectorIdentity,
             body.requireRetainedConversation === true,
             acquisition.signal,
+            body.projectLabel,
           );
         } finally {
           response.off("close", onClose);

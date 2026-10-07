@@ -14,6 +14,7 @@ export interface M365BrowserRunOptions {
   providerId?: string;
   traceContext?: TraceContext;
   forceTemporaryChat?: boolean;
+  projectLabel?: string;
 }
 
 export type M365TurnOptions = M365BrowserRunOptions;

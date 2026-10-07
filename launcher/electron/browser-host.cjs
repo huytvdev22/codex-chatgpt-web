@@ -671,7 +671,7 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal) {
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, projectLabel) {
     signal?.throwIfAborted();
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
@@ -697,12 +697,18 @@ class BrowserHost {
       },
     });
     let m365Label = ordinal === 1 ? "M365 Copilot" : `M365 Copilot ${ordinal}`;
-    if (isM365 && conversationKey) {
-      const projectPart = conversationKey.split("__")[0];
-      if (projectPart && projectPart !== "default") {
-        const parts = projectPart.split("_");
-        const folderName = parts.length > 1 ? parts.slice(0, -1).join("_") : projectPart;
-        m365Label = `M365 Copilot (${folderName})`;
+    if (isM365) {
+      if (projectLabel) {
+        m365Label = `M365 Copilot (${projectLabel})`;
+      } else if (conversationKey) {
+        const projectPart = conversationKey.split("__")[0];
+        if (projectPart && projectPart !== "default" && !/^[a-f0-9]{64}$/.test(projectPart)) {
+          const parts = projectPart.split("_");
+          const folderName = parts.length > 1 ? parts.slice(0, -1).join("_") : projectPart;
+          m365Label = `M365 Copilot (${folderName})`;
+        } else if (/^[a-f0-9]{64}$/.test(conversationKey)) {
+          m365Label = `M365 Copilot (${conversationKey.slice(0, 6)})`;
+        }
       }
     }
     const label = isM365 ? m365Label : `ChatGPT ${ordinal}`;
@@ -2653,6 +2659,7 @@ class BrowserHost {
     connectorIdentity,
     requireRetainedConversation = false,
     signal,
+    projectLabel,
   ) {
     signal?.throwIfAborted();
     if (this.manualOperation) {
@@ -2703,6 +2710,9 @@ class BrowserHost {
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";
+      if (projectLabel && existing.label.startsWith("M365 Copilot")) {
+        existing.label = `M365 Copilot (${projectLabel})`;
+      }
       if (!reused) {
         existing.bootstrapReady = false;
         existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
@@ -2729,7 +2739,7 @@ class BrowserHost {
       error.code = "retained_conversation_unavailable";
       throw error;
     }
-    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal);
+    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, projectLabel);
     this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();

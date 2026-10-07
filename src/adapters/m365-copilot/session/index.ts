@@ -17,6 +17,7 @@ export {
 } from "./conversation-guard";
 export {
   extractCodexProjectCwd,
+  extractProjectLabel,
   resolveM365ConversationKey,
   clearProjectSession,
 } from "./conversation-key";

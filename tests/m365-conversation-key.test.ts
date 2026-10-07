@@ -1,6 +1,7 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   extractCodexProjectCwd,
+  extractProjectLabel,
   resolveM365ConversationKey,
   clearProjectSession,
 } from "../src/adapters/m365-copilot/session";
@@ -8,6 +9,8 @@ import { CodexRawPayload } from "../src/adapters/m365-copilot/normalization";
 import type { CodexParsedRequest } from "../src/types";
 
 describe("M365 Composite Conversation Key Tests", () => {
+  const SHA256_REGEX = /^[a-f0-9]{64}$/;
+
   const createMockParsed = (systemPrompt?: string[], messages?: any[]): CodexParsedRequest => ({
     modelId: "gpt-4o",
     stream: true,
@@ -80,8 +83,45 @@ describe("M365 Composite Conversation Key Tests", () => {
     });
   });
 
+  describe("extractProjectLabel", () => {
+    test("trích xuất tên thư mục dự án làm label hiển thị trên tab", () => {
+      const parsed = createMockParsed(["<cwd>/Users/huytv/IdeaProjects/project-alpha</cwd>"]);
+      const label = extractProjectLabel(parsed);
+      expect(label).toBe("project-alpha");
+    });
+
+    test("trích xuất tên thư mục khi CWD là đường dẫn Windows", () => {
+      const parsed = createMockParsed(["<cwd>D:\\Workspace\\my-app</cwd>"]);
+      const label = extractProjectLabel(parsed);
+      expect(label).toBe("my-app");
+    });
+
+    test("trả về undefined khi không tìm thấy CWD", () => {
+      const parsed = createMockParsed();
+      const label = extractProjectLabel(parsed);
+      expect(label).toBeUndefined();
+    });
+  });
+
   describe("resolveM365ConversationKey", () => {
-    test("ưu tiên header tường minh x-codex-conversation-key nếu có", () => {
+    test("chấp nhận header x-codex-conversation-key dạng 64-hex hợp lệ", () => {
+      const parsed = createMockParsed(["<cwd>/Users/huytv/project-a</cwd>"]);
+      const rawPayload = createMockRawPayload();
+      const valid64Hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+      const headers = new Headers({ "x-codex-conversation-key": valid64Hex });
+
+      const key = resolveM365ConversationKey({
+        parsed,
+        rawPayload,
+        headers,
+        hasPriorAssistantReply: false,
+      });
+
+      expect(key).toBe(valid64Hex);
+      expect(SHA256_REGEX.test(key)).toBe(true);
+    });
+
+    test("chuẩn hóa header x-codex-conversation-key không phải 64-hex thành SHA-256 hợp lệ", () => {
       const parsed = createMockParsed(["<cwd>/Users/huytv/project-a</cwd>"]);
       const rawPayload = createMockRawPayload();
       const headers = new Headers({ "x-codex-conversation-key": "explicit-key-12345" });
@@ -93,10 +133,10 @@ describe("M365 Composite Conversation Key Tests", () => {
         hasPriorAssistantReply: false,
       });
 
-      expect(key).toBe("explicit-key-12345");
+      expect(SHA256_REGEX.test(key)).toBe(true);
     });
 
-    test("gắn kết tên project và thread_id khi rawPayload có thread_id", () => {
+    test("luôn sinh chuỗi sha256 64-hex khi rawPayload có thread_id", () => {
       const parsed = createMockParsed(["<cwd>/Users/huytv/my-project</cwd>"]);
       const rawPayload = createMockRawPayload({ thread_id: "thread-abc-xyz" });
 
@@ -106,8 +146,7 @@ describe("M365 Composite Conversation Key Tests", () => {
         hasPriorAssistantReply: false,
       });
 
-      expect(key).toContain("my-project_");
-      expect(key).toContain("__thread-abc-xyz");
+      expect(SHA256_REGEX.test(key)).toBe(true);
     });
 
     test("phân biệt hoàn toàn giữa hai project khác nhau (mở 2 tab riêng biệt)", () => {
@@ -129,8 +168,8 @@ describe("M365 Composite Conversation Key Tests", () => {
         hasPriorAssistantReply: false,
       });
 
-      expect(keyA).toContain("project-a_");
-      expect(keyB).toContain("project-b_");
+      expect(SHA256_REGEX.test(keyA)).toBe(true);
+      expect(SHA256_REGEX.test(keyB)).toBe(true);
       expect(keyA).not.toBe(keyB);
     });
 
@@ -152,6 +191,7 @@ describe("M365 Composite Conversation Key Tests", () => {
         hasPriorAssistantReply: true,
       });
 
+      expect(SHA256_REGEX.test(keyTurn1)).toBe(true);
       expect(keyTurn1).toBe(keyTurn2);
     });
 
@@ -173,8 +213,8 @@ describe("M365 Composite Conversation Key Tests", () => {
         hasPriorAssistantReply: false,
       });
 
-      expect(keySession1).toContain("single-project_");
-      expect(keySession2).toContain("single-project_");
+      expect(SHA256_REGEX.test(keySession1)).toBe(true);
+      expect(SHA256_REGEX.test(keySession2)).toBe(true);
       expect(keySession1).not.toBe(keySession2);
     });
 
@@ -188,16 +228,16 @@ describe("M365 Composite Conversation Key Tests", () => {
         hasPriorAssistantReply: false,
       });
 
-      const projectTag = key1.split("__")[0];
-      clearProjectSession(projectTag);
+      clearProjectSession();
 
-      // Sau khi clear, kể cả khi hasPriorAssistantReply = true (nếu không còn session cache)
       const key2 = resolveM365ConversationKey({
         parsed,
         rawPayload,
         hasPriorAssistantReply: false,
       });
 
+      expect(SHA256_REGEX.test(key1)).toBe(true);
+      expect(SHA256_REGEX.test(key2)).toBe(true);
       expect(key1).not.toBe(key2);
     });
   });

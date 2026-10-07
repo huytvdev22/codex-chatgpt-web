@@ -49,6 +49,7 @@ export async function executeTurnWithDriver(
         {
           conversationKey: options.conversationKey,
           connectorIdentity: driver.id,
+          projectLabel: options.projectLabel,
         },
         options.signal
       );

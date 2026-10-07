@@ -18,6 +18,7 @@ import {
   isToolCallPart,
   isAssistantFinalAnswer,
   resolveM365ConversationKey,
+  extractProjectLabel,
   type ConversationGuardState,
 } from "./session";
 import { emitStructuredEvent } from "../../observability/emitter";
@@ -263,6 +264,7 @@ async runTurn(
       const traceId = incoming.headers.get("x-codex-trace-id")
         || (cleanTurnId && cleanTurnId.length >= 6 ? cleanTurnId : undefined)
         || `turn_${randomBytes(8).toString("hex")}`;
+      const projectLabel = extractProjectLabel(parsed, rawPayload, incoming.headers);
 
       const reply = await executeM365Turn(promptToSend, {
         onChunk: (delta) => {
@@ -280,6 +282,7 @@ async runTurn(
         modelSlug: parsed.modelId,
         providerId: incoming.headers.get("x-codex-provider") || undefined,
         traceContext,
+        projectLabel,
       });
 
       const { remainingText, toolCall } = toolDetector.finish();

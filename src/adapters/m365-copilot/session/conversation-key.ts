@@ -81,13 +81,30 @@ export function extractCodexProjectCwd(
 const activeProjectSessions = new Map<string, string>();
 
 /**
- * Sinh mã định danh cuộc trò chuyện hỗn hợp (Composite Conversation Key) duy nhất:
- * [Tên Project + Hash Thư mục]__[Thread ID / Session Token]
+ * Trích xuất tên hiển thị ngắn gọn của Project (ví dụ: test-codex-todo-app) để hiển thị trên nhãn Tab của Launcher.
+ */
+export function extractProjectLabel(
+  parsed: CodexParsedRequest,
+  rawPayload?: CodexRawPayload,
+  headers?: Headers
+): string | undefined {
+  const cwd = extractCodexProjectCwd(parsed, rawPayload, headers);
+  if (!cwd) return undefined;
+  const normalized = cwd.replace(/\\/g, "/");
+  const name = basename(normalized).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return name || undefined;
+}
+
+/**
+ * Sinh mã định danh cuộc trò chuyện hỗn hợp (Composite Conversation Key) duy nhất
+ * được băm chuẩn SHA-256 (64 ký tự hex) để tương thích 100% với regex của Desktop Launcher:
+ * SHA256([Tên Project + Hash Thư mục]__[Thread ID / Session Token])
  *
  * Đảm bảo:
- * 1. Hai project khác nhau trong VS Code sẽ có 2 key hoàn toàn khác nhau -> mở 2 Tab M365 riêng biệt.
- * 2. Khi người dùng bấm New Chat trong cùng project -> sinh ra session token mới -> mở Tab M365 mới.
- * 3. Các request tiếp theo trong cùng cuộc trò chuyện -> giữ nguyên key -> tái sử dụng đúng Tab M365 đó.
+ * 1. Hai project khác nhau trong VS Code sẽ có 2 hash hoàn toàn khác nhau -> Launcher mở 2 Tab M365 riêng biệt.
+ * 2. Khi người dùng bấm New Chat trong cùng project -> sinh ra session token mới -> Launcher mở Tab M365 mới.
+ * 3. Các request tiếp theo trong cùng cuộc trò chuyện -> giữ nguyên hash -> Launcher tái sử dụng đúng Tab M365 đó.
+ * 4. Luôn khớp chính xác regex `^[a-f0-9]{64}$` của Desktop Launcher control server.
  */
 export function resolveM365ConversationKey(options: {
   parsed: CodexParsedRequest;
@@ -97,10 +114,17 @@ export function resolveM365ConversationKey(options: {
 }): string {
   logFunctionInput("session:conversation-key", "resolveM365ConversationKey");
 
+  // Helper băm chuỗi thành 64 ký tự hex SHA-256
+  const toSha256 = (val: string) => {
+    return /^[a-f0-9]{64}$/.test(val)
+      ? val
+      : createHash("sha256").update(val).digest("hex");
+  };
+
   // 1. Nếu caller gửi header x-codex-conversation-key chỉ định tường minh, ưu tiên dùng
   const explicitKey = options.headers?.get("x-codex-conversation-key")?.trim();
   if (explicitKey) {
-    return explicitKey;
+    return toSha256(explicitKey);
   }
 
   // 2. Xác định danh tính project từ đường dẫn CWD
@@ -116,7 +140,7 @@ export function resolveM365ConversationKey(options: {
   const rawThreadId = options.rawPayload.getThreadId() || options.headers?.get("x-codex-thread-id")?.trim();
   if (rawThreadId) {
     activeProjectSessions.set(projectTag, rawThreadId);
-    return `${projectTag}__${rawThreadId}`;
+    return toSha256(`${projectTag}__${rawThreadId}`);
   }
 
   // 4. Nếu client không truyền thread_id:
@@ -128,16 +152,21 @@ export function resolveM365ConversationKey(options: {
     const newSessionToken = `turn_${randomBytes(4).toString("hex")}`;
     activeProjectSessions.set(projectTag, newSessionToken);
     console.log(`[session:conversation-key] Bắt đầu đoạn chat mới cho project [${projectTag}]: session=${newSessionToken}`);
-    return `${projectTag}__${newSessionToken}`;
+    return toSha256(`${projectTag}__${newSessionToken}`);
   }
 
   const existingSessionToken = activeProjectSessions.get(projectTag)!;
-  return `${projectTag}__${existingSessionToken}`;
+  return toSha256(`${projectTag}__${existingSessionToken}`);
 }
 
 /**
  * Xóa session đã lưu của một project khi cuộc hội thoại kết thúc hoặc người dùng reset.
  */
-export function clearProjectSession(projectTag: string): void {
-  activeProjectSessions.delete(projectTag);
+export function clearProjectSession(projectTag?: string): void {
+  if (projectTag) {
+    activeProjectSessions.delete(projectTag);
+  } else {
+    activeProjectSessions.clear();
+  }
 }
+
