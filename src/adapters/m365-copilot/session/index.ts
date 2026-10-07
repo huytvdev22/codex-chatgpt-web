@@ -15,3 +15,8 @@ export {
   isReadOnlyTool,
   getMaxIdenticalToolCalls,
 } from "./conversation-guard";
+export {
+  extractCodexProjectCwd,
+  resolveM365ConversationKey,
+  clearProjectSession,
+} from "./conversation-key";

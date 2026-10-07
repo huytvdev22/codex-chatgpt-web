@@ -17,6 +17,7 @@ import {
   stableToolFingerprint,
   isToolCallPart,
   isAssistantFinalAnswer,
+  resolveM365ConversationKey,
   type ConversationGuardState,
 } from "./session";
 import { emitStructuredEvent } from "../../observability/emitter";
@@ -102,25 +103,29 @@ async runTurn(
       return true;
     };
 
-    const conversationKey = incoming.headers.get("x-codex-conversation-key")
-      || rawPayload.getThreadId()
-      || undefined;
-
     // =========================================================================
     // 1. GIẢI THÍCH VỀ BIẾN isNewConversation (TRÁNH HIỂU NHẦM):
+    // - hasPriorAssistantReply: kiểm tra xem trong context đã có phản hồi assistant nào chưa.
+    // - resolveM365ConversationKey: Tự động phân tách phiên theo từng project workspace (CWD)
+    //   và session/thread, định dạng: [projectName_hash]__[sessionToken/threadId].
+    //   -> Khi mở project khác trong VS Code: sinh key riêng -> Launcher tự mở Tab M365 riêng.
+    //   -> Khi bấm New Chat trên Codex: sinh session mới -> mở Tab M365 mới.
+    //   -> Khi chat tiếp trong cùng phiên: giữ nguyên key -> tái sử dụng Tab M365 hiện tại.
     // - isNewConversation CHỈ ĐƯỢC COI LÀ TRUE TRONG 2 TRƯỜNG HỢP:
-    //   (1) Người dùng bấm "New Chat" trên Codex IDE:
-    //       Lúc này context gửi sang chưa có bất kỳ phản hồi nào của assistant (!hasPriorAssistantReply).
+    //   (1) Người dùng bấm "New Chat" trên Codex IDE (!hasPriorAssistantReply).
     //   (2) Lần đầu tiên bắt gặp conversationKey của một cửa sổ VS Code mới (!isKnownConversation).
     // - TRONG SUỐT QUÁ TRÌNH CHAT TIẾP THEO CỦA CỬA SỔ ĐÓ (Request 2, 3, 4...):
     //   hasPriorAssistantReply === true và conversationKey đã được ghi nhận -> isNewConversation = FALSE.
-    // - Ý NGHĨA QUAN TRỌNG:
-    //   Khi isNewConversation = false, trình duyệt TUYỆT ĐỐI KHÔNG BẤM NÚT "New Chat",
-    //   KHÔNG reload trang, KHÔNG toggle lại nút Temporary Chat.
-    //   Toàn bộ phiên trò chuyện (kể cả phiên tạm thời) được DUY TRÌ LIÊN TỤC qua các request
-    //   cho đến khi người dùng chủ động bấm "New Chat" trên Codex IDE.
+    //   Khi đó trình duyệt TUYỆT ĐỐI KHÔNG BẤM NÚT "New Chat", KHÔNG reload trang,
+    //   KHÔNG toggle lại nút Temporary Chat, phiên chat tạm thời được DUY TRÌ LIÊN TỤC.
     // =========================================================================
     const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
+    const conversationKey = resolveM365ConversationKey({
+      parsed,
+      rawPayload,
+      headers: incoming.headers,
+      hasPriorAssistantReply,
+    });
     const isKnownConversation = Boolean(conversationKey && this.activeConversations.has(conversationKey));
     const isNewConversation = !hasPriorAssistantReply || (Boolean(conversationKey) && !isKnownConversation);
 

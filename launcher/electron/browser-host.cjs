@@ -696,7 +696,16 @@ class BrowserHost {
         backgroundThrottling: false,
       },
     });
-    const label = isM365 ? (ordinal === 1 ? "M365 Copilot" : `M365 Copilot ${ordinal}`) : `ChatGPT ${ordinal}`;
+    let m365Label = ordinal === 1 ? "M365 Copilot" : `M365 Copilot ${ordinal}`;
+    if (isM365 && conversationKey) {
+      const projectPart = conversationKey.split("__")[0];
+      if (projectPart && projectPart !== "default") {
+        const parts = projectPart.split("_");
+        const folderName = parts.length > 1 ? parts.slice(0, -1).join("_") : projectPart;
+        m365Label = `M365 Copilot (${folderName})`;
+      }
+    }
+    const label = isM365 ? m365Label : `ChatGPT ${ordinal}`;
     const pageTitle = isM365 ? "M365 Copilot" : "ChatGPT";
     const initialUrl = isM365 ? M365_CHAT_URL : IDLE_BROWSER_URL;
     const tab = {

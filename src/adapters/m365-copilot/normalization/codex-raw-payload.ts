@@ -282,6 +282,12 @@ constructor(raw: CodexRawRequestWire) {
    */
   getThreadId(): string | undefined {
     logFunctionInput("normalization:codex-raw-payload", "getThreadId");
+    if (this.extra?.thread_id) {
+      return String(this.extra.thread_id);
+    }
+    if ((this._rawSnapshot as any)?.thread_id) {
+      return String((this._rawSnapshot as any).thread_id);
+    }
     if (this.client_metadata?.thread_id) {
       return String(this.client_metadata.thread_id);
     }
