@@ -9,26 +9,78 @@ import type {
   ScrapeProgressResult,
 } from "../contracts/page-driver";
 
+/**
+ * URL trang chủ trò chuyện của Microsoft 365 Copilot Web.
+ */
+export const M365_CHAT_URL = "https://m365.cloud.microsoft/chat";
+
+/**
+ * Tập hợp toàn bộ DOM Selectors điều khiển giao diện M365 Copilot Web.
+ * Quy hoạch tập trung để dễ bảo trì, cập nhật và tránh hardcode rải rác trong driver.
+ */
 export const CHAT_SELECTORS = {
+  /**
+   * 1. Ô nhập liệu chính (Editor target):
+   * ProseMirror rich-text contenteditable div có ID chuẩn #m365-chat-editor-target-element.
+   * Đây là nơi tiêm text prompt của người dùng hoặc Codex IDE.
+   */
   editor: "#m365-chat-editor-target-element",
+
+  /**
+   * 1.1. Selector fallback cho ô nhập liệu:
+   * Bao gồm ID chính thức, div có thuộc tính contenteditable="true", hoặc element có role="textbox".
+   * Dùng khi chờ đợi editor render hoặc khi DOM có biến thể nhẹ giữa các tenant Microsoft.
+   */
+  editorFallback:
+    "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']",
+
+  /**
+   * 2. Khung bao ngoài của khu vực chat input (Input Wrapper):
+   * Container chứa toàn bộ editor và các thành phần bổ trợ (mention, attachments, controls).
+   */
   inputWrapper: ".fai-BebopLiteChatInput__inputWrapper",
+
+  /**
+   * 3. Khu vực các nút hành động (Input Actions):
+   * Chứa các nút tương tác ở góc phải/dưới của input box (bao gồm nút Send, Dictation, Stop).
+   */
   actions: ".fai-BebopLiteChatInput__actions",
+
+  /**
+   * 4. Nút Gửi tin nhắn (Send Button):
+   * Nút submit có aria-label="Send" hoặc icon send (.fai-SendButton__sendIcon).
+   * LƯU Ý BẮT BUỘC: Phải có mệnh đề loại trừ :not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon))
+   * để không bao giờ click nhầm vào nút Send khi nó đang biến đổi thành nút Stop generating!
+   */
   sendButton:
     'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))',
+
+  /**
+   * 5. Nút Dừng tạo câu trả lời (Stop Generating Button):
+   * Xuất hiện khi AI đang trong quá trình sinh phản hồi (streaming).
+   * Hỗ trợ đa ngôn ngữ (tiếng Anh: "Stop generating", tiếng Việt: "Dừng tạo"),
+   * kèm class icon stop (.fai-SendButton__stopIcon) và data-testid="stop-button".
+   * Dùng để nhận diện trạng thái isGenerating hoặc để ngắt luồng (abort generation).
+   */
   stopButton:
-    'button[type="submit"][aria-label="Stop generating"], button[aria-label="Stop generating"], button[aria-label*="Stop generating" i], button[aria-label*="Dừng tạo" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]',
+    'button[type="submit"][aria-label="Stop generating"], button[aria-label="Stop generating"], button[aria-label*="Stop generating" i], button[aria-label*="Dừng tạo" i], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]',
+
+  /**
+   * 6. Nút nhập liệu bằng giọng nói (Voice Dictation Button):
+   * Nút khởi động tính năng Speech-to-text / Dictation trên thanh công cụ của input box.
+   */
   dictationButton: 'button[aria-label="Start dictation"]',
 
   /**
-   * Nút New chat (bắt đầu cuộc trò chuyện mới).
+   * 7. Nút New chat (Bắt đầu cuộc trò chuyện mới):
+   * Dùng để khởi tạo phiên chat mới sạch sẽ trên giao diện M365 Copilot.
    */
   newChatButton:
     'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]',
 
   /**
-   * =========================================================================
-   * 3. NÚT TOGGLE CUỘC TRÒ CHUYỆN TẠM THỜI (Temporary Chat) TRÊN M365 COPILOT WEB:
-   * - Element này là một Fluent UI Toggle Button (fui-ToggleButton).
+   * 8. Nút Toggle Cuộc trò chuyện tạm thời (Temporary Chat Toggle):
+   * Element Fluent UI Toggle Button (fui-ToggleButton).
    * - Trạng thái 1 (Chưa bật - Cuộc trò chuyện thường):
    *     <button type="button" aria-label="Temporary chat" class="... fui-ToggleButton ..." aria-pressed="false">
    *     -> Đang lưu lịch sử vào sidebar Chats.
@@ -36,20 +88,65 @@ export const CHAT_SELECTORS = {
    *     <button type="button" aria-label="Temporary chat" class="... fui-ToggleButton U0s2RHhP ..." aria-pressed="true">
    *     -> Không lưu lịch sử cuộc trò chuyện vào sidebar.
    *
-   * [NHẬN ĐỊNH CŨ SAI LẦM]:
-   *   Trước đây dùng:
-   *     const tempBtn = document.querySelector('button[aria-label*="Temporary chat" i]...');
-   *     if (tempBtn) tempBtn.click();
-   *   Cách làm này sai vì đây là Toggle Button! Nếu nút đã ở trạng thái bật (aria-pressed="true"),
-   *   việc click bừa bãi sẽ vô tình TẮT cuộc trò chuyện tạm thời và chuyển về cuộc trò chuyện thường!
-   *
-   * [QUY HOẠCH CHUẨN]:
-   *   Tất cả selector tập trung vào CHAT_SELECTORS.temporaryChatToggle.
-   *   Chỉ click khi aria-pressed === "false". Tuyệt đối KHÔNG click khi aria-pressed === "true".
-   * =========================================================================
+   * [QUY TẮC TOGGLE CHUẨN XÁC]:
+   *   Chỉ click khi aria-pressed === "false" để BẬT.
+   *   Tuyệt đối KHÔNG click khi aria-pressed === "true" vì sẽ vô tình TẮT chế độ tạm thời!
    */
   temporaryChatToggle:
     'button[aria-label="Temporary chat"], .fui-ToggleButton[aria-label="Temporary chat"], button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]',
+
+  /**
+   * 9. Bong bóng tin nhắn AI (Assistant Message):
+   * Dùng để nhận diện các message phản hồi do M365 Copilot sinh ra trong DOM.
+   */
+  aiMessage:
+    ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']",
+
+  /**
+   * 10. Bong bóng tin nhắn người dùng (User Message):
+   * Dùng để nhận diện và loại trừ tin nhắn người dùng khi trích xuất phản hồi của AI.
+   */
+  userMessage: "[data-content='user-message']",
+
+  /**
+   * 11. Vùng hiển thị Markdown câu trả lời (Markdown Reply):
+   */
+  markdownReply: '[data-testid="markdown-reply"]',
+
+  /**
+   * 12. Vùng hiển thị thông báo lỗi trên web (Error Message / Alert):
+   * Dùng để bắt lỗi hạn ngạch, lỗi gián đoạn mạng hoặc "Something went wrong".
+   */
+  errorMessage:
+    '[data-testid="error-message"], .fai-ErrorMessage, [role="alert"], [class*="errorMessage" i], [class*="error-banner" i]',
+
+  /**
+   * 13. Khối hiển thị mã nguồn (Code Preview scroll container):
+   */
+  codePreviewScroll:
+    "[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block",
+
+  /**
+   * 14. Item cuộc trò chuyện hiện tại trong sidebar (Active chat history item):
+   */
+  chatHistoryActiveItem:
+    '[aria-current="page"], [aria-selected="true"], .fai-ChatHistoryItem--selected, [data-is-selected="true"]',
+
+  /**
+   * 15. Nút tùy chọn thêm (More options) của thread trong sidebar:
+   */
+  chatHistoryMoreOptions:
+    'button[aria-label*="More" i], button[aria-label*="Tùy chọn" i], button:has(svg[data-icon-name="More"]), [data-icon-name="More"], button[aria-label*="More options" i], button[aria-label*="Cuộc trò chuyện" i] button',
+
+  /**
+   * 16. Mục chọn trong menu ngữ cảnh (Context menu item):
+   */
+  contextMenuItem: '[role="menuitem"], button, .ms-ContextualMenu-item',
+
+  /**
+   * 17. Nút bấm trong hộp thoại xác nhận (Confirm dialog button):
+   */
+  dialogButton: 'button[type="button"], button',
 };
 
 /**
@@ -80,7 +177,7 @@ export class M365CopilotDriver implements PageDriver {
     logFunctionInput("browser:drivers:m365-copilot", "ensureReady");
     const currentUrl = page.url();
     if (!currentUrl.includes("m365.cloud.microsoft")) {
-      await page.goto("https://m365.cloud.microsoft/chat", {
+      await page.goto(M365_CHAT_URL, {
         waitUntil: "domcontentloaded",
         timeout: 20_000,
       });
@@ -186,7 +283,7 @@ export class M365CopilotDriver implements PageDriver {
       if (page.url().includes("/chat/c/")) {
         console.log(`[m365-driver] Điều hướng về /chat từ thread cũ: ${page.url()}`);
         await page
-          .goto("https://m365.cloud.microsoft/chat", {
+          .goto(M365_CHAT_URL, {
             waitUntil: "domcontentloaded",
             timeout: 15_000,
           })
@@ -221,9 +318,7 @@ export class M365CopilotDriver implements PageDriver {
     }
 
     // Đảm bảo editor đã xuất hiện
-    const editorSelector =
-      "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']";
-    await page.waitForSelector(editorSelector, { timeout: 15_000 });
+    await page.waitForSelector(CHAT_SELECTORS.editorFallback, { timeout: 15_000 });
   }
 
   async ensureModelMode(page: Page, modelSlug?: string): Promise<void> {
@@ -242,14 +337,10 @@ export class M365CopilotDriver implements PageDriver {
   async waitForIdle(page: Page, _signal?: AbortSignal): Promise<void> {
     logFunctionInput("browser:drivers:m365-copilot", "waitForIdle");
     await page
-      .evaluate(async () => {
+      .evaluate(async (selectors) => {
         const isIdle = () => {
-          const stopBtn = document.querySelector(
-            'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
-          );
-          const editor = document.querySelector(
-            '#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]'
-          );
+          const stopBtn = document.querySelector(selectors.stopButton);
+          const editor = document.querySelector(selectors.editorFallback);
           const isEditorDisabled = editor?.getAttribute("aria-disabled") === "true";
           return !stopBtn && !isEditorDisabled;
         };
@@ -262,9 +353,7 @@ export class M365CopilotDriver implements PageDriver {
           if (isIdle()) return;
         }
 
-        const stopBtn = document.querySelector(
-          'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
-        ) as HTMLButtonElement | null;
+        const stopBtn = document.querySelector(selectors.stopButton) as HTMLButtonElement | null;
         if (stopBtn) {
           stopBtn.click();
           const stopClickAt = Date.now();
@@ -274,23 +363,21 @@ export class M365CopilotDriver implements PageDriver {
           }
           await new Promise((r) => setTimeout(r, 800));
         }
-      })
+      }, CHAT_SELECTORS)
       .catch(() => {});
   }
 
   async captureBaseline(page: Page): Promise<BaselineState> {
     logFunctionInput("browser:drivers:m365-copilot", "captureBaseline");
-    return page.evaluate(() => {
+    return page.evaluate((selectors) => {
       const candidates = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-        )
+        document.querySelectorAll<HTMLElement>(selectors.aiMessage)
       );
       const aiList: HTMLElement[] = [];
       for (const el of candidates) {
         if (
-          el.matches("[data-content='user-message']") ||
-          el.querySelector("[data-content='user-message']")
+          el.matches(selectors.userMessage) ||
+          el.querySelector(selectors.userMessage)
         ) {
           continue;
         }
@@ -301,7 +388,7 @@ export class M365CopilotDriver implements PageDriver {
         const isExplicitAi = el.matches(".fai-CopilotMessage, [data-content='ai-message']");
         const hasAiMarkers = Boolean(
           el.querySelector(
-            ".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']"
+            `.fai-CopilotMessage, [data-content='ai-message'], ${selectors.markdownReply}, .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']`
           )
         );
         const heading = el.querySelector(
@@ -330,15 +417,14 @@ export class M365CopilotDriver implements PageDriver {
         lastText: lastEl ? lastEl.textContent?.trim() || "" : "",
         lastHtml: lastEl ? lastEl.innerHTML || "" : "",
       };
-    });
+    }, CHAT_SELECTORS);
   }
 
   async submitPrompt(page: Page, promptText: string): Promise<boolean> {
     logFunctionInput("browser:drivers:m365-copilot", "submitPrompt", { promptTextLength: promptText.length });
-    await page.evaluate((text: string) => {
+    await page.evaluate(({ text, selectors }) => {
       const editor = (document.getElementById("m365-chat-editor-target-element") ||
-        document.querySelector("div[contenteditable='true']") ||
-        document.querySelector("[role='textbox']")) as HTMLElement;
+        document.querySelector(selectors.editorFallback)) as HTMLElement;
       if (!editor) throw new Error("Không tìm thấy ô nhập liệu của M365 Copilot!");
 
       delete (window as any).__m365_code_lines_cache;
@@ -363,26 +449,20 @@ export class M365CopilotDriver implements PageDriver {
       );
       editor.dispatchEvent(new Event("input", { bubbles: true }));
       editor.dispatchEvent(new Event("change", { bubbles: true }));
-    }, promptText);
+    }, { text: promptText, selectors: CHAT_SELECTORS });
 
     await new Promise((r) => setTimeout(r, 300));
 
     // Guaranteed Submission Loop
     let promptSubmitted = false;
     for (let submitAttempt = 0; submitAttempt < 10; submitAttempt++) {
-      promptSubmitted = await page.evaluate(() => {
-        const stopBtn = document.querySelector(
-          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
-        );
-        const sendBtn = document.querySelector(
-          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
-        );
-        const editor = document.querySelector(
-          '#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]'
-        );
+      promptSubmitted = await page.evaluate((selectors) => {
+        const stopBtn = document.querySelector(selectors.stopButton);
+        const sendBtn = document.querySelector(selectors.sendButton);
+        const editor = document.querySelector(selectors.editorFallback);
         const editorText = editor?.textContent?.trim() || "";
         return Boolean(stopBtn) || (!sendBtn && editorText.length === 0);
-      });
+      }, CHAT_SELECTORS);
 
       if (promptSubmitted) {
         console.log(
@@ -392,21 +472,13 @@ export class M365CopilotDriver implements PageDriver {
       }
 
       try {
-        const sendLocator = page
-          .locator(
-            'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
-          )
-          .first();
+        const sendLocator = page.locator(CHAT_SELECTORS.sendButton).first();
         if ((await sendLocator.count()) > 0 && (await sendLocator.isVisible())) {
           await sendLocator.click({ force: true, timeout: 500 });
           await new Promise((r) => setTimeout(r, 200));
-          const isNowGenerating = await page.evaluate(() => {
-            return Boolean(
-              document.querySelector(
-                'button[aria-label="Stop generating"], .fai-SendButton__stopIcon'
-              )
-            );
-          });
+          const isNowGenerating = await page.evaluate((selectors) => {
+            return Boolean(document.querySelector(selectors.stopButton));
+          }, CHAT_SELECTORS);
           if (isNowGenerating) {
             console.log(
               `[m365-driver] [send] Playwright pointer click thành công ở lần thử ${submitAttempt + 1}`
@@ -418,10 +490,8 @@ export class M365CopilotDriver implements PageDriver {
       } catch {}
 
       const domSendSuccess = await page
-        .evaluate(() => {
-          const sendBtn = document.querySelector(
-            'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
-          ) as HTMLButtonElement | null;
+        .evaluate((selectors) => {
+          const sendBtn = document.querySelector(selectors.sendButton) as HTMLButtonElement | null;
           if (sendBtn && !sendBtn.disabled) {
             sendBtn.dispatchEvent(
               new PointerEvent("pointerdown", { bubbles: true, cancelable: true })
@@ -443,18 +513,14 @@ export class M365CopilotDriver implements PageDriver {
             return true;
           }
           return false;
-        })
+        }, CHAT_SELECTORS)
         .catch(() => false);
 
       if (domSendSuccess) {
         await new Promise((r) => setTimeout(r, 200));
-        const isNowGenerating = await page.evaluate(() => {
-          return Boolean(
-            document.querySelector(
-              'button[aria-label="Stop generating"], .fai-SendButton__stopIcon'
-            )
-          );
-        });
+        const isNowGenerating = await page.evaluate((selectors) => {
+          return Boolean(document.querySelector(selectors.stopButton));
+        }, CHAT_SELECTORS);
         if (isNowGenerating) {
           console.log(
             `[m365-driver] [send] DOM send dispatch thành công ở lần thử ${submitAttempt + 1}`
@@ -464,22 +530,16 @@ export class M365CopilotDriver implements PageDriver {
         }
       }
 
-      const shouldPressEnter = await page.evaluate(() => {
-        const isStopPresent = Boolean(
-          document.querySelector(
-            'button[aria-label="Stop generating"], .fai-SendButton__stopIcon'
-          )
-        );
+      const shouldPressEnter = await page.evaluate((selectors) => {
+        const isStopPresent = Boolean(document.querySelector(selectors.stopButton));
         return !isStopPresent;
-      });
+      }, CHAT_SELECTORS);
       if (shouldPressEnter) {
         await page
-          .evaluate(() => {
-            const editor = document.querySelector(
-              '#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]'
-            ) as HTMLElement;
+          .evaluate((selectors) => {
+            const editor = document.querySelector(selectors.editorFallback) as HTMLElement;
             if (editor) editor.focus();
-          })
+          }, CHAT_SELECTORS)
           .catch(() => {});
         await page.keyboard.press("Control+Enter");
         await page.keyboard.press("Enter");
@@ -492,25 +552,19 @@ export class M365CopilotDriver implements PageDriver {
   }
 
   async scrapeTurnProgress(page: Page, baseline: BaselineState): Promise<ScrapeProgressResult> {
-    return page.evaluate((before: BaselineState) => {
-      const stopBtn = document.querySelector(
-        'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]'
-      );
-      const editor = document.querySelector(
-        '#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]'
-      );
+    return page.evaluate(({ before, selectors }: { before: BaselineState; selectors: typeof CHAT_SELECTORS }) => {
+      const stopBtn = document.querySelector(selectors.stopButton);
+      const editor = document.querySelector(selectors.editorFallback);
       const editorDisabled = editor?.getAttribute("aria-disabled") === "true";
 
       const candidates = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-        )
+        document.querySelectorAll<HTMLElement>(selectors.aiMessage)
       );
       const aiList: HTMLElement[] = [];
       for (const el of candidates) {
         if (
-          el.matches("[data-content='user-message']") ||
-          el.querySelector("[data-content='user-message']")
+          el.matches(selectors.userMessage) ||
+          el.querySelector(selectors.userMessage)
         ) {
           continue;
         }
@@ -521,7 +575,7 @@ export class M365CopilotDriver implements PageDriver {
         const isExplicitAi = el.matches(".fai-CopilotMessage, [data-content='ai-message']");
         const hasAiMarkers = Boolean(
           el.querySelector(
-            ".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']"
+            `.fai-CopilotMessage, [data-content='ai-message'], ${selectors.markdownReply}, .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']`
           )
         );
         const heading = el.querySelector(
@@ -539,9 +593,7 @@ export class M365CopilotDriver implements PageDriver {
       );
 
       let detectedWebError = "";
-      const errorEl = document.querySelector(
-        '[data-testid="error-message"], .fai-ErrorMessage, [role="alert"], [class*="errorMessage" i], [class*="error-banner" i]'
-      );
+      const errorEl = document.querySelector(selectors.errorMessage);
       if (errorEl && errorEl.textContent?.trim()) {
         const errText = errorEl.textContent.trim();
         if (
@@ -603,7 +655,7 @@ export class M365CopilotDriver implements PageDriver {
       }
 
       const markdownReplies = Array.from(
-        lastMsg.querySelectorAll('[data-testid="markdown-reply"]')
+        lastMsg.querySelectorAll(selectors.markdownReply)
       ) as HTMLElement[];
       const replyEl =
         markdownReplies.find(
@@ -865,7 +917,7 @@ export class M365CopilotDriver implements PageDriver {
         };
       });
 
-      const actionsEl = document.querySelector(".fai-BebopLiteChatInput__actions");
+      const actionsEl = document.querySelector(selectors.actions);
       const hasSubmitBtn = Boolean(
         actionsEl?.querySelector('button[type="submit"], .fai-SendButton')
       );
@@ -886,30 +938,26 @@ export class M365CopilotDriver implements PageDriver {
         fastPathRawText,
         isInputActionsIdle,
       };
-    }, baseline);
+    }, { before: baseline, selectors: CHAT_SELECTORS });
   }
 
   async abortGeneration(page: Page): Promise<void> {
     logFunctionInput("browser:drivers:m365-copilot", "abortGeneration");
     await page
-      .evaluate(() => {
-        const stopBtn = document.querySelector(
-          'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
-        ) as HTMLButtonElement | null;
+      .evaluate((selectors) => {
+        const stopBtn = document.querySelector(selectors.stopButton) as HTMLButtonElement | null;
         if (stopBtn) stopBtn.click();
-      })
+      }, CHAT_SELECTORS)
       .catch(() => {});
   }
 
   async periodicAction(page: Page, attempt: number): Promise<void> {
     if (attempt % 4 === 0) {
       await page
-        .evaluate(() => {
+        .evaluate((selectors) => {
           window.scrollTo(0, document.body.scrollHeight);
           document
-            .querySelectorAll(
-              "[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block"
-            )
+            .querySelectorAll(selectors.codePreviewScroll)
             .forEach((el) => {
               try {
                 const scrollEl = el as HTMLElement;
@@ -919,7 +967,7 @@ export class M365CopilotDriver implements PageDriver {
                 }
               } catch {}
             });
-        })
+        }, CHAT_SELECTORS)
         .catch(() => {});
     }
   }
@@ -934,21 +982,16 @@ export class M365CopilotDriver implements PageDriver {
 
       console.log(`[m365-driver] Đang tự động dọn dẹp cuộc trò chuyện tạm thời: ${page.url()}`);
       await page
-        .evaluate(async () => {
+        .evaluate(async (selectors) => {
           // 1. Tìm nút 'More options' / 'Tùy chọn khác' của thread hiện tại trong danh sách Chats
           const activeItem =
-            document.querySelector(
-              '[aria-current="page"], [aria-selected="true"], .fai-ChatHistoryItem--selected, [data-is-selected="true"]'
-            ) || document.querySelector('nav a[href*="/chat/c/"]')?.parentElement;
+            document.querySelector(selectors.chatHistoryActiveItem) ||
+            document.querySelector('nav a[href*="/chat/c/"]')?.parentElement;
 
-          let moreBtn = activeItem?.querySelector(
-            'button[aria-label*="More" i], button[aria-label*="Tùy chọn" i], button:has(svg[data-icon-name="More"]), [data-icon-name="More"]'
-          ) as HTMLElement | null;
+          let moreBtn = activeItem?.querySelector(selectors.chatHistoryMoreOptions) as HTMLElement | null;
 
           if (!moreBtn) {
-            moreBtn = document.querySelector(
-              'button[aria-label*="More options" i], button[aria-label*="Cuộc trò chuyện" i] button'
-            ) as HTMLElement | null;
+            moreBtn = document.querySelector(selectors.chatHistoryMoreOptions) as HTMLElement | null;
           }
 
           if (moreBtn) {
@@ -957,7 +1000,7 @@ export class M365CopilotDriver implements PageDriver {
 
             // 2. Click mục Delete trong context menu
             const deleteItem = Array.from(
-              document.querySelectorAll('[role="menuitem"], button, .ms-ContextualMenu-item')
+              document.querySelectorAll(selectors.contextMenuItem)
             ).find((el) =>
               /delete|xóa/i.test(el.textContent || el.getAttribute("aria-label") || "")
             ) as HTMLElement | null;
@@ -968,7 +1011,7 @@ export class M365CopilotDriver implements PageDriver {
 
               // 3. Confirm dialog xác nhận xóa
               const confirmBtn = Array.from(
-                document.querySelectorAll('button[type="button"], button')
+                document.querySelectorAll(selectors.dialogButton)
               ).find((b) => {
                 const text = (
                   b.textContent ||
@@ -985,11 +1028,11 @@ export class M365CopilotDriver implements PageDriver {
               }
             }
           }
-        })
+        }, CHAT_SELECTORS)
         .catch(() => {});
 
       await page
-        .goto("https://m365.cloud.microsoft/chat", {
+        .goto(M365_CHAT_URL, {
           waitUntil: "domcontentloaded",
           timeout: 10_000,
         })
