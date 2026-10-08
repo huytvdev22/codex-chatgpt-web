@@ -177,29 +177,27 @@ describe("M365 Tool Calling PoC Tests", () => {
     const posix = new PosixCommandStrategy();
     const ps = new PowerShellCommandStrategy();
 
-    // --- KIỂM TRA POSIX / NODE RUNNER (macOS, Linux) ---
-    // 1. read_file: dùng node -e
+    // --- KIỂM TRA POSIX NATIVE RUNNER (macOS, Linux) ---
+    // 1. read_file: dùng head / sed native để kích hoạt icon 📖
     const r1 = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "src/main.ts" } }, [], posix);
     expect(r1.name).toBe("exec_command");
-    expect(JSON.parse(r1.arguments).cmd).toContain('node -e "const fs=require(\'fs\')');
-    expect(JSON.parse(r1.arguments).cmd).toContain('"src/main.ts"');
+    expect(JSON.parse(r1.arguments).cmd).toContain('head -n 150 "src/main.ts"');
 
-    // 2. list_dir: dùng node -e
+    // 2. list_dir: dùng ls native để kích hoạt icon 📁
     const r2 = M365ToolBridge.mapToolCall({ name: "list_dir", arguments: { path: "src" } }, [], posix);
     expect(r2.name).toBe("exec_command");
-    expect(JSON.parse(r2.arguments).cmd).toContain('node -e "const fs=require(\'fs\')');
-    expect(JSON.parse(r2.arguments).cmd).toContain('"src"');
+    expect(JSON.parse(r2.arguments).cmd).toContain('ls -la "src"');
 
-    // 3. search_files: dùng node -e
+    // 3. search_files: dùng find native để kích hoạt icon 🔍
     const r3 = M365ToolBridge.mapToolCall({ name: "search_files", arguments: { pattern: "*.json" } }, [], posix);
     expect(r3.name).toBe("exec_command");
-    expect(JSON.parse(r3.arguments).cmd).toContain("node -e");
+    expect(JSON.parse(r3.arguments).cmd).toContain("find");
     expect(JSON.parse(r3.arguments).cmd).toContain('"*.json"');
 
-    // 4. grep_code: dùng node -e
+    // 4. grep_code: dùng grep native để kích hoạt icon 🔍
     const r4 = M365ToolBridge.mapToolCall({ name: "grep_code", arguments: { query: "compileM365Prompt" } }, [], posix);
     expect(r4.name).toBe("exec_command");
-    expect(JSON.parse(r4.arguments).cmd).toContain("node -e");
+    expect(JSON.parse(r4.arguments).cmd).toContain("grep");
     expect(JSON.parse(r4.arguments).cmd).toContain('"compileM365Prompt"');
 
     // 5. git_status
@@ -233,7 +231,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     const psRead = M365ToolBridge.mapToolCall({ name: "read_file", arguments: { path: "demo.java" } }, [], ps);
     expect(psRead.name).toBe("exec_command");
     const psReadCmd = JSON.parse(psRead.arguments).cmd;
-    expect(psReadCmd).toContain("powershell -NoProfile -EncodedCommand ");
+    expect(psReadCmd).toContain("Get-Content");
 
     const psWrite = M365ToolBridge.mapToolCall({ name: "write_file", arguments: { path: "demo.txt", content: "Hello PS" } }, [], ps);
     expect(psWrite.name).toBe("exec_command");
@@ -343,8 +341,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(mapped.name).toBe("exec_command");
     const cmd = JSON.parse(mapped.arguments).cmd;
     expect(cmd).toContain('"server.js"');
-    expect(cmd).toContain('15 45');
-    expect(cmd).toContain('lines.slice');
+    expect(cmd).toContain("sed -n '15,45p' \"server.js\"");
   });
 
   test("Phase 11: normalizeFileContent eliminates trailing backslashes, empty-line slashes, and unescapes Turndown brackets/braces", () => {
@@ -433,7 +430,7 @@ const b = \\{\\
 
     // 1. Kiểm tra lệnh đọc file thật trên Windows
     const readCmd = psStrategy.readFile("package.json", { startLine: 1, endLine: 3 });
-    expect(readCmd).toContain("powershell -NoProfile -EncodedCommand ");
+    expect(readCmd).toContain("Get-Content");
     
     // Thực thi qua PowerShell nếu môi trường có powershell (ví dụ Windows hoặc máy có pwsh)
     if (process.platform === "win32") {
@@ -448,16 +445,12 @@ const b = \\{\\
       expect(listOutput).toContain("tool-bridge.ts");
       expect(listOutput).toContain("strategies/");
     } else {
-      // Trên POSIX (mac/linux), kiểm tra định dạng base64 EncodedCommand
-      const base64Part = readCmd.split("-EncodedCommand ")[1].trim();
-      const decodedScript = Buffer.from(base64Part, "base64").toString("utf16le");
-      expect(decodedScript).toContain("$lines = [System.IO.File]::ReadAllLines");
-      expect(decodedScript).toContain("cGFja2FnZS5qc29u");
+      // Trên POSIX (mac/linux), kiểm tra định dạng lệnh native PowerShell
+      expect(readCmd).toContain('Get-Content -LiteralPath "package.json"');
+      expect(readCmd).toContain("-TotalCount 3");
 
       const listCmd = psStrategy.listDir("src/adapters/m365-copilot");
-      const listBase64 = listCmd.split("-EncodedCommand ")[1].trim();
-      const decodedListScript = Buffer.from(listBase64, "base64").toString("utf16le");
-      expect(decodedListScript).toContain("Get-ChildItem -LiteralPath");
+      expect(listCmd).toContain('Get-ChildItem -LiteralPath "src/adapters/m365-copilot" -Name');
     }
 
     // 3. Kiểm tra Resolver tự động phát hiện đúng strategy

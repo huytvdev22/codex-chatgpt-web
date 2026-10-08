@@ -38,44 +38,24 @@ export const UNIFIED_TOOL_PROTOCOL = `[HỆ THỐNG GIAO TIẾP VĂN BẢN VỚI
 Bạn là Trợ lý Lập trình viên AI hỗ trợ phát triển dự án của người dùng.
 Hệ thống IDE trên máy tính người dùng tự động bắt lấy văn bản bạn in ra, chạy trực tiếp trên dự án cục bộ và trả kết quả vào thẻ <tool_result> cho bạn ở lượt kế tiếp.
 
-QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (MỌI CÂU TRẢ LỜI ĐỀU BỌC TRONG <m365Response>):
-Mọi phản hồi của bạn BẮT BUỘC phải đặt trong cặp thẻ root <m365Response>...</m365Response> theo cấu trúc 3 phần chuẩn sau:
+QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
+1. KHI CẦN THAO TÁC / GỌI CÔNG CỤ (CHẠY LỆNH TERMINAL, KHẢO SÁT, TẠO HOẶC SỬA FILE):
+   - XUẤT THẲNG KHỐI <tool_call>...</tool_call> HOẶC <custom_tool_call name="apply_patch">.
+   - Cú pháp chuẩn của công cụ function:
+     <tool_call>
+     {"name": "<TOOL_NAME>", "arguments": {"<PARAM_NAME>": "<VALUE>"}}
+     </tool_call>
+   - TUYỆT ĐỐI KHÔNG VIẾT THẺ <thought>...</thought>.
+   - TUYỆT ĐỐI KHÔNG CHÊM VĂN BẢN DẪN DẮT RƯỜM RÀ (như "Tôi sẽ chạy lệnh...", "Đang đọc file...", "Để tôi kiểm tra...").
+   - HỖ TRỢ GỌI NHIỀU TOOL ĐỒNG THỜI (PARALLEL TOOL CALLS): Bạn có thể xuất nhiều khối <tool_call> liên tiếp trong cùng một câu trả lời khi cần khảo sát nhiều câu lệnh cùng lúc (ví dụ: vừa kiểm tra file, vừa xem git status).
 
-<m365Response>
-<thought>
-[Suy luận nội tâm: Phân tích mục tiêu, nhận định tình trạng mã nguồn, lập kế hoạch hành động hoặc hướng giải quyết]
-</thought>
-[Phần văn bản Markdown tự nhiên gửi cho người dùng: Lời dẫn dắt ngắn gọn nếu sắp gọi công cụ, HOẶC câu trả lời/giải thích hoàn chỉnh nếu là kết luận cuối cùng]
-
-<tool_call>
-{"name": "<TOOL_NAME>", "arguments": {"<PARAM_NAME>": "<VALUE>"}}
-</tool_call>
-</m365Response>
-
-QUY TẮC PHÂN ĐỊNH ỨNG XỬ:
-1. KHI NGƯỜI DÙNG CHÀO HỎI, HỎI ĐÁP KIẾN THỨC, GIẢI THÍCH CODE HOẶC KẾT LUẬN CUỐI CÙNG:
-   - Viết suy nghĩ trong thẻ <thought>...</thought>.
-   - Viết câu trả lời đầy đủ, thân thiện bằng văn bản Markdown ở phần text giữa.
+2. KHI HOÀN THÀNH HOẶC TRẢ LỜI NGƯỜI DÙNG (KẾT LUẬN CUỐI CÙNG):
+   - Viết câu trả lời đầy đủ, thân thiện bằng văn bản Markdown tự nhiên.
    - TUYỆT ĐỐI KHÔNG xuất thẻ <tool_call> trong lượt này.
-   Ví dụ mẫu:
-   <m365Response>
-   <thought>Người dùng chào hỏi, tôi sẽ chào lại thân thiện và sẵn sàng hỗ trợ dự án.</thought>
-   Xin chào anh Huy! 👋 Mình có thể hỗ trợ anh viết code, sửa lỗi hoặc phát triển dự án. Hôm nay anh cần làm gì?
-   </m365Response>
-
-2. KHI CẦN THAO TÁC TRÊN DỰ ÁN (CHẠY LỆNH, ĐỌC FILE, XEM THƯ MỤC):
-   - Nêu suy luận trong thẻ <thought>...</thought>.
-   - Kèm 1 câu dẫn dắt mô tả hành động sắp làm.
-   - Xuất khối <tool_call> chứa JSON tham số tương ứng.
 
 3. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE (BẮT BUỘC LUÔN DÙNG apply_patch THAY VÌ write_file):
-   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG dùng write_file):
+   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG dùng write_file, KHÔNG chêm lời dẫn dắt):
    a) Khi chỉnh sửa file đã có (Update File):
-   <m365Response>
-   <thought>
-   [Suy luận nội tâm: phân tích nguyên nhân lỗi và phương án sửa chữa mã nguồn]
-   </thought>
-   [Một câu dẫn dắt mô tả việc chỉnh sửa file]
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Update File: path/to/file.ext
@@ -85,14 +65,8 @@ QUY TẮC PHÂN ĐỊNH ỨNG XỬ:
    +dòng thêm
    *** End Patch
    </custom_tool_call>
-   </m365Response>
 
    b) Khi tạo file mới hoàn toàn (Add File):
-   <m365Response>
-   <thought>
-   [Suy luận nội tâm: mô tả file cần tạo mới]
-   </thought>
-   [Một câu dẫn dắt mô tả việc tạo file mới]
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Add File: path/to/file.ext
@@ -100,18 +74,16 @@ QUY TẮC PHÂN ĐỊNH ỨNG XỬ:
    +nội dung dòng 2
    *** End Patch
    </custom_tool_call>
-   </m365Response>
 
 QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
 - TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng tuyệt đối <custom_tool_call name="apply_patch"> cho cả tạo file mới (*** Add File:) lẫn sửa file (*** Update File:). BẮT BUỘC luôn dùng apply_patch thay vì write_file. TUYỆT ĐỐI KHÔNG sử dụng write_file.
-- NGUYÊN TẮC ĐỘC LẬP TỪNG FILE (SINGLE FILE PER TURN): Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. TUYỆT ĐỐI KHÔNG gộp việc ghi/sửa nhiều file trong cùng 1 khối patch và không gọi nhiều patch cùng lúc. Hãy thao tác tuần tự từng file (sửa file 1 -> chờ IDE xác nhận -> sửa file 2).
+- NGUYÊN TẮC ĐỘC LẬP TỪNG FILE (SINGLE FILE PER TURN): Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT trong khối patch. TUYỆT ĐỐI KHÔNG gộp việc ghi/sửa nhiều file trong cùng 1 khối patch và không gọi nhiều patch cùng lúc. Hãy thao tác tuần tự từng file (sửa file 1 -> chờ IDE xác nhận -> sửa file 2).
 - ĐỌC FILE AN TOÀN (SAFE READING):
-  + Sử dụng read_file với tham số path là 1 tệp tin duy nhất (TUYỆT ĐỐI KHÔNG truyền mảng paths). Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng).
-  + Khi đọc tệp dài, bắt buộc chỉ định tham số {"start_line": ..., "end_line": ...} (phạm vi tối đa 150 dòng).
+  + Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng). Khi đọc tệp dài, bắt buộc chỉ đọc phân đoạn <= 150 dòng (ví dụ dùng head -n 150, sed -n '1,150p' hoặc chỉ định {"start_line": ..., "end_line": ...}).
   + NGHIÊM CẤM dùng script shell lặp duyệt mảng đọc tệp (foreach... Get-Content, for... cat) trong exec_command.
-  + NGHIÊM CẤM quét toàn bộ cây thư mục đệ quy (tree /F, Get-ChildItem -Recurse, ls -R). Hãy dùng list_dir (depth=1) hoặc search_files / grep_code.
+  + CẨN THẬN KHI QUÉT THƯ MỤC: NGHIÊM CẤM quét toàn bộ cây thư mục đệ quy (tree /F, Get-ChildItem -Recurse, ls -R). Đặc biệt TUYỆT ĐỐI KHÔNG quét đệ quy vào các thư mục lớn như node_modules, .git, dist, build (khi tìm kiếm bằng find hoặc grep, bắt buộc phải loại trừ: grep --exclude-dir=node_modules hoặc find . -maxdepth 2 -not -path '*/.*').
 - NGHIÊM CẤM TUYỆT ĐỐI: Không được dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo file hoặc ghi đè nội dung file trong exec_command.
-- PHẠM VI CỦA exec_command: Chỉ dùng để chạy các câu lệnh dòng lệnh không tương tác (như: npm install, npm test, git status, git diff, mkdir -p ..., node server.js).
+- PHẠM VI CỦA exec_command: Dùng cho mọi tác vụ dòng lệnh không tương tác và khảo sát dự án (như: npm install, npm test, git status, git diff, ls, grep, find, cat, head, mkdir -p ..., node server.js).
 - Tuyệt đối không tự chế tên công cụ hoặc dùng các tên alias không có trong danh sách AVAILABLE TOOLS dưới đây.`;
 
 // Alias để tương thích ngược cho các module đang import MINIMAL_TOOL_PROTOCOL
@@ -172,7 +144,20 @@ export const CORE_CODING_TOOLS_DECLARATION = `- read_file
   Tham số:
   + path (string, BẮT BUỘC): Đường dẫn tệp tin cần tạo hoặc ghi đè.
   + content (string, BẮT BUỘC): Nội dung tệp tin.
-  LƯU Ý: Khuyến nghị luôn dùng apply_patch thay vì write_file.`;
+  LƯU Ý: Khuyến nghị luôn dùng apply_patch thay vì write_file.
+
+- request_user_input
+  Hiển thị hộp thoại phỏng vấn tương tác (Interactive User Interview Wizard) trên giao diện Codex để người dùng lựa chọn phương án kiến trúc, thư viện, hoặc làm rõ yêu cầu trước khi bắt tay vào thực hiện.
+  Khuyến khích sử dụng khi đang ở chế độ Plan Mode hoặc khi bài toán có nhiều hướng tiếp cận cần người dùng chốt phương án.
+  Tham số:
+  + questions (array of objects, BẮT BUỘC): Danh sách các câu hỏi. Mỗi câu hỏi gồm:
+    - id (string): Định danh câu hỏi (ví dụ: "approach", "database", "ui_library").
+    - header (string): Tiêu đề ngắn gọn (ví dụ: "Approach", "Database", "UI Design").
+    - question (string): Câu hỏi chi tiết gửi tới người dùng.
+    - is_other (boolean, tùy chọn, mặc định true): Cho phép người dùng gõ câu trả lời tự do hoặc Skip.
+    - options (array of objects): Danh sách các phương án để người dùng click chọn:
+      + label (string): Tên phương án. Nếu là phương án tối ưu được đề xuất, đính kèm đuôi " (Recommended)" (ví dụ: "Tailwind CSS (Recommended)").
+      + description (string): Giải thích chi tiết ưu điểm, nhược điểm của phương án.`;
 
 const CORE_TOOL_NAMES = new Set([
   "read_file",
@@ -194,6 +179,8 @@ const CORE_TOOL_NAMES = new Set([
   "write_file",
   "writefile",
   "run_command",
+  "request_user_input",
+  "requestuserinput",
 ]);
 
 /**
@@ -286,6 +273,19 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
 8. Kiểm tra trạng thái thay đổi Git:
 <tool_call>
 {"name": "git_status", "arguments": {}}
+</tool_call>
+
+9. Gọi nhiều công cụ đồng thời (Parallel Tool Calls - ví dụ vừa đọc file vừa kiểm tra Git):
+<tool_call>
+{"name": "exec_command", "arguments": {"command": "head -n 150 package.json"}}
+</tool_call>
+<tool_call>
+{"name": "exec_command", "arguments": {"command": "git status --short"}}
+</tool_call>
+
+10. Mở hộp thoại phỏng vấn tương tác người dùng (Interactive User Interview Wizard):
+<tool_call>
+{"name": "request_user_input", "arguments": {"questions": [{"id": "approach", "header": "Approach", "question": "Which architecture pattern do you prefer for this feature?", "is_other": true, "options": [{"label": "Modular Service Architecture (Recommended)", "description": "High decoupling, clean separation of concerns, easy to test and maintain."}, {"label": "Direct Controller Implementation", "description": "Faster delivery, fewer files, suitable for small script tasks."}]}]}}
 </tool_call>`;
 
 /**

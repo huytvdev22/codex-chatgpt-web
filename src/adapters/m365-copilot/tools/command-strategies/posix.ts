@@ -9,49 +9,54 @@ import type { FileRange, WriteFileOptions } from "./types";
 export class PosixCommandStrategy extends BasePlatformCommandStrategy {
   readonly platformName = "posix";
 
-    /**
+  /**
    * Sinh lệnh đọc nội dung file an toàn trong môi trường POSIX (macOS, Linux).
+   * Sử dụng lệnh native `head` / `sed` để Codex Rust binary nhận diện thành CommandAction::Read (icon 📖).
    */
-readFile(targetPath: string, range?: FileRange): string {
+  readFile(targetPath: string, range?: FileRange): string {
     logFunctionInput("tools:command-strategies:posix", "readFile", { targetPath, range });
     const file = String(targetPath || "package.json");
     const startLine = range?.startLine ? Math.max(0, range.startLine) : 0;
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
 
-    const script = `const fs=require('fs');try{const f=process.argv[1],raw=fs.readFileSync(f,'utf8');const lines=raw.split(/\\r?\\n/),tot=lines.length;const rStart=parseInt(process.argv[2]||'0',10),rEnd=parseInt(process.argv[3]||'0',10);const isPaged=rStart>0||rEnd>0;const s=rStart>0?Math.max(1,rStart):1;const e=rEnd>0?Math.min(tot,Math.min(rEnd,s+149)):(isPaged?Math.min(tot,s+149):Math.min(tot,150));const slice=lines.slice(s-1,e);const num=slice.map((l,idx)=>(s+idx)+': '+l).join('\\n');console.log('[File: '+f+' ('+s+'-'+e+'/'+tot+' lines)]\\n'+num);if(e<tot){console.log('[NOTE: File continues. To read the next chunk, specify start_line='+(e+1)+', end_line='+Math.min(tot,e+150)+']')}}catch(e){console.error('Cannot read file: '+e.message);process.exit(1)}`;
-    return `node -e "${script}" ${this.quoteArg(file)} ${startLine} ${endLine}`;
+    if (startLine > 1) {
+      const end = endLine > 0 ? endLine : startLine + 149;
+      return `sed -n '${startLine},${end}p' ${this.quoteArg(file)}`;
+    }
+    const end = endLine > 0 ? endLine : 150;
+    return `head -n ${end} ${this.quoteArg(file)}`;
   }
 
-    /**
+  /**
    * Sinh lệnh liệt kê danh sách tệp và thư mục trong môi trường POSIX.
+   * Sử dụng lệnh native `ls -la` để Codex Rust binary nhận diện thành CommandAction::ListFiles (icon 📁).
    */
-listDir(targetPath: string): string {
+  listDir(targetPath: string): string {
     logFunctionInput("tools:command-strategies:posix", "listDir", { targetPath });
     const dir = String(targetPath || ".");
-    const script = `const fs=require('fs');try{const items=fs.readdirSync(process.argv[1],{withFileTypes:true}).map(e=>e.isDirectory()?e.name+'/':e.name).sort();console.log(items.join('\\n'))}catch(e){console.error('Cannot list dir: '+e.message);process.exit(1)}`;
-    return `node -e "${script}" ${this.quoteArg(dir)}`;
+    return `ls -la ${this.quoteArg(dir)}`;
   }
 
-    /**
+  /**
    * Sinh lệnh tìm kiếm tệp tin theo mẫu (pattern) trong môi trường POSIX.
+   * Sử dụng lệnh native `find` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
-searchFiles(pattern: string, targetPath = "."): string {
+  searchFiles(pattern: string, targetPath = "."): string {
     logFunctionInput("tools:command-strategies:posix", "searchFiles", { pattern, targetPath });
     const dir = String(targetPath || ".");
     const pat = String(pattern || "*");
-    const script = `const fs=require('fs'),p=require('path');const root=process.argv[1]||'.',pattern=process.argv[2]||'*';const reg=new RegExp(pattern.replace(/\\./g,'\\\\.').replace(/\\*/g,'.*').replace(/\\?/g,'.'),'i');const res=[];function walk(d){if(res.length>=50)return;try{for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.name.startsWith('.')||e.name==='node_modules'||e.name==='dist'||e.name==='target')continue;const full=p.join(d,e.name);if(e.isDirectory())walk(full);else if(reg.test(e.name)||reg.test(full))res.push(full);if(res.length>=50)break;}}catch{}}walk(root);console.log(res.join('\\n'));`;
-    return `node -e "${script}" ${this.quoteArg(dir)} ${this.quoteArg(pat)}`;
+    return `find ${this.quoteArg(dir)} -maxdepth 3 -name ${this.quoteArg(pat)} -not -path '*/.*' -not -path '*/node_modules/*'`;
   }
 
-    /**
+  /**
    * Sinh lệnh tìm kiếm nội dung mã nguồn (grep) trong môi trường POSIX.
+   * Sử dụng lệnh native `grep` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
-grepCode(query: string, targetPath = "."): string {
+  grepCode(query: string, targetPath = "."): string {
     logFunctionInput("tools:command-strategies:posix", "grepCode", { query, targetPath });
     const dir = String(targetPath || ".");
     const q = String(query || "");
-    const script = `const fs=require('fs'),p=require('path');const root=process.argv[1]||'.',q=process.argv[2]||'';let c=0;function scan(d){if(c>=50)return;try{for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.name.startsWith('.')||e.name==='node_modules'||e.name==='dist'||e.name==='target')continue;const full=p.join(d,e.name);if(e.isDirectory())scan(full);else if(/\\.(ts|js|tsx|jsx|json|md|html|css|py|rs|go|java|xml|yml|yaml|toml|sh|bat|cmd|ps1)$/i.test(e.name)){try{const lines=fs.readFileSync(full,'utf8').split('\\n');for(let i=0;i<lines.length;i++){if(lines[i].includes(q)){console.log(full+':'+(i+1)+': '+lines[i].trim());c++;if(c>=50)return;}}}catch{}}}}catch{}}scan(root);`;
-    return `node -e "${script}" ${this.quoteArg(dir)} ${this.quoteArg(q)}`;
+    return `grep -rn --exclude-dir={node_modules,.git,dist,target,bin,obj} ${this.quoteArg(q)} ${this.quoteArg(dir)}`;
   }
 
     /**

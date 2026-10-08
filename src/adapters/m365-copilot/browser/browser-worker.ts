@@ -24,8 +24,17 @@ export interface M365BrowserRunOptions {
   forceTemporaryChat?: boolean;
 }
 
+export const M365_CHAT_EDITOR_SELECTOR = [
+  '#m365-chat-editor-target-element',
+  '.fai-BebopLiteChatInput [role="textbox"]',
+  '.fai-ChatInput [role="textbox"]',
+  'div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i])',
+  '[role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i])',
+  'textarea:not([aria-readonly="true"])',
+].join(", ");
+
 export const CHAT_SELECTORS = {
-  editor: '#m365-chat-editor-target-element',
+  editor: M365_CHAT_EDITOR_SELECTOR,
   inputWrapper: '.fai-BebopLiteChatInput__inputWrapper',
   actions: '.fai-BebopLiteChatInput__actions',
   sendButton: 'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))',
@@ -175,7 +184,7 @@ export async function executeM365Turn(
     }
 
     // 3. Chờ khung nhập liệu xuất hiện
-    const editorSelector = "#m365-chat-editor-target-element, div[contenteditable='true'], [role='textbox']";
+    const editorSelector = M365_CHAT_EDITOR_SELECTOR;
     await page.waitForSelector(editorSelector, { timeout: 15_000 });
 
     // Đảm bảo Temporary Chat được bật nếu người dùng chưa bật
@@ -200,7 +209,9 @@ export async function executeM365Turn(
         const stopBtn = document.querySelector(
           'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
         );
-        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
+        const editor = document.querySelector(
+          '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
+        );
         const isEditorDisabled = editor?.getAttribute("aria-disabled") === "true";
         return !stopBtn && !isEditorDisabled;
       };
@@ -275,8 +286,11 @@ export async function executeM365Turn(
     // 4. Nhập prompt vào editor và kích hoạt nút Gửi
     await page.evaluate((text) => {
       const editor = (document.getElementById("m365-chat-editor-target-element") ||
-        document.querySelector("div[contenteditable='true']") ||
-        document.querySelector("[role='textbox']")) as HTMLElement;
+        document.querySelector(".fai-BebopLiteChatInput [role='textbox']") ||
+        document.querySelector(".fai-ChatInput [role='textbox']") ||
+        document.querySelector("div[contenteditable='true']:not([aria-readonly='true']):not([aria-label*='Code editor' i])") ||
+        document.querySelector("[role='textbox']:not([aria-readonly='true']):not([aria-label*='Code editor' i])") ||
+        document.querySelector("textarea:not([aria-readonly='true'])")) as HTMLElement;
       if (!editor) throw new Error("Không tìm thấy ô nhập liệu của M365 Copilot!");
       // Reset cache tích lũy dòng code của lượt trước
       delete (window as any).__m365_code_lines_cache;
@@ -313,7 +327,9 @@ export async function executeM365Turn(
         const sendBtn = document.querySelector(
           'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
         );
-        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
+        const editor = document.querySelector(
+          '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
+        );
         const editorText = editor?.textContent?.trim() || "";
         return Boolean(stopBtn) || (!sendBtn && editorText.length === 0);
       });
@@ -383,7 +399,9 @@ export async function executeM365Turn(
       });
       if (shouldPressEnter) {
         await page.evaluate(() => {
-          const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]') as HTMLElement;
+          const editor = document.querySelector(
+            '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
+          ) as HTMLElement;
           if (editor) {
             editor.focus();
           }
@@ -437,7 +455,9 @@ export async function executeM365Turn(
         const stopBtn = document.querySelector(
           'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]'
         );
-        const editor = document.querySelector('#m365-chat-editor-target-element, div[contenteditable="true"], [role="textbox"]');
+        const editor = document.querySelector(
+          '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
+        );
         const editorDisabled = editor?.getAttribute("aria-disabled") === "true";
 
         // Lọc danh sách tin nhắn AI độc quyền (loại trừ hoàn toàn User message)

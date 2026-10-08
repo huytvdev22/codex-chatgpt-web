@@ -26,166 +26,54 @@ private wrapEncoded(script: string): string {
     return `powershell -NoProfile -EncodedCommand ${encodePowerShellScript(script.trim())}`;
   }
 
-    /**
+  /**
    * Sinh lệnh PowerShell đọc nội dung tệp tin trên hệ điều hành Windows.
+   * Bắt đầu bằng `Get-Content` để Codex Rust binary nhận diện thành CommandAction::Read (icon 📖).
    */
-readFile(targetPath: string, range?: FileRange): string {
+  readFile(targetPath: string, range?: FileRange): string {
     logFunctionInput("tools:command-strategies:powershell", "readFile", { targetPath, range });
-    const b64Path = Buffer.from(String(targetPath || "package.json"), "utf8").toString("base64");
+    const file = String(targetPath || "package.json");
     const startLine = range?.startLine ? Math.max(0, range.startLine) : 0;
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
 
-    const script = `
-$ProgressPreference = 'SilentlyContinue';
-$p = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Path}'));
-$rStart = ${startLine};
-$rEnd = ${endLine};
-if (-not (Test-Path -LiteralPath $p)) {
-  [Console]::Error.WriteLine("Cannot read file: File not found: $p");
-  exit 1;
-}
-try {
-  $fullPath = (Resolve-Path -LiteralPath $p).Path;
-  $lines = [System.IO.File]::ReadAllLines($fullPath, [System.Text.Encoding]::UTF8);
-  $tot = $lines.Count;
-  $isPaged = ($rStart -gt 0) -or ($rEnd -gt 0);
-  $s = if ($rStart -gt 0) { [Math]::Max(1, $rStart) } else { 1 };
-  $e = if ($rEnd -gt 0) { [Math]::Min($tot, [Math]::Min($rEnd, $s + 149)) } elseif ($isPaged) { [Math]::Min($tot, $s + 149) } else { [Math]::Min($tot, 150) };
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
-  Write-Output "[File: $p ($s-$e/$tot lines)]";
-  for ($i = $s; $i -le $e; $i++) {
-    Write-Output ("{0}: {1}" -f $i, $lines[$i - 1]);
-  }
-  if ($e -lt $tot) {
-    Write-Output "[NOTE: File continues. To read the next chunk, specify start_line=$($e + 1), end_line=$([Math]::Min($tot, $e + 150))]";
-  }
-} catch {
-  [Console]::Error.WriteLine("Cannot read file: $($_.Exception.Message)");
-  exit 1;
-}
-`;
-    return this.wrapEncoded(script);
+    if (startLine > 1) {
+      const count = endLine > 0 ? Math.max(1, endLine - startLine + 1) : 150;
+      return `Get-Content -LiteralPath ${this.quoteArg(file)} -Encoding UTF8 | Select-Object -Skip ${startLine - 1} -First ${count}`;
+    }
+    const count = endLine > 0 ? endLine : 150;
+    return `Get-Content -LiteralPath ${this.quoteArg(file)} -TotalCount ${count} -Encoding UTF8`;
   }
 
-    /**
+  /**
    * Sinh lệnh PowerShell liệt kê tệp và thư mục trên hệ điều hành Windows.
+   * Bắt đầu bằng `Get-ChildItem` để Codex Rust binary nhận diện thành CommandAction::ListFiles (icon 📁).
    */
-listDir(targetPath: string): string {
+  listDir(targetPath: string): string {
     logFunctionInput("tools:command-strategies:powershell", "listDir", { targetPath });
-    const b64Path = Buffer.from(String(targetPath || "."), "utf8").toString("base64");
-
-    const script = `
-$ProgressPreference = 'SilentlyContinue';
-$p = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Path}'));
-if (-not (Test-Path -LiteralPath $p)) {
-  [Console]::Error.WriteLine("Cannot list dir: Directory not found: $p");
-  exit 1;
-}
-try {
-  $items = Get-ChildItem -LiteralPath $p -Force -ErrorAction Stop | ForEach-Object {
-    if ($_.PSIsContainer) { $_.Name + "/" } else { $_.Name }
-  } | Sort-Object;
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
-  Write-Output ($items -join "\`n");
-} catch {
-  [Console]::Error.WriteLine("Cannot list dir: $($_.Exception.Message)");
-  exit 1;
-}
-`;
-    return this.wrapEncoded(script);
+    const dir = String(targetPath || ".");
+    return `Get-ChildItem -LiteralPath ${this.quoteArg(dir)} -Name`;
   }
 
-    /**
+  /**
    * Sinh lệnh PowerShell tìm kiếm tệp tin theo mẫu trên hệ điều hành Windows.
+   * Bắt đầu bằng `Get-ChildItem` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
-searchFiles(pattern: string, targetPath = "."): string {
+  searchFiles(pattern: string, targetPath = "."): string {
     logFunctionInput("tools:command-strategies:powershell", "searchFiles", { pattern, targetPath });
-    const b64Root = Buffer.from(String(targetPath || "."), "utf8").toString("base64");
-    const b64Pattern = Buffer.from(String(pattern || "*"), "utf8").toString("base64");
-
-    const script = `
-$ProgressPreference = 'SilentlyContinue';
-$root = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Root}'));
-$pat = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Pattern}'));
-if (-not (Test-Path -LiteralPath $root)) { exit 0; }
-try {
-  $regexPat = [regex]::Escape($pat).Replace('\*','.*').Replace('\?','.');
-  $reg = [regex]::new($regexPat, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase);
-  $res = [System.Collections.Generic.List[string]]::new();
-  function Walk-Dir([string]$d) {
-    if ($res.Count -ge 50) { return; }
-    try {
-      $entries = [System.IO.Directory]::GetFileSystemEntries($d);
-      foreach ($e in $entries) {
-        $name = [System.IO.Path]::GetFileName($e);
-        if ($name.StartsWith('.') -or $name -eq 'node_modules' -or $name -eq 'target' -or $name -eq 'dist' -or $name -eq 'bin') { continue; }
-        if ([System.IO.Directory]::Exists($e)) {
-          Walk-Dir $e;
-        } else {
-          if ($reg.IsMatch($name) -or $reg.IsMatch($e)) {
-            $res.Add($e);
-            if ($res.Count -ge 50) { return; }
-          }
-        }
-      }
-    } catch {}
-  }
-  Walk-Dir (Resolve-Path -LiteralPath $root).Path;
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
-  Write-Output ($res -join "\`n");
-} catch {}
-`;
-    return this.wrapEncoded(script);
+    const dir = String(targetPath || ".");
+    const pat = String(pattern || "*");
+    return `Get-ChildItem -Path ${this.quoteArg(dir)} -Filter ${this.quoteArg(pat)} -Recurse -Depth 3 -Exclude node_modules,dist,bin,obj -Name`;
   }
 
-    /**
+  /**
    * Sinh lệnh PowerShell tìm kiếm nội dung mã nguồn trên hệ điều hành Windows.
+   * Bắt đầu bằng `Select-String` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
-grepCode(query: string, targetPath = "."): string {
+  grepCode(query: string, targetPath = "."): string {
     logFunctionInput("tools:command-strategies:powershell", "grepCode", { query, targetPath });
-    const b64Root = Buffer.from(String(targetPath || "."), "utf8").toString("base64");
-    const b64Query = Buffer.from(String(query || ""), "utf8").toString("base64");
-
-    const script = `
-$ProgressPreference = 'SilentlyContinue';
-$root = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Root}'));
-$query = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64Query}'));
-if (-not (Test-Path -LiteralPath $root)) { exit 0; }
-try {
-  $extReg = [regex]::new('\.(ts|js|tsx|jsx|json|md|html|css|py|rs|go|java|xml|yml|yaml|toml|sh|bat|cmd|ps1)$', 'IgnoreCase');
-  $count = 0;
-  $res = [System.Collections.Generic.List[string]]::new();
-  function Scan-Dir([string]$d) {
-    if ($count -ge 50) { return; }
-    try {
-      $entries = [System.IO.Directory]::GetFileSystemEntries($d);
-      foreach ($e in $entries) {
-        $name = [System.IO.Path]::GetFileName($e);
-        if ($name.StartsWith('.') -or $name -eq 'node_modules' -or $name -eq 'target' -or $name -eq 'dist' -or $name -eq 'bin') { continue; }
-        if ([System.IO.Directory]::Exists($e)) {
-          Scan-Dir $e;
-          if ($count -ge 50) { return; }
-        } elseif ($extReg.IsMatch($name)) {
-          try {
-            $lines = [System.IO.File]::ReadAllLines($e, [System.Text.Encoding]::UTF8);
-            for ($i = 0; $i -lt $lines.Length; $i++) {
-              if ($lines[$i].IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                $res.Add(("{0}:{1}: {2}" -f $e, ($i + 1), $lines[$i].Trim()));
-                $count++;
-                if ($count -ge 50) { return; }
-              }
-            }
-          } catch {}
-        }
-      }
-    } catch {}
-  }
-  Scan-Dir (Resolve-Path -LiteralPath $root).Path;
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
-  Write-Output ($res -join "\`n");
-} catch {}
-`;
-    return this.wrapEncoded(script);
+    const dir = String(targetPath || ".");
+    const q = String(query || "");
+    return `Select-String -Path "${dir}/*" -Pattern ${this.quoteArg(q)} -Exclude *.min.js,*.lock`;
   }
 
     /**

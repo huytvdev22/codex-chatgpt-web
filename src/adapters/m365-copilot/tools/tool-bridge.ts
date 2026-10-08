@@ -116,6 +116,103 @@ export function normalizeFileContent(
   return result;
 }
 
+export interface RequestUserInputOption {
+  label: string;
+  description?: string;
+}
+
+export interface RequestUserInputQuestion {
+  id: string;
+  header: string;
+  question: string;
+  is_other?: boolean;
+  is_secret?: boolean;
+  options: RequestUserInputOption[];
+}
+
+/**
+ * Chuẩn hóa tham số cho request_user_input (Interactive User Interview Wizard)
+ * Đảm bảo tương thích hoàn hảo với schema của Codex Rust binary:
+ * - Hỗ trợ cả questions dạng mảng lẫn câu hỏi đơn lẻ truyền trực tiếp ở root (question / prompt)
+ * - Tự động trích xuất header từ category, topic, title hoặc 3-4 từ đầu của câu hỏi
+ * - Chuẩn hóa options: hỗ trợ cả string array lẫn object array { label, description }
+ * - Mặc định gán is_other = true để người dùng có ô nhập tự do hoặc Skip
+ */
+export function normalizeRequestUserInputArgs(args: Record<string, any>): { questions: RequestUserInputQuestion[] } {
+  let rawList: any[] = [];
+  if (Array.isArray(args.questions)) {
+    rawList = args.questions;
+  } else if (args.question || args.prompt || args.title || args.message) {
+    rawList = [args];
+  } else if (Array.isArray(args.items) || Array.isArray(args.choices)) {
+    rawList = [args];
+  }
+
+  const questions: RequestUserInputQuestion[] = rawList.map((item, idx) => {
+    if (typeof item !== "object" || item === null) {
+      return {
+        id: `q_${idx + 1}`,
+        header: `Question ${idx + 1}`,
+        question: String(item ?? ""),
+        is_other: true,
+        is_secret: false,
+        options: [],
+      };
+    }
+
+    const id = String(item.id || item.name || item.key || `q_${idx + 1}`);
+    const questionText = String(item.question || item.prompt || item.title || item.message || "");
+    let headerText = String(item.header || item.category || item.topic || item.title || "");
+    if (!headerText) {
+      const words = questionText.trim().split(/\s+/).slice(0, 4).join(" ");
+      headerText = words ? (words.length > 25 ? words.slice(0, 25) : words) : `Question ${idx + 1}`;
+    }
+
+    const isOther = typeof item.is_other === "boolean" ? item.is_other : true;
+    const isSecret = Boolean(item.is_secret || item.secret || false);
+
+    const rawOptions = Array.isArray(item.options)
+      ? item.options
+      : Array.isArray(item.choices)
+      ? item.choices
+      : Array.isArray(item.items)
+      ? item.items
+      : Array.isArray(item.answers)
+      ? item.answers
+      : [];
+
+    const options: RequestUserInputOption[] = rawOptions.map((opt: any) => {
+      if (typeof opt === "string") {
+        return {
+          label: opt,
+          description: "",
+        };
+      }
+      if (typeof opt === "object" && opt !== null) {
+        return {
+          label: String(opt.label || opt.name || opt.title || opt.text || ""),
+          description: String(opt.description || opt.desc || opt.detail || opt.details || ""),
+        };
+      }
+      return {
+        label: String(opt ?? ""),
+        description: "",
+      };
+    });
+
+    return {
+      id,
+      header: headerText,
+      question: questionText,
+      is_other: isOther,
+      is_secret: isSecret,
+      options,
+    };
+  });
+
+  return { questions };
+}
+
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   read_file: (args, strategy) => {
     return SafeCommandGuard.handleReadFile(args, strategy);
@@ -248,12 +345,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   request_user_input: (args) => {
-    const questions = Array.isArray(args.questions) ? args.questions : [];
+    const normalized = normalizeRequestUserInputArgs(args);
     return {
       name: "request_user_input",
-      args: {
-        questions,
-      },
+      args: normalized,
     };
   },
 
@@ -312,6 +407,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   execcommand: (args, strategy) => TOOL_HANDLERS.exec_command(args, strategy),
   applypatch: (args, strategy) => TOOL_HANDLERS.apply_patch(args, strategy),
   writefile: (args, strategy) => TOOL_HANDLERS.write_file(args, strategy),
+  requestuserinput: (args, strategy) => TOOL_HANDLERS.request_user_input(args, strategy),
 };
 
 /**
@@ -397,6 +493,9 @@ export class M365ToolBridge {
         const rawContent = typeof parsedArgs.content === "string" ? parsedArgs.content : JSON.stringify(parsedArgs.content ?? "");
         const shouldUnescape = parsedArgs.unescape_newlines !== false && parsedArgs.unescape !== false;
         parsedArgs.content = normalizeFileContent(rawContent, { unescapeNewlines: shouldUnescape, targetPath });
+      }
+      if (toolName === "request_user_input") {
+        parsedArgs = normalizeRequestUserInputArgs(parsedArgs);
       }
       if (toolName === "exec_command") {
         const cmd = String(parsedArgs.cmd || parsedArgs.command || "");

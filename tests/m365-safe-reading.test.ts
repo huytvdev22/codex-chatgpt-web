@@ -216,7 +216,7 @@ describe("M365 Safe File Reading & Command Guardrail Tests", () => {
 
       expect(mapped.name).toBe("exec_command");
       const args = JSON.parse(mapped.arguments);
-      expect(args.cmd).toContain("powershell -NoProfile -EncodedCommand");
+      expect(args.cmd).toContain("Get-Content");
     });
   });
 
