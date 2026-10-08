@@ -113,6 +113,22 @@ export function normalizeFileContent(
   // 7. Khử dấu \ ở cuối file nếu dòng cuối cùng kết thúc bằng \
   result = result.replace(/\\+[ \t]*$/g, "");
 
+  // 8. Tự động phục hồi các thẻ HTML bị biến dạng/cắt cụt nếu là file markup (.html, .htm, .xml, .svg)
+  if (targetPath.endsWith(".html") || targetPath.endsWith(".htm") || targetPath.endsWith(".xml") || targetPath.endsWith(".svg")) {
+    result = result.replace(
+      /^([ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[sS]cript>?/gm,
+      "$1<script src=\"$2\"></script>"
+    );
+    result = result.replace(
+      /^([ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[aA]tch$/gm,
+      "$1<script src=\"$2\"></script>"
+    );
+    result = result.replace(
+      /^([ \t]*)(?:<link\s+[^>\n]*href=["'\s]*)?([a-zA-Z0-9_./-]+\.css)(?:["'\s]*>)?(?:<\/)?[lL]ink>?/gm,
+      "$1<link rel=\"stylesheet\" href=\"$2\">"
+    );
+  }
+
   return result;
 }
 
@@ -467,6 +483,20 @@ export class M365ToolBridge {
       const endIdx = patch.lastIndexOf("*** End Patch");
       if (endIdx >= 0) patch = patch.slice(0, endIdx + "*** End Patch".length);
       else if (!patch.endsWith("*** End Patch")) patch = `${patch}\n*** End Patch`;
+
+      // Khôi phục các thẻ HTML bị cắt cụt/biến dạng do bộ lọc web của Microsoft Copilot
+      patch = patch.replace(
+        /^([ \t]*[-+ ]?[ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[sS]cript>?/gm,
+        "$1<script src=\"$2\"></script>"
+      );
+      patch = patch.replace(
+        /^([ \t]*[-+ ]?[ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[aA]tch$/gm,
+        "$1<script src=\"$2\"></script>"
+      );
+      patch = patch.replace(
+        /^([ \t]*[-+ ]?[ \t]*)(?:<link\s+[^>\n]*href=["'\s]*)?([a-zA-Z0-9_./-]+\.css)(?:["'\s]*>)?(?:<\/)?[lL]ink>?/gm,
+        "$1<link rel=\"stylesheet\" href=\"$2\">"
+      );
 
       if (hasExactTool) {
         console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);

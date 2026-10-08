@@ -203,12 +203,14 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
       if (text) {
         console.log("[M365 TOOL] received tool result");
         const safeText = truncateToolResult(text);
+        const isFenced = safeText.startsWith("```");
+        const safeBody = isFenced ? safeText : `\`\`\`\n${safeText}\n\`\`\``;
         if (isPlanMode) {
-          parts.push(`<tool_result>\n${safeText}\n</tool_result>\n${TOOL_RESULT_HINTS.planMode}`);
+          parts.push(`<tool_result>\n${safeBody}\n</tool_result>\n${TOOL_RESULT_HINTS.planMode}`);
         } else if (isImplementingPlan) {
-          parts.push(`<tool_result>\n${safeText}\n</tool_result>\n${TOOL_RESULT_HINTS.implementPlan}`);
+          parts.push(`<tool_result>\n${safeBody}\n</tool_result>\n${TOOL_RESULT_HINTS.implementPlan}`);
         } else {
-          parts.push(`<tool_result>\n${safeText}\n</tool_result>\n${TOOL_RESULT_HINTS.default}`);
+          parts.push(`<tool_result>\n${safeBody}\n</tool_result>\n${TOOL_RESULT_HINTS.default}`);
         }
       }
     }

@@ -14,6 +14,7 @@ export {
   type ParsedToolCall,
   sanitizeCodexPatchContent,
   sanitizeJsonControlChars,
+  autoHealHtmlMangledTags,
 } from "./toolcall-detector";
 
 export {

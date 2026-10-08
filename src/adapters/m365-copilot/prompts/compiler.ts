@@ -58,8 +58,9 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    - TUYỆT ĐỐI KHÔNG xuất thẻ <tool_call> trong lượt này.
 
 4. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE:
-   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG chêm lời dẫn dắt):
-   a) Khi chỉnh sửa file mã nguồn thông thường (Update File):
+   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (luôn đặt trong khối 4-backtick \`\`\`\`markdown, TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG chêm lời dẫn dắt):
+   a) Khi chỉnh sửa file mã nguồn logic thông thường (.js, .ts, .py, .java,...):
+   \`\`\`\`markdown
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Update File: path/to/file.ext
@@ -69,8 +70,10 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    +dòng thêm
    *** End Patch
    </custom_tool_call>
+   \`\`\`\`
 
    b) Khi tạo file mới hoàn toàn HOẶC tạo/sửa file dạng thẻ (HTML, XML, SVG, VUE, JSX) (Add File):
+   \`\`\`\`markdown
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Add File: path/to/file.ext
@@ -78,21 +81,22 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    +nội dung dòng 2
    *** End Patch
    </custom_tool_call>
+   \`\`\`\`
 
 QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
-- ĐẶC BIỆT KHI TẠO HOẶC SỬA FILE DẠNG THẺ (HTML, XML, SVG, VUE, JSX):
-  + Đối với file HTML/XML có kích thước vừa và nhỏ (dưới 200 dòng) hoặc khi sửa đổi cấu trúc thẻ phức tạp:
-    KHUYẾN NGHỊ TUYỆT ĐỐI dùng cú pháp viết lại toàn bộ file bằng:
+- BẮT BUỘC ĐỐI VỚI FILE DẠNG THẺ (HTML, XML, SVG, VUE, JSX):
+  + TUYỆT ĐỐI KHÔNG DÙNG *** Update File: với các đoạn diff @@ context @@ cho file HTML/XML (tránh hoàn toàn lỗi lệch context anchor và không bao giờ bị cắt cụt/biến dạng thẻ <script>, <meta>, <link>).
+  + BẮT BUỘC viết lại toàn bộ nội dung file bằng cú pháp:
+    \`\`\`\`markdown
     <custom_tool_call name="apply_patch">
     *** Begin Patch
     *** Add File: path/to/file.html
     +<!DOCTYPE html>
-    +... toàn bộ nội dung đầy đủ của file ...
+    +... toàn bộ nội dung hoàn chỉnh của file ...
     *** End Patch
     </custom_tool_call>
-    (hoặc sử dụng write_file). Việc viết lại toàn bộ file giúp bảo toàn 100% các thẻ <script>, <meta>, <link>, tránh hoàn toàn lỗi lệch context anchor @@ hoặc cắt cụt thẻ HTML.
-  + Nếu bắt buộc dùng *** Update File: cho file HTML/XML:
-    BẮT BUỘC phải cung cấp context anchor rõ ràng bao gồm ít nhất 1-2 dòng thẻ mốc cụ thể (ví dụ: @@ <head> @@ hoặc @@ <body> @@). TUYỆT ĐỐI KHÔNG để @@ trống trơn.
+    \`\`\`\`
+    (hoặc sử dụng write_file). Khi dùng *** Add File: trên file đã có, IDE sẽ ghi đè an toàn và hiển thị giao diện diff toàn bộ (+X -Y) cho người dùng.
 - TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> cho cả tạo file mới (*** Add File:) lẫn sửa file (*** Update File:).
 - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE (SINGLE FILE PER TURN): Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT trong khối patch. TUYỆT ĐỐI KHÔNG gộp việc ghi/sửa nhiều file trong cùng 1 khối patch và không gọi nhiều patch cùng lúc. Hãy thao tác tuần tự từng file (sửa file 1 -> chờ IDE xác nhận -> sửa file 2).
 - ĐỌC FILE AN TOÀN (SAFE READING):
@@ -537,9 +541,12 @@ compile(input: PromptCompileInput): PromptCompileResult {
 
       let toolResultsContent = "";
       if (normalized.trailingToolResults.length > 0) {
-        const resultBlocks = normalized.trailingToolResults.map(res =>
-          `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
-        );
+        const resultBlocks = normalized.trailingToolResults.map(res => {
+          const content = truncateToolResult(res.output);
+          const isFenced = content.startsWith("```");
+          const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
+          return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
+        });
         toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
         incrementalSections.push(toolResultsContent);
       }
@@ -676,9 +683,12 @@ compile(input: PromptCompileInput): PromptCompileResult {
     // 8. Kết quả Tool gần nhất (Trailing tool results của turn hiện tại)
     let toolResultsContent = "";
     if (normalized.trailingToolResults.length > 0) {
-      const resultBlocks = normalized.trailingToolResults.map(res =>
-        `<tool_result id="${res.callId}">\n${truncateToolResult(res.output)}\n</tool_result>`
-      );
+      const resultBlocks = normalized.trailingToolResults.map(res => {
+        const content = truncateToolResult(res.output);
+        const isFenced = content.startsWith("```");
+        const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
+        return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
+      });
       toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
       sections.push(toolResultsContent);
     }

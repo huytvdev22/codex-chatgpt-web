@@ -715,7 +715,51 @@ export function sanitizeCodexPatchContent(rawPatch: string): string {
   // Khử dấu gạch chéo ngược thừa ở cuối dòng do Turndown
   patch = patch.replace(/\\+[ \t]*(\r?\n)/g, "$1");
 
+  // Tự động phục hồi các thẻ HTML bị biến dạng/cắt cụt do bộ lọc web của Microsoft Copilot
+  patch = autoHealHtmlMangledTags(patch);
+
   return patch.trim();
 }
 
+/**
+ * Tự động phục hồi các thẻ HTML/XML bị bộ lọc giao diện hoặc LLM của Microsoft Copilot làm biến dạng:
+ * 1. Phục hồi thẻ <script src="..."> bị sanitize biến dạng thành .jsscript>, .jsatch hoặc thiếu mở/đóng thẻ
+ * 2. Phục hồi thẻ <link rel="stylesheet" href="..."> bị biến dạng thành .csslink> hoặc đuôi rác
+ * 3. Phục hồi các thẻ <meta> bị cắt cụt đuôi (thiếu dấu ngoặc kép hoặc dấu đóng >)
+ */
+export function autoHealHtmlMangledTags(text: string): string {
+  if (!text) return "";
+
+  // 1. Phục hồi thẻ script (ví dụ: js/storage.jsscript>, js/app.jsatch, - js/app.jsatch, + js/storage.jsscript>)
+  let healed = text.replace(
+    /^([ \t]*[-+ ]?[ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[sS]cript>?/gm,
+    "$1<script src=\"$2\"></script>"
+  );
+  healed = healed.replace(
+    /^([ \t]*[-+ ]?[ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[aA]tch$/gm,
+    "$1<script src=\"$2\"></script>"
+  );
+
+  // 2. Phục hồi thẻ link stylesheet (ví dụ: styles.csslink>, styles.cssatch)
+  healed = healed.replace(
+    /^([ \t]*[-+ ]?[ \t]*)(?:<link\s+[^>\n]*href=["'\s]*)?([a-zA-Z0-9_./-]+\.css)(?:["'\s]*>)?(?:<\/)?[lL]ink>?/gm,
+    "$1<link rel=\"stylesheet\" href=\"$2\">"
+  );
+
+  // 3. Phục hồi thẻ meta bị cắt cụt đuôi
+  healed = healed.replace(
+    /^([ \t]*[-+ ]?[ \t]*<meta\s+[^>\n]*)(?<!>)$/gm,
+    (match) => {
+      const quotes = (match.match(/"/g) || []).length;
+      if (quotes % 2 !== 0) {
+        return match + '">';
+      }
+      return match.endsWith(">") ? match : match + ">";
+    }
+  );
+
+  return healed;
+}
+
 export { chatGptHtmlToMarkdown };
+
