@@ -172,7 +172,8 @@ async runTurn(
     const compiledPrompt = promptToSend;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
-    if (isTitleRequest(parsed, compiledPrompt)) {
+    // TUYỆT ĐỐI không đánh chặn nếu lượt này có tool results từ IDE
+    if (normalized.trailingToolResults.length === 0 && isTitleRequest(parsed, compiledPrompt)) {
       if (!markTurnConsumed()) {
         return;
       }

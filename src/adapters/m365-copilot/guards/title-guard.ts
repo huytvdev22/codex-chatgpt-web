@@ -2,33 +2,47 @@ import { logFunctionInput } from "../debug-logger";
 import type { CodexParsedRequest } from "../../../types";
 
 /**
- * Kiểm tra xem request có phải là request sinh tiêu đề (Title Request) ngầm của Codex hay không
+ * Kiểm tra xem request có phải là request sinh tiêu đề (Title Request) ngầm của Codex hay không.
+ * RÀNG BUỘC AN TOÀN:
+ * 1. TUYỆT ĐỐI KHÔNG đánh chặn nếu request có toolResults hoặc đang thực thi công cụ.
+ * 2. TUYỆT ĐỐI KHÔNG kiểm tra trên compiledPrompt vì compiledPrompt chứa System Prompt,
+ *    danh sách công cụ (có 'description') và các template mã nguồn (có thẻ '<title>').
+ * 3. Chỉ kiểm tra trực tiếp trên tin nhắn của người dùng hoặc chỉ thị developer cụ thể của lượt này.
  */
 export function isTitleRequest(parsed: CodexParsedRequest, compiledPrompt: string): boolean {
   logFunctionInput("guards:title-guard", "isTitleRequest", { parsed, compiledPrompt });
-  const p = compiledPrompt.toLowerCase();
+
+  // 1. Nếu có tool results (kết quả đọc file, chạy lệnh terminal từ IDE) -> Chắc chắn KHÔNG PHẢI Title Request
   if (
-    (p.includes("title:") && p.includes("description:")) ||
-    p.includes("generate a title") ||
-    p.includes("short title for the conversation") ||
-    p.includes("title and description") ||
-    p.includes("brief title") ||
-    p.includes("session title")
+    (parsed.context?.toolResults && parsed.context.toolResults.length > 0) ||
+    (parsed.input && parsed.input.some((item: any) => item.role === "tool" || item.type === "tool_result"))
   ) {
-    return true;
+    return false;
   }
 
-  // Kiểm tra thêm trong các systemPrompt hoặc developer messages
-  if (parsed.context?.systemPrompt) {
-    for (const sp of parsed.context.systemPrompt) {
-      const lower = sp.toLowerCase();
-      if (lower.includes("generate a title") || (lower.includes("title:") && lower.includes("description:"))) {
-        return true;
-      }
-    }
-  }
+  // 2. Trích xuất nội dung yêu cầu cụ thể của lượt này từ tin nhắn người dùng hoặc developer
+  const userMessages = parsed.messages?.filter(m => m.role === "user") || [];
+  const lastUserMsg = userMessages.length > 0 ? (userMessages[userMessages.length - 1].content || "").toLowerCase() : "";
+  const devMessages = parsed.messages?.filter(m => m.role === "developer" || m.role === "system") || [];
+  const lastDevMsg = devMessages.length > 0 ? (devMessages[devMessages.length - 1].content || "").toLowerCase() : "";
 
-  return false;
+  // Thêm kiểm tra từ context.systemPrompt nếu có
+  const systemPrompts = (parsed.context?.systemPrompt || []).map(s => s.toLowerCase()).join(" ");
+
+  const specificText = `${lastUserMsg} ${lastDevMsg} ${systemPrompts}`.trim();
+  if (!specificText) return false;
+
+  // 3. Chỉ nhận diện là Title Request khi YÊU CẦU CỤ THỂ thực sự là sinh tiêu đề và không có ý định code
+  const isExplicitTitle =
+    specificText.includes("generate a title") ||
+    specificText.includes("generate a concise title") ||
+    specificText.includes("short title for the conversation") ||
+    specificText.includes("title for this session") ||
+    specificText.includes("session title") ||
+    specificText.includes("brief title") ||
+    (specificText.includes("title:") && specificText.includes("description:") && specificText.length < 500);
+
+  return Boolean(isExplicitTitle);
 }
 
 /**
