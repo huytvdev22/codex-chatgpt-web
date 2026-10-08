@@ -46,6 +46,109 @@ export class CodexPayloadNormalizer {
   }
 
   /**
+   * Định dạng thông tin môi trường làm việc gọn gàng, loại bỏ toàn bộ XML rác của macOS seatbelt sandbox.
+   */
+  private static parseEnvironmentContext(rawEnv: string): string {
+    const cwd = rawEnv.match(/<cwd>([\s\S]*?)<\/cwd>/i)?.[1]?.trim();
+    const shell = rawEnv.match(/<shell>([\s\S]*?)<\/shell>/i)?.[1]?.trim();
+    const date = rawEnv.match(/<current_date>([\s\S]*?)<\/current_date>/i)?.[1]?.trim();
+    const tz = rawEnv.match(/<timezone>([\s\S]*?)<\/timezone>/i)?.[1]?.trim();
+    const ws = rawEnv.match(/<workspace_roots>[\s\S]*?<root>([\s\S]*?)<\/root>/i)?.[1]?.trim();
+
+    const parts: string[] = [];
+    if (cwd) parts.push(`- Thư mục làm việc (cwd): ${cwd}`);
+    if (shell) parts.push(`- Shell: ${shell}`);
+    if (date || tz) parts.push(`- Thời gian: ${date || ""} (${tz || ""})`.trim());
+    if (ws && ws !== cwd) parts.push(`- Workspace: ${ws}`);
+
+    return parts.length > 0 ? parts.join("\n") : rawEnv.trim();
+  }
+
+  /**
+   * Nhận diện các tin nhắn hệ thống nội bộ của OpenAI Codex CLI để loại trừ hoàn toàn khỏi priorHistory.
+   */
+  private static isInternalSystemMessage(item: CodexRawInputItem, text: string): boolean {
+    const meta = (item as any).internal_chat_message_metadata_passthrough;
+    const kinds = Array.isArray(meta?.content_item_kinds) ? ((meta.content_item_kinds as unknown[]) as string[]) : [];
+
+    const systemKinds = [
+      "environments.environment_context",
+      "additional_content.codex_apps_client_time_context",
+      "host_skills.instructions",
+      "permissions.instructions",
+      "collaboration_mode.instructions",
+      "model.base_instructions",
+    ];
+
+    if (kinds.some(k => systemKinds.includes(k))) {
+      return true;
+    }
+
+    const trimmed = text.trim();
+    if (
+      trimmed.startsWith("<environment_context>") ||
+      trimmed.startsWith("<external_codex_apps_open_page>") ||
+      trimmed.startsWith("<codex_apps_client_time_context>") ||
+      trimmed.startsWith("<codex_apps_open_page_instructions>") ||
+      trimmed.startsWith("<recommended_plugins>") ||
+      trimmed.startsWith("<skills_instructions>") ||
+      trimmed.startsWith("<permissions") ||
+      trimmed.startsWith("<collaboration_mode>")
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Lọc sạch toàn bộ boilerplate nội bộ của Codex IDE khỏi developerInstructions,
+   * chỉ giữ lại các chỉ thị thực sự của người dùng hoặc dự án (nếu có).
+   */
+  private static cleanDeveloperInstructions(text: string): string {
+    let cleaned = text
+      .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
+      .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
+      .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
+      .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
+      .replace(/<recommended_plugins>[\s\S]*?<\/recommended_plugins>/gi, "")
+      .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
+      .replace(/<permissions\s+instructions>[\s\S]*?<\/permissions\s+instructions>/gi, "")
+      .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
+      .replace(/<sandbox_mode[\s\S]*?<\/sandbox_mode[^>]*>/gi, "")
+      .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
+      .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
+      .replace(/`?\s*change it;\s*user requests or tool descriptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
+      .replace(/##\s*request_user_input availability[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
+      .replace(/In Default mode, strongly prefer making reasonable assumptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
+      .replace(/Known mode names are Default and Plan\.?/gi, "")
+      .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
+      .trim();
+
+    const isCodexBuiltInBoilerplate =
+      cleaned.includes("You are Codex") ||
+      cleaned.includes("# Rules for getting work done") ||
+      cleaned.includes("# Personality\nAs Codex") ||
+      cleaned.includes("Exercise caution when escaping text for execcommand calls");
+
+    if (isCodexBuiltInBoilerplate) {
+      cleaned = cleaned
+        .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Personality[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# When to ask the user for permission[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Autonomy and persistence[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Working with the user[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Rules for getting work done(?:\n(?:\s*[-*]|\s{2,}).*)*(?=\n# |\n\[|\n<|\n[^\s\-*]|$)/gi, "")
+        .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .trim();
+    }
+
+    return cleaned.trim();
+  }
+
+  /**
    * Chuẩn hóa toàn bộ danh sách công cụ từ root tools và additional_tools trong input.
    * Bảo toàn namespace, qualifiedName, và lưu trữ rawParameters/format nguyên vẹn.
    */
@@ -312,7 +415,7 @@ export class CodexPayloadNormalizer {
     const developerInstructions: string[] = [];
     let environmentContext: string | undefined;
 
-    // Xây dựng priorHistory: LOẠI BỎ hoàn toàn latest user item để tránh duplicate trong prompt!
+    // Xây dựng priorHistory: LOẠI BỎ hoàn toàn latest user item và các tin nhắn hệ thống nội bộ của Codex
     const priorHistory: NormalizedTurn[] = [];
     for (let i = 0; i < input.length; i++) {
       if (i === latestUserIdx) {
@@ -323,59 +426,33 @@ export class CodexPayloadNormalizer {
       const item = input[i];
       if (!item) continue;
 
+      let text = "";
+      if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "developer" || item.role === "assistant"))) {
+        text = this.extractTextFromContent((item as any).content);
+      }
+
+      // Trích xuất environmentContext nếu có trong bất kỳ message nào (kể cả user hay developer)
+      const envMatch = text.match(/<environment_context>([\s\S]*?)<\/environment_context>/i);
+      if (envMatch) {
+        environmentContext = (environmentContext ? `${environmentContext}\n` : "") + this.parseEnvironmentContext(envMatch[1]);
+      }
+
       const isDev = item.role === "developer" || (item.type === "message" && item.role === "developer");
       if (isDev) {
-        let text = this.extractTextFromContent((item as any).content);
-        const envMatch = text.match(/<environment_context>([\s\S]*?)<\/environment_context>/i);
-        if (envMatch) {
-          environmentContext = (environmentContext ? `${environmentContext}\n` : "") + envMatch[1].trim();
-        }
-        text = text
-          .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
-          .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
-          .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
-          .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
-          // Rút gọn mạnh permissions và sandbox instructions khỏi prompt gửi M365
-          .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
-          .replace(/<permissions\s+instructions>[\s\S]*?<\/permissions\s+instructions>/gi, "")
-          .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
-          .replace(/<sandbox_mode[\s\S]*?<\/sandbox_mode[^>]*>/gi, "")
-          .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
-          .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
-          .trim();
-
-        // 1. Loại bỏ các token placeholder rác dạng ¨C...C
-        text = text.replace(/¨C[a-zA-Z0-9_-]+C/g, "");
-
-        // 2. Lọc bỏ boilerplate system instructions mặc định của OpenAI Codex
-        const isCodexBuiltInBoilerplate =
-          text.includes("You are Codex") ||
-          text.includes("# Rules for getting work done") ||
-          text.includes("# Personality\nAs Codex") ||
-          text.includes("Exercise caution when escaping text for execcommand calls");
-
-        if (isCodexBuiltInBoilerplate) {
-          text = text
-            .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# Personality[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# When to ask the user for permission[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# Autonomy and persistence[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# Working with the user[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# Rules for getting work done(?:\n(?:\s*[-*]|\s{2,}).*)*(?=\n# |\n\[|\n<|\n[^\s\-*]|$)/gi, "")
-            .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")
-            .trim();
-        }
-
-        if (text && text.length > 5 && !text.includes("You are Codex")) {
-          developerInstructions.push(text);
+        const cleaned = this.cleanDeveloperInstructions(text);
+        if (cleaned && cleaned.length > 5 && !cleaned.includes("You are Codex")) {
+          developerInstructions.push(cleaned);
         }
         continue;
       }
 
+      // LOẠI BỎ TRIỆT ĐỂ: Nếu là tin nhắn hệ thống nội bộ của Codex (environment, app page, time context, plugins...)
+      // Tuyệt đối không đưa vào priorHistory để tránh làm ô nhiễm lịch sử trò chuyện của người dùng!
+      if (this.isInternalSystemMessage(item, text)) {
+        continue;
+      }
+
       if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "assistant"))) {
-        const text = this.extractTextFromContent((item as any).content);
         if (text.trim()) {
           priorHistory.push({
             id: (item as any).id ? String((item as any).id) : undefined,
