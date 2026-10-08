@@ -101,7 +101,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(activeNames).toContain("run"); // web.run
   });
 
-  test("Phase 2: renderDynamicToolDeclarations sử dụng định dạng tool duy nhất", () => {
+  test("Phase 2: renderDynamicToolDeclarations sử dụng định dạng tool duy nhất và không nhồi additional tools ngoài lề", () => {
     const payload = CodexRawPayload.from(sampleRaw);
     const normalized = CodexPayloadNormalizer.normalize(payload);
 
@@ -111,8 +111,9 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(dynamicText).toContain("- exec_command");
     expect(dynamicText).toContain("- apply_patch");
     expect(dynamicText).toContain("- request_user_input");
-    expect(dynamicText).toContain("- create_goal");
-    expect(dynamicText).toContain("- web.run");
+    // Không còn nhồi các additional_tools ngoài lề từ client vào prompt M365 Copilot
+    expect(dynamicText).not.toContain("- create_goal");
+    expect(dynamicText).not.toContain("- web.run");
 
     // Không còn các tên alias tự chế hay lẫn lộn
     expect(dynamicText).not.toContain("run_command(cmd)");

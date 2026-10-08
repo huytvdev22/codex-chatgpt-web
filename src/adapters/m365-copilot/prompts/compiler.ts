@@ -39,8 +39,12 @@ Bạn là Trợ lý Lập trình viên AI hỗ trợ phát triển dự án củ
 Hệ thống IDE trên máy tính người dùng tự động bắt lấy văn bản bạn in ra, chạy trực tiếp trên dự án cục bộ và trả kết quả vào thẻ <tool_result> cho bạn ở lượt kế tiếp.
 
 QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
-1. KHI CẦN THAO TÁC / GỌI CÔNG CỤ (CHẠY LỆNH TERMINAL, KHẢO SÁT, TẠO HOẶC SỬA FILE):
-   - XUẤT THẲNG KHỐI <tool_call>...</tool_call> HOẶC <custom_tool_call name="apply_patch">.
+1. BẮT BUỘC BỌC TRONG KHỐI 4-BACKTICK \`\`\`\`markdown:
+   - TOÀN BỘ câu trả lời của bạn, bao gồm mọi khối công cụ (<tool_call>, <custom_tool_call name="apply_patch">) BẮT BUỘC PHẢI ĐƯỢC ĐẶT BÊN TRONG DUY NHẤT 1 KHỐI CODE BLOCK 4-BACKTICK \`\`\`\`markdown ... \`\`\`\`.
+   - TUYỆT ĐỐI KHÔNG xuất thẻ XML, thẻ HTML hay bất kỳ ký tự nào BÊN NGOÀI khối 4-backtick này (để bảo đảm các thẻ <script>, <meta>, <link>, <html> không bị bộ lọc giao diện web làm hỏng).
+
+2. KHI CẦN THAO TÁC / GỌI CÔNG CỤ (CHẠY LỆNH TERMINAL, KHẢO SÁT, TẠO HOẶC SỬA FILE):
+   - XUẤT THẲNG KHỐI <tool_call>...</tool_call> HOẶC <custom_tool_call name="apply_patch"> (luôn đặt bên trong khối 4-backtick \`\`\`\`markdown).
    - Cú pháp chuẩn của công cụ function:
      <tool_call>
      {"name": "<TOOL_NAME>", "arguments": {"<PARAM_NAME>": "<VALUE>"}}
@@ -49,13 +53,13 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    - TUYỆT ĐỐI KHÔNG CHÊM VĂN BẢN DẪN DẮT RƯỜM RÀ (như "Tôi sẽ chạy lệnh...", "Đang đọc file...", "Để tôi kiểm tra...").
    - HỖ TRỢ GỌI NHIỀU TOOL ĐỒNG THỜI (PARALLEL TOOL CALLS): Bạn có thể xuất nhiều khối <tool_call> liên tiếp trong cùng một câu trả lời khi cần khảo sát nhiều câu lệnh cùng lúc (ví dụ: vừa kiểm tra file, vừa xem git status).
 
-2. KHI HOÀN THÀNH HOẶC TRẢ LỜI NGƯỜI DÙNG (KẾT LUẬN CUỐI CÙNG):
-   - Viết câu trả lời đầy đủ, thân thiện bằng văn bản Markdown tự nhiên.
+3. KHI HOÀN THÀNH HOẶC TRẢ LỜI NGƯỜI DÙNG (KẾT LUẬN CUỐI CÙNG):
+   - Viết câu trả lời đầy đủ, thân thiện bằng văn bản Markdown tự nhiên bên trong khối 4-backtick.
    - TUYỆT ĐỐI KHÔNG xuất thẻ <tool_call> trong lượt này.
 
-3. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE (BẮT BUỘC LUÔN DÙNG apply_patch THAY VÌ write_file):
-   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG dùng write_file, KHÔNG chêm lời dẫn dắt):
-   a) Khi chỉnh sửa file đã có (Update File):
+4. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE:
+   BẮT BUỘC sử dụng khối Freeform chuẩn dưới đây (TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG chêm lời dẫn dắt):
+   a) Khi chỉnh sửa file mã nguồn thông thường (Update File):
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Update File: path/to/file.ext
@@ -66,7 +70,7 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    *** End Patch
    </custom_tool_call>
 
-   b) Khi tạo file mới hoàn toàn (Add File):
+   b) Khi tạo file mới hoàn toàn HOẶC tạo/sửa file dạng thẻ (HTML, XML, SVG, VUE, JSX) (Add File):
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Add File: path/to/file.ext
@@ -76,7 +80,20 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    </custom_tool_call>
 
 QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:
-- TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng tuyệt đối <custom_tool_call name="apply_patch"> cho cả tạo file mới (*** Add File:) lẫn sửa file (*** Update File:). BẮT BUỘC luôn dùng apply_patch thay vì write_file. TUYỆT ĐỐI KHÔNG sử dụng write_file.
+- ĐẶC BIỆT KHI TẠO HOẶC SỬA FILE DẠNG THẺ (HTML, XML, SVG, VUE, JSX):
+  + Đối với file HTML/XML có kích thước vừa và nhỏ (dưới 200 dòng) hoặc khi sửa đổi cấu trúc thẻ phức tạp:
+    KHUYẾN NGHỊ TUYỆT ĐỐI dùng cú pháp viết lại toàn bộ file bằng:
+    <custom_tool_call name="apply_patch">
+    *** Begin Patch
+    *** Add File: path/to/file.html
+    +<!DOCTYPE html>
+    +... toàn bộ nội dung đầy đủ của file ...
+    *** End Patch
+    </custom_tool_call>
+    (hoặc sử dụng write_file). Việc viết lại toàn bộ file giúp bảo toàn 100% các thẻ <script>, <meta>, <link>, tránh hoàn toàn lỗi lệch context anchor @@ hoặc cắt cụt thẻ HTML.
+  + Nếu bắt buộc dùng *** Update File: cho file HTML/XML:
+    BẮT BUỘC phải cung cấp context anchor rõ ràng bao gồm ít nhất 1-2 dòng thẻ mốc cụ thể (ví dụ: @@ <head> @@ hoặc @@ <body> @@). TUYỆT ĐỐI KHÔNG để @@ trống trơn.
+- TẠO FILE MỚI HOẶC SỬA FILE: Ưu tiên sử dụng <custom_tool_call name="apply_patch"> cho cả tạo file mới (*** Add File:) lẫn sửa file (*** Update File:).
 - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE (SINGLE FILE PER TURN): Mỗi lượt CHỈ ĐƯỢC tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT trong khối patch. TUYỆT ĐỐI KHÔNG gộp việc ghi/sửa nhiều file trong cùng 1 khối patch và không gọi nhiều patch cùng lúc. Hãy thao tác tuần tự từng file (sửa file 1 -> chờ IDE xác nhận -> sửa file 2).
 - ĐỌC FILE AN TOÀN (SAFE READING):
   + Mỗi lần chỉ đọc tối đa 1-3 tệp (tổng số dòng <= 150 dòng). Khi đọc tệp dài, bắt buộc chỉ đọc phân đoạn <= 150 dòng (ví dụ dùng head -n 150, sed -n '1,150p' hoặc chỉ định {"start_line": ..., "end_line": ...}).
@@ -225,8 +242,9 @@ export function cleanToolDescription(name: string, rawDesc?: string): string {
 /**
  * Ví dụ mẫu gọi công cụ chuẩn mực cho M365 Copilot bắt chước
  */
-export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
+export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN (BẮT BUỘC LUÔN NẰM TRONG KHỐI 4-BACKTICK \`\`\`\`markdown):
 1. Sửa code trong file đã có (BẮT BUỘC DÙNG apply_patch *** Update File:):
+\`\`\`\`markdown
 <custom_tool_call name="apply_patch">
 *** Begin Patch
 *** Update File: src/math.js
@@ -236,84 +254,96 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN:
 +dòng thêm
 *** End Patch
 </custom_tool_call>
+\`\`\`\`
 
-2. Tạo file mới hoàn toàn (BẮT BUỘC DÙNG apply_patch *** Add File:, THAY VÌ write_file):
+2. Tạo file mới hoàn toàn HOẶC tạo/sửa file dạng thẻ (HTML, XML, SVG, JSX) an toàn không bị lỗi diff:
+\`\`\`\`markdown
 <custom_tool_call name="apply_patch">
 *** Begin Patch
-*** Add File: hello.js
-+console.log('hello');
+*** Add File: index.html
++<!DOCTYPE html>
++<html lang="vi">
++<head>
++  <meta charset="UTF-8">
++  <title>Tiêu đề</title>
++</head>
++<body>
++  <h1>Xin chào</h1>
++  <script src="js/storage.js"></script>
++  <script src="js/app.js"></script>
++</body>
++</html>
 *** End Patch
 </custom_tool_call>
+\`\`\`\`
 
 3. Chạy câu lệnh terminal/CLI không tương tác:
+\`\`\`\`markdown
 <tool_call>
 {"name": "exec_command", "arguments": {"command": "npm test"}}
 </tool_call>
+\`\`\`\`
 
 4. Đọc file từ dự án (Tối đa 1-3 tệp, tổng <= 150 dòng, có phân trang):
+\`\`\`\`markdown
 <tool_call>
 {"name": "read_file", "arguments": {"path": "package.json", "start_line": 1, "end_line": 150}}
 </tool_call>
+\`\`\`\`
 
 5. Xem cấu trúc thư mục (Cấp hiện tại, depth=1):
+\`\`\`\`markdown
 <tool_call>
 {"name": "list_dir", "arguments": {"path": "."}}
 </tool_call>
+\`\`\`\`
 
 6. Tìm kiếm tệp theo mẫu tên (glob pattern):
+\`\`\`\`markdown
 <tool_call>
 {"name": "search_files", "arguments": {"pattern": "*.js", "path": "."}}
 </tool_call>
+\`\`\`\`
 
 7. Tìm kiếm từ khóa mã nguồn trong dự án:
+\`\`\`\`markdown
 <tool_call>
 {"name": "grep_code", "arguments": {"query": "function calculateTotal", "path": "."}}
 </tool_call>
+\`\`\`\`
 
 8. Kiểm tra trạng thái thay đổi Git:
+\`\`\`\`markdown
 <tool_call>
 {"name": "git_status", "arguments": {}}
 </tool_call>
+\`\`\`\`
 
 9. Gọi nhiều công cụ đồng thời (Parallel Tool Calls - ví dụ vừa đọc file vừa kiểm tra Git):
+\`\`\`\`markdown
 <tool_call>
 {"name": "exec_command", "arguments": {"command": "head -n 150 package.json"}}
 </tool_call>
 <tool_call>
 {"name": "exec_command", "arguments": {"command": "git status --short"}}
 </tool_call>
+\`\`\`\`
 
 10. Mở hộp thoại phỏng vấn tương tác người dùng (Interactive User Interview Wizard):
+\`\`\`\`markdown
 <tool_call>
 {"name": "request_user_input", "arguments": {"questions": [{"id": "approach", "header": "Approach", "question": "Which architecture pattern do you prefer for this feature?", "is_other": true, "options": [{"label": "Modular Service Architecture (Recommended)", "description": "High decoupling, clean separation of concerns, easy to test and maintain."}, {"label": "Direct Controller Implementation", "description": "Faster delivery, fewer files, suitable for small script tasks."}]}]}}
-</tool_call>`;
+</tool_call>
+\`\`\`\``;
 
 /**
- * Render Dynamic Tool Declaration trực tiếp từ normalized.activeCodingTools.
- * Luôn bao gồm đầy đủ schema của Core Coding Tools và bổ sung các tool mở rộng từ client.
+ * Render Tool Declaration chuẩn mực cho M365 Copilot.
+ * Sử dụng bộ công cụ Core Coding Tools tối ưu, không nhồi các additional_tools ngoài lề từ client
+ * giúp prompt tinh gọn tối đa, bảo vệ ngữ cảnh và chống phân tâm cho M365 Copilot.
  */
-export function renderDynamicToolDeclarations(tools: NormalizedTool[]): string {
-  logFunctionInput("prompts:compiler", "renderDynamicToolDeclarations", { tools });
-
-  const additionalEntries: string[] = [];
-  for (const tool of tools || []) {
-    const rawName = tool.identity.name;
-    const qualified = tool.identity.namespace
-      ? `${tool.identity.namespace}.${rawName}`
-      : rawName;
-    if (CORE_TOOL_NAMES.has(rawName) || CORE_TOOL_NAMES.has(qualified)) {
-      continue;
-    }
-    const desc = cleanToolDescription(rawName, tool.description);
-    additionalEntries.push(`- ${qualified}\n  ${desc}`);
-  }
-
-  let toolListText = CORE_CODING_TOOLS_DECLARATION;
-  if (additionalEntries.length > 0) {
-    toolListText += `\n\n${additionalEntries.join("\n\n")}`;
-  }
-
-  return `AVAILABLE TOOLS\n\n${toolListText}\n\n${CANONICAL_TOOL_EXAMPLES}`;
+export function renderDynamicToolDeclarations(_tools?: NormalizedTool[]): string {
+  logFunctionInput("prompts:compiler", "renderDynamicToolDeclarations", { tools: _tools });
+  return `AVAILABLE TOOLS\n\n${CORE_CODING_TOOLS_DECLARATION}\n\n${CANONICAL_TOOL_EXAMPLES}`;
 }
 
 export interface PromptSectionMetrics {
