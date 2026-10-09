@@ -4,6 +4,8 @@ export {
   TOOL_REMINDER_PROMPT,
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
+  COMPACT_CORE_TOOLS_DECLARATION,
+  COMPACT_APPLY_PATCH_EXAMPLES,
 } from "./templates";
 
 export {
@@ -13,6 +15,7 @@ export {
   CANONICAL_TOOL_EXAMPLES,
   cleanToolDescription,
   renderDynamicToolDeclarations,
+  renderCompactDynamicToolDeclarations,
   calculatePromptMetrics,
   promptCompiler,
   type PromptSectionMetrics,

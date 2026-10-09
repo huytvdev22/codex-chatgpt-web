@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { M365OutputTranslator } from "../src/adapters/m365-copilot/translation/output-translator";
 import { XmlToolCallDetector } from "../src/adapters/m365-copilot/translation/detectors/xml-detector";
-import { UNIFIED_TOOL_PROTOCOL, CORE_CODING_TOOLS_DECLARATION, CANONICAL_TOOL_EXAMPLES } from "../src/adapters/m365-copilot/prompts/compiler";
-import { TOOL_REMINDER_PROMPT, PLAN_MODE_PROMPT, IMPLEMENT_PLAN_PROMPT } from "../src/adapters/m365-copilot/prompts/templates";
+import {
+  UNIFIED_TOOL_PROTOCOL,
+  CORE_CODING_TOOLS_DECLARATION,
+  CANONICAL_TOOL_EXAMPLES,
+  promptCompiler,
+} from "../src/adapters/m365-copilot/prompts/compiler";
+import {
+  TOOL_REMINDER_PROMPT,
+  PLAN_MODE_PROMPT,
+  IMPLEMENT_PLAN_PROMPT,
+  COMPACT_CORE_TOOLS_DECLARATION,
+  COMPACT_APPLY_PATCH_EXAMPLES,
+} from "../src/adapters/m365-copilot/prompts/templates";
 import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/m365-copilot/tools/tool-bridge";
 
 describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
@@ -208,5 +219,71 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(CANONICAL_TOOL_EXAMPLES).toContain("request_user_input");
     expect(PLAN_MODE_PROMPT).toContain("request_user_input");
     expect(PLAN_MODE_PROMPT).toContain("Interactive User Interview Wizard");
+  });
+
+  test("11. COMPACT_CORE_TOOLS_DECLARATION và COMPACT_APPLY_PATCH_EXAMPLES định nghĩa tóm tắt súc tích", () => {
+    // Bản compact có tên các tool chính
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("AVAILABLE TOOLS (COMPACT):");
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("apply_patch");
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("read_file");
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("exec_command");
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("request_user_input");
+
+    // Bản compact ví dụ: CHỈ GIỮ LẠI cú pháp apply_patch
+    expect(COMPACT_APPLY_PATCH_EXAMPLES).toContain("VÍ DỤ MẪU DUY NHẤT: CÚ PHÁP apply_patch");
+    expect(COMPACT_APPLY_PATCH_EXAMPLES).toContain("*** Update File:");
+    expect(COMPACT_APPLY_PATCH_EXAMPLES).toContain("*** Add File:");
+    // Tuyệt đối không chứa các ví dụ thừa khác
+    expect(COMPACT_APPLY_PATCH_EXAMPLES).not.toContain("git_status");
+    expect(COMPACT_APPLY_PATCH_EXAMPLES).not.toContain("grep_code");
+    expect(COMPACT_APPLY_PATCH_EXAMPLES).not.toContain("search_files");
+  });
+
+  test("12. promptCompiler từ Turn 2 (isNewConversation: false) sinh ra Compact Prompt và bảo toàn Environment Context", () => {
+    const mockNormalized: any = {
+      threadId: "th_123",
+      turnId: "tu_123",
+      activeCodingTools: [],
+      priorHistory: [],
+      trailingToolResults: [
+        { callId: "c_1", toolName: "apply_patch", kind: "custom", output: "Success. Updated styles.css" },
+      ],
+      latestUserInstruction: "tiếp tục sửa js/app.js",
+      environmentContext: "- Thư mục làm việc (cwd): /workspace/app\n- Shell: zsh",
+    };
+    const mockParsed: any = {
+      modelId: "m365-copilot/think",
+      stream: true,
+      options: {},
+      context: { messages: [] },
+    };
+
+    // 1. Turn 1 (isNewConversation: true) -> Full Prompt
+    const resTurn1 = promptCompiler.compile({
+      normalized: mockNormalized,
+      parsed: mockParsed,
+      isNewConversation: true,
+    });
+    expect(resTurn1.finalPrompt).toContain("AVAILABLE TOOLS\n");
+    expect(resTurn1.finalPrompt).toContain("VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN");
+    expect(resTurn1.finalPrompt).toContain("git_status");
+
+    // 2. Turn 2 (isNewConversation: false) -> Compact Prompt
+    const resTurn2 = promptCompiler.compile({
+      normalized: mockNormalized,
+      parsed: mockParsed,
+      isNewConversation: false,
+    });
+    expect(resTurn2.finalPrompt).toContain("AVAILABLE TOOLS (COMPACT):");
+    expect(resTurn2.finalPrompt).toContain("VÍ DỤ MẪU DUY NHẤT: CÚ PHÁP apply_patch");
+    // Bảo toàn Ngữ cảnh Môi trường
+    expect(resTurn2.finalPrompt).toContain("[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]:");
+    expect(resTurn2.finalPrompt).toContain("/workspace/app");
+    // Loại bỏ các ví dụ dài dòng không cần thiết
+    expect(resTurn2.finalPrompt).not.toContain('{"name": "git_status"');
+    expect(resTurn2.finalPrompt).not.toContain('{"name": "grep_code"');
+
+    // Dung lượng Turn 2 compact hơn nhiều so với Turn 1
+    expect(resTurn2.finalPrompt.length).toBeLessThan(resTurn1.finalPrompt.length);
   });
 });

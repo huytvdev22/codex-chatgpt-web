@@ -5,6 +5,8 @@ import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
+  COMPACT_CORE_TOOLS_DECLARATION,
+  COMPACT_APPLY_PATCH_EXAMPLES,
 } from "./templates";
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
@@ -350,6 +352,15 @@ export function renderDynamicToolDeclarations(_tools?: NormalizedTool[]): string
   return `AVAILABLE TOOLS\n\n${CORE_CODING_TOOLS_DECLARATION}\n\n${CANONICAL_TOOL_EXAMPLES}`;
 }
 
+/**
+ * Render Tool Declaration phiên bản COMPACT cho M365 Copilot từ Turn 2 trở đi.
+ * Chỉ giữ danh mục công cụ tóm tắt 1 dòng và DUY NHẤT mẫu ví dụ của apply_patch.
+ */
+export function renderCompactDynamicToolDeclarations(_tools?: NormalizedTool[]): string {
+  logFunctionInput("prompts:compiler", "renderCompactDynamicToolDeclarations", { tools: _tools });
+  return `${COMPACT_CORE_TOOLS_DECLARATION}\n\n${COMPACT_APPLY_PATCH_EXAMPLES}`;
+}
+
 export interface PromptSectionMetrics {
   toolDeclaration: number;
   developerInstructions: number;
@@ -530,15 +541,24 @@ compile(input: PromptCompileInput): PromptCompileResult {
     if (!isNewConversation) {
       const incrementalSections: string[] = [];
 
+      // 1. Lời nhắc vai trò thực thi công cụ IDE
       const reminderSection = isImplementingPlan
         ? IMPLEMENT_PLAN_PROMPT
         : (isPlanMode ? `${PLAN_MODE_PROMPT}\n\n${TOOL_REMINDER_PROMPT}` : TOOL_REMINDER_PROMPT);
       incrementalSections.push(reminderSection);
 
-      // Bổ sung danh sách tools THẲNG TỪ RAW CỦA CODEX GỬI LÊN (activeCodingTools)
-      const dynamicToolsText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-      incrementalSections.push(dynamicToolsText);
+      // 2. Bảo toàn Ngữ cảnh Môi trường / Thư mục làm việc (forward từ raw Codex)
+      let envSection = "";
+      if (normalized.environmentContext) {
+        envSection = `[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]:\n${normalized.environmentContext}`;
+        incrementalSections.push(envSection);
+      }
 
+      // 3. Danh sách tools phiên bản COMPACT và DUY NHẤT mẫu ví dụ apply_patch từ Turn 2
+      const compactToolsText = renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
+      incrementalSections.push(compactToolsText);
+
+      // 4. TOÀN BỘ KHÔNG GIAN DÀNH CHO KẾT QUẢ TOOL CALL VỪA NHẬN ĐƯỢC
       let toolResultsContent = "";
       if (normalized.trailingToolResults.length > 0) {
         const resultBlocks = normalized.trailingToolResults.map(res => {
@@ -551,13 +571,14 @@ compile(input: PromptCompileInput): PromptCompileResult {
         incrementalSections.push(toolResultsContent);
       }
 
+      // 5. Yêu cầu của người dùng mới nhất (nếu có)
       let userReqContent = "";
       if (normalized.latestUserInstruction) {
         userReqContent = `[YÊU CẦU CỦA NGƯỜI DÙNG]:\n${normalized.latestUserInstruction}`;
         incrementalSections.push(userReqContent);
       }
 
-      // Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
+      // 6. Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
       incrementalSections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
 
       const finalPrompt = incrementalSections.join("\n\n").trim();
@@ -566,15 +587,15 @@ compile(input: PromptCompileInput): PromptCompileResult {
         `planMode=${isPlanMode}\n` +
         `collaborationMode=${collaborationMode}\n` +
         `finalPromptLength=${finalPrompt.length}\n` +
-        `mode=incremental_stateful`
+        `mode=incremental_stateful_compact`
       );
 
       const metrics = calculatePromptMetrics({
-        toolDeclaration: `${reminderSection}\n\n${dynamicToolsText}`,
+        toolDeclaration: `${reminderSection}\n\n${compactToolsText}`,
         developerInstructions: "",
         history: "",
         toolResults: toolResultsContent,
-        environment: "",
+        environment: envSection,
         userRequest: userReqContent,
         finalPrompt,
       });
@@ -586,10 +607,10 @@ compile(input: PromptCompileInput): PromptCompileResult {
         developerRulesCount: 0,
         historyTurns: 0,
         toolResultsCount: normalized.trailingToolResults.length,
-        toolPromptChars: reminderSection.length + dynamicToolsText.length,
+        toolPromptChars: reminderSection.length + compactToolsText.length,
         historyChars: 0,
         developerChars: 0,
-        environmentChars: 0,
+        environmentChars: envSection.length,
         finalPromptChars: finalPrompt.length,
       };
 

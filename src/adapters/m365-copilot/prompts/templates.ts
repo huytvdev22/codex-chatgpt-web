@@ -93,3 +93,47 @@ export const OUTPUT_FORMAT_HINTS = {
   implementPlan: `[Yêu cầu định dạng đầu ra]: Kế hoạch đã được phê duyệt. Hãy xuất ngay khối công cụ tạo hoặc sửa file (luôn dùng apply_patch thay vì write_file) tương ứng với bước đầu tiên của kế hoạch để triển khai trực tiếp vào mã nguồn. TUYỆT ĐỐI KHÔNG dùng cat <<EOF hay heredoc shell.`,
   default: `[Yêu cầu định dạng đầu ra]: Hãy xuất ngay khối công cụ tương ứng (hoặc câu lệnh terminal tương ứng nếu là lệnh shell) để IDE thực thi trực tiếp trên dự án cục bộ thay vì chỉ viết hướng dẫn văn bản hoặc tự chạy trong sandbox /mnt/data.`,
 };
+
+/**
+ * Danh mục công cụ cốt lõi phiên bản COMPACT (dành riêng cho Turn 2 trở đi trong phiên làm việc).
+ * Tóm tắt súc tích 1 dòng cho mỗi công cụ để tiết kiệm token tối đa và tập trung không gian cho kết quả tool call.
+ */
+export const COMPACT_CORE_TOOLS_DECLARATION = `AVAILABLE TOOLS (COMPACT):
+- apply_patch: [ƯU TIÊN TUYỆT ĐỐI KHI TẠO/SỬA FILE] Tạo hoặc sửa file cục bộ (FREEFORM patch, đúng 1 file duy nhất / lượt).
+- read_file: Đọc nội dung tệp mã nguồn (path: string, start_line?: number, end_line?: number <= 150 dòng).
+- exec_command: Chạy câu lệnh CLI terminal không tương tác (command: string). TUYỆT ĐỐI không dùng lệnh shell để tạo file (cat >).
+- request_user_input: Mở wizard phỏng vấn người dùng khi cần làm rõ yêu cầu hoặc chốt phương án kiến trúc (questions: array).
+- list_dir: Xem danh sách tệp/thư mục con cấp hiện tại (path?: string).
+- search_files: Tìm kiếm tệp theo mẫu glob pattern (pattern: string, path?: string).
+- grep_code: Tìm kiếm từ khóa hoặc regex trong mã nguồn (query: string, path?: string).
+- git_status: Xem nhanh trạng thái Git thay đổi (không tham số).
+- git_diff: Xem diff chi tiết của Git (path?: string).
+- write_file: Tạo/ghi đè file (path: string, content: string). Khuyến nghị luôn ưu tiên apply_patch thay vì write_file.`;
+
+/**
+ * Mẫu ví dụ duy nhất cho Turn 2 trở đi: CHỈ GIỮ LẠI cú pháp apply_patch (sửa file và tạo file mới).
+ * Loại bỏ toàn bộ các ví dụ JSON thừa (git, grep, exec, search...) để dành trọn không gian cho kết quả tool call.
+ */
+export const COMPACT_APPLY_PATCH_EXAMPLES = `VÍ DỤ MẪU DUY NHẤT: CÚ PHÁP apply_patch (BẮT BUỘC 1 FILE DUY NHẤT / LƯỢT):
+1. Sửa file đã có (BẮT BUỘC DÙNG apply_patch *** Update File:):
+\`\`\`\`markdown
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Update File: path/to/file.ext
+@@ context_anchor @@
+ dòng giữ nguyên
+-dòng code cũ xóa
++dòng code mới thêm
+*** End Patch
+</custom_tool_call>
+\`\`\`\`
+
+2. Tạo file mới hoàn toàn (HOẶC tạo/sửa file dạng thẻ HTML/XML/SVG an toàn):
+\`\`\`\`markdown
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Add File: path/to/file.ext
++dòng code mới thêm
+*** End Patch
+</custom_tool_call>
+\`\`\`\``;
