@@ -445,17 +445,26 @@ const b = \\{\\
       expect(listOutput).toContain("tool-bridge.ts");
       expect(listOutput).toContain("strategies/");
     } else {
-      // Trên POSIX (mac/linux), kiểm tra định dạng lệnh native PowerShell
-      expect(readCmd).toContain('Get-Content -LiteralPath "package.json"');
-      expect(readCmd).toContain("-TotalCount 3");
+      // Trên POSIX (mac/linux), kiểm tra định dạng lệnh native PowerShell chuẩn Codex icon
+      expect(readCmd).toContain('Get-Content "package.json"');
+      expect(readCmd).toContain("-Head 3");
 
       const listCmd = psStrategy.listDir("src/adapters/m365-copilot");
-      expect(listCmd).toContain('Get-ChildItem -LiteralPath "src/adapters/m365-copilot" -Name');
+      expect(listCmd).toContain('dir "src/adapters/m365-copilot" -Name');
     }
 
     // 3. Kiểm tra Resolver tự động phát hiện đúng strategy
     const pwshStrategy = CommandStrategyResolver.resolve({ shell: "pwsh" });
     expect(pwshStrategy.platformName).toBe("powershell");
+
+    const pwshExeStrategy = CommandStrategyResolver.resolve({ shell: "powershell.exe" });
+    expect(pwshExeStrategy.platformName).toBe("powershell");
+
+    const fullPathStrategy = CommandStrategyResolver.resolve({ shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" });
+    expect(fullPathStrategy.platformName).toBe("powershell");
+
+    const cmdStrategy = CommandStrategyResolver.resolve({ shell: "cmd.exe" });
+    expect(cmdStrategy.platformName).toBe("powershell");
 
     const zshStrategy = CommandStrategyResolver.resolve({ shell: "zsh" });
     expect(zshStrategy.platformName).toBe("posix");

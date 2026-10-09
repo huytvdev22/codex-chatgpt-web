@@ -38,11 +38,21 @@ export class CommandStrategyResolver {
       if (this.customStrategies.has(shell)) {
         return this.customStrategies.get(shell)!;
       }
-      if (shell === "powershell" || shell === "pwsh") {
+      if (
+        shell === "powershell" ||
+        shell === "pwsh" ||
+        shell.includes("powershell") ||
+        shell.includes("pwsh") ||
+        shell.endsWith("powershell.exe") ||
+        shell.endsWith("pwsh.exe")
+      ) {
         return new PowerShellCommandStrategy();
       }
-      if (shell === "bash" || shell === "zsh" || shell === "sh") {
+      if (shell === "bash" || shell === "zsh" || shell === "sh" || shell.endsWith("bash.exe") || shell.endsWith("zsh.exe")) {
         return new PosixCommandStrategy();
+      }
+      if (shell === "cmd" || shell === "cmd.exe" || shell.endsWith("cmd.exe")) {
+        return new PowerShellCommandStrategy();
       }
     }
 

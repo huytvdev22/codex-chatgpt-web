@@ -13,7 +13,7 @@ export class BashCommandDetector implements IToolCallDetector {
   /**
  * Khởi tạo bộ phát hiện lệnh bash với instance biên dịch lệnh tương ứng.
  */
-  constructor(private readonly translator = new BashCommandTranslator()) {
+  constructor(private readonly translator = new BashCommandTranslator()) {}
 
 
     /**

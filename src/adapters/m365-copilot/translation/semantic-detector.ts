@@ -28,7 +28,7 @@ export class M365MarkdownBuffer {
  */
   constructor(
     private readonly transform: (md: string) => string = md => md
-  ) {
+  ) {}
 
 
     /**

@@ -28,41 +28,35 @@ private wrapEncoded(script: string): string {
 
   /**
    * Sinh lệnh PowerShell đọc nội dung tệp tin trên hệ điều hành Windows.
-   * Bắt đầu bằng `Get-Content` để Codex Rust binary nhận diện thành CommandAction::Read (icon 📖).
+   * Sử dụng cú pháp native tinh gọn `Get-Content <file> -Head <count>` để Codex Rust binary nhận diện thành CommandAction::Read (icon 📖).
    */
   readFile(targetPath: string, range?: FileRange): string {
     logFunctionInput("tools:command-strategies:powershell", "readFile", { targetPath, range });
     const file = String(targetPath || "package.json");
-    const startLine = range?.startLine ? Math.max(0, range.startLine) : 0;
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
-
-    if (startLine > 1) {
-      const count = endLine > 0 ? Math.max(1, endLine - startLine + 1) : 150;
-      return `Get-Content -LiteralPath ${this.quoteArg(file)} -Encoding UTF8 | Select-Object -Skip ${startLine - 1} -First ${count}`;
-    }
     const count = endLine > 0 ? endLine : 150;
-    return `Get-Content -LiteralPath ${this.quoteArg(file)} -TotalCount ${count} -Encoding UTF8`;
+    return `Get-Content ${this.quoteArg(file)} -Head ${count}`;
   }
 
   /**
    * Sinh lệnh PowerShell liệt kê tệp và thư mục trên hệ điều hành Windows.
-   * Bắt đầu bằng `Get-ChildItem` để Codex Rust binary nhận diện thành CommandAction::ListFiles (icon 📁).
+   * Sử dụng alias native `dir <dir> -Name` để Codex Rust binary nhận diện thành CommandAction::ListFiles (icon 📁).
    */
   listDir(targetPath: string): string {
     logFunctionInput("tools:command-strategies:powershell", "listDir", { targetPath });
     const dir = String(targetPath || ".");
-    return `Get-ChildItem -LiteralPath ${this.quoteArg(dir)} -Name`;
+    return `dir ${this.quoteArg(dir)} -Name`;
   }
 
   /**
    * Sinh lệnh PowerShell tìm kiếm tệp tin theo mẫu trên hệ điều hành Windows.
-   * Bắt đầu bằng `Get-ChildItem` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
+   * Sử dụng alias native `dir <dir> -Filter ...` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
   searchFiles(pattern: string, targetPath = "."): string {
     logFunctionInput("tools:command-strategies:powershell", "searchFiles", { pattern, targetPath });
     const dir = String(targetPath || ".");
     const pat = String(pattern || "*");
-    return `Get-ChildItem -Path ${this.quoteArg(dir)} -Filter ${this.quoteArg(pat)} -Recurse -Depth 3 -Exclude node_modules,dist,bin,obj -Name`;
+    return `dir ${this.quoteArg(dir)} -Filter ${this.quoteArg(pat)} -Recurse -Depth 3 -Exclude node_modules,dist,bin,obj -Name`;
   }
 
   /**

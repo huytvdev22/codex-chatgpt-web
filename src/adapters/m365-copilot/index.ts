@@ -56,6 +56,18 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
     const match = text.match(/<shell>([^<]+)<\/shell>/i);
     if (match) return match[1].trim();
   }
+  // 3. Tự động nhận diện PowerShell nếu context chứa đường dẫn Windows ổ đĩa (ví dụ C:\, D:\)
+  for (const sp of parsed.context.systemPrompt || []) {
+    if (/[a-zA-Z]:\\/i.test(sp)) return "powershell";
+  }
+  for (const msg of parsed.context.messages || []) {
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : Array.isArray(msg.content)
+        ? msg.content.map(c => c.type === "text" ? c.text : "").join(" ")
+        : "";
+    if (/[a-zA-Z]:\\/i.test(text)) return "powershell";
+  }
   return undefined;
 }
 
