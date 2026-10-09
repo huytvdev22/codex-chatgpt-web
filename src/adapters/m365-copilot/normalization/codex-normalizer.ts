@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type {
   CodexRawPayload,
   CodexRawToolSpec,
@@ -18,7 +18,7 @@ export class CodexPayloadNormalizer {
    * Trích xuất chuỗi văn bản thuần túy từ nội dung tin nhắn của Codex (hỗ trợ chuỗi đơn hoặc mảng content blocks).
    */
   private static extractTextFromContent(content: string | CodexRawContentBlock[]): string {
-    logFunctionInput("normalization:codex-normalizer", "extractTextFromContent", { content });
+
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
       return content
@@ -39,7 +39,7 @@ export class CodexPayloadNormalizer {
    * Chuẩn hóa và chuyển đổi đầu ra của công cụ (output) thành chuỗi string an toàn.
    */
   private static stringifyToolOutput(output: unknown): string {
-    logFunctionInput("normalization:codex-normalizer", "stringifyToolOutput", { output });
+
     if (typeof output === "string") return output;
     const serialized = JSON.stringify(output ?? "");
     return serialized ?? "";
@@ -153,7 +153,7 @@ export class CodexPayloadNormalizer {
    * Bảo toàn namespace, qualifiedName, và lưu trữ rawParameters/format nguyên vẹn.
    */
   static extractTools(rawPayload: CodexRawPayload): NormalizedTool[] {
-    logFunctionInput("normalization:codex-normalizer", "extractTools", { rawPayload });
+
     const tools: NormalizedTool[] = [];
     const seen = new Set<string>();
     const DEFAULT_FUNCTION_NAMESPACE = "functions";
@@ -162,7 +162,7 @@ export class CodexPayloadNormalizer {
      * Chuẩn hóa định nghĩa công cụ thô (raw tool spec) từ Codex thành định dạng công cụ chuẩn (Canonical Tool).
      */
     const processSpec = (spec: CodexRawToolSpec, namespace?: string) => {
-      logFunctionInput("normalization:codex-normalizer", "processSpec", { spec, namespace });
+
       if (!spec || typeof spec !== "object") return;
 
       if (spec.type === "namespace" && Array.isArray(spec.tools)) {
@@ -238,7 +238,7 @@ export class CodexPayloadNormalizer {
    * - Ghép nối call_id ngược về tool call tương ứng để xác định tên tool và kind.
    */
   static extractTrailingToolResults(rawPayload: CodexRawPayload): NormalizedToolResult[] {
-    logFunctionInput("normalization:codex-normalizer", "extractTrailingToolResults", { rawPayload });
+
     const input = rawPayload.input || [];
     const trailingResults: NormalizedToolResult[] = [];
 
@@ -293,7 +293,7 @@ export class CodexPayloadNormalizer {
    * Ưu tiên message có metadata content_item_kinds chứa 'user.text'.
    */
   static findLatestUserItemIndex(input: CodexRawInputItem[]): number {
-    logFunctionInput("normalization:codex-normalizer", "findLatestUserItemIndex", { input });
+
     let fallbackIndex = -1;
 
     for (let i = input.length - 1; i >= 0; i--) {
@@ -325,7 +325,7 @@ export class CodexPayloadNormalizer {
    * nhằm hỗ trợ tương thích 100% khi request không có raw wire input (mock test hoặc pipeline cũ).
    */
   static convertMessagesToInput(messages: Array<any>): CodexRawInputItem[] {
-    logFunctionInput("normalization:codex-normalizer", "convertMessagesToInput", { messages });
+
     const input: CodexRawInputItem[] = [];
     for (const msg of messages || []) {
       if (!msg) continue;
@@ -376,7 +376,7 @@ export class CodexPayloadNormalizer {
    * Chuẩn hóa toàn bộ request từ CodexRawPayload sang NormalizedCodexRequest.
    */
   static normalize(rawPayload: CodexRawPayload): NormalizedCodexRequest {
-    logFunctionInput("normalization:codex-normalizer", "normalize", { rawPayload });
+
     const rawContextMsgs = (rawPayload as any).context?.messages || (rawPayload.extra as any)?.context?.messages;
     const input = (rawPayload.input && rawPayload.input.length > 0)
       ? rawPayload.input
@@ -542,7 +542,7 @@ export class CodexPayloadNormalizer {
    * (So sánh vị trí xuất hiện cuối cùng trong request để phản ánh trạng thái mới nhất).
    */
   static detectCollaborationMode(rawPayload: CodexRawPayload): "default" | "plan" {
-    logFunctionInput("normalization:codex-normalizer", "detectCollaborationMode", { rawPayload });
+
     const rawString = typeof (rawPayload as any).toJSON === "function"
       ? JSON.stringify((rawPayload as any).toJSON())
       : JSON.stringify(rawPayload);
@@ -586,7 +586,7 @@ export class CodexPayloadNormalizer {
     tools: NormalizedTool[],
     targetName: string
   ): { tool: NormalizedTool | null; ambiguous?: boolean } {
-    logFunctionInput("normalization:codex-normalizer", "resolveToolByName", { tools, targetName });
+
     if (!targetName) return { tool: null };
 
     // Chuẩn hóa loại bỏ tiền tố functions. nếu có

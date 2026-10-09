@@ -1,4 +1,3 @@
-import { logFunctionInput } from "../debug-logger";
 import { chatGptHtmlToMarkdown } from "../../chatgpt-web/markdown";
 export { chatGptHtmlToMarkdown };
 

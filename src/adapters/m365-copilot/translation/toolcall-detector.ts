@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import { chatGptHtmlToMarkdown } from "./html-to-markdown";
 
 export interface ParsedToolCall {

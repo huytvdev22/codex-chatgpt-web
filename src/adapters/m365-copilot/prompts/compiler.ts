@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { CodexParsedRequest } from "../../../types";
 import type { NormalizedCodexRequest, NormalizedTool } from "../normalization/canonical-types";
 import {
@@ -20,7 +20,7 @@ const MAX_TOOL_RESULT_CHARS = 8_000;
  * Thực hiện xử lý truncateToolResult cho quy trình M365 Copilot Adapter.
  */
 export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
-  logFunctionInput("prompts:compiler", "truncateToolResult", { content, maxChars });
+
   if (content.length <= maxChars) return content;
   const half = Math.floor((maxChars - 200) / 2);
   const head = content.slice(0, half);
@@ -214,7 +214,7 @@ const CORE_TOOL_NAMES = new Set([
  * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI và control tokens rác.
  */
 export function cleanToolDescription(name: string, rawDesc?: string): string {
-  logFunctionInput("prompts:compiler", "cleanToolDescription", { name, rawDesc });
+
   if (!rawDesc) return "No description provided.";
   let desc = rawDesc.trim();
 
@@ -352,7 +352,7 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN 
  * giúp prompt tinh gọn tối đa, bảo vệ ngữ cảnh và chống phân tâm cho M365 Copilot.
  */
 export function renderDynamicToolDeclarations(_tools?: NormalizedTool[]): string {
-  logFunctionInput("prompts:compiler", "renderDynamicToolDeclarations", { tools: _tools });
+
   return `AVAILABLE TOOLS\n\n${CORE_CODING_TOOLS_DECLARATION}\n\n${CANONICAL_TOOL_EXAMPLES}`;
 }
 
@@ -361,7 +361,7 @@ export function renderDynamicToolDeclarations(_tools?: NormalizedTool[]): string
  * Chỉ giữ danh mục công cụ tóm tắt 1 dòng và DUY NHẤT mẫu ví dụ của apply_patch.
  */
 export function renderCompactDynamicToolDeclarations(_tools?: NormalizedTool[]): string {
-  logFunctionInput("prompts:compiler", "renderCompactDynamicToolDeclarations", { tools: _tools });
+
   return `${COMPACT_CORE_TOOLS_DECLARATION}\n\n${COMPACT_APPLY_PATCH_EXAMPLES}`;
 }
 
@@ -419,7 +419,7 @@ export function calculatePromptMetrics(sections: {
   userRequest: string;
   finalPrompt: string;
 }): PromptSectionMetrics {
-  logFunctionInput("prompts:compiler", "calculatePromptMetrics", { sections });
+
   const lengths: Record<string, number> = {
     toolDeclaration: sections.toolDeclaration.length,
     developerInstructions: sections.developerInstructions.length,
@@ -454,7 +454,7 @@ export function calculatePromptMetrics(sections: {
  * Ghi nhận các chỉ số đo lường chi tiết về kích thước từng phần của prompt đã biên dịch.
  */
 export function logPromptMetrics(metrics: PromptSectionMetrics): void {
-  logFunctionInput("prompts:compiler", "logPromptMetrics", { metrics });
+
   console.log(
     `[prompt-metrics]\n` +
     `toolDeclaration=${metrics.toolDeclaration}\n` +
@@ -470,7 +470,7 @@ export function logPromptMetrics(metrics: PromptSectionMetrics): void {
  * Ghi nhận thông tin kiểm toán (audit log) về số lượng công cụ, lượt hội thoại và kích thước prompt.
  */
 export function logPromptAudit(audit: PromptAuditData): void {
-  logFunctionInput("prompts:compiler", "logPromptAudit", { audit });
+
   console.log(
     `[prompt-audit]\n` +
     `threadId=${audit.threadId || "n/a"}\n` +
@@ -491,7 +491,7 @@ export function logPromptAudit(audit: PromptAuditData): void {
  * Kiểm tra xem người dùng có vừa bấm xác nhận triển khai kế hoạch hay không
  */
 export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
-  logFunctionInput("prompts:compiler", "isImplementingPlanRequest", { parsed });
+
   const messages = parsed.context.messages || [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -518,11 +518,11 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
  * Ghi nhận log: planMode, collaborationMode, finalPromptLength.
  */
 export class M365PromptCompiler {
-    /**
-   * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
-   */
-compile(input: PromptCompileInput): PromptCompileResult {
-    logFunctionInput("prompts:compiler", "compile", { input });
+  /**
+ * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
+ */
+  compile(input: PromptCompileInput): PromptCompileResult {
+
     const { normalized, parsed } = input;
 
     // 1. Phân định chính xác Collaboration Mode (Loại bỏ triệt để mâu thuẫn Plan Mode / Default Mode)

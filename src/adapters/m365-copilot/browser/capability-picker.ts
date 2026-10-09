@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { Page } from "playwright-core";
 import type { M365CapabilityMode } from "../../../m365-models";
 export type { M365CapabilityMode };
@@ -57,7 +57,7 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
    * Đảm bảo model mong muốn đang được chọn trên giao diện M365 Copilot
    */
   async ensureMode(page: Page, targetMode: M365CapabilityMode): Promise<boolean> {
-    logFunctionInput("browser:capability-picker", "ensureMode", { page, targetMode });
+
     const spec = M365_CAPABILITY_SPECS[targetMode];
     if (!spec) {
       console.warn(`[m365-capability] Unknown capability mode: ${targetMode}, skipping switch.`);
@@ -197,7 +197,7 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
 
       if (selectResult.alreadyChecked) {
         // Đóng menu nếu đã được chọn từ trước
-        await page.keyboard.press("Escape").catch(() => {});
+        await page.keyboard.press("Escape").catch(() => { });
         console.log(`[m365-capability] Mode '${spec.label}' was already checked.`);
         return true;
       }
@@ -210,11 +210,11 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
 
       console.warn(`[m365-capability] Failed to select mode: ${selectResult.reason}`);
       // Nhấn Escape để đóng menu nếu menu còn mở dở
-      await page.keyboard.press("Escape").catch(() => {});
+      await page.keyboard.press("Escape").catch(() => { });
       return false;
     } catch (error) {
       console.warn(`[m365-capability] Error during capability selection: ${error instanceof Error ? error.message : String(error)}`);
-      await page.keyboard.press("Escape").catch(() => {});
+      await page.keyboard.press("Escape").catch(() => { });
       return false;
     }
   }
@@ -226,6 +226,6 @@ export const defaultCapabilityPicker = new M365CapabilityPicker();
  * Kiểm tra và kích hoạt chế độ năng lực (Capability Mode) mục tiêu trên giao diện M365 Copilot.
  */
 export async function ensureM365CapabilityMode(page: Page, targetMode: M365CapabilityMode): Promise<boolean> {
-  logFunctionInput("browser:capability-picker", "ensureM365CapabilityMode", { page, targetMode });
+
   return defaultCapabilityPicker.ensureMode(page, targetMode);
 }

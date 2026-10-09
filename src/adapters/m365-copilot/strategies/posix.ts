@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import { BasePlatformCommandStrategy } from "./base";
 import type { FileRange, WriteFileOptions } from "./types";
 
@@ -9,11 +9,11 @@ import type { FileRange, WriteFileOptions } from "./types";
 export class PosixCommandStrategy extends BasePlatformCommandStrategy {
   readonly platformName = "posix";
 
-    /**
-   * Sinh lệnh đọc nội dung file an toàn trong môi trường POSIX (macOS, Linux).
-   */
-readFile(targetPath: string, range?: FileRange): string {
-    logFunctionInput("strategies:posix", "readFile", { targetPath, range });
+  /**
+ * Sinh lệnh đọc nội dung file an toàn trong môi trường POSIX (macOS, Linux).
+ */
+  readFile(targetPath: string, range?: FileRange): string {
+
     const file = String(targetPath || "package.json");
     const startLine = range?.startLine ? Math.max(0, range.startLine) : 0;
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
@@ -22,43 +22,43 @@ readFile(targetPath: string, range?: FileRange): string {
     return `node -e "${script}" ${this.quoteArg(file)} ${startLine} ${endLine}`;
   }
 
-    /**
-   * Sinh lệnh liệt kê danh sách tệp và thư mục trong môi trường POSIX.
-   */
-listDir(targetPath: string): string {
-    logFunctionInput("strategies:posix", "listDir", { targetPath });
+  /**
+ * Sinh lệnh liệt kê danh sách tệp và thư mục trong môi trường POSIX.
+ */
+  listDir(targetPath: string): string {
+
     const dir = String(targetPath || ".");
     const script = `const fs=require('fs');try{const items=fs.readdirSync(process.argv[1],{withFileTypes:true}).map(e=>e.isDirectory()?e.name+'/':e.name).sort();console.log(items.join('\\n'))}catch(e){console.error('Cannot list dir: '+e.message);process.exit(1)}`;
     return `node -e "${script}" ${this.quoteArg(dir)}`;
   }
 
-    /**
-   * Sinh lệnh tìm kiếm tệp tin theo mẫu (pattern) trong môi trường POSIX.
-   */
-searchFiles(pattern: string, targetPath = "."): string {
-    logFunctionInput("strategies:posix", "searchFiles", { pattern, targetPath });
+  /**
+ * Sinh lệnh tìm kiếm tệp tin theo mẫu (pattern) trong môi trường POSIX.
+ */
+  searchFiles(pattern: string, targetPath = "."): string {
+
     const dir = String(targetPath || ".");
     const pat = String(pattern || "*");
     const script = `const fs=require('fs'),p=require('path');const root=process.argv[1]||'.',pattern=process.argv[2]||'*';const reg=new RegExp(pattern.replace(/\\./g,'\\\\.').replace(/\\*/g,'.*').replace(/\\?/g,'.'),'i');const res=[];function walk(d){if(res.length>=50)return;try{for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.name.startsWith('.')||e.name==='node_modules'||e.name==='dist'||e.name==='target')continue;const full=p.join(d,e.name);if(e.isDirectory())walk(full);else if(reg.test(e.name)||reg.test(full))res.push(full);if(res.length>=50)break;}}catch{}}walk(root);console.log(res.join('\\n'));`;
     return `node -e "${script}" ${this.quoteArg(dir)} ${this.quoteArg(pat)}`;
   }
 
-    /**
-   * Sinh lệnh tìm kiếm nội dung mã nguồn (grep) trong môi trường POSIX.
-   */
-grepCode(query: string, targetPath = "."): string {
-    logFunctionInput("strategies:posix", "grepCode", { query, targetPath });
+  /**
+ * Sinh lệnh tìm kiếm nội dung mã nguồn (grep) trong môi trường POSIX.
+ */
+  grepCode(query: string, targetPath = "."): string {
+
     const dir = String(targetPath || ".");
     const q = String(query || "");
     const script = `const fs=require('fs'),p=require('path');const root=process.argv[1]||'.',q=process.argv[2]||'';let c=0;function scan(d){if(c>=50)return;try{for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.name.startsWith('.')||e.name==='node_modules'||e.name==='dist'||e.name==='target')continue;const full=p.join(d,e.name);if(e.isDirectory())scan(full);else if(/\\.(ts|js|tsx|jsx|json|md|html|css|py|rs|go|java|xml|yml|yaml|toml|sh|bat|cmd|ps1)$/i.test(e.name)){try{const lines=fs.readFileSync(full,'utf8').split('\\n');for(let i=0;i<lines.length;i++){if(lines[i].includes(q)){console.log(full+':'+(i+1)+': '+lines[i].trim());c++;if(c>=50)return;}}}catch{}}}}catch{}}scan(root);`;
     return `node -e "${script}" ${this.quoteArg(dir)} ${this.quoteArg(q)}`;
   }
 
-    /**
-   * Sinh lệnh ghi dữ liệu ra tệp tin trong môi trường POSIX.
-   */
-writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
-    logFunctionInput("strategies:posix", "writeFile", { targetPath, contentOrBase64, options });
+  /**
+ * Sinh lệnh ghi dữ liệu ra tệp tin trong môi trường POSIX.
+ */
+  writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
+
     const file = String(targetPath || "");
     const stagingPath = options?.stagingPath;
 

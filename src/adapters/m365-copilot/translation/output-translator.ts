@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import {
   type OpenAIToolCall,
   type ParseDiagnostics,

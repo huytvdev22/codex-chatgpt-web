@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { AgentLoopResult, AgentMessage } from "./agent-loop";
 
 export interface CognitiveTurnEvaluation {
@@ -30,7 +30,7 @@ export class CognitiveEvaluator {
    * Đánh giá một turn cụ thể trong lịch sử trao đổi của agent
    */
   evaluateTurn(message: AgentMessage, turnIndex: number): CognitiveTurnEvaluation {
-    logFunctionInput("harness:cognitive-evaluator", "evaluateTurn", { turnIndex, role: message.role });
+
     const hasThought = Boolean(message.thinking && message.thinking.trim().length > 0);
     const thoughtLength = message.thinking ? message.thinking.trim().length : 0;
     const hasNarrative = Boolean(message.narrative && message.narrative.trim().length > 0);
@@ -68,7 +68,7 @@ export class CognitiveEvaluator {
    * Đánh giá tổng thể phiên làm việc của Agent Loop
    */
   evaluateSession(result: AgentLoopResult): CognitiveSessionMetrics {
-    logFunctionInput("harness:cognitive-evaluator", "evaluateSession", { turns: result.turns, status: result.status });
+
     const assistantMessages = result.messages.filter(m => m.role === "assistant");
     const toolResultMessages = result.messages.filter(m => m.role === "tool_result");
 

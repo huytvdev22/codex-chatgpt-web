@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import { AtomicFileWriter } from "../tools/atomic-file-writer";
 import type { OpenAIToolCall } from "./detectors/types";
 

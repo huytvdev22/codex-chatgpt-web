@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { FileRange, PlatformCommandStrategy, WriteFileOptions } from "./types";
 
 /**
@@ -14,28 +14,28 @@ export abstract class BasePlatformCommandStrategy implements PlatformCommandStra
   abstract grepCode(query: string, targetPath?: string): string;
   abstract writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string;
 
-    /**
-   * Thực hiện xử lý BasePlatformCommandStrategy.gitStatus cho quy trình M365 Copilot Adapter.
-   */
-gitStatus(): string {
-    logFunctionInput("strategies:base", "gitStatus");
+  /**
+ * Thực hiện xử lý BasePlatformCommandStrategy.gitStatus cho quy trình M365 Copilot Adapter.
+ */
+  gitStatus(): string {
+
     return "git status -s";
   }
 
-    /**
-   * Thực hiện xử lý BasePlatformCommandStrategy.gitDiff cho quy trình M365 Copilot Adapter.
-   */
-gitDiff(targetPath?: string): string {
-    logFunctionInput("strategies:base", "gitDiff", { targetPath });
+  /**
+ * Thực hiện xử lý BasePlatformCommandStrategy.gitDiff cho quy trình M365 Copilot Adapter.
+ */
+  gitDiff(targetPath?: string): string {
+
     const file = targetPath ? String(targetPath).trim() : "";
     return file ? `git diff ${this.quoteArg(file)}` : "git diff";
   }
 
-    /**
-   * Thực hiện xử lý BasePlatformCommandStrategy.runCommand cho quy trình M365 Copilot Adapter.
-   */
-runCommand(cmd: string): string {
-    logFunctionInput("strategies:base", "runCommand", { cmd });
+  /**
+ * Thực hiện xử lý BasePlatformCommandStrategy.runCommand cho quy trình M365 Copilot Adapter.
+ */
+  runCommand(cmd: string): string {
+
     return String(cmd || "");
   }
 
@@ -43,7 +43,7 @@ runCommand(cmd: string): string {
    * Bao bọc chuỗi tham số an toàn đa nền tảng bằng nháy kép.
    */
   protected quoteArg(arg: string): string {
-    logFunctionInput("strategies:base", "quoteArg", { arg });
+
     if (!arg) return '""';
     return `"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   }

@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { CodexMessage } from "../../../types";
 import type { ConversationGuardState } from "./conversation-state";
 
@@ -40,7 +40,7 @@ export const conversationGuard = new Map<string, ConversationGuardState>();
  * Thực hiện xử lý cleanExpiredConversationGuards cho quy trình M365 Copilot Adapter.
  */
 export function cleanExpiredConversationGuards(now = Date.now()): void {
-  logFunctionInput("session:conversation-guard", "cleanExpiredConversationGuards", { now });
+
   for (const [key, state] of conversationGuard.entries()) {
     if (now - state.updatedAt > GUARD_TTL_MS) {
       conversationGuard.delete(key);
@@ -59,7 +59,7 @@ export function cleanExpiredConversationGuards(now = Date.now()): void {
  * Thực hiện xử lý stableSortValue cho quy trình M365 Copilot Adapter.
  */
 export function stableSortValue(value: unknown): unknown {
-  logFunctionInput("session:conversation-guard", "stableSortValue", { value });
+
   if (value === null || typeof value !== "object") {
     if (typeof value === "string") {
       return value.replace(/\\/g, "/").trim();
@@ -81,7 +81,7 @@ export function stableSortValue(value: unknown): unknown {
  * Thực hiện xử lý stableToolFingerprint cho quy trình M365 Copilot Adapter.
  */
 export function stableToolFingerprint(name: string, rawArgs: unknown): string {
-  logFunctionInput("session:conversation-guard", "stableToolFingerprint", { name, rawArgs });
+
   let parsedArgs = rawArgs;
   if (typeof rawArgs === "string") {
     try {
@@ -98,7 +98,7 @@ export function stableToolFingerprint(name: string, rawArgs: unknown): string {
  * Thực hiện xử lý isToolCallPart cho quy trình M365 Copilot Adapter.
  */
 export function isToolCallPart(part: unknown): boolean {
-  logFunctionInput("session:conversation-guard", "isToolCallPart", { part });
+
   if (!part || typeof part !== "object") return false;
   const p = part as Record<string, unknown>;
   const typeStr = typeof p.type === "string" ? p.type.toLowerCase() : "";
@@ -119,7 +119,7 @@ export function isToolCallPart(part: unknown): boolean {
  * Thực hiện xử lý isAssistantFinalAnswer cho quy trình M365 Copilot Adapter.
  */
 export function isAssistantFinalAnswer(msg: CodexMessage | undefined): boolean {
-  logFunctionInput("session:conversation-guard", "isAssistantFinalAnswer", { msg });
+
   if (!msg || msg.role !== "assistant") return false;
 
   // 1. Nếu content là string: Kiểm tra xem có chứa XML tool_call serialize không

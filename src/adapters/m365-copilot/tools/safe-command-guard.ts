@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { PlatformCommandStrategy } from "./command-strategies/types";
 
 export interface StructuredRefusalPayload {
@@ -25,7 +25,7 @@ export class SafeCommandGuard {
    * Tuyệt đối không chặn các câu lệnh phổ biến (git, npm, npx, bun, cargo, node, python, ls, dir).
    */
   static validateShellCommand(cmd: string): CommandValidationResult {
-    logFunctionInput("tools:safe-command-guard", "validateShellCommand", { cmd });
+
     const trimmed = (cmd || "").trim();
     if (!trimmed) {
       return { allowed: true };
@@ -93,7 +93,7 @@ export class SafeCommandGuard {
    * Tạo Structured Refusal Payload chuẩn JSON
    */
   static createStructuredRefusalPayload(validation: CommandValidationResult): StructuredRefusalPayload {
-    logFunctionInput("tools:safe-command-guard", "createStructuredRefusalPayload", { validation });
+
     return {
       status: "rejected",
       error: "GUARDRAIL_VIOLATION",
@@ -110,7 +110,7 @@ export class SafeCommandGuard {
     validation: CommandValidationResult,
     platform: "powershell" | "posix" = "powershell"
   ): string {
-    logFunctionInput("tools:safe-command-guard", "createStructuredRefusalCommand", { validation, platform });
+
     const payload = this.createStructuredRefusalPayload(validation);
     const jsonStr = JSON.stringify(payload, null, 2);
 
@@ -128,7 +128,7 @@ export class SafeCommandGuard {
    * Trích xuất danh sách file từ đối số của read_file
    */
   static parseTargetFiles(args: Record<string, any>): string[] {
-    logFunctionInput("tools:safe-command-guard", "parseTargetFiles", { args });
+
     if (Array.isArray(args.files)) {
       return args.files.map(String).map(s => s.trim()).filter(Boolean);
     }
@@ -150,7 +150,7 @@ export class SafeCommandGuard {
     args: { start_line?: any; end_line?: any; startline?: any; endline?: any; start?: any; end?: any },
     maxLines = SafeCommandGuard.MAX_TOTAL_LINES
   ): { startLine: number; endLine: number } {
-    logFunctionInput("tools:safe-command-guard", "clampReadFileRange", { args, maxLines });
+
     const rawStart = parseInt(String(args.start_line || args.startline || args.start || 1), 10) || 1;
     const startLine = Math.max(1, rawStart);
     let rawEnd = parseInt(String(args.end_line || args.endline || args.end || 0), 10) || 0;
@@ -186,7 +186,7 @@ export class SafeCommandGuard {
     args: Record<string, any>,
     strategy: PlatformCommandStrategy
   ): { name: string; args: { cmd: string } } {
-    logFunctionInput("tools:safe-command-guard", "handleReadFile", { args, platform: strategy.platformName });
+
     const files = this.parseTargetFiles(args);
     const platform = strategy.platformName === "posix" ? "posix" : "powershell";
 

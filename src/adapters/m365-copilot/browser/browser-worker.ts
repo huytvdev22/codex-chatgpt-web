@@ -1,4 +1,3 @@
-import { logFunctionInput } from "../debug-logger";
 import { connectLauncherBrowserHost, notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../../launcher-browser-host";
 import { getConfigDir } from "../../../config";
 import { join } from "node:path";
@@ -51,7 +50,7 @@ let activeM365ConversationKey: string | null = null;
  * Xác định đường dẫn file descriptor của Launcher Browser Host từ tham số hoặc thư mục cấu hình.
  */
 function resolveDescriptorPath(customPath?: string): string {
-  logFunctionInput("browser:browser-worker", "resolveDescriptorPath", { customPath });
+
   if (customPath && existsSync(customPath)) return customPath;
   const home = process.env.CODEX_CHATGPT_WEB_HOME || getConfigDir();
   return join(home, "runtime", "launcher-browser.json");
@@ -65,7 +64,7 @@ export async function executeM365Turn(
   promptText: string,
   options: M365BrowserRunOptions
 ): Promise<string> {
-  logFunctionInput("browser:browser-worker", "executeM365Turn", { promptText, options });
+
   const descriptorPath = resolveDescriptorPath(options.descriptorPath);
   if (!existsSync(descriptorPath)) {
     throw new Error(
@@ -358,7 +357,7 @@ export async function executeM365Turn(
             break;
           }
         }
-      } catch {}
+      } catch { }
 
       // 3. Dự phòng trong DOM: Dispatch sự kiện CHỈ KHI NÚT LÀ NÚT SEND (Loại trừ 100% nút Stop!)
       const domSendSuccess = await page.evaluate(() => {
@@ -405,7 +404,7 @@ export async function executeM365Turn(
           if (editor) {
             editor.focus();
           }
-        }).catch(() => {});
+        }).catch(() => { });
         await page.keyboard.press("Control+Enter");
         await page.keyboard.press("Enter");
       }
@@ -848,9 +847,9 @@ export async function executeM365Turn(
                 // đảm bảo Monaco kịp render các dòng trung gian vào DOM để cache thu thập đủ.
                 scrollEl.scrollTop = Math.min(maxScroll, scrollEl.scrollTop + 350);
               }
-            } catch {}
+            } catch { }
           });
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       // Stream các khối đã hoàn thành:
@@ -1116,7 +1115,7 @@ export async function executeM365Turn(
  * Bọc một Promise với giới hạn thời gian chờ (timeout), trả về giá trị fallback nếu quá thời gian.
  */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-  logFunctionInput("browser:browser-worker", "withTimeout", { promise, timeoutMs, fallback });
+
   let timer: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => resolve(fallback), timeoutMs);

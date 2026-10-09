@@ -1,4 +1,3 @@
-import { logFunctionInput } from "../debug-logger";
 /**
  * Giao diện đại diện cho một quy tắc phân tích lệnh Bash/Shell sang Tool Call
  * Tuân thủ Open/Closed Principle (OCP) & Single Responsibility Principle (SRP)

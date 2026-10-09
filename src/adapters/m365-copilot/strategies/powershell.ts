@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import { BasePlatformCommandStrategy } from "./base";
 import type { FileRange, WriteFileOptions } from "./types";
 
@@ -7,7 +7,7 @@ import type { FileRange, WriteFileOptions } from "./types";
  * Phương pháp này loại bỏ triệt để mọi nguy cơ lỗi parsing nháy kép, nháy đơn, ký tự đặc biệt hay biến $var.
  */
 export function encodePowerShellScript(script: string): string {
-  logFunctionInput("strategies:powershell", "encodePowerShellScript", { script });
+
   return Buffer.from(script, "utf16le").toString("base64");
 }
 
@@ -18,19 +18,19 @@ export function encodePowerShellScript(script: string): string {
 export class PowerShellCommandStrategy extends BasePlatformCommandStrategy {
   readonly platformName = "powershell";
 
-    /**
-   * Mã hóa đoạn mã PowerShell sang định dạng Base64 UTF-16LE tương thích với cờ -EncodedCommand.
-   */
-private wrapEncoded(script: string): string {
-    logFunctionInput("strategies:powershell", "wrapEncoded", { script });
+  /**
+ * Mã hóa đoạn mã PowerShell sang định dạng Base64 UTF-16LE tương thích với cờ -EncodedCommand.
+ */
+  private wrapEncoded(script: string): string {
+
     return `powershell -NoProfile -EncodedCommand ${encodePowerShellScript(script.trim())}`;
   }
 
-    /**
-   * Sinh lệnh PowerShell đọc nội dung tệp tin trên hệ điều hành Windows.
-   */
-readFile(targetPath: string, range?: FileRange): string {
-    logFunctionInput("strategies:powershell", "readFile", { targetPath, range });
+  /**
+ * Sinh lệnh PowerShell đọc nội dung tệp tin trên hệ điều hành Windows.
+ */
+  readFile(targetPath: string, range?: FileRange): string {
+
     const b64Path = Buffer.from(String(targetPath || "package.json"), "utf8").toString("base64");
     const startLine = range?.startLine ? Math.max(0, range.startLine) : 0;
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
@@ -64,11 +64,11 @@ try {
     return this.wrapEncoded(script);
   }
 
-    /**
-   * Sinh lệnh PowerShell liệt kê tệp và thư mục trên hệ điều hành Windows.
-   */
-listDir(targetPath: string): string {
-    logFunctionInput("strategies:powershell", "listDir", { targetPath });
+  /**
+ * Sinh lệnh PowerShell liệt kê tệp và thư mục trên hệ điều hành Windows.
+ */
+  listDir(targetPath: string): string {
+
     const b64Path = Buffer.from(String(targetPath || "."), "utf8").toString("base64");
 
     const script = `
@@ -92,11 +92,11 @@ try {
     return this.wrapEncoded(script);
   }
 
-    /**
-   * Sinh lệnh PowerShell tìm kiếm tệp tin theo mẫu trên hệ điều hành Windows.
-   */
-searchFiles(pattern: string, targetPath = "."): string {
-    logFunctionInput("strategies:powershell", "searchFiles", { pattern, targetPath });
+  /**
+ * Sinh lệnh PowerShell tìm kiếm tệp tin theo mẫu trên hệ điều hành Windows.
+ */
+  searchFiles(pattern: string, targetPath = "."): string {
+
     const b64Root = Buffer.from(String(targetPath || "."), "utf8").toString("base64");
     const b64Pattern = Buffer.from(String(pattern || "*"), "utf8").toString("base64");
 
@@ -135,11 +135,11 @@ try {
     return this.wrapEncoded(script);
   }
 
-    /**
-   * Sinh lệnh PowerShell tìm kiếm nội dung mã nguồn trên hệ điều hành Windows.
-   */
-grepCode(query: string, targetPath = "."): string {
-    logFunctionInput("strategies:powershell", "grepCode", { query, targetPath });
+  /**
+ * Sinh lệnh PowerShell tìm kiếm nội dung mã nguồn trên hệ điều hành Windows.
+ */
+  grepCode(query: string, targetPath = "."): string {
+
     const b64Root = Buffer.from(String(targetPath || "."), "utf8").toString("base64");
     const b64Query = Buffer.from(String(query || ""), "utf8").toString("base64");
 
@@ -185,11 +185,11 @@ try {
     return this.wrapEncoded(script);
   }
 
-    /**
-   * Sinh lệnh PowerShell ghi dữ liệu ra tệp tin trên hệ điều hành Windows.
-   */
-writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
-    logFunctionInput("strategies:powershell", "writeFile", { targetPath, contentOrBase64, options });
+  /**
+ * Sinh lệnh PowerShell ghi dữ liệu ra tệp tin trên hệ điều hành Windows.
+ */
+  writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
+
     const b64Path = Buffer.from(String(targetPath || ""), "utf8").toString("base64");
     const stagingPath = options?.stagingPath;
     const expLen = options?.expectedLength || 0;

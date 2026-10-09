@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import { normalizeMarkdownFences, m365HtmlToMarkdown } from "./html-to-markdown";
 export { m365HtmlToMarkdown };
 
@@ -28,75 +28,75 @@ export class M365MarkdownBuffer {
  */
   constructor(
     private readonly transform: (md: string) => string = md => md
-  ) {}
+  ) { }
 
 
-    /**
-     * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
-     * Duyệt tuần tự an toàn tuyệt đối theo Semantic Key:
-     * Bỏ qua các block đã commit; khi gặp block chưa streamable thì dừng lại chờ;
-     * Không phụ thuộc vào committedIndex đơn điệu để tránh nhảy cóc khi danh sách block bị co giãn.
-     */
-    observe(blocks: M365MarkdownBlock[]): string {
+  /**
+   * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
+   * Duyệt tuần tự an toàn tuyệt đối theo Semantic Key:
+   * Bỏ qua các block đã commit; khi gặp block chưa streamable thì dừng lại chờ;
+   * Không phụ thuộc vào committedIndex đơn điệu để tránh nhảy cóc khi danh sách block bị co giãn.
+   */
+  observe(blocks: M365MarkdownBlock[]): string {
 
-      this.pendingBlocks = blocks;
-      let delta = "";
+    this.pendingBlocks = blocks;
+    let delta = "";
 
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-        if (this.committedKeys.has(block.key)) {
-          continue;
-        }
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      if (this.committedKeys.has(block.key)) {
+        continue;
+      }
 
-        // Khối hiện tại chưa hoàn thành (đang là khối cuối cùng hoặc đang sinh) -> dừng lại chờ
-        if (!block.streamable) {
-          break;
-        }
+      // Khối hiện tại chưa hoàn thành (đang là khối cuối cùng hoặc đang sinh) -> dừng lại chờ
+      if (!block.streamable) {
+        break;
+      }
 
+      const blockDelta = this.commitBlock(block);
+      if (blockDelta) {
+        delta += blockDelta;
+      }
+    }
+
+    return delta;
+  }
+
+  /**
+   * Kết thúc lượt sinh phản hồi từ Copilot.
+   * Commit toàn bộ các khối còn lại chưa từng được commit.
+   */
+  finish(finalBlocks?: M365MarkdownBlock[]): { markdown: string; delta: string } {
+
+    const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
+    let delta = "";
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      if (!this.committedKeys.has(block.key)) {
         const blockDelta = this.commitBlock(block);
         if (blockDelta) {
           delta += blockDelta;
         }
       }
-
-      return delta;
     }
 
-    /**
-     * Kết thúc lượt sinh phản hồi từ Copilot.
-     * Commit toàn bộ các khối còn lại chưa từng được commit.
-     */
-    finish(finalBlocks ?: M365MarkdownBlock[]): { markdown: string; delta: string } {
+    this.pendingBlocks = [];
+    return { markdown: this.markdown, delta };
+  }
 
-      const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
-      let delta = "";
+  /**
+ * Lấy toàn bộ nội dung Markdown hoàn chỉnh đã được tích lũy trong bộ đệm.
+ */
+  getMarkdown(): string {
 
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-        if (!this.committedKeys.has(block.key)) {
-          const blockDelta = this.commitBlock(block);
-          if (blockDelta) {
-            delta += blockDelta;
-          }
-        }
-      }
+    return this.markdown;
+  }
 
-      this.pendingBlocks = [];
-      return { markdown: this.markdown, delta };
-    }
-
-    /**
-   * Lấy toàn bộ nội dung Markdown hoàn chỉnh đã được tích lũy trong bộ đệm.
-   */
-    getMarkdown(): string {
-
-      return this.markdown;
-    }
-
-    /**
-   * Xử lý commit một khối Markdown đã hoàn tất vào chuỗi Markdown chính thức.
-   */
-private commitBlock(block: M365MarkdownBlock): string {
+  /**
+ * Xử lý commit một khối Markdown đã hoàn tất vào chuỗi Markdown chính thức.
+ */
+  private commitBlock(block: M365MarkdownBlock): string {
 
     // Nếu khối là khối công cụ hoặc patch, ưu tiên trích xuất textContent thuần túy (raw text)
     // để tránh việc Turndown tự động escape các ký tự cú pháp như _ thành \_, [ thành \[, * thành \*

@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { CodexTool } from "../../../types";
 import {
   CommandStrategyResolver,
@@ -51,12 +51,12 @@ export function normalizeFileContent(
   content: string,
   optionsOrUnescape: boolean | string | NormalizeFileContentOptions = true
 ): string {
-  logFunctionInput("tools:tool-bridge", "normalizeFileContent", { content, optionsOrUnescape });
+
   const options: NormalizeFileContentOptions = typeof optionsOrUnescape === "boolean"
     ? { unescapeNewlines: optionsOrUnescape }
     : typeof optionsOrUnescape === "string"
-    ? { targetPath: optionsOrUnescape }
-    : optionsOrUnescape;
+      ? { targetPath: optionsOrUnescape }
+      : optionsOrUnescape;
 
   if (typeof content !== "string") {
     return String(content ?? "");
@@ -190,12 +190,12 @@ export function normalizeRequestUserInputArgs(args: Record<string, any>): { ques
     const rawOptions = Array.isArray(item.options)
       ? item.options
       : Array.isArray(item.choices)
-      ? item.choices
-      : Array.isArray(item.items)
-      ? item.items
-      : Array.isArray(item.answers)
-      ? item.answers
-      : [];
+        ? item.choices
+        : Array.isArray(item.items)
+          ? item.items
+          : Array.isArray(item.answers)
+            ? item.answers
+            : [];
 
     const options: RequestUserInputOption[] = rawOptions.map((opt: any) => {
       if (typeof opt === "string") {
@@ -439,7 +439,7 @@ export class M365ToolBridge {
     clientTools: CodexTool[] = [],
     options?: MapToolCallOptions | PlatformCommandStrategy
   ): M365MappedToolCall {
-    logFunctionInput("tools:tool-bridge", "mapToolCall", { raw, clientTools, options });
+
     // Tự động gọt bỏ tiền tố functions. nếu M365 sinh ra theo namespace cũ
     let toolName = raw.name;
     if (typeof toolName === "string" && toolName.startsWith("functions.")) {

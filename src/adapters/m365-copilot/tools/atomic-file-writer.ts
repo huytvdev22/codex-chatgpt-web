@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
@@ -44,7 +44,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
    * Tính toán chuỗi băm SHA-256 của nội dung
    */
   static computeSha256(content: string | Buffer): string {
-    logFunctionInput("tools:atomic-file-writer", "computeSha256", { content });
+
     const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content, "utf8");
     return crypto.createHash("sha256").update(buffer).digest("hex");
   }
@@ -57,7 +57,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
     content: string | Buffer,
     options?: AtomicWriteOptions
   ): AtomicWriteResult {
-    logFunctionInput("tools:atomic-file-writer", "writeFile", { targetPath, content, options });
+
     return new AtomicFileWriter().writeFile(targetPath, content, options);
   }
 
@@ -68,7 +68,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
     content: string | Buffer,
     prefix = "codex_staging_"
   ): StagingFileResult {
-    logFunctionInput("tools:atomic-file-writer", "createStagingFile", { content, prefix });
+
     return new AtomicFileWriter().createStagingFile(content, prefix);
   }
 
@@ -80,7 +80,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
     content: string | Buffer,
     options?: AtomicWriteOptions
   ): AtomicWriteResult {
-    logFunctionInput("tools:atomic-file-writer", "writeFile", { targetPath, content, options });
+
     const absoluteTargetPath = path.resolve(targetPath);
     const targetDir = path.dirname(absoluteTargetPath);
 
@@ -149,10 +149,10 @@ export class AtomicFileWriter implements IAtomicFileWriter {
     } catch (err: any) {
       // Nếu có lỗi, đóng fd nếu còn mở và dọn sạch file tạm (không bao giờ chạm vào file đích)
       if (fd !== null) {
-        try { fs.closeSync(fd); } catch {}
+        try { fs.closeSync(fd); } catch { }
       }
       if (fs.existsSync(tempFilePath)) {
-        try { fs.unlinkSync(tempFilePath); } catch {}
+        try { fs.unlinkSync(tempFilePath); } catch { }
       }
       throw err;
     }
@@ -163,7 +163,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
    * mà không cần truyền qua tham số dòng lệnh (Command-line limit mitigation)
    */
   createStagingFile(content: string | Buffer, prefix = "codex_staging_"): StagingFileResult {
-    logFunctionInput("tools:atomic-file-writer", "createStagingFile", { content, prefix });
+
     const stagingDir = path.join(os.tmpdir(), "codex_m365_staging");
     fs.mkdirSync(stagingDir, { recursive: true });
 
@@ -189,7 +189,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
    * Xác minh file tồn tại và khớp với kích thước và SHA-256 mong muốn
    */
   verifyFile(filePath: string, expectedLength: number, expectedSha256: string): boolean {
-    logFunctionInput("tools:atomic-file-writer", "verifyFile", { filePath, expectedLength, expectedSha256 });
+
     if (!fs.existsSync(filePath)) return false;
     try {
       const stat = fs.statSync(filePath);
@@ -209,7 +209,7 @@ export const defaultAtomicFileWriter = new AtomicFileWriter();
  * Thực hiện xử lý computeSha256 cho quy trình M365 Copilot Adapter.
  */
 export function computeSha256(content: string | Buffer): string {
-  logFunctionInput("tools:atomic-file-writer", "computeSha256", { content });
+
   return AtomicFileWriter.computeSha256(content);
 }
 
@@ -217,6 +217,6 @@ export function computeSha256(content: string | Buffer): string {
  * Thực hiện xử lý createStagingFile cho quy trình M365 Copilot Adapter.
  */
 export function createStagingFile(content: string | Buffer, prefix?: string): StagingFileResult {
-  logFunctionInput("tools:atomic-file-writer", "createStagingFile", { content, prefix });
+
   return defaultAtomicFileWriter.createStagingFile(content, prefix);
 }

@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import type { CodexContentPart, CodexParsedRequest } from "../../../types";
 import { CodexRawPayload } from "../normalization/codex-raw-payload";
 import { CodexPayloadNormalizer } from "../normalization/codex-normalizer";
@@ -32,7 +32,7 @@ const MAX_TOOL_RESULT_CHARS = 8_000;
  * Thực hiện xử lý stringifyContent cho quy trình M365 Copilot Adapter.
  */
 function stringifyContent(content: string | CodexContentPart[]): string {
-  logFunctionInput("prompts:assembler", "stringifyContent", { content });
+
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
@@ -52,7 +52,7 @@ function stringifyContent(content: string | CodexContentPart[]): string {
  * khỏi nguy cơ quá tải bộ đệm khi log hoặc file quá lớn.
  */
 export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
-  logFunctionInput("prompts:assembler", "truncateToolResult", { content, maxChars });
+
   if (content.length <= maxChars) {
     return content;
   }
@@ -68,7 +68,7 @@ export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_C
  * (Ví dụ: "PLEASE IMPLEMENT THIS PLAN", "Yes, implement this plan")
  */
 export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
-  logFunctionInput("prompts:assembler", "isImplementingPlanRequest", { parsed });
+
   const messages = parsed.context.messages || [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -76,8 +76,8 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
       const text = typeof msg.content === "string"
         ? msg.content
         : Array.isArray(msg.content)
-        ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
-        : "";
+          ? msg.content.map(c => (c.type === "text" ? c.text : "")).join(" ")
+          : "";
       if (/PLEASE IMPLEMENT THIS PLAN/i.test(text) || /Yes, implement this plan/i.test(text)) {
         return true;
       }
@@ -93,7 +93,7 @@ export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
  * không được lấy trạng thái cũ trong lịch sử khi người dùng đã chuyển sang Default mode hoặc phê duyệt triển khai.
  */
 export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
-  logFunctionInput("prompts:assembler", "isPlanModeRequest", { parsed });
+
   if (isImplementingPlanRequest(parsed)) {
     return false;
   }
@@ -106,7 +106,7 @@ export function isPlanModeRequest(parsed: CodexParsedRequest): boolean {
  * @param isNewConversation true nếu là cuộc trò chuyện mới hoặc cần ngữ cảnh đầy đủ; false nếu đang tiếp tục cuộc trò chuyện hiện tại
  */
 export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation = true): string {
-  logFunctionInput("prompts:assembler", "compileM365Prompt", { parsed, isNewConversation });
+
   const parts: string[] = [];
   const isImplementingPlan = isImplementingPlanRequest(parsed);
   const isPlanMode = !isImplementingPlan && isPlanModeRequest(parsed);

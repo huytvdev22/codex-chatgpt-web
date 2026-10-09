@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../../debug-logger";
+
 import { BasePlatformCommandStrategy } from "./base";
 import type { FileRange, WriteFileOptions } from "./types";
 
@@ -14,7 +14,7 @@ export class PosixCommandStrategy extends BasePlatformCommandStrategy {
    * Sử dụng lệnh native `head` / `sed` để Codex Rust binary nhận diện thành CommandAction::Read (icon 📖).
    */
   readFile(targetPath: string, range?: FileRange): string {
-    logFunctionInput("tools:command-strategies:posix", "readFile", { targetPath, range });
+
     const file = String(targetPath || "package.json");
     const startLine = range?.startLine ? Math.max(0, range.startLine) : 0;
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
@@ -32,7 +32,7 @@ export class PosixCommandStrategy extends BasePlatformCommandStrategy {
    * Sử dụng lệnh native `ls -la` để Codex Rust binary nhận diện thành CommandAction::ListFiles (icon 📁).
    */
   listDir(targetPath: string): string {
-    logFunctionInput("tools:command-strategies:posix", "listDir", { targetPath });
+
     const dir = String(targetPath || ".");
     return `ls -la ${this.quoteArg(dir)}`;
   }
@@ -42,7 +42,7 @@ export class PosixCommandStrategy extends BasePlatformCommandStrategy {
    * Sử dụng lệnh native `find` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
   searchFiles(pattern: string, targetPath = "."): string {
-    logFunctionInput("tools:command-strategies:posix", "searchFiles", { pattern, targetPath });
+
     const dir = String(targetPath || ".");
     const pat = String(pattern || "*");
     return `find ${this.quoteArg(dir)} -maxdepth 3 -name ${this.quoteArg(pat)} -not -path '*/.*' -not -path '*/node_modules/*'`;
@@ -53,17 +53,17 @@ export class PosixCommandStrategy extends BasePlatformCommandStrategy {
    * Sử dụng lệnh native `grep` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
   grepCode(query: string, targetPath = "."): string {
-    logFunctionInput("tools:command-strategies:posix", "grepCode", { query, targetPath });
+
     const dir = String(targetPath || ".");
     const q = String(query || "");
     return `grep -rn --exclude-dir={node_modules,.git,dist,target,bin,obj} ${this.quoteArg(q)} ${this.quoteArg(dir)}`;
   }
 
-    /**
-   * Sinh lệnh ghi dữ liệu ra tệp tin trong môi trường POSIX.
-   */
-writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
-    logFunctionInput("tools:command-strategies:posix", "writeFile", { targetPath, contentOrBase64, options });
+  /**
+ * Sinh lệnh ghi dữ liệu ra tệp tin trong môi trường POSIX.
+ */
+  writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
+
     const file = String(targetPath || "");
     const stagingPath = options?.stagingPath;
 

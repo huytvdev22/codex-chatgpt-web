@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 import { M365OutputTranslator, type OpenAIToolCall, type TranslationResult } from "../translation/output-translator";
 import { truncateToolResult } from "../prompts/assembler";
 import * as fs from "node:fs";
@@ -66,116 +66,116 @@ import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } fro
  * Tool Executor mặc định hỗ trợ chạy các công cụ read_file, list_dir, grep_code, git_status, git_diff, run_command, write_file
  */
 export class LocalToolExecutor implements IToolExecutor {
-    /**
-   * Khởi tạo bộ thực thi công cụ cục bộ với thư mục làm việc và công cụ ghi file.
-   */
-constructor(
+  /**
+ * Khởi tạo bộ thực thi công cụ cục bộ với thư mục làm việc và công cụ ghi file.
+ */
+  constructor(
     private readonly workingDir: string = process.cwd(),
     private readonly fileWriter: IAtomicFileWriter = defaultAtomicFileWriter
   ) {
-    logFunctionInput("harness:agent-loop", "constructor", { workingDir, fileWriter });}
+
 
     /**
    * Thực thi công cụ được yêu cầu bởi agent trên môi trường máy cục bộ và trả về kết quả chuẩn hóa.
    */
-async execute(name: string, args: Record<string, any>): Promise<string> {
-    logFunctionInput("harness:agent-loop", "execute", { name, args });
-    try {
-      switch (name) {
+async execute(name: string, args: Record<string, any>): Promise < string > {
+
+      try {
+        switch(name) {
         case "read_file": {
-          const filePath = path.resolve(this.workingDir, String(args.path || args.file || ""));
-          if (!fs.existsSync(filePath)) {
-            return `Lỗi: File không tồn tại tại đường dẫn: ${filePath}`;
-          }
-          const content = fs.readFileSync(filePath, "utf8");
-          const lines = content.split("\n");
-          const startLine = args.start_line ? Math.max(1, parseInt(String(args.start_line), 10)) : 1;
-          const endLine = args.end_line ? Math.min(lines.length, parseInt(String(args.end_line), 10)) : lines.length;
-          const sliced = lines.slice(startLine - 1, endLine).map((l, i) => `${startLine + i}: ${l}`).join("\n");
-          return `[File: ${args.path || args.file} (${startLine}-${endLine}/${lines.length} lines)]\n${sliced}`;
-        }
+      const filePath = path.resolve(this.workingDir, String(args.path || args.file || ""));
+      if (!fs.existsSync(filePath)) {
+        return `Lỗi: File không tồn tại tại đường dẫn: ${filePath}`;
+      }
+      const content = fs.readFileSync(filePath, "utf8");
+      const lines = content.split("\n");
+      const startLine = args.start_line ? Math.max(1, parseInt(String(args.start_line), 10)) : 1;
+      const endLine = args.end_line ? Math.min(lines.length, parseInt(String(args.end_line), 10)) : lines.length;
+      const sliced = lines.slice(startLine - 1, endLine).map((l, i) => `${startLine + i}: ${l}`).join("\n");
+      return `[File: ${args.path || args.file} (${startLine}-${endLine}/${lines.length} lines)]\n${sliced}`;
+    }
 
         case "list_dir": {
-          const dirPath = path.resolve(this.workingDir, String(args.path || args.dir || "."));
-          if (!fs.existsSync(dirPath)) {
-            return `Lỗi: Thư mục không tồn tại: ${dirPath}`;
-          }
-          const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-          const items = entries.map(e => `${e.isDirectory() ? "[DIR] " : "      "}${e.name}`);
-          return `[Thư mục: ${args.path || "."}]\n${items.join("\n")}`;
-        }
+      const dirPath = path.resolve(this.workingDir, String(args.path || args.dir || "."));
+      if (!fs.existsSync(dirPath)) {
+        return `Lỗi: Thư mục không tồn tại: ${dirPath}`;
+      }
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      const items = entries.map(e => `${e.isDirectory() ? "[DIR] " : "      "}${e.name}`);
+      return `[Thư mục: ${args.path || "."}]\n${items.join("\n")}`;
+    }
 
         case "grep_code": {
-          const query = String(args.query || args.pattern || "");
-          const targetPath = String(args.path || args.dir || ".");
-          try {
-            const out = execSync(`grep -rnI "${query.replace(/"/g, '\\"')}" ${targetPath}`, {
-              cwd: this.workingDir,
-              encoding: "utf8",
-              maxBuffer: 2 * 1024 * 1024,
-            });
-            return out.trim() || `Không tìm thấy kết quả cho từ khóa: ${query}`;
-          } catch {
-            return `Không tìm thấy kết quả cho từ khóa: ${query}`;
-          }
-        }
+      const query = String(args.query || args.pattern || "");
+      const targetPath = String(args.path || args.dir || ".");
+      try {
+        const out = execSync(`grep -rnI "${query.replace(/"/g, '\\"')}" ${targetPath}`, {
+          cwd: this.workingDir,
+          encoding: "utf8",
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        return out.trim() || `Không tìm thấy kết quả cho từ khóa: ${query}`;
+      } catch {
+        return `Không tìm thấy kết quả cho từ khóa: ${query}`;
+      }
+    }
 
         case "git_status": {
-          try {
-            const out = execSync("git status --short --branch", {
-              cwd: this.workingDir,
-              encoding: "utf8",
-            });
-            return out.trim() || "Working tree clean";
-          } catch (err: any) {
-            return `Lỗi git status: ${err.message}`;
-          }
-        }
+      try {
+        const out = execSync("git status --short --branch", {
+          cwd: this.workingDir,
+          encoding: "utf8",
+        });
+        return out.trim() || "Working tree clean";
+      } catch (err: any) {
+        return `Lỗi git status: ${err.message}`;
+      }
+    }
 
         case "git_diff": {
-          try {
-            const fileArg = args.path || args.file ? ` "${args.path || args.file}"` : "";
-            const out = execSync(`git diff${fileArg}`, {
-              cwd: this.workingDir,
-              encoding: "utf8",
-            });
-            return out.trim() || "Không có thay đổi git diff";
-          } catch (err: any) {
-            return `Lỗi git diff: ${err.message}`;
-          }
-        }
+      try {
+        const fileArg = args.path || args.file ? ` "${args.path || args.file}"` : "";
+        const out = execSync(`git diff${fileArg}`, {
+          cwd: this.workingDir,
+          encoding: "utf8",
+        });
+        return out.trim() || "Không có thay đổi git diff";
+      } catch (err: any) {
+        return `Lỗi git diff: ${err.message}`;
+      }
+    }
 
         case "write_file": {
-          const rawPath = String(args.path || args.file || "");
-          if (!rawPath.trim()) {
-            return `Lỗi: Đường dẫn file không hợp lệ (path bị trống).`;
-          }
-          const filePath = path.resolve(this.workingDir, rawPath);
-          const content = String(args.content ?? "");
-          const result = this.fileWriter.writeFile(filePath, content);
-          return `Ghi file thành công: ${filePath} (${result.bytesWritten} bytes, sha256: ${result.sha256})`;
-        }
+      const rawPath = String(args.path || args.file || "");
+      if (!rawPath.trim()) {
+        return `Lỗi: Đường dẫn file không hợp lệ (path bị trống).`;
+      }
+      const filePath = path.resolve(this.workingDir, rawPath);
+      const content = String(args.content ?? "");
+      const result = this.fileWriter.writeFile(filePath, content);
+      return `Ghi file thành công: ${filePath} (${result.bytesWritten} bytes, sha256: ${result.sha256})`;
+    }
 
         case "run_command": {
-          const cmd = String(args.cmd || args.command || "");
-          try {
-            const out = execSync(cmd, {
-              cwd: this.workingDir,
-              encoding: "utf8",
-              maxBuffer: 2 * 1024 * 1024,
-            });
-            return out.trim();
-          } catch (err: any) {
-            return `Command error: ${err.stdout || ""}\n${err.stderr || err.message}`;
-          }
-        }
+      const cmd = String(args.cmd || args.command || "");
+      try {
+        const out = execSync(cmd, {
+          cwd: this.workingDir,
+          encoding: "utf8",
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        return out.trim();
+      } catch (err: any) {
+        return `Command error: ${err.stdout || ""}\n${err.stderr || err.message}`;
+      }
+    }
 
         default:
-          return `Lỗi: Công cụ ${name} không được hỗ trợ trong LocalToolExecutor`;
+    return `Lỗi: Công cụ ${name} không được hỗ trợ trong LocalToolExecutor`;
       }
     } catch (err: any) {
-      return `Lỗi thực thi tool ${name}: ${err.message}`;
-    }
+  return `Lỗi thực thi tool ${name}: ${err.message}`;
+}
   }
 }
 
@@ -192,7 +192,7 @@ export class M365AgentLoop {
     private readonly toolExecutor: IToolExecutor = new LocalToolExecutor(),
     private readonly translator: M365OutputTranslator = new M365OutputTranslator()
   ) {
-    logFunctionInput("harness:agent-loop", "constructor", { modelClient, toolExecutor, translator });
+
   }
 
   private isRetryableError(err: unknown, retryableKeywords: string[]): boolean {
@@ -283,7 +283,7 @@ export class M365AgentLoop {
    * Khởi chạy vòng lặp Agent đa bước
    */
   async run(initialPrompt: string, options: AgentLoopOptions = {}): Promise<AgentLoopResult> {
-    logFunctionInput("harness:agent-loop", "run", { initialPrompt, options });
+
     const maxTurns = options.maxTurns ?? 30;
     const messages: AgentMessage[] = [];
     let currentPrompt = initialPrompt;

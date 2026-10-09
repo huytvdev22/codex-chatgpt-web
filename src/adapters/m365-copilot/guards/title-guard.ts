@@ -1,4 +1,3 @@
-import { logFunctionInput } from "../debug-logger";
 import type { CodexParsedRequest } from "../../../types";
 
 /**
@@ -30,7 +29,7 @@ export function isTitleRequest(
   compiledPrompt: string,
   options?: { enableTitleGuard?: boolean }
 ): boolean {
-  logFunctionInput("guards:title-guard", "isTitleRequest", { parsed, compiledPrompt, options });
+
 
   // 0. CỜ BẬT TẮT: Mặc định DISABLED (false). Trả về false ngay lập tức nếu không được bật tường minh!
   if (!isTitleGuardEnabled(options?.enableTitleGuard)) {
@@ -88,7 +87,7 @@ export function isTitleRequest(
  * Sinh nội dung phản hồi tiêu đề tức thì (5ms)
  */
 export function generateTitleResponse(compiledPrompt: string): string {
-  logFunctionInput("guards:title-guard", "generateTitleResponse", { compiledPrompt });
+
   // Trích xuất từ khoá nếu có
   let subject = "Coding Session";
   const match = compiledPrompt.match(/(?:xây dựng|tạo|viết|sửa|debug|tích hợp|hướng dẫn|hàm|file|module)\s+([^.,\n]+)/i);

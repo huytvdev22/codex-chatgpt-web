@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../debug-logger";
+
 /**
  * Đại diện 1:1 cấu trúc Raw JSON Request từ Codex IDE (Responses API wire format).
  * Tuân thủ nghiêm ngặt nguyên lý SOLID:
@@ -12,7 +12,7 @@ export type CodexRawContentBlock =
   | { type: "input_text" | "text"; text: string }
   | { type: "input_image"; image_url: string; detail?: string }
   | { type: "input_file"; file_id?: string; filename?: string }
-  | { type: string; [key: string]: unknown };
+  | { type: string;[key: string]: unknown };
 
 export interface CodexRawMessageItem {
   type: "message";
@@ -61,7 +61,7 @@ export type CodexRawToolSpec =
   | CodexRawToolNamespace
   | CodexRawToolCustom
   | CodexRawToolSearch
-  | { type: string; name?: string; description?: string; [key: string]: unknown };
+  | { type: string; name?: string; description?: string;[key: string]: unknown };
 
 export interface CodexRawAdditionalToolsItem {
   type: "additional_tools";
@@ -118,7 +118,7 @@ export type CodexRawInputItem =
   | CodexRawCustomToolCallItem
   | CodexRawCustomToolCallOutputItem
   | CodexRawCompactionTriggerItem
-  | { type: string; [key: string]: unknown };
+  | { type: string;[key: string]: unknown };
 
 export interface CodexRawClientMetadata {
   thread_id?: string;
@@ -154,19 +154,19 @@ export interface CodexRawRequestWire {
  * Chỉ kiểm tra tính an toàn của object trước khi nạp vào CodexRawPayload.
  */
 export class CodexWireParser {
-    /**
-   * Kiểm tra một giá trị có phải là đối tượng bản ghi (Record) hợp lệ và không rỗng hay không.
-   */
-static isRecord(value: unknown): value is Record<string, unknown> {
-    logFunctionInput("normalization:codex-raw-payload", "isRecord", { value });
+  /**
+ * Kiểm tra một giá trị có phải là đối tượng bản ghi (Record) hợp lệ và không rỗng hay không.
+ */
+  static isRecord(value: unknown): value is Record<string, unknown> {
+
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
-    /**
-   * Thực hiện xử lý CodexWireParser.parse cho quy trình M365 Copilot Adapter.
-   */
-static parse(raw: unknown): CodexRawRequestWire {
-    logFunctionInput("normalization:codex-raw-payload", "parse", { raw });
+  /**
+ * Thực hiện xử lý CodexWireParser.parse cho quy trình M365 Copilot Adapter.
+ */
+  static parse(raw: unknown): CodexRawRequestWire {
+
     if (!this.isRecord(raw)) {
       throw new TypeError("Codex request body must be a non-null object");
     }
@@ -210,17 +210,17 @@ export class CodexRawPayload {
   readonly client_metadata?: CodexRawClientMetadata;
   readonly tools?: CodexRawToolSpec[];
   readonly input?: CodexRawInputItem[];
-  readonly reasoning?: { effort?: string; [key: string]: unknown };
-  readonly text?: { verbosity?: string; [key: string]: unknown };
+  readonly reasoning?: { effort?: string;[key: string]: unknown };
+  readonly text?: { verbosity?: string;[key: string]: unknown };
   readonly extra: Record<string, unknown>;
 
   private readonly _rawSnapshot: CodexRawRequestWire;
 
-    /**
-   * Khởi tạo wrapper đóng gói payload request thô sau khi phân giải.
-   */
-constructor(raw: CodexRawRequestWire) {
-    logFunctionInput("normalization:codex-raw-payload", "constructor", { raw });
+  /**
+ * Khởi tạo wrapper đóng gói payload request thô sau khi phân giải.
+ */
+  constructor(raw: CodexRawRequestWire) {
+
     this._rawSnapshot = structuredClone(raw);
 
     this.model = raw.model;
@@ -254,7 +254,7 @@ constructor(raw: CodexRawRequestWire) {
    * Factory khởi tạo an toàn từ dữ liệu chưa xác định (unknown)
    */
   static from(raw: unknown): CodexRawPayload {
-    logFunctionInput("normalization:codex-raw-payload", "from", { raw });
+
     const parsedWire = CodexWireParser.parse(raw);
     return new CodexRawPayload(parsedWire);
   }
@@ -265,7 +265,7 @@ constructor(raw: CodexRawRequestWire) {
    * không đảm bảo bảo toàn nguyên vẹn raw HTTP bytes hay formatting ban đầu.
    */
   toJSON(): CodexRawRequestWire {
-    logFunctionInput("normalization:codex-raw-payload", "toJSON");
+
     return structuredClone(this._rawSnapshot);
   }
 
@@ -273,7 +273,7 @@ constructor(raw: CodexRawRequestWire) {
    * Xuất chuỗi JSON từ snapshot
    */
   toRawJson(indent?: number): string {
-    logFunctionInput("normalization:codex-raw-payload", "toRawJson", { indent });
+
     return JSON.stringify(this._rawSnapshot, null, indent);
   }
 
@@ -281,7 +281,7 @@ constructor(raw: CodexRawRequestWire) {
    * Trích xuất Thread ID từ client_metadata hoặc x-codex-turn-metadata
    */
   getThreadId(): string | undefined {
-    logFunctionInput("normalization:codex-raw-payload", "getThreadId");
+
     if (this.client_metadata?.thread_id) {
       return String(this.client_metadata.thread_id);
     }
@@ -303,7 +303,7 @@ constructor(raw: CodexRawRequestWire) {
    * Trích xuất Turn ID từ client_metadata
    */
   getTurnId(): string | undefined {
-    logFunctionInput("normalization:codex-raw-payload", "getTurnId");
+
     if (this.client_metadata?.turn_id) {
       return String(this.client_metadata.turn_id);
     }

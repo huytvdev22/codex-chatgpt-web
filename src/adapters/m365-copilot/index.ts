@@ -1,4 +1,4 @@
-import { logFunctionInput } from "./debug-logger";
+
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
@@ -40,7 +40,7 @@ export * from "./harness";
  * Trích xuất thông tin môi trường shell của client từ các tham số hoặc context của request.
  */
 function extractClientShell(parsed: CodexParsedRequest): string | undefined {
-  logFunctionInput("index", "extractClientShell", { parsed });
+
   // 1. Kiểm tra trong system prompt
   for (const sp of parsed.context.systemPrompt || []) {
     const match = sp.match(/<shell>([^<]+)<\/shell>/i);
@@ -56,18 +56,7 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
     const match = text.match(/<shell>([^<]+)<\/shell>/i);
     if (match) return match[1].trim();
   }
-  // 3. Tự động nhận diện PowerShell nếu context chứa đường dẫn Windows ổ đĩa (ví dụ C:\, D:\)
-  for (const sp of parsed.context.systemPrompt || []) {
-    if (/[a-zA-Z]:\\/i.test(sp)) return "powershell";
-  }
-  for (const msg of parsed.context.messages || []) {
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : Array.isArray(msg.content)
-        ? msg.content.map(c => c.type === "text" ? c.text : "").join(" ")
-        : "";
-    if (/[a-zA-Z]:\\/i.test(text)) return "powershell";
-  }
+
   return undefined;
 }
 
@@ -76,17 +65,17 @@ export class M365CopilotAdapter implements ProviderAdapter {
   private lastConversationKey?: string;
   private readonly translator = new M365OutputTranslator();
 
-  constructor(readonly options?: { enableTitleGuard?: boolean }) {}
+  constructor(readonly options?: { enableTitleGuard?: boolean }) { }
 
-    /**
-   * Điều phối toàn bộ vòng đời của một lượt tương tác (turn): chuẩn hóa request, compile prompt, chạy browser worker và dịch kết quả.
-   */
-async runTurn(
+  /**
+ * Điều phối toàn bộ vòng đời của một lượt tương tác (turn): chuẩn hóa request, compile prompt, chạy browser worker và dịch kết quả.
+ */
+  async runTurn(
     parsed: CodexParsedRequest,
     incoming: IncomingMeta,
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
-    logFunctionInput("index", "runTurn", { parsed, incoming, emit });
+
     const traceContext: TraceContext | undefined = incoming.traceContext || traceStorage.getStore() || undefined;
 
     if (incoming.abortSignal?.aborted) {
@@ -634,7 +623,7 @@ async runTurn(
  * Factory khởi tạo đối tượng M365CopilotAdapter với đầy đủ các cấu hình và dependencies cần thiết.
  */
 export function createM365CopilotAdapter(): ProviderAdapter {
-  logFunctionInput("index", "createM365CopilotAdapter");
+
   return new M365CopilotAdapter();
 }
 

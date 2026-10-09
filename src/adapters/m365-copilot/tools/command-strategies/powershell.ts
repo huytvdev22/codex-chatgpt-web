@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../../debug-logger";
+
 import { BasePlatformCommandStrategy } from "./base";
 import type { FileRange, WriteFileOptions } from "./types";
 
@@ -7,7 +7,7 @@ import type { FileRange, WriteFileOptions } from "./types";
  * Phương pháp này loại bỏ triệt để mọi nguy cơ lỗi parsing nháy kép, nháy đơn, ký tự đặc biệt hay biến $var.
  */
 export function encodePowerShellScript(script: string): string {
-  logFunctionInput("tools:command-strategies:powershell", "encodePowerShellScript", { script });
+
   return Buffer.from(script, "utf16le").toString("base64");
 }
 
@@ -18,11 +18,11 @@ export function encodePowerShellScript(script: string): string {
 export class PowerShellCommandStrategy extends BasePlatformCommandStrategy {
   readonly platformName = "powershell";
 
-    /**
-   * Mã hóa đoạn mã PowerShell sang định dạng Base64 UTF-16LE tương thích với cờ -EncodedCommand.
-   */
-private wrapEncoded(script: string): string {
-    logFunctionInput("tools:command-strategies:powershell", "wrapEncoded", { script });
+  /**
+ * Mã hóa đoạn mã PowerShell sang định dạng Base64 UTF-16LE tương thích với cờ -EncodedCommand.
+ */
+  private wrapEncoded(script: string): string {
+
     return `powershell -NoProfile -EncodedCommand ${encodePowerShellScript(script.trim())}`;
   }
 
@@ -31,7 +31,7 @@ private wrapEncoded(script: string): string {
    * Sử dụng cú pháp native tinh gọn `Get-Content <file> -Head <count>` để Codex Rust binary nhận diện thành CommandAction::Read (icon 📖).
    */
   readFile(targetPath: string, range?: FileRange): string {
-    logFunctionInput("tools:command-strategies:powershell", "readFile", { targetPath, range });
+
     const file = String(targetPath || "package.json");
     const endLine = range?.endLine ? Math.max(0, range.endLine) : 0;
     const count = endLine > 0 ? endLine : 150;
@@ -43,7 +43,7 @@ private wrapEncoded(script: string): string {
    * Sử dụng alias native `dir <dir> -Name` để Codex Rust binary nhận diện thành CommandAction::ListFiles (icon 📁).
    */
   listDir(targetPath: string): string {
-    logFunctionInput("tools:command-strategies:powershell", "listDir", { targetPath });
+
     const dir = String(targetPath || ".");
     return `dir ${this.quoteArg(dir)} -Name`;
   }
@@ -53,7 +53,7 @@ private wrapEncoded(script: string): string {
    * Sử dụng alias native `dir <dir> -Filter ...` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
   searchFiles(pattern: string, targetPath = "."): string {
-    logFunctionInput("tools:command-strategies:powershell", "searchFiles", { pattern, targetPath });
+
     const dir = String(targetPath || ".");
     const pat = String(pattern || "*");
     return `dir ${this.quoteArg(dir)} -Filter ${this.quoteArg(pat)} -Recurse -Depth 3 -Exclude node_modules,dist,bin,obj -Name`;
@@ -64,17 +64,17 @@ private wrapEncoded(script: string): string {
    * Bắt đầu bằng `Select-String` để Codex Rust binary nhận diện thành CommandAction::Search (icon 🔍).
    */
   grepCode(query: string, targetPath = "."): string {
-    logFunctionInput("tools:command-strategies:powershell", "grepCode", { query, targetPath });
+
     const dir = String(targetPath || ".");
     const q = String(query || "");
     return `Select-String -Path "${dir}/*" -Pattern ${this.quoteArg(q)} -Exclude *.min.js,*.lock`;
   }
 
-    /**
-   * Sinh lệnh PowerShell ghi dữ liệu ra tệp tin trên hệ điều hành Windows.
-   */
-writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
-    logFunctionInput("tools:command-strategies:powershell", "writeFile", { targetPath, contentOrBase64, options });
+  /**
+ * Sinh lệnh PowerShell ghi dữ liệu ra tệp tin trên hệ điều hành Windows.
+ */
+  writeFile(targetPath: string, contentOrBase64: string, options?: WriteFileOptions): string {
+
     const b64Path = Buffer.from(String(targetPath || ""), "utf8").toString("base64");
     const stagingPath = options?.stagingPath;
     const expLen = options?.expectedLength || 0;

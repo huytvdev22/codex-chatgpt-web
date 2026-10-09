@@ -1,4 +1,4 @@
-import { logFunctionInput } from "../../debug-logger";
+
 import type { IToolCallDetector, DetectedToolCall } from "./types";
 import { cleanJsonPayload, normalizeToolName } from "./sanitizers";
 
