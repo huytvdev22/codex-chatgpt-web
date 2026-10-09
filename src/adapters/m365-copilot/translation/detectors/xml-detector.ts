@@ -12,11 +12,11 @@ export class XmlToolCallDetector implements IToolCallDetector {
   readonly priority = 2;
   readonly name = "XmlToolCallDetector";
 
-    /**
-   * Phát hiện các thẻ XML <tool_call> trong văn bản phản hồi.
-   */
-detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
-    logFunctionInput("translation:detectors:xml-detector", "detect", { rawResponse });
+  /**
+ * Phát hiện các thẻ XML <tool_call> trong văn bản phản hồi.
+ */
+  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+
     if (!rawResponse || !rawResponse.trim()) return null;
 
     const allCalls: DetectedToolCall[] = [];
@@ -48,11 +48,11 @@ detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     return null;
   }
 
-    /**
-   * Phân giải nội dung bên trong thẻ XML <tool_call> thành tên công cụ và tham số.
-   */
-private parseInnerXml(innerContent: string): DetectedToolCall | null {
-    logFunctionInput("translation:detectors:xml-detector", "parseInnerXml", { innerContent });
+  /**
+ * Phân giải nội dung bên trong thẻ XML <tool_call> thành tên công cụ và tham số.
+ */
+  private parseInnerXml(innerContent: string): DetectedToolCall | null {
+
     const trimmed = innerContent.trim();
 
     // 0. Ưu tiên cao nhất: Thử parse trực tiếp JSON gốc nguyên bản không qua bất kỳ sanitizer nào

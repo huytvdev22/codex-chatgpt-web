@@ -55,7 +55,7 @@ export function extractCognitiveBlocks(rawText: string): {
   narrative?: string;
   cleanedText: string;
 } {
-  logFunctionInput("translation:output-translator", "extractCognitiveBlocks", { rawTextLength: rawText.length });
+
   let thinking: string | undefined;
 
   // 0. Gọt bỏ thẻ bọc envelope <m365Response>...</m365Response>
@@ -102,7 +102,7 @@ export class M365OutputTranslator {
    * Khởi tạo bộ biên dịch đầu ra của M365 Copilot với danh sách các detector đăng ký.
    */
   constructor(customDetectors?: IToolCallDetector[]) {
-    logFunctionInput("translation:output-translator", "constructor", { customDetectors });
+
     if (customDetectors && customDetectors.length > 0) {
       this.detectors = [...customDetectors].sort((a, b) => a.priority - b.priority);
     } else {
@@ -122,7 +122,7 @@ export class M365OutputTranslator {
    * và bóc tách các khối nhận thức (Thinking & Narrative)
    */
   translate(rawResponse: string): TranslationResult {
-    logFunctionInput("translation:output-translator", "translate", { rawResponse });
+
     const rawPreview = rawResponse.length > 2000
       ? `${rawResponse.slice(0, 1000)}\n... [TRUNCATED ${rawResponse.length - 1500} chars for privacy] ...\n${rawResponse.slice(-500)}`
       : rawResponse;
@@ -229,7 +229,7 @@ export class M365OutputTranslator {
    * Helper chuyển đổi kết quả sang payload OpenAI tool_calls trực tiếp
    */
   toOpenAIPayload(rawResponse: string): { tool_calls: OpenAIToolCall[] } | { content: string } {
-    logFunctionInput("translation:output-translator", "toOpenAIPayload", { rawResponse });
+
     const result = this.translate(rawResponse);
     if (result.type === "tool_call") {
       return { tool_calls: result.tool_calls };

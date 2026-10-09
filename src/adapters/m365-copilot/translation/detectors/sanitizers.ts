@@ -7,7 +7,7 @@ export { stripOuterCodeFence };
  * Sinh ngẫu nhiên mã ID duy nhất cho một tool call vừa phát hiện.
  */
 export function generateToolCallId(): string {
-  logFunctionInput("translation:detectors:sanitizers", "generateToolCallId");
+
   return `call_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
 
@@ -15,7 +15,7 @@ export function generateToolCallId(): string {
  * Chuẩn hóa tên tool: Tự động loại bỏ tiền tố "functions." nếu có
  */
 export function normalizeToolName(name: string): string {
-  logFunctionInput("translation:detectors:sanitizers", "normalizeToolName", { name });
+
   if (typeof name === "string" && name.startsWith("functions.")) {
     return name.slice("functions.".length);
   }
@@ -26,7 +26,7 @@ export function normalizeToolName(name: string): string {
  * Tự động cân bằng dấu đóng ngoặc nhọn JSON nếu bị thiếu do Markdown hoặc DOM cắt dở
  */
 export function balanceJsonBraces(raw: string): string {
-  logFunctionInput("translation:detectors:sanitizers", "balanceJsonBraces", { raw });
+
   let inString = false;
   let escaped = false;
   let openBraces = 0;
@@ -56,7 +56,7 @@ export function balanceJsonBraces(raw: string): string {
  * 4. Tự động cân bằng ngoặc nhọn nếu mô hình mở nhiều hơn đóng.
  */
 export function cleanJsonPayload(raw: string): string {
-  logFunctionInput("translation:detectors:sanitizers", "cleanJsonPayload", { raw });
+
   const stripped = stripOuterCodeFence(raw).trim();
 
   // Ưu tiên 1: Nếu chuỗi đã là JSON hợp lệ, giữ nguyên vẹn 100%
@@ -81,7 +81,7 @@ export function cleanJsonPayload(raw: string): string {
  * Chuẩn hóa khối patch Codex (khôi phục các ký tự bị escape bởi Markdown/Turndown)
  */
 export function normalizePatchEnvelope(raw: string): string {
-  logFunctionInput("translation:detectors:sanitizers", "normalizePatchEnvelope", { raw });
+
   let cleaned = raw
     .replaceAll("\\*", "*")
     .replaceAll("\\_", "_")

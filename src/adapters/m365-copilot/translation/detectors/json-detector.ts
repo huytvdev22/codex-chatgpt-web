@@ -14,11 +14,11 @@ export class JsonToolCallDetector implements IToolCallDetector {
   readonly priority = 1;
   readonly name = "JsonToolCallDetector";
 
-    /**
-   * Phát hiện và trích xuất tool call dạng JSON trong phản hồi của mô hình.
-   */
-detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
-    logFunctionInput("translation:detectors:json-detector", "detect", { rawResponse });
+  /**
+ * Phát hiện và trích xuất tool call dạng JSON trong phản hồi của mô hình.
+ */
+  detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
+
     if (!rawResponse || !rawResponse.trim()) return null;
 
     // Không match nếu đang là XML tool_call để nhường cho XmlToolCallDetector nếu nằm trong thẻ
@@ -50,11 +50,11 @@ detect(rawResponse: string): DetectedToolCall[] | DetectedToolCall | null {
     return null;
   }
 
-    /**
-   * Thử phân tích một chuỗi văn bản thành đối tượng JSON hợp lệ.
-   */
-private tryParseJson(jsonStr: string): DetectedToolCall[] | DetectedToolCall | null {
-    logFunctionInput("translation:detectors:json-detector", "tryParseJson", { jsonStr });
+  /**
+ * Thử phân tích một chuỗi văn bản thành đối tượng JSON hợp lệ.
+ */
+  private tryParseJson(jsonStr: string): DetectedToolCall[] | DetectedToolCall | null {
+
     try {
       const clean = cleanJsonPayload(jsonStr);
       const parsed = JSON.parse(clean);
@@ -90,11 +90,11 @@ private tryParseJson(jsonStr: string): DetectedToolCall[] | DetectedToolCall | n
     return null;
   }
 
-    /**
-   * Trích xuất thông tin tool name và arguments từ một đối tượng JSON đã parse.
-   */
-private extractFromObject(obj: any): DetectedToolCall | null {
-    logFunctionInput("translation:detectors:json-detector", "extractFromObject", { obj });
+  /**
+ * Trích xuất thông tin tool name và arguments từ một đối tượng JSON đã parse.
+ */
+  private extractFromObject(obj: any): DetectedToolCall | null {
+
     if (!obj || typeof obj !== "object") return null;
 
     // TH1: { "action": "tool_call", "tool": "read_file", "arguments": { ... } }

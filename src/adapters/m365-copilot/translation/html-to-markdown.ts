@@ -15,7 +15,7 @@ export const STATUS_PATTERNS = [
  * Tự động chuẩn hóa các code fence bị lỗi định dạng Markdown (như cụt 2 backtick hoặc lẻ loi 1 backtick)
  */
 export function normalizeMarkdownFences(md: string): string {
-  logFunctionInput("translation:html-to-markdown", "normalizeMarkdownFences", { md });
+
   if (!md) return "";
 
   // Sửa các dòng chỉ chứa đúng 2 dấu backtick thành 3 dấu backtick chuẩn
@@ -34,7 +34,7 @@ export function normalizeMarkdownFences(md: string): string {
  * Chuyển đổi cây HTML của tin nhắn M365 Copilot thành chuỗi Markdown chuẩn hóa.
  */
 export function m365HtmlToMarkdown(html: string): string {
-  logFunctionInput("translation:html-to-markdown", "m365HtmlToMarkdown", { html });
+
   if (!html || !html.trim()) return "";
   let md = chatGptHtmlToMarkdown(html).trim();
 

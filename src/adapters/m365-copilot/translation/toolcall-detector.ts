@@ -213,7 +213,7 @@ export class M365ToolCallDetector {
    * Trả về text thông thường an toàn để emit text_delta (nếu không thuộc tool_call, patch hay thought).
    */
   feed(chunk: string): string {
-    logFunctionInput("translation:toolcall-detector", "feed", { chunk });
+
     if (this.detectedToolCall) return "";
     this.buffer += chunk;
 
@@ -371,7 +371,7 @@ export class M365ToolCallDetector {
    * hoặc khi JSON arguments chưa hoàn chỉnh!
    */
   finish(): { remainingText: string; toolCall: ParsedToolCall | null; detectedToolCall?: ParsedToolCall } {
-    logFunctionInput("translation:toolcall-detector", "finish");
+
     let remainingText = "";
     if (this.inThought) {
       this.thoughtContent += this.buffer;
@@ -428,7 +428,7 @@ export class M365ToolCallDetector {
    * Helper xử lý chunk và trả về kết quả ngay lập tức
    */
   processChunk(chunk: string): { emittedText: string; toolCalls: ParsedToolCall[] } {
-    logFunctionInput("translation:toolcall-detector", "processChunk", { chunk });
+
     const emittedText = this.feed(chunk);
     const toolCall = this.getToolCall();
     return {
@@ -437,19 +437,19 @@ export class M365ToolCallDetector {
     };
   }
 
-    /**
-   * Kiểm tra xem detector đã nhận diện được một tool call hoàn chỉnh hay chưa.
-   */
-hasDetectedToolCall(): boolean {
-    logFunctionInput("translation:toolcall-detector", "hasDetectedToolCall");
+  /**
+ * Kiểm tra xem detector đã nhận diện được một tool call hoàn chỉnh hay chưa.
+ */
+  hasDetectedToolCall(): boolean {
+
     return this.detectedToolCall !== null;
   }
 
-    /**
-   * Lấy thông tin tool call hoàn chỉnh đã phát hiện được.
-   */
-getToolCall(): ParsedToolCall | null {
-    logFunctionInput("translation:toolcall-detector", "getToolCall");
+  /**
+ * Lấy thông tin tool call hoàn chỉnh đã phát hiện được.
+ */
+  getToolCall(): ParsedToolCall | null {
+
     return this.detectedToolCall;
   }
 
@@ -459,7 +459,7 @@ getToolCall(): ParsedToolCall | null {
    * Đồng thời tự động khử dấu \ thừa ở cuối dòng trước khi xuống dòng (line continuation).
    */
   private cleanToolPayload(raw: string): string {
-    logFunctionInput("translation:toolcall-detector", "cleanToolPayload", { raw });
+
     const stripped = stripOuterCodeFence(raw);
     return stripped
       .replace(/\\_/g, "_")
@@ -468,11 +468,11 @@ getToolCall(): ParsedToolCall | null {
       .trim();
   }
 
-    /**
-   * Phân giải chuỗi payload thô bên trong thẻ tool call thành tên hàm và đối số JSON.
-   */
-private parseToolPayload(raw: string): ParsedToolCall | null {
-    logFunctionInput("translation:toolcall-detector", "parseToolPayload", { raw });
+  /**
+ * Phân giải chuỗi payload thô bên trong thẻ tool call thành tên hàm và đối số JSON.
+ */
+  private parseToolPayload(raw: string): ParsedToolCall | null {
+
     const trimmed = raw.trim();
 
     // 0. Ưu tiên cao nhất: Thử parse trực tiếp JSON gốc nguyên bản không qua bất kỳ sanitizer nào
@@ -604,7 +604,7 @@ private parseToolPayload(raw: string): ParsedToolCall | null {
  * Đồng thời tự động khử dấu \ thừa ở cuối dòng trước khi xuống dòng (line continuation).
  */
 export function sanitizeJsonControlChars(raw: string): string {
-  logFunctionInput("translation:toolcall-detector", "sanitizeJsonControlChars", { raw });
+
   let inString = false;
   let escaped = false;
   let out = "";
@@ -654,7 +654,7 @@ export function sanitizeJsonControlChars(raw: string): string {
  * Bóc tách code fence ở rìa ngoài cùng của khối JSON/XML
  */
 export function stripOuterCodeFence(raw: string): string {
-  logFunctionInput("translation:toolcall-detector", "stripOuterCodeFence", { raw });
+
   let trimmed = raw.trim();
   const openMatch = trimmed.match(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n/);
   if (openMatch) {
@@ -675,7 +675,7 @@ export function stripOuterCodeFence(raw: string): string {
  * 4. Gọt sạch các ký tự escape markdown thừa từ Turndown.
  */
 export function sanitizeCodexPatchContent(rawPatch: string): string {
-  logFunctionInput("translation:toolcall-detector", "sanitizeCodexPatchContent", { rawPatch });
+
   let patch = rawPatch
     .replaceAll("\\*", "*")
     .replaceAll("\\_", "_")

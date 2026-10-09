@@ -23,81 +23,81 @@ export class M365MarkdownBuffer {
   private markdown = "";
   private pendingBlocks: M365MarkdownBlock[] = [];
 
-    /**
-   * Khởi tạo bộ đệm Markdown ngữ nghĩa quản lý commit các khối văn bản và code.
-   */
-constructor(
+  /**
+ * Khởi tạo bộ đệm Markdown ngữ nghĩa quản lý commit các khối văn bản và code.
+ */
+  constructor(
     private readonly transform: (md: string) => string = md => md
   ) {
-    logFunctionInput("translation:semantic-detector", "constructor", { transform }); }
 
-  /**
-   * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
-   * Duyệt tuần tự an toàn tuyệt đối theo Semantic Key:
-   * Bỏ qua các block đã commit; khi gặp block chưa streamable thì dừng lại chờ;
-   * Không phụ thuộc vào committedIndex đơn điệu để tránh nhảy cóc khi danh sách block bị co giãn.
-   */
-  observe(blocks: M365MarkdownBlock[]): string {
-    logFunctionInput("translation:semantic-detector", "observe", { blocks });
-    this.pendingBlocks = blocks;
-    let delta = "";
 
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      if (this.committedKeys.has(block.key)) {
-        continue;
-      }
+    /**
+     * Quan sát danh sách các khối ngữ nghĩa hiện tại trong DOM.
+     * Duyệt tuần tự an toàn tuyệt đối theo Semantic Key:
+     * Bỏ qua các block đã commit; khi gặp block chưa streamable thì dừng lại chờ;
+     * Không phụ thuộc vào committedIndex đơn điệu để tránh nhảy cóc khi danh sách block bị co giãn.
+     */
+    observe(blocks: M365MarkdownBlock[]): string {
 
-      // Khối hiện tại chưa hoàn thành (đang là khối cuối cùng hoặc đang sinh) -> dừng lại chờ
-      if (!block.streamable) {
-        break;
-      }
+      this.pendingBlocks = blocks;
+      let delta = "";
 
-      const blockDelta = this.commitBlock(block);
-      if (blockDelta) {
-        delta += blockDelta;
-      }
-    }
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        if (this.committedKeys.has(block.key)) {
+          continue;
+        }
 
-    return delta;
-  }
+        // Khối hiện tại chưa hoàn thành (đang là khối cuối cùng hoặc đang sinh) -> dừng lại chờ
+        if (!block.streamable) {
+          break;
+        }
 
-  /**
-   * Kết thúc lượt sinh phản hồi từ Copilot.
-   * Commit toàn bộ các khối còn lại chưa từng được commit.
-   */
-  finish(finalBlocks?: M365MarkdownBlock[]): { markdown: string; delta: string } {
-    logFunctionInput("translation:semantic-detector", "finish", { finalBlocks });
-    const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
-    let delta = "";
-
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      if (!this.committedKeys.has(block.key)) {
         const blockDelta = this.commitBlock(block);
         if (blockDelta) {
           delta += blockDelta;
         }
       }
+
+      return delta;
     }
 
-    this.pendingBlocks = [];
-    return { markdown: this.markdown, delta };
-  }
+    /**
+     * Kết thúc lượt sinh phản hồi từ Copilot.
+     * Commit toàn bộ các khối còn lại chưa từng được commit.
+     */
+    finish(finalBlocks ?: M365MarkdownBlock[]): { markdown: string; delta: string } {
+
+      const blocks = (finalBlocks && finalBlocks.length > 0) ? finalBlocks : this.pendingBlocks;
+      let delta = "";
+
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        if (!this.committedKeys.has(block.key)) {
+          const blockDelta = this.commitBlock(block);
+          if (blockDelta) {
+            delta += blockDelta;
+          }
+        }
+      }
+
+      this.pendingBlocks = [];
+      return { markdown: this.markdown, delta };
+    }
 
     /**
    * Lấy toàn bộ nội dung Markdown hoàn chỉnh đã được tích lũy trong bộ đệm.
    */
-getMarkdown(): string {
-    logFunctionInput("translation:semantic-detector", "getMarkdown");
-    return this.markdown;
-  }
+    getMarkdown(): string {
+
+      return this.markdown;
+    }
 
     /**
    * Xử lý commit một khối Markdown đã hoàn tất vào chuỗi Markdown chính thức.
    */
 private commitBlock(block: M365MarkdownBlock): string {
-    logFunctionInput("translation:semantic-detector", "commitBlock", { block });
+
     // Nếu khối là khối công cụ hoặc patch, ưu tiên trích xuất textContent thuần túy (raw text)
     // để tránh việc Turndown tự động escape các ký tự cú pháp như _ thành \_, [ thành \[, * thành \*
     let rawMd: string;

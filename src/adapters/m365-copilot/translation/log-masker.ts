@@ -6,7 +6,7 @@ import type { OpenAIToolCall } from "./detectors/types";
  * Mask arguments string cho log console để giấu secret / dữ liệu lớn
  */
 export function maskArgumentsForLog(argsStr: string): string {
-  logFunctionInput("translation:log-masker", "maskArgumentsForLog", { argsStr });
+
   try {
     const parsed = JSON.parse(argsStr);
     if (parsed && typeof parsed === "object") {
@@ -35,7 +35,7 @@ export function maskArgumentsForLog(argsStr: string): string {
  * Che giấu secret và dữ liệu lớn khi in log ra console (Yêu cầu 10)
  */
 export function maskToolCallsForLog(toolCalls: OpenAIToolCall[]): any[] {
-  logFunctionInput("translation:log-masker", "maskToolCallsForLog", { toolCalls });
+
   return toolCalls.map(tc => {
     try {
       const parsedArgs = JSON.parse(tc.function.arguments);
