@@ -8,6 +8,7 @@ import {
   promptCompiler,
 } from "../src/adapters/m365-copilot/prompts/compiler";
 import {
+  FILE_REFERENCING_CONVENTION_PROMPT,
   TOOL_REMINDER_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
@@ -286,4 +287,36 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     // Dung lượng Turn 2 compact hơn nhiều so với Turn 1
     expect(resTurn2.finalPrompt.length).toBeLessThan(resTurn1.finalPrompt.length);
   });
+
+  test("13. Quy chuẩn tham chiếu file bằng Markdown link tương đối hiện diện đầy đủ trong các bộ prompt", () => {
+    // 1. FILE_REFERENCING_CONVENTION_PROMPT
+    expect(FILE_REFERENCING_CONVENTION_PROMPT).toContain("[tên_file](đường_dẫn_tương_đối)");
+    expect(FILE_REFERENCING_CONVENTION_PROMPT).toContain("[index.html](index.html)");
+    expect(FILE_REFERENCING_CONVENTION_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
+
+    // 2. UNIFIED_TOOL_PROTOCOL
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("QUY TẮC THAM CHIẾU TỆP TIN (CLICKABLE LINKS)");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("[index.html](index.html)");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("[index.html — dòng 12](index.html#L12)");
+
+    // 3. PLAN_MODE_PROMPT
+    expect(PLAN_MODE_PROMPT).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
+    expect(PLAN_MODE_PROMPT).toContain("[index.html](index.html)");
+    expect(PLAN_MODE_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
+
+    // 4. IMPLEMENT_PLAN_PROMPT
+    expect(IMPLEMENT_PLAN_PROMPT).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
+    expect(IMPLEMENT_PLAN_PROMPT).toContain("[index.html](index.html)");
+    expect(IMPLEMENT_PLAN_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
+
+    // 5. TOOL_REMINDER_PROMPT
+    expect(TOOL_REMINDER_PROMPT).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
+    expect(TOOL_REMINDER_PROMPT).toContain("[index.html](index.html)");
+    expect(TOOL_REMINDER_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
+
+    // 6. COMPACT_CORE_TOOLS_DECLARATION (Turn 2 trở đi)
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("[index.html](index.html)");
+    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("[index.html — dòng 12](index.html#L12)");
+  });
 });
+

@@ -9,6 +9,14 @@
 
 
 /**
+ * Chỉ dẫn quy chuẩn tham chiếu tệp tin bằng Markdown link tương đối cho Codex IDE
+ */
+export const FILE_REFERENCING_CONVENTION_PROMPT = `QUY TẮC THAM CHIẾU TỆP TIN BẰNG MARKDOWN LINK TƯƠNG ĐỐI:
+Khi nhắc đến bất kỳ tệp tin nào trong câu trả lời, giải thích mã nguồn hoặc bản kế hoạch, BẮT BUỘC sử dụng cú pháp Markdown link tương đối để IDE kích hoạt liên kết nhấp chuột (Clickable Link):
+- Link tệp tin tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html), [js/app.js](js/app.js))
+- Link tới dòng cụ thể: [tên_file — dòng N](đường_dẫn_tương_đối#LN) (Ví dụ: [index.html — dòng 12](index.html#L12), [js/storage.js — dòng 25](js/storage.js#L25))`;
+
+/**
  * Chỉ dẫn kích hoạt chế độ lập kế hoạch (Plan Mode)
  */
 export const PLAN_MODE_PROMPT = `[CHẾ ĐỘ LẬP KẾ HOẠCH - CODEX PLAN MODE ĐANG BẬT]
@@ -40,6 +48,7 @@ BẠN BẮT BUỘC PHẢI TUÂN THỦ CÁC QUY TẮC SAU:
 </proposed_plan>
    - Thẻ mở <proposed_plan> và thẻ đóng </proposed_plan> phải nằm trên từng dòng riêng biệt.
    - Nội dung kế hoạch viết bằng tiếng Việt rõ ràng, súc tích.
+   - QUY TẮC THAM CHIẾU TỆP TIN: Khi nhắc đến bất kỳ file nào trong kế hoạch, BẮT BUỘC sử dụng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc link dòng cụ thể: [tên_file — dòng N](đường_dẫn_tương_đối#LN) (Ví dụ: [index.html — dòng 12](index.html#L12)).
    - TUYỆT ĐỐI KHÔNG hỏi "Tôi có nên tiếp tục không?" ("Should I proceed?"), vì client Codex sẽ tự động hiển thị nút phê duyệt "Implement this plan?" cho người dùng!`;
 
 /**
@@ -56,7 +65,8 @@ BẠN HÃY TIẾN HÀNH THỰC HIỆN CÁC BƯỚC THEO ĐÚNG KẾ HOẠCH:
    - QUY TẮC ĐỌC FILE: Dùng read_file hoặc exec_command (tối đa 1-3 tệp, tổng <= 150 dòng). Tuyệt đối không chạy script lặp đọc hàng loạt tệp hoặc quét đệ quy (tree /F, Get-ChildItem -Recurse) vào node_modules.
 2. Sau khi file được tạo/sửa và nhận kết quả toolResult, tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command) để kiểm tra tính đúng đắn.
 3. TUYỆT ĐỐI KHÔNG xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt.
-4. TUYỆT ĐỐI KHÔNG từ chối hoặc nói rằng bạn không có công cụ IDE; IDE của người dùng đang tự động bắt các khối <tool_call> hoặc lệnh terminal của bạn để thực thi trực tiếp trên máy tính. Hãy bắt tay vào thực hiện bước 1 ngay!`;
+4. TUYỆT ĐỐI KHÔNG từ chối hoặc nói rằng bạn không có công cụ IDE; IDE của người dùng đang tự động bắt các khối <tool_call> hoặc lệnh terminal của bạn để thực thi trực tiếp trên máy tính. Hãy bắt tay vào thực hiện bước 1 ngay!
+5. QUY TẮC THAM CHIẾU TỆP TIN: Khi giải thích hoặc nhắc đến bất kỳ tệp tin nào trong câu trả lời, BẮT BUỘC sử dụng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc link dòng cụ thể: [tên_file — dòng N](đường_dẫn_tương_đối#LN) (Ví dụ: [index.html — dòng 12](index.html#L12)).`;
 
 /**
  * Lời nhắc thực thi công cụ trong quá trình trao đổi để tránh Copilot thoát vai
@@ -74,6 +84,7 @@ LƯU Ý QUAN TRỌNG: Bạn đang được kết nối trực tiếp với IDE c
   + NGHIÊM CẤM dùng script shell lặp đọc hàng loạt tệp (foreach... Get-Content) hoặc quét đệ quy toàn bộ thư mục (tree /F, Get-ChildItem -Recurse, ls -R). Đặc biệt TUYỆT ĐỐI KHÔNG quét đệ quy vào node_modules, .git, dist, build (loại trừ: --exclude-dir=node_modules). Hãy dùng list_dir (depth=1) hoặc search_files / grep_code.
 - NGHIÊM CẤM TUYỆT ĐỐI: Không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
 - Lệnh exec_command chỉ dùng cho các câu lệnh CLI không tương tác (như npm install, npm test, git status, git diff, mkdir -p ...).
+- QUY TẮC THAM CHIẾU TỆP TIN: Khi nhắc đến bất kỳ tệp tin nào trong câu trả lời hoặc kết luận, BẮT BUỘC sử dụng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc link dòng cụ thể: [tên_file — dòng N](đường_dẫn_tương_đối#LN) (Ví dụ: [index.html — dòng 12](index.html#L12)) để người dùng dễ dàng bấm chuột chuyển tới file trong IDE.
 - Khi kết quả tool_result có mã thoát 0 (Process exited with code 0) hoặc output rỗng: Thao tác trước đó đã THÀNH CÔNG (lệnh thực thi không sinh output ra stdout hoặc file đã được tạo). Hãy tự tin tiếp tục ngay bước tiếp theo hoặc đưa ra câu trả lời kết luận nếu đã xong!`;
 
 /**
@@ -108,7 +119,8 @@ export const COMPACT_CORE_TOOLS_DECLARATION = `AVAILABLE TOOLS (COMPACT):
 - grep_code: Tìm kiếm từ khóa hoặc regex trong mã nguồn (query: string, path?: string).
 - git_status: Xem nhanh trạng thái Git thay đổi (không tham số).
 - git_diff: Xem diff chi tiết của Git (path?: string).
-- write_file: Tạo/ghi đè file (path: string, content: string). Khuyến nghị luôn ưu tiên apply_patch thay vì write_file.`;
+- write_file: Tạo/ghi đè file (path: string, content: string). Khuyến nghị luôn ưu tiên apply_patch thay vì write_file.
+- Quy tắc tham chiếu file: Bắt buộc dùng Markdown link tương đối [index.html](index.html) hoặc link dòng cụ thể [index.html — dòng 12](index.html#L12).`;
 
 /**
  * Mẫu ví dụ duy nhất cho Turn 2 trở đi: CHỈ GIỮ LẠI cú pháp apply_patch (sửa file và tạo file mới).

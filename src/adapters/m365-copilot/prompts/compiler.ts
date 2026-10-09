@@ -57,6 +57,10 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
 
 3. KHI HOÀN THÀNH HOẶC TRẢ LỜI NGƯỜI DÙNG (KẾT LUẬN CUỐI CÙNG):
    - Viết câu trả lời đầy đủ, thân thiện bằng văn bản Markdown tự nhiên bên trong khối 4-backtick.
+   - QUY TẮC THAM CHIẾU TỆP TIN (CLICKABLE LINKS): Khi nhắc đến bất kỳ tệp tin nào trong câu trả lời, giải thích mã nguồn hoặc kế hoạch, BẮT BUỘC sử dụng cú pháp Markdown link tương đối:
+     + Link tệp tin tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html), [js/app.js](js/app.js))
+     + Link tới dòng cụ thể: [tên_file — dòng N](đường_dẫn_tương_đối#LN) (Ví dụ: [index.html — dòng 12](index.html#L12), [js/storage.js — dòng 25](js/storage.js#L25))
+     Mục đích: Giúp giao diện Codex tự động nhận diện hyperlink để người dùng nhấp chuột mở ngay tệp và nhảy tới dòng tương ứng.
    - TUYỆT ĐỐI KHÔNG xuất thẻ <tool_call> trong lượt này.
 
 4. ĐẶC BIỆT KHI CHỈNH SỬA HOẶC TẠO FILE:

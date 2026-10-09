@@ -17,6 +17,7 @@ import {
 
 // Re-export để đảm bảo 100% tương thích ngược cho các module và tests đang import từ ./prompt
 export {
+  FILE_REFERENCING_CONVENTION_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
