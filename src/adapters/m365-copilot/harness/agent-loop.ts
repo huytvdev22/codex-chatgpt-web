@@ -73,7 +73,7 @@ export class LocalToolExecutor implements IToolExecutor {
     private readonly workingDir: string = process.cwd(),
     private readonly fileWriter: IAtomicFileWriter = defaultAtomicFileWriter
   ) {
-
+  }
 
     /**
    * Thực thi công cụ được yêu cầu bởi agent trên môi trường máy cục bộ và trả về kết quả chuẩn hóa.
