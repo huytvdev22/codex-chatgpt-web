@@ -1,7 +1,7 @@
 import { logFunctionInput } from "./debug-logger";
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
-import { isTitleRequest, generateTitleResponse } from "./guards";
+import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
 import { compileM365Prompt, compileM365HybridForwardPrompt, promptCompiler } from "./prompts/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
 import { executeM365Turn } from "./browser";
@@ -63,6 +63,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
   private lastConversationKey?: string;
   private readonly translator = new M365OutputTranslator();
+
+  constructor(readonly options?: { enableTitleGuard?: boolean }) {}
 
     /**
    * Điều phối toàn bộ vòng đời của một lượt tương tác (turn): chuẩn hóa request, compile prompt, chạy browser worker và dịch kết quả.
@@ -172,8 +174,12 @@ async runTurn(
     const compiledPrompt = promptToSend;
 
     // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
+    // MẶC ĐỊNH DISABLED. Chỉ kích hoạt khi được cấu hình bật tường minh qua options hoặc env var
     // TUYỆT ĐỐI không đánh chặn nếu lượt này có tool results từ IDE
-    if (normalized.trailingToolResults.length === 0 && isTitleRequest(parsed, compiledPrompt)) {
+    if (
+      normalized.trailingToolResults.length === 0 &&
+      isTitleRequest(parsed, compiledPrompt, { enableTitleGuard: this.options?.enableTitleGuard })
+    ) {
       if (!markTurnConsumed()) {
         return;
       }

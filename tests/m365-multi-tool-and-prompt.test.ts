@@ -99,12 +99,14 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
 `;
     const res = translator.translate(raw);
     expect(res.type).toBe("tool_call");
-    expect(res.tool_calls.length).toBe(2);
-    expect(res.thinking).toBeUndefined();
-    expect(res.tool_calls[0].function.name).toBe("exec_command");
-    expect(res.tool_calls[0].function.arguments).toContain("git log");
-    expect(res.tool_calls[1].function.name).toBe("exec_command");
-    expect(res.tool_calls[1].function.arguments).toContain("bun --version");
+    if (res.type === "tool_call") {
+      expect(res.tool_calls.length).toBe(2);
+      expect(res.thinking).toBeUndefined();
+      expect(res.tool_calls[0].function.name).toBe("exec_command");
+      expect(res.tool_calls[0].function.arguments).toContain("git log");
+      expect(res.tool_calls[1].function.name).toBe("exec_command");
+      expect(res.tool_calls[1].function.arguments).toContain("bun --version");
+    }
   });
 
   test("7. normalizeRequestUserInputArgs chuẩn hóa mềm dẻo các định dạng câu hỏi và tùy chọn", () => {
@@ -189,12 +191,14 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
 `;
     const res = translator.translate(raw);
     expect(res.type).toBe("tool_call");
-    expect(res.tool_calls.length).toBe(1);
-    expect(res.tool_calls[0].function.name).toBe("request_user_input");
-    const parsed = JSON.parse(res.tool_calls[0].function.arguments);
-    expect(parsed.questions.length).toBe(1);
-    expect(parsed.questions[0].id).toBe("ui_choice");
-    expect(parsed.questions[0].options[0].label).toBe("Dark Mode (Recommended)");
+    if (res.type === "tool_call") {
+      expect(res.tool_calls.length).toBe(1);
+      expect(res.tool_calls[0].function.name).toBe("request_user_input");
+      const parsed = JSON.parse(res.tool_calls[0].function.arguments);
+      expect(parsed.questions.length).toBe(1);
+      expect(parsed.questions[0].id).toBe("ui_choice");
+      expect(parsed.questions[0].options[0].label).toBe("Dark Mode (Recommended)");
+    }
   });
 
   test("10. Prompts và templates chứa đầy đủ hướng dẫn phỏng vấn request_user_input", () => {
