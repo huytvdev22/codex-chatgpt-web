@@ -27,6 +27,7 @@ export interface M365BrowserRunOptions {
   isNewConversation?: boolean;
   shouldStop?: () => boolean;
   modelSlug?: string;
+  reasoning?: string;
   traceContext?: TraceContext;
   images?: NormalizedImageAttachment[];
 }
@@ -148,7 +149,7 @@ export async function executeM365Turn(
 
     // 3.1. Đảm bảo model mong muốn (Capability Mode) được chọn trên giao diện M365 Copilot
     if (options.modelSlug) {
-      const targetMode = resolveM365CapabilityMode(options.modelSlug);
+      const targetMode = resolveM365CapabilityMode(options.modelSlug, options.reasoning);
       await ensureM365CapabilityMode(page, targetMode).catch(err => {
         console.warn(`[m365-worker] Warning: Failed to ensure capability mode '${targetMode}':`, err);
       });

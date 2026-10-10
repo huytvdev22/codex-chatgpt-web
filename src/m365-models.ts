@@ -17,40 +17,15 @@ export interface M365ModelRoute {
   autoCompactTokenLimit: number;
   effectiveContextWindowPercent: number;
   composerCharLimit: number;
-  legacy?: boolean;
   inputModalities?: readonly ("text" | "image")[];
 }
 
 export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
   {
-    slug: "m365-copilot/auto",
-    displayName: "M365 Copilot Auto (Web)",
-    description: "Microsoft 365 Copilot Web - Tự động cân nhắc thời gian suy nghĩ (Auto mode)",
-    backendModel: "m365-copilot-auto",
-    capabilityMode: "auto",
-    contextWindow: 100_000,
-    autoCompactTokenLimit: 90_000,
-    effectiveContextWindowPercent: 90,
-    composerCharLimit: 100_000,
-    inputModalities: ["text", "image"],
-  },
-  {
-    slug: "m365-copilot/gpt-5.6-think",
-    displayName: "M365 Copilot GPT 5.6 Think Deeper (Web)",
-    description: "OpenAI GPT 5.6 Think deeper qua Microsoft 365 Copilot Web (Mô hình suy nghĩ chuyên sâu)",
-    backendModel: "m365-copilot-gpt5.6-think",
-    capabilityMode: "gpt-5.6-think",
-    contextWindow: 100_000,
-    autoCompactTokenLimit: 90_000,
-    effectiveContextWindowPercent: 90,
-    composerCharLimit: 100_000,
-    inputModalities: ["text", "image"],
-  },
-  {
-    slug: "m365-copilot/gpt-5.6-quick",
-    displayName: "M365 Copilot GPT 5.6 Quick Response (Web)",
-    description: "OpenAI GPT 5.6 Quick response qua Microsoft 365 Copilot Web (Mô hình phản hồi nhanh)",
-    backendModel: "m365-copilot-gpt5.6-quick",
+    slug: "m365-copilot/gpt-5.6",
+    displayName: "M365 - GPT 5.6",
+    description: "GPT 5.6 qua Microsoft 365 Copilot Web",
+    backendModel: "m365-copilot-gpt5.6",
     capabilityMode: "gpt-5.6-quick",
     contextWindow: 100_000,
     autoCompactTokenLimit: 90_000,
@@ -59,50 +34,11 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     inputModalities: ["text", "image"],
   },
   {
-    slug: "m365-copilot/think",
-    displayName: "M365 Copilot Think Deeper (Web)",
-    description: "Microsoft 365 Copilot Web - Think deeper (Suy nghĩ lâu hơn cho câu trả lời tốt hơn)",
-    backendModel: "m365-copilot-think",
-    capabilityMode: "think",
-    contextWindow: 100_000,
-    autoCompactTokenLimit: 90_000,
-    effectiveContextWindowPercent: 90,
-    composerCharLimit: 100_000,
-    inputModalities: ["text", "image"],
-  },
-  {
-    slug: "m365-copilot/quick",
-    displayName: "M365 Copilot Quick Response (Web)",
-    description: "Microsoft 365 Copilot Web - Quick response (Trả lời nhanh ngay lập tức)",
-    backendModel: "m365-copilot-quick",
+    slug: "m365-copilot",
+    displayName: "M365 Copilot",
+    description: "Microsoft 365 Copilot Web",
+    backendModel: "m365-copilot",
     capabilityMode: "quick",
-    contextWindow: 100_000,
-    autoCompactTokenLimit: 90_000,
-    effectiveContextWindowPercent: 90,
-    composerCharLimit: 100_000,
-    inputModalities: ["text", "image"],
-  },
-  // Backward compatibility routes (ẩn khỏi menu chọn model bằng legacy: true)
-  {
-    slug: "m365-copilot/gpt-5",
-    displayName: "M365 Copilot GPT-5.6 (Web - Legacy)",
-    description: "Microsoft 365 Copilot Web (Mặc định GPT 5.6 Think deeper)",
-    backendModel: "m365-copilot-gpt5",
-    capabilityMode: "gpt-5.6-think",
-    legacy: true,
-    contextWindow: 100_000,
-    autoCompactTokenLimit: 90_000,
-    effectiveContextWindowPercent: 90,
-    composerCharLimit: 100_000,
-    inputModalities: ["text", "image"],
-  },
-  {
-    slug: "m365-copilot/fast",
-    displayName: "M365 Copilot Fast (Web - Legacy)",
-    description: "Microsoft 365 Copilot Web Fast Mode (Mặc định Quick response)",
-    backendModel: "m365-copilot-fast",
-    capabilityMode: "quick",
-    legacy: true,
     contextWindow: 100_000,
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
@@ -120,10 +56,25 @@ export function availableM365ModelRoutes(): readonly M365ModelRoute[] {
   return M365_MODEL_ROUTES;
 }
 
-export function resolveM365CapabilityMode(slug?: string): M365CapabilityMode {
+export function resolveM365CapabilityMode(
+  slug?: string,
+  reasoning?: string,
+): M365CapabilityMode {
   if (!slug || typeof slug !== "string") return "auto";
   const matched = M365_MODEL_ROUTES.find(r => r.slug === slug);
-  if (matched) return matched.capabilityMode;
+  if (matched) {
+    const deeper = reasoning === "high"
+      || reasoning === "xhigh"
+      || reasoning === "max"
+      || reasoning === "ultra";
+    if (matched.slug === "m365-copilot/gpt-5.6") {
+      return deeper ? "gpt-5.6-think" : "gpt-5.6-quick";
+    }
+    if (matched.slug === "m365-copilot") {
+      return deeper ? "think" : "quick";
+    }
+    return matched.capabilityMode;
+  }
 
   const lower = slug.toLowerCase();
   if (lower.includes("5.6") || lower.includes("gpt5.6") || lower.includes("gpt-5.6")) {

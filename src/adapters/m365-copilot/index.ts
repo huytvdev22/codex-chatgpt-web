@@ -212,6 +212,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
           conversationKey,
           isNewConversation: formatAttempt === 0 ? isNewConversation : false,
           modelSlug: parsed.modelId,
+          reasoning: parsed.options.reasoning,
           traceContext,
           images: formatAttempt === 0 ? normalized.images : [],
         });

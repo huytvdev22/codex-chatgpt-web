@@ -13,6 +13,7 @@ import {
 } from "./chatgpt-web-models";
 import {
   availableM365ModelRoutes,
+  isM365ModelSlug,
   M365_COPILOT_MODEL_PREFIX,
   type M365ModelRoute,
 } from "./m365-models";
@@ -205,7 +206,22 @@ export function ensureManagedModelCatalogFile(
         const raw = JSON.parse(readFileSync(catalogPath, "utf8"));
         const hasM365 = Array.isArray(raw.models) && raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX));
         const allM365SupportImages = hasM365 && !raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX) && (!Array.isArray(m.input_modalities) || !m.input_modalities.includes("image")));
-        if (!hasM365 || !allM365SupportImages) {
+        const visibleM365Slugs = Array.isArray(raw.models)
+          ? raw.models
+              .filter((m: any) =>
+                typeof m?.slug === "string"
+                && isM365ModelSlug(m.slug)
+                && m.visibility !== "hide")
+              .map((m: any) => m.slug)
+              .sort()
+          : [];
+        const expectedVisibleM365Slugs = [
+          "m365-copilot",
+          "m365-copilot/gpt-5.6",
+        ];
+        const hasCurrentM365Surface =
+          JSON.stringify(visibleM365Slugs) === JSON.stringify(expectedVisibleM365Slugs);
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface) {
           shouldWrite = true;
         }
       } catch {
@@ -394,7 +410,12 @@ export function buildM365Model(
     tool_mode: null,
     upgrade: null,
     default_reasoning_level: "low",
-    supported_reasoning_levels: [reasoningLevel(template, "low", route.displayName)],
+    supported_reasoning_levels: route.legacy
+      ? [reasoningLevel(template, "low", route.displayName)]
+      : [
+          reasoningLevel(template, "low", "Quick"),
+          reasoningLevel(template, "high", "Deeper"),
+        ],
     context_window: route.contextWindow,
     max_context_window: route.contextWindow,
     effective_context_window_percent: route.effectiveContextWindowPercent,
@@ -491,4 +512,3 @@ export function augmentNativeModelCatalog(
   };
   return result;
 }
-
