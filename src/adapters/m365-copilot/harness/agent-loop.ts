@@ -1,6 +1,12 @@
 
-import { M365OutputTranslator, type OpenAIToolCall, type TranslationResult } from "../translation/output-translator";
+import { randomUUID } from "node:crypto";
+import type { OpenAIToolCall } from "../translation/detectors/types";
+import { parseStrictM365Response, type M365ProtocolErrorCode } from "../translation/strict-response-parser";
 import { truncateToolResult } from "../prompts/assembler";
+import { buildM365FormatRetryPrompt } from "../prompts/format-retry";
+import { normalizeM365ToolArguments } from "../tools/argument-normalizer";
+import { validateM365ToolCall } from "../tools/tool-validator";
+import type { CodexTool } from "../../../types";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
@@ -36,20 +42,21 @@ export interface AgentLoopRetryOptions {
   maxDelayMs?: number;
   perTurnTimeoutMs?: number;
   retryableErrors?: string[];
+  maxFormatRetries?: number;
 }
 
 export interface AgentLoopOptions {
   maxTurns?: number;
   conversationKey?: string;
   retryOptions?: AgentLoopRetryOptions;
+  clientTools?: CodexTool[];
   onTurnStart?: (turnIndex: number, prompt: string) => void;
   onRawResponse?: (turnIndex: number, raw: string) => void;
-  onThinking?: (turnIndex: number, thinking: string) => void;
-  onNarrative?: (turnIndex: number, narrative: string) => void;
   onToolCall?: (turnIndex: number, toolCalls: OpenAIToolCall[]) => void;
   onToolResult?: (turnIndex: number, toolName: string, result: string, isError?: boolean) => void;
   onFinalAnswer?: (turnIndex: number, answer: string) => void;
   onTurnRetry?: (turnIndex: number, attempt: number, error: Error, delayMs: number) => void;
+  onFormatRetry?: (turnIndex: number, attempt: number, code: string, message: string) => void;
 }
 
 export interface AgentLoopResult {
@@ -59,6 +66,10 @@ export interface AgentLoopResult {
   status: "completed" | "max_turns_exceeded" | "failed";
   error?: string;
 }
+
+type HarnessTranslationResult =
+  | { type: "final_answer"; content: string; rawResponse: string }
+  | { type: "tool_call"; tool_calls: OpenAIToolCall[]; rawResponse: string };
 
 import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../tools/atomic-file-writer";
 
@@ -189,10 +200,57 @@ export class M365AgentLoop {
    */
   constructor(
     private readonly modelClient: IM365ModelClient,
-    private readonly toolExecutor: IToolExecutor = new LocalToolExecutor(),
-    private readonly translator: M365OutputTranslator = new M365OutputTranslator()
+    private readonly toolExecutor: IToolExecutor = new LocalToolExecutor()
   ) {
+  }
 
+  /**
+   * Dùng cùng strict parser, argument normalization và validation với production.
+   */
+  private translateResponse(
+    rawResponse: string,
+    clientTools: CodexTool[]
+  ): HarnessTranslationResult | { protocolError: { code: M365ProtocolErrorCode; message: string } } {
+    const parsed = parseStrictM365Response(rawResponse);
+    if (parsed.kind === "protocol_error") {
+      return { protocolError: { code: parsed.code, message: parsed.message } };
+    }
+    if (parsed.kind === "final_answer") {
+      return {
+        type: "final_answer",
+        content: parsed.content,
+        rawResponse,
+      };
+    }
+
+    const normalizedCalls = parsed.calls.map(call => {
+      const normalized = normalizeM365ToolArguments(call.name, call.arguments);
+      return { ...call, name: normalized.name, arguments: normalized.arguments };
+    });
+    for (const call of normalizedCalls) {
+      const validation = validateM365ToolCall(call.name, call.arguments, clientTools);
+      if (!validation.ok) {
+        return {
+          protocolError: {
+            code: "INVALID_TOOL_CALL",
+            message: `${validation.code}: ${validation.message}`,
+          },
+        };
+      }
+    }
+
+    return {
+      type: "tool_call",
+      rawResponse,
+      tool_calls: normalizedCalls.map(call => ({
+        id: call.id || `call_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: JSON.stringify(call.arguments),
+        },
+      })),
+    };
   }
 
   private isRetryableError(err: unknown, retryableKeywords: string[]): boolean {
@@ -295,41 +353,65 @@ export class M365AgentLoop {
       turnCount++;
       options.onTurnStart?.(turnCount, currentPrompt);
 
-      // 1. Gửi prompt cho M365 kèm cơ chế retry + timeout
+      // 1. Gửi prompt cho M365 kèm retry transport và retry protocol tách biệt.
       let rawResponse: string;
-      try {
-        rawResponse = await this.callWithRetry(
-          currentPrompt,
-          {
-            turnIndex: turnCount,
-            conversationKey: options.conversationKey,
-          },
-          options
+      let translation: HarnessTranslationResult | undefined;
+      let attemptPrompt = currentPrompt;
+      const configuredFormatRetries = options.retryOptions?.maxFormatRetries ?? 3;
+      const maxFormatRetries = Number.isFinite(configuredFormatRetries) && configuredFormatRetries >= 0
+        ? Math.min(Math.floor(configuredFormatRetries), 10)
+        : 3;
+
+      for (let formatAttempt = 0; formatAttempt <= maxFormatRetries; formatAttempt++) {
+        try {
+          rawResponse = await this.callWithRetry(
+            attemptPrompt,
+            {
+              turnIndex: turnCount,
+              conversationKey: options.conversationKey,
+            },
+            options
+          );
+        } catch (err: any) {
+          const errorMsg = `M365 Model Call thất bại sau khi thử lại: ${err?.message || String(err)}`;
+          return {
+            finalAnswer: errorMsg,
+            turns: turnCount,
+            messages,
+            status: "failed",
+            error: errorMsg,
+          };
+        }
+
+        options.onRawResponse?.(turnCount, rawResponse);
+        const translated = this.translateResponse(rawResponse, options.clientTools || []);
+        if (!("protocolError" in translated)) {
+          translation = translated;
+          break;
+        }
+
+        options.onFormatRetry?.(
+          turnCount,
+          formatAttempt + 1,
+          translated.protocolError.code,
+          translated.protocolError.message
         );
-      } catch (err: any) {
-        const errorMsg = `M365 Model Call thất bại sau khi thử lại: ${err?.message || String(err)}`;
-        return {
-          finalAnswer: errorMsg,
-          turns: turnCount,
-          messages,
-          status: "failed",
-          error: errorMsg,
-        };
+        if (formatAttempt >= maxFormatRetries) {
+          const errorMsg = `[M365 Format Error] Đã hủy response sau ${maxFormatRetries + 1} lần vì sai protocol (${translated.protocolError.code}): ${translated.protocolError.message}`;
+          return {
+            finalAnswer: errorMsg,
+            turns: turnCount,
+            messages,
+            status: "failed",
+            error: errorMsg,
+          };
+        }
+        attemptPrompt = buildM365FormatRetryPrompt(translated.protocolError);
       }
 
-      options.onRawResponse?.(turnCount, rawResponse);
-
-      // 2. Chuyển dịch phản hồi qua Output Translator
-      const translation = this.translator.translate(rawResponse);
-
-      if (translation.thinking) {
-        console.log(`\n[THOUGHT] (turn ${turnCount})\n${translation.thinking}`);
-        options.onThinking?.(turnCount, translation.thinking);
-      }
-
-      if (translation.narrative) {
-        console.log(`\n[NARRATIVE] (turn ${turnCount})\n${translation.narrative}`);
-        options.onNarrative?.(turnCount, translation.narrative);
+      if (!translation) {
+        const errorMsg = "[M365 Format Error] Không nhận được response protocol hợp lệ.";
+        return { finalAnswer: errorMsg, turns: turnCount, messages, status: "failed", error: errorMsg };
       }
 
       // 3. Phân nhánh: Final Answer hay Tool Call
@@ -338,7 +420,6 @@ export class M365AgentLoop {
         messages.push({
           role: "assistant",
           content: translation.content,
-          thinking: translation.thinking,
         });
 
         return {
@@ -355,12 +436,8 @@ export class M365AgentLoop {
       messages.push({
         role: "assistant",
         content: JSON.stringify({
-          ...(translation.thinking ? { thinking: translation.thinking } : {}),
-          ...(translation.narrative ? { narrative: translation.narrative } : {}),
           tool_calls: toolCalls,
         }),
-        thinking: translation.thinking,
-        narrative: translation.narrative,
       });
 
       // 4. Thực thi từng tool call và thu thập kết quả

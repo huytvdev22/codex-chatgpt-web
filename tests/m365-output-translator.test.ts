@@ -314,18 +314,23 @@ describe("M365 Output Translator Specification Tests", () => {
   // ==========================================
   test("Agent Loop: executes multi-turn tool calling until final answer", async () => {
     // Giả lập M365 Model Client phản hồi qua 3 lượt:
-    // Lượt 1: M365 trả về lệnh bash "git status"
-    // Lượt 2: Sau khi có kết quả git status, M365 trả về XML tool_call read_file "pom.xml"
+    // Lượt 1: M365 trả về strict tool_call git_status
+    // Lượt 2: Sau khi có kết quả git status, M365 trả về strict tool_call read_file "pom.xml"
     // Lượt 3: Sau khi đọc pom.xml, M365 trả về Final Answer
     const mockResponses = [
-      "bash -lc git status",
-      `<tool_call>
+      `<m365Response><tool_call>
+{
+  "name": "git_status",
+  "arguments": {}
+}
+</tool_call></m365Response>`,
+      `<m365Response><tool_call>
 {
   "name": "read_file",
   "arguments": { "path": "pom.xml" }
 }
-</tool_call>`,
-      "Phân tích hoàn tất. Dự án sử dụng Java 17 và đã sửa lỗi phụ thuộc trong pom.xml."
+</tool_call></m365Response>`,
+      "<m365Response>Phân tích hoàn tất. Dự án sử dụng Java 17 và đã sửa lỗi phụ thuộc trong pom.xml.</m365Response>"
     ];
 
     let turn = 0;
@@ -351,7 +356,7 @@ describe("M365 Output Translator Specification Tests", () => {
       },
     };
 
-    const agentLoop = new M365AgentLoop(mockModelClient, mockToolExecutor, translator);
+    const agentLoop = new M365AgentLoop(mockModelClient, mockToolExecutor);
 
     const result = await agentLoop.run("Kiểm tra thay đổi và phân tích pom.xml");
 

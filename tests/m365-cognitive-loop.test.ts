@@ -37,7 +37,7 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
           throw new Error("Request timeout: gateway timed out");
         }
         // Lần thứ 3 thành công
-        return "Tác vụ đã được hoàn thành sau khi thử lại thành công.";
+        return "<m365Response>Tác vụ đã được hoàn thành sau khi thử lại thành công.</m365Response>";
       },
     };
 
@@ -125,10 +125,10 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
       async call(prompt: string, context?: { turnIndex: number }) {
         if (context?.turnIndex === 1) {
           // Trả về tool call đọc file không tồn tại
-          return `<tool_call>\n{"name": "read_file", "arguments": {"path": "non-existent-file.xyz"}}\n</tool_call>`;
+          return `<m365Response><tool_call>\n{"name": "read_file", "arguments": {"path": "non-existent-file.xyz"}}\n</tool_call></m365Response>`;
         }
         promptReceivedAtTurn2 = prompt;
-        return "Tôi hiểu file không tồn tại, tôi sẽ tạo file mới.";
+        return "<m365Response>Tôi hiểu file không tồn tại, tôi sẽ tạo file mới.</m365Response>";
       },
     };
 
@@ -155,6 +155,74 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
     expect(toolMsg?.isError).toBe(true);
   });
 
+  test("Default harness retries strict protocol errors before executing tools", async () => {
+    const prompts: string[] = [];
+    const formatErrors: string[] = [];
+    let modelCalls = 0;
+    let toolExecutions = 0;
+
+    const modelClient: IM365ModelClient = {
+      async call(prompt) {
+        prompts.push(prompt);
+        modelCalls++;
+        if (modelCalls === 1) {
+          return `<tool_call>{"name":"read_file","arguments":{"path":"package.json"}}</tool_call>`;
+        }
+        if (modelCalls === 2) {
+          return `<m365Response><tool_call>{"name":"read_file","arguments":{"path":"package.json"}}</tool_call></m365Response>`;
+        }
+        return `<m365Response>Hoàn tất sau khi đọc file.</m365Response>`;
+      },
+    };
+    const executor: IToolExecutor = {
+      execute() {
+        toolExecutions++;
+        return "{}";
+      },
+    };
+
+    const result = await new M365AgentLoop(modelClient, executor).run("Đọc package.json", {
+      onFormatRetry(_turn, _attempt, code) {
+        formatErrors.push(code);
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.turns).toBe(2);
+    expect(toolExecutions).toBe(1);
+    expect(formatErrors).toEqual(["MISSING_RESPONSE_ENVELOPE"]);
+    expect(prompts[1]).toContain("M365 RESPONSE FORMAT ERROR");
+  });
+
+  test("Default harness rejects an incomplete atomic batch without executing its valid prefix", async () => {
+    let modelCalls = 0;
+    let toolExecutions = 0;
+    const modelClient: IM365ModelClient = {
+      async call() {
+        modelCalls++;
+        if (modelCalls === 1) {
+          return `<m365Response>
+<tool_call>{"name":"read_file","arguments":{"path":"a.ts"}}</tool_call>
+<tool_call>{"name":"grep_code","arguments":{"query":"needle"}}
+</m365Response>`;
+        }
+        return `<m365Response>Batch trước đã được hủy.</m365Response>`;
+      },
+    };
+    const executor: IToolExecutor = {
+      execute() {
+        toolExecutions++;
+        return "unexpected";
+      },
+    };
+
+    const result = await new M365AgentLoop(modelClient, executor).run("Kiểm tra atomic batch");
+    expect(result.status).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(toolExecutions).toBe(0);
+    expect(result.finalAnswer).toBe("Batch trước đã được hủy.");
+  });
+
   // =========================================================================
   // 4. Default Max Turns = 30
   // =========================================================================
@@ -164,7 +232,7 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
     const endlessModelClient: IM365ModelClient = {
       async call() {
         turnsRun++;
-        return `<tool_call>\n{"name": "read_file", "arguments": {"path": "step_${turnsRun}.txt"}}\n</tool_call>`;
+        return `<m365Response><tool_call>\n{"name": "read_file", "arguments": {"path": "step_${turnsRun}.txt"}}\n</tool_call></m365Response>`;
       },
     };
 
@@ -272,53 +340,6 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
       expect(result.content).toBe("Dự án M365 Copilot có kiến trúc modular rất tốt.");
       expect(result.content).not.toContain("<thought>");
     }
-  });
-
-  test("Agent Loop nhận thinking và narrative qua callbacks và lưu vào AgentMessage", async () => {
-    let capturedThinking = "";
-    let capturedNarrative = "";
-
-    const cognitiveModelClient: IM365ModelClient = {
-      async call(prompt: string, context?: { turnIndex: number }) {
-        if (context?.turnIndex === 1) {
-          return `<thought>
-Tôi cần xem git status để nắm các file thay đổi.
-</thought>
-Tôi sẽ kiểm tra trạng thái Git hiện tại:
-<tool_call>
-{"name": "git_status", "arguments": {}}
-</tool_call>`;
-        }
-        return `<thought>
-Git tree clean, tôi sẽ kết luận.
-</thought>
-Hệ thống hoàn toàn sạch sẽ.`;
-      },
-    };
-
-    const mockToolExecutor: IToolExecutor = {
-      execute: () => "M src/index.ts",
-    };
-
-    const loop = new M365AgentLoop(cognitiveModelClient, mockToolExecutor);
-    const result = await loop.run("Kiểm tra git", {
-      onThinking(turn, thinking) {
-        if (turn === 1) capturedThinking = thinking;
-      },
-      onNarrative(turn, narrative) {
-        if (turn === 1) capturedNarrative = narrative;
-      },
-    });
-
-    expect(result.status).toBe("completed");
-    expect(capturedThinking).toContain("Tôi cần xem git status");
-    expect(capturedNarrative).toBe("Tôi sẽ kiểm tra trạng thái Git hiện tại:");
-
-    // Kiểm tra messages lưu trữ thinking
-    const assistantMsg1 = result.messages.find((m) => m.role === "assistant" && m.thinking);
-    expect(assistantMsg1).toBeDefined();
-    expect(assistantMsg1?.thinking).toContain("Tôi cần xem git status");
-    expect(assistantMsg1?.narrative).toBe("Tôi sẽ kiểm tra trạng thái Git hiện tại:");
   });
 
   test("CognitiveEvaluator tính toán chính xác chỉ số nhận thức của phiên", () => {
