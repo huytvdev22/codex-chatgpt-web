@@ -1920,15 +1920,6 @@ function SettingsSurface({
             onChange={(checked) => void setUseSavedChats(checked)}
           />
         </SettingRow>
-        <SettingRow body={copy.m365MultiSurfaceBody} label={copy.m365MultiSurface}>
-          <Switch
-            checked={snapshot.state.m365MultiSurfaceConversations}
-            disabled={busy || snapshot.state.browserInteractionMode === "manual"}
-            onChange={(checked) => void api!.setM365MultiSurfaceConversations(checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>

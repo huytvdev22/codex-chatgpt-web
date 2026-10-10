@@ -87,8 +87,7 @@ class M365ConversationStore {
  * lifecycle chung, tránh rải nhánh provider-specific xuyên suốt implementation.
  */
 class M365SurfaceManager {
-  constructor({ descriptorPath, getMultiSurfaceEnabled = () => false }) {
-    this.getMultiSurfaceEnabled = getMultiSurfaceEnabled;
+  constructor({ descriptorPath }) {
     this.store = new M365ConversationStore(
       path.join(path.dirname(descriptorPath), "m365-conversations.json"),
     );
@@ -111,30 +110,19 @@ class M365SurfaceManager {
     const tabs = [...turnTabs.values()].filter(tab => tab.provider === "m365");
     if (tabs.some(tab => tab.conversationKey === conversationKey)) return;
 
-    const limit = this.getMultiSurfaceEnabled() ? MAX_M365_SURFACES : 1;
+    const limit = MAX_M365_SURFACES;
     while (tabs.length >= limit) {
       const reclaimable = tabs
         .filter(tab => tab.status === "ready")
         .sort((left, right) => (left.lastHeartbeatAt || 0) - (right.lastHeartbeatAt || 0))[0];
       if (!reclaimable) {
-        throw new Error(
-          this.getMultiSurfaceEnabled()
-            ? `M365 Copilot already has ${limit} active conversation surfaces`
-            : "M365 Copilot is busy with another conversation; enable Multi-surface conversations or wait for it to finish",
-        );
+        throw new Error(`M365 Copilot already has ${limit} active conversation surfaces`);
       }
       removeTab(reclaimable);
       tabs.splice(tabs.indexOf(reclaimable), 1);
     }
   }
 
-  resetLiveSurfaces(turnTabs, removeTab) {
-    const running = [...turnTabs.values()].some(tab => tab.provider === "m365" && tab.status === "running");
-    if (running) throw new Error("Finish or cancel active M365 turns before changing Multi-surface conversations");
-    for (const tab of [...turnTabs.values()]) {
-      if (tab.provider === "m365") removeTab(tab);
-    }
-  }
 }
 
 module.exports = {

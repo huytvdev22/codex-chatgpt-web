@@ -43,35 +43,11 @@ test("M365 persistent bindings survive launcher store recreation", () => {
   }
 });
 
-test("single-surface mode reclaims ready M365 history but never a running turn", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "m365-surfaces-"));
-  try {
-    const manager = new M365SurfaceManager({
-      descriptorPath: path.join(root, "launcher-browser.json"),
-      getMultiSurfaceEnabled: () => false,
-    });
-    const ready = { id: "ready", provider: "m365", status: "ready", conversationKey: "a".repeat(64) };
-    const tabs = new Map([[ready.id, ready]]);
-    manager.prepareAllocation(tabs, "b".repeat(64), tab => tabs.delete(tab.id));
-    assert.equal(tabs.size, 0);
-
-    const running = { id: "running", provider: "m365", status: "running", conversationKey: "a".repeat(64) };
-    tabs.set(running.id, running);
-    assert.throws(
-      () => manager.prepareAllocation(tabs, "b".repeat(64), () => assert.fail("must not remove a running turn")),
-      /busy with another conversation/,
-    );
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("multi-surface mode allows three independent M365 conversations", () => {
+test("M365 supports three independent conversation surfaces by default", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "m365-multi-surfaces-"));
   try {
     const manager = new M365SurfaceManager({
       descriptorPath: path.join(root, "launcher-browser.json"),
-      getMultiSurfaceEnabled: () => true,
     });
     const tabs = new Map([
       ["one", { id: "one", provider: "m365", status: "running", conversationKey: "1".repeat(64) }],

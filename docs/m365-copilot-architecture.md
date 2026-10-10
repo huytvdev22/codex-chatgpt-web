@@ -102,7 +102,7 @@ Trong hệ thống `codex-chatgpt-web`, adapter thực hiện nhiệm vụ:
 ### 1.3. Các năng lực cốt lõi (Key Capabilities)
 
 - **Stateful Session (Incremental Roundtrip):** Giữ nguyên ngữ cảnh phiên trò chuyện Copilot; mỗi turn kế tiếp chỉ gửi delta lời nhắc và kết quả công cụ mới (tiết kiệm đến 95% token tiêu thụ). Adapter không còn hỗ trợ Temporary Chat Per Request.
-- **Persistent Multi-surface Conversations:** Tùy chọn Launcher gắn mỗi Codex thread với một normal M365 conversation có UUID và một browser surface riêng. Binding được lưu cục bộ để khôi phục đúng URL sau khi Launcher khởi động lại; tối đa 3 M365 surfaces hoạt động đồng thời.
+- **Persistent Multi-surface Conversations:** Đây là hành vi mặc định: mỗi Codex thread được gắn với một normal M365 conversation có UUID và một browser surface riêng. Binding được lưu cục bộ để khôi phục đúng URL sau khi Launcher khởi động lại; tối đa 3 M365 surfaces hoạt động đồng thời.
 - **Fast-Path Streaming Scraper:** Trích xuất streaming text trực tiếp từ Scriptor Code Preview DOM qua `[data-line-index]`, không qua thư viện Turndown, cho độ trễ chỉ vài mili-giây và bảo toàn 100% định dạng code.
 - **Zero-Latency Title Guard:** Đánh chặn các yêu cầu sinh tiêu đề ngầm từ Codex IDE và trả lời tức thì sau 5ms, giải phóng 100% tải browser cho tác vụ này.
 - **XML Response Envelope:** Yêu cầu phản hồi của mô hình nằm trong phần tử gốc ``, với phần suy luận `<thought>`, nội dung Markdown và thao tác công cụ được phân tách rõ ràng.

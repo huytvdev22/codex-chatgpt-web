@@ -16,16 +16,10 @@ test("M365 no longer exposes per-request Temporary Chat configuration", () => {
   }
 });
 
-test("M365 multi-surface normal conversations are wired through renderer and preload", () => {
-  assert.match(appSource, /copy\.m365MultiSurface/);
-  assert.match(appSource, /setM365MultiSurfaceConversations\(checked\)/);
-  assert.doesNotMatch(
-    appSource,
-    /selectedProvider === "m365"\s*\?\s*\(\s*<SettingRow body=\{copy\.m365MultiSurfaceBody\}/,
-    "the M365 setting must remain visible even when another provider is selected",
-  );
-  assert.match(preloadSource, /launcher:m365-multi-surface/);
-  assert.match(electronMain, /setM365MultiSurfaceEnabled/);
+test("M365 multi-surface normal conversations are enabled without launcher configuration", () => {
+  for (const source of [appSource, electronMain, preloadSource]) {
+    assert.doesNotMatch(source, /m365MultiSurfaceConversations|setM365MultiSurface|launcher:m365-multi-surface/);
+  }
   assert.match(browserHostSource, /M365SurfaceManager/);
 });
 

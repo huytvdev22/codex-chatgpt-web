@@ -335,7 +335,6 @@ class BrowserHost {
     clipboardApi = clipboard,
     getBrowserInteractionMode = () => "automatic",
     getUseSavedChats = () => false,
-    getM365MultiSurfaceEnabled = () => false,
     provider = "m365",
   }) {
     if (typeof getConnectorName !== "function") {
@@ -373,10 +372,7 @@ class BrowserHost {
     this.clipboard = clipboardApi;
     this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.getUseSavedChats = getUseSavedChats;
-    this.m365SurfaceManager = new M365SurfaceManager({
-      descriptorPath,
-      getMultiSurfaceEnabled: getM365MultiSurfaceEnabled,
-    });
+    this.m365SurfaceManager = new M365SurfaceManager({ descriptorPath });
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -2842,14 +2838,6 @@ class BrowserHost {
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
     return { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };
-  }
-
-  setM365MultiSurfaceEnabled(enabled) {
-    this.m365SurfaceManager.resetLiveSurfaces(
-      this.turnTabs,
-      tab => this.removeTurnTab(tab, false),
-    );
-    return enabled === true;
   }
 
   async returnToIdle() {

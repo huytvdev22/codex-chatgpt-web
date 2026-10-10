@@ -954,16 +954,6 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
   });
-  handle("launcher:m365-multi-surface", (_event, enabled) => {
-    if (browserHost.activeTraceId || browserHost.currentOperation()) {
-      throw new Error("Finish or cancel active browser turns before changing M365 Multi-surface conversations");
-    }
-    browserHost.setM365MultiSurfaceEnabled(enabled === true);
-    const state = stateStore.update({ m365MultiSurfaceConversations: enabled === true });
-    send("launcher:state-changed", state);
-    send("launcher:browser-state", browserHost.snapshot());
-    return state;
-  });
   handle("launcher:browser-interaction-mode", async (_event, rawMode) => {
     const mode = validateBrowserInteractionMode(rawMode);
     const current = stateStore.read();
@@ -1218,7 +1208,6 @@ async function start() {
     cancelTurn: IS_DEV_PROFILE ? undefined : (traceId, reason) => runtimeSupervisor.cancelBrowserTurn(traceId, reason),
     getConnectorName: () => runtimeHost.browserConnectorName(),
     getUseSavedChats: () => runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
-    getM365MultiSurfaceEnabled: () => stateStore.read().m365MultiSurfaceConversations === true,
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
     loginWithPasskey: () => runtimeHost.capturePasskeyLogin(),
