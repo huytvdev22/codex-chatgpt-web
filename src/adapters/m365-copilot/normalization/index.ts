@@ -1,12 +1,14 @@
-export type {
-  NormalizedToolIdentity,
-  NormalizedFunctionTool,
-  NormalizedCustomTool,
-  NormalizedTool,
-  NormalizedToolResult,
-  NormalizedTurn,
-  NormalizedExecutionPolicy,
-  NormalizedCodexRequest,
+export {
+  M365_MAX_INPUT_IMAGES,
+  type NormalizedToolIdentity,
+  type NormalizedFunctionTool,
+  type NormalizedCustomTool,
+  type NormalizedTool,
+  type NormalizedToolResult,
+  type NormalizedTurn,
+  type NormalizedExecutionPolicy,
+  type NormalizedCodexRequest,
+  type NormalizedImageAttachment,
 } from "./canonical-types";
 
 export {

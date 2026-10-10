@@ -10,3 +10,11 @@ export {
   ensureM365CapabilityMode,
   resolveM365CapabilityMode,
 } from "./capability-picker";
+
+export {
+  attachFilesViaPlusMenu,
+  m365ImageFilePayloads,
+  PLUS_MENU_SELECTORS,
+  type M365ImagePayload,
+  type AttachFilesOptions,
+} from "./attachments";

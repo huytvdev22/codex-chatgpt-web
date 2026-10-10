@@ -18,6 +18,7 @@ export interface M365ModelRoute {
   effectiveContextWindowPercent: number;
   composerCharLimit: number;
   legacy?: boolean;
+  inputModalities?: readonly ("text" | "image")[];
 }
 
 export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
@@ -31,6 +32,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
   {
     slug: "m365-copilot/gpt-5.6-think",
@@ -42,6 +44,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
   {
     slug: "m365-copilot/gpt-5.6-quick",
@@ -53,6 +56,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
   {
     slug: "m365-copilot/think",
@@ -64,6 +68,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
   {
     slug: "m365-copilot/quick",
@@ -75,6 +80,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
   // Backward compatibility routes (ẩn khỏi menu chọn model bằng legacy: true)
   {
@@ -88,6 +94,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
   {
     slug: "m365-copilot/fast",
@@ -100,6 +107,7 @@ export const M365_MODEL_ROUTES: readonly M365ModelRoute[] = [
     autoCompactTokenLimit: 90_000,
     effectiveContextWindowPercent: 90,
     composerCharLimit: 100_000,
+    inputModalities: ["text", "image"],
   },
 ];
 

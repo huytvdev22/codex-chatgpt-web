@@ -203,7 +203,9 @@ export function ensureManagedModelCatalogFile(
     if (!shouldWrite && existsSync(catalogPath)) {
       try {
         const raw = JSON.parse(readFileSync(catalogPath, "utf8"));
-        if (!Array.isArray(raw.models) || !raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX))) {
+        const hasM365 = Array.isArray(raw.models) && raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX));
+        const allM365SupportImages = hasM365 && !raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX) && (!Array.isArray(m.input_modalities) || !m.input_modalities.includes("image")));
+        if (!hasM365 || !allM365SupportImages) {
           shouldWrite = true;
         }
       } catch {
@@ -384,7 +386,7 @@ export function buildM365Model(
     slug: route.slug,
     display_name: route.displayName,
     description: route.description,
-    input_modalities: ["text"],
+    input_modalities: route.inputModalities ? [...route.inputModalities] : ["text", "image"],
     visibility: route.legacy ? "hide" : "list",
     supported_in_api: true,
     priority: 100,

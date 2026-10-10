@@ -7,6 +7,7 @@ import {
   TOOL_REMINDER_PROMPT,
   COMPACT_CORE_TOOLS_DECLARATION,
   COMPACT_APPLY_PATCH_EXAMPLES,
+  M365_IMAGE_ATTACHMENT_HINT,
 } from "./templates";
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
@@ -392,7 +393,7 @@ export interface PromptAuditData {
 
 export interface PromptCompileInput {
   normalized: NormalizedCodexRequest;
-  parsed: CodexParsedRequest;
+  parsed?: CodexParsedRequest;
   isPlanMode?: boolean;
   isImplementingPlan?: boolean;
   isNewConversation?: boolean;
@@ -490,9 +491,9 @@ export function logPromptAudit(audit: PromptAuditData): void {
 /**
  * Kiểm tra xem người dùng có vừa bấm xác nhận triển khai kế hoạch hay không
  */
-export function isImplementingPlanRequest(parsed: CodexParsedRequest): boolean {
+export function isImplementingPlanRequest(parsed?: CodexParsedRequest): boolean {
 
-  const messages = parsed.context.messages || [];
+  const messages = parsed?.context?.messages || [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role === "user") {
@@ -582,7 +583,12 @@ export class M365PromptCompiler {
         incrementalSections.push(userReqContent);
       }
 
-      // 6. Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
+      // 6. Thông báo hình ảnh đính kèm (nếu có)
+      if (normalized.images && normalized.images.length > 0) {
+        incrementalSections.push(M365_IMAGE_ATTACHMENT_HINT);
+      }
+
+      // 7. Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
       incrementalSections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
 
       const finalPrompt = incrementalSections.join("\n\n").trim();
@@ -644,7 +650,7 @@ export class M365PromptCompiler {
 
     // 4. System Instructions từ Codex IDE (Lọc bỏ các hướng dẫn nội bộ thừa)
     let devInstructionsContent = "";
-    if (parsed.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
+    if (parsed?.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
       const filteredSystem = parsed.context.systemPrompt
         .map(sp => sp.trim())
         .filter(
@@ -725,7 +731,12 @@ export class M365PromptCompiler {
       sections.push(userReqContent);
     }
 
-    // 10. Chỉ thị Fast-Path 4 backticks ở cuối cùng
+    // 10. Thông báo hình ảnh đính kèm (nếu có)
+    if (normalized.images && normalized.images.length > 0) {
+      sections.push(M365_IMAGE_ATTACHMENT_HINT);
+    }
+
+    // 11. Chỉ thị Fast-Path 4 backticks ở cuối cùng
     sections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
 
     let finalPrompt = sections.join("\n\n").trim();

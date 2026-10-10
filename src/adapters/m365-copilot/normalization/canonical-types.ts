@@ -65,6 +65,23 @@ export interface NormalizedExecutionPolicy {
 }
 
 /**
+ * Số lượng hình ảnh tối đa M365 Copilot cho phép trong 1 lượt nhắn.
+ */
+export const M365_MAX_INPUT_IMAGES = 3;
+
+/**
+ * Đính kèm hình ảnh đã được chuẩn hóa (Canonical Image Attachment).
+ */
+export interface NormalizedImageAttachment {
+  ref: string;
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+  buffer: Buffer;
+  detail?: string;
+}
+
+/**
  * Đối tượng yêu cầu từ Codex đã được chuẩn hóa toàn diện (Canonical Boundary).
  * Đóng vai trò là đầu vào duy nhất cho các Prompt Builders và downstream adapters.
  */
@@ -84,5 +101,6 @@ export interface NormalizedCodexRequest {
   executionPolicy: NormalizedExecutionPolicy;
   collaborationMode: "default" | "plan";
   rawSnapshot: CodexRawRequestWire;
+  images?: NormalizedImageAttachment[];
 }
 

@@ -234,6 +234,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         forceTemporaryChat: isTemporaryPerRequest,
         modelSlug: parsed.modelId,
         traceContext,
+        images: normalized.images,
       });
 
       const { remainingText, toolCall } = toolDetector.finish();

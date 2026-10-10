@@ -149,3 +149,10 @@ export const COMPACT_APPLY_PATCH_EXAMPLES = `VÍ DỤ MẪU DUY NHẤT: CÚ PHÁ
 *** End Patch
 </custom_tool_call>
 \`\`\`\``;
+
+/**
+ * Lời nhắc chỉ dẫn cho M365 Copilot khi có hình ảnh đính kèm trong lượt hội thoại
+ */
+export const M365_IMAGE_ATTACHMENT_HINT = `[HÌNH ẢNH ĐÍNH KÈM ĐÃ ĐƯỢC TẢI LÊN]
+Tin nhắn này có đính kèm hình ảnh thực tế được tải lên trực tiếp trong giao diện chat của Microsoft 365 Copilot.
+Hãy quan sát trực tiếp hình ảnh đính kèm trong ngữ cảnh cuộc trò chuyện để phân tích giao diện, mã nguồn, biểu đồ hoặc lỗi theo yêu cầu của người dùng.`;

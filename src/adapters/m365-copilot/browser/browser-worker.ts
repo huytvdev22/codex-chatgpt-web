@@ -9,6 +9,8 @@ import { resolveM365CapabilityMode } from "../../../m365-models";
 import { emitStructuredEvent } from "../../../observability/emitter";
 import { logDebugPipelineStation } from "../../../observability/debug-logger";
 import type { TraceContext } from "../../../observability/types";
+import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
+import type { NormalizedImageAttachment } from "../normalization/canonical-types";
 
 export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
@@ -21,6 +23,7 @@ export interface M365BrowserRunOptions {
   modelSlug?: string;
   traceContext?: TraceContext;
   forceTemporaryChat?: boolean;
+  images?: NormalizedImageAttachment[];
 }
 
 export const M365_CHAT_EDITOR_SELECTOR = [
@@ -282,6 +285,18 @@ export async function executeM365Turn(
       };
     });
 
+    // 3.5. Đính kèm hình ảnh qua Plus Menu (Phương án 1)
+    if (options.images && options.images.length > 0) {
+      try {
+        const payloads = m365ImageFilePayloads(options.images);
+        console.log(`[m365-worker] Đang đính kèm ${payloads.length} hình ảnh vào Copilot Web qua Plus Menu...`);
+        await attachFilesViaPlusMenu(page, payloads, { signal: options.signal });
+        console.log(`[m365-worker] Đính kèm hình ảnh hoàn tất!`);
+      } catch (err: any) {
+        console.warn(`[m365-worker] Lỗi trong quá trình đính kèm hình ảnh:`, err?.message);
+      }
+    }
+
     // 4. Nhập prompt vào editor và kích hoạt nút Gửi
     await page.evaluate((text) => {
       const editor = (document.getElementById("m365-chat-editor-target-element") ||
@@ -314,6 +329,19 @@ export async function executeM365Turn(
 
     // Chờ ngắn để React cập nhật DOM và hiển thị nút Send
     await new Promise(r => setTimeout(r, 300));
+
+    // Nếu có đính kèm ảnh, chờ nút Send được bật (enabled) sau khi backend tải xong
+    if (options.images && options.images.length > 0) {
+      const sendSelector = CHAT_SELECTORS.sendButton;
+      const sendLocator = page.locator(sendSelector).first();
+      const sendWaitDeadline = Date.now() + 30_000;
+      while (Date.now() < sendWaitDeadline) {
+        if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const isEnabled = await sendLocator.isEnabled().catch(() => false);
+        if (isEnabled) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
 
     // VÒNG LẶP GỬI & XÁC NHẬN CHẮC CHẮN (Guaranteed Submission Loop)
     let promptSubmitted = false;

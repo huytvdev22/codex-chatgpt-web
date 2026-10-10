@@ -5,12 +5,14 @@ import type {
   CodexRawInputItem,
   CodexRawContentBlock,
 } from "./codex-raw-payload";
-import type {
-  NormalizedCodexRequest,
-  NormalizedTool,
-  NormalizedToolResult,
-  NormalizedTurn,
-  NormalizedExecutionPolicy,
+import {
+  M365_MAX_INPUT_IMAGES,
+  type NormalizedCodexRequest,
+  type NormalizedTool,
+  type NormalizedToolResult,
+  type NormalizedTurn,
+  type NormalizedExecutionPolicy,
+  type NormalizedImageAttachment,
 } from "./canonical-types";
 
 export class CodexPayloadNormalizer {
@@ -365,7 +367,7 @@ export class CodexPayloadNormalizer {
         input.push({
           type: "message",
           role: msg.role || "user",
-          content: typeof msg.content === "string" ? msg.content : "",
+          content: typeof msg.content === "string" ? msg.content : (Array.isArray(msg.content) ? msg.content : ""),
         } as any);
       }
     }
@@ -517,6 +519,8 @@ export class CodexPayloadNormalizer {
       toolChoice: rawPayload.tool_choice,
     };
 
+    const images = this.extractImages(rawPayload);
+
     return {
       model: rawPayload.model || "m365-copilot/think",
       stream: rawPayload.stream ?? true,
@@ -532,6 +536,7 @@ export class CodexPayloadNormalizer {
       executionPolicy,
       collaborationMode: this.detectCollaborationMode(rawPayload),
       rawSnapshot: rawPayload.toJSON(),
+      images: images.length > 0 ? images : undefined,
     };
   }
 
@@ -610,5 +615,123 @@ export class CodexPayloadNormalizer {
     }
 
     return { tool: null };
+  }
+
+  /**
+   * Trích xuất và chuẩn hóa danh sách hình ảnh từ raw input hoặc context messages.
+   */
+  static extractImages(rawPayload: CodexRawPayload): NormalizedImageAttachment[] {
+    const images: NormalizedImageAttachment[] = [];
+    const imageExtensions: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/gif": "gif",
+      "image/webp": "webp",
+    };
+
+    const isDummy = (url: string) =>
+      typeof url === "string" && (url.startsWith("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB") || url.length < 50);
+
+    const processCandidate = (url?: unknown, detail?: unknown) => {
+      if (typeof url !== "string" || !url.startsWith("data:") || isDummy(url)) return;
+      const match = url.match(/^data:([^;,]+);base64,(.*)$/s);
+      if (!match) return;
+      const mediaType = match[1].toLowerCase();
+      const ext = imageExtensions[mediaType] || "png";
+      const base64 = match[2];
+      try {
+        const buf = Buffer.from(base64, "base64");
+        if (buf.length === 0 || buf.length > 20_000_000) return;
+        const idx = images.length + 1;
+        images.push({
+          ref: `m365-img-${idx}`,
+          name: `image-${idx}.${ext}`,
+          mimeType: mediaType,
+          dataUrl: url,
+          buffer: buf,
+          ...(typeof detail === "string" ? { detail } : {}),
+        });
+      } catch {
+        // bỏ qua nếu base64 không hợp lệ
+      }
+    };
+
+    // 1. Quét từ rawPayload.input: CHỈ trích xuất ảnh thuộc về lượt hiện tại (sau assistant message gần nhất)
+    const input = rawPayload.input || [];
+    let lastAssistantIdx = -1;
+    for (let i = input.length - 1; i >= 0; i--) {
+      const it = input[i];
+      if (
+        it &&
+        (it.role === "assistant" ||
+          (it.type === "message" && (it as any).role === "assistant") ||
+          it.type === "function_call" ||
+          it.type === "custom_tool_call")
+      ) {
+        lastAssistantIdx = i;
+        break;
+      }
+    }
+
+    const currentTurnItems = lastAssistantIdx >= 0 ? input.slice(lastAssistantIdx + 1) : input;
+    for (const item of currentTurnItems) {
+      if (!item) continue;
+      // Chỉ bóc tách ảnh từ tin nhắn của người dùng ở lượt hiện tại
+      const isUser = item.role === "user" || (item.type === "message" && (item as any).role === "user") || !item.role;
+      if (!isUser) continue;
+
+      const content = (item as any).content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block && typeof block === "object") {
+            if (block.type === "input_image" && block.image_url) {
+              processCandidate(block.image_url, block.detail);
+            } else if (block.type === "image" && block.imageUrl) {
+              processCandidate(block.imageUrl, block.detail);
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Quét từ context.messages nếu rawPayload.input không có ảnh
+    if (images.length === 0) {
+      const rawContextMsgs = (rawPayload as any).context?.messages || (rawPayload.extra as any)?.context?.messages;
+      if (Array.isArray(rawContextMsgs) && rawContextMsgs.length > 0) {
+        let lastAssistantMsgIdx = -1;
+        for (let i = rawContextMsgs.length - 1; i >= 0; i--) {
+          if (rawContextMsgs[i]?.role === "assistant") {
+            lastAssistantMsgIdx = i;
+            break;
+          }
+        }
+        const currentMsgs = lastAssistantMsgIdx >= 0 ? rawContextMsgs.slice(lastAssistantMsgIdx + 1) : rawContextMsgs;
+        for (const msg of currentMsgs) {
+          if (!msg || msg.role !== "user") continue;
+          const content = msg.content;
+          if (Array.isArray(content)) {
+            for (const part of content) {
+              if (part && typeof part === "object") {
+                if (part.type === "image" && part.imageUrl) {
+                  if (!images.some(img => img.dataUrl === part.imageUrl)) {
+                    processCandidate(part.imageUrl, part.detail);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (images.length > M365_MAX_INPUT_IMAGES) {
+      console.warn(
+        `[m365-normalizer] Số lượng ảnh trong lượt (${images.length}) vượt quá giới hạn ${M365_MAX_INPUT_IMAGES} của M365 Copilot. Chỉ giữ lại ${M365_MAX_INPUT_IMAGES} ảnh đầu tiên.`
+      );
+      return images.slice(0, M365_MAX_INPUT_IMAGES);
+    }
+
+    return images;
   }
 }
