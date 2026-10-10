@@ -16,6 +16,19 @@ test("M365 no longer exposes per-request Temporary Chat configuration", () => {
   }
 });
 
+test("M365 multi-surface normal conversations are wired through renderer and preload", () => {
+  assert.match(appSource, /copy\.m365MultiSurface/);
+  assert.match(appSource, /setM365MultiSurfaceConversations\(checked\)/);
+  assert.doesNotMatch(
+    appSource,
+    /selectedProvider === "m365"\s*\?\s*\(\s*<SettingRow body=\{copy\.m365MultiSurfaceBody\}/,
+    "the M365 setting must remain visible even when another provider is selected",
+  );
+  assert.match(preloadSource, /launcher:m365-multi-surface/);
+  assert.match(electronMain, /setM365MultiSurfaceEnabled/);
+  assert.match(browserHostSource, /M365SurfaceManager/);
+});
+
 test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
   for (const fails of [false, true]) {

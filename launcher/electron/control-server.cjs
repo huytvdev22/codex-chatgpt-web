@@ -181,6 +181,15 @@ class BrowserControlServer {
       if (body.connectorIdentity !== undefined && body.conversationKey === undefined) {
         throw new Error("connectorIdentity requires conversationKey");
       }
+      if (body.provider !== undefined && body.provider !== "chatgpt" && body.provider !== "m365") {
+        throw new Error("provider is invalid");
+      }
+      if (body.conversationId !== undefined
+        && (request.url !== "/v1/turn/end"
+          || typeof body.conversationId !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId))) {
+        throw new Error("conversationId is invalid");
+      }
       if (body.retain !== undefined && typeof body.retain !== "boolean") {
         throw new Error("retain is invalid");
       }
@@ -314,15 +323,17 @@ class BrowserControlServer {
         let lease;
         try {
           if (response.destroyed) onClose();
-          lease = await host.beginTurn(
+          const baseArguments = [
             body.traceId,
             preferences.showBrowserDuringTurns === true,
             body.helperPid,
             body.conversationKey,
             body.connectorIdentity,
             body.requireRetainedConversation === true,
-            acquisition.signal,
-          );
+          ];
+          lease = body.provider === undefined
+            ? await host.beginTurn(...baseArguments, acquisition.signal)
+            : await host.beginTurn(...baseArguments, body.provider, acquisition.signal);
         } finally {
           response.off("close", onClose);
         }
@@ -336,7 +347,7 @@ class BrowserControlServer {
         return;
       } else {
         if (!['completed', 'failed', 'aborted'].includes(body.status)) throw new Error("turn status is invalid");
-        const release = await host.endTurn(
+        const endArguments = [
           body.traceId,
           body.helperPid,
           body.status,
@@ -344,7 +355,10 @@ class BrowserControlServer {
           body.message,
           body.retain === true,
           body.connectorBound === true,
-        );
+        ];
+        const release = body.conversationId === undefined
+          ? await host.endTurn(...endArguments)
+          : await host.endTurn(...endArguments, body.conversationId);
         this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
         writeJson(response, 200, { ok: true, ...release });
         return;

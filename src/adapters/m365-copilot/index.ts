@@ -4,7 +4,7 @@ import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
 import { promptCompiler, buildM365FormatRetryPrompt } from "./prompts/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
-import { executeM365Turn } from "./browser";
+import { executeM365Turn, m365ConversationKey } from "./browser";
 import { parseStrictM365Response, maskArgumentsForLog, type StrictM365ResponseResult } from "./translation";
 import { M365ToolBridge, normalizeM365ToolArguments, validateM365ToolCall } from "./tools";
 import {
@@ -59,7 +59,6 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
 
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
-  private lastConversationKey?: string;
 
   constructor(readonly options?: { enableTitleGuard?: boolean }) { }
 
@@ -101,18 +100,13 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return true;
     };
 
-    const conversationKey = incoming.headers.get("x-codex-conversation-key")
+    const rawConversationKey = incoming.headers.get("x-codex-conversation-key")
       || rawPayload.getThreadId()
       || undefined;
+    const conversationKey = m365ConversationKey(parsed, rawConversationKey);
 
     const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
-    const isNewConversation = !hasPriorAssistantReply || (
-      Boolean(conversationKey) && Boolean(this.lastConversationKey) && this.lastConversationKey !== conversationKey
-    );
-
-    if (conversationKey) {
-      this.lastConversationKey = conversationKey;
-    }
+    const isNewConversation = !hasPriorAssistantReply;
 
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
     const allMsgs = parsed.context.messages || [];

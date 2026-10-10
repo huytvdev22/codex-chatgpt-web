@@ -18,3 +18,12 @@ export {
   type M365ImagePayload,
   type AttachFilesOptions,
 } from "./attachments";
+
+export { m365ConversationKey } from "./conversation-key";
+
+export {
+  M365_CHAT_URL,
+  M365_CONVERSATION_ORIGIN,
+  parseM365ConversationId,
+  waitForM365ConversationId,
+} from "./conversation-url";

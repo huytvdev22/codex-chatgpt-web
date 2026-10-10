@@ -388,6 +388,7 @@ export type LauncherTurnActivity =
       helperPid: number;
       conversationKey?: string;
       connectorIdentity?: string;
+      provider?: "m365" | "chatgpt";
       requireRetainedConversation?: boolean;
     }
   | {
@@ -405,6 +406,7 @@ export type LauncherTurnActivity =
       message?: string;
       retain?: boolean;
       connectorBound?: boolean;
+      conversationId?: string;
     };
 
 // Startup must outlast the launcher's ten-second idle bootstrap. This is not a model-turn budget.
@@ -648,6 +650,7 @@ export async function notifyLauncherTurn(
   surfaceId?: string;
   reused?: boolean;
   connectorBound?: boolean;
+  conversationId?: string;
   cancelledByUser?: boolean;
   authenticationRequired?: boolean;
   trackUsage?: boolean;
@@ -691,10 +694,16 @@ export async function notifyLauncherTurn(
       if (typeof body.connectorBound !== "boolean") {
         throw new Error("Launcher browser control channel returned an invalid connector state");
       }
+      if (body.conversationId !== undefined
+        && (typeof body.conversationId !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId))) {
+        throw new Error("Launcher browser control channel returned an invalid M365 conversation id");
+      }
       return {
         surfaceId: body.surfaceId,
         reused: body.reused,
         connectorBound: body.connectorBound,
+        ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
         trackUsage: body.trackUsage === true,
       };
     }

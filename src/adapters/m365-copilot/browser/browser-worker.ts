@@ -1,4 +1,5 @@
-import { connectLauncherBrowserHost, notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../../launcher-browser-host";
+import { randomBytes } from "node:crypto";
+import { connectLauncherBrowserHost, notifyLauncherTurn } from "../../../launcher-browser-host";
 import { getConfigDir } from "../../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -11,6 +12,11 @@ import { logDebugPipelineStation } from "../../../observability/debug-logger";
 import type { TraceContext } from "../../../observability/types";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
 import type { NormalizedImageAttachment } from "../normalization/canonical-types";
+import {
+  M365_CHAT_URL,
+  parseM365ConversationId,
+  waitForM365ConversationId,
+} from "./conversation-url";
 
 export interface M365BrowserRunOptions {
   onChunk: (text: string) => void;
@@ -46,8 +52,6 @@ export const CHAT_SELECTORS = {
 export type M365TurnOptions = M365BrowserRunOptions;
 export type M365TurnResult = { rawMarkdown: string; blocks: M365MarkdownBlock[] };
 
-let activeM365ConversationKey: string | null = null;
-
 /**
  * Xác định đường dẫn file descriptor của Launcher Browser Host từ tham số hoặc thư mục cấu hình.
  */
@@ -74,26 +78,32 @@ export async function executeM365Turn(
     );
   }
 
-  if (options.traceId) {
-    try {
-      await notifyLauncherTurn(descriptorPath, {
-        phase: "start",
-        traceId: options.traceId,
-        helperPid: process.pid,
-        conversationKey: options.conversationKey || "",
-        connectorIdentity: "m365-copilot",
-        requireRetainedConversation: false,
-      }, undefined, options.signal);
-    } catch {
-      // Bỏ qua lỗi start nếu launcher chưa phản hồi
-    }
+  if (!options.conversationKey) {
+    throw new Error("M365 multi-surface requires a stable conversation key");
+  }
+  const turnTraceId = options.traceId || randomBytes(12).toString("base64url");
+  const lease = await notifyLauncherTurn(descriptorPath, {
+    phase: "start",
+    traceId: turnTraceId,
+    helperPid: process.pid,
+    conversationKey: options.conversationKey,
+    connectorIdentity: "m365-copilot",
+    provider: "m365",
+    requireRetainedConversation: false,
+  }, undefined, options.signal);
+  if (!lease.surfaceId) {
+    throw new Error("Launcher did not allocate an M365 conversation surface");
   }
 
-  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  const m365SurfaceId = (descriptor as any).m365SurfaceId || descriptor.surfaceId;
-  const connection = await connectLauncherBrowserHost(descriptorPath, 20_000, m365SurfaceId, options.signal);
+  const connection = await connectLauncherBrowserHost(
+    descriptorPath,
+    20_000,
+    lease.surfaceId,
+    options.signal,
+  );
   const { browser, page } = connection;
   let finalStatus: "completed" | "failed" | "aborted" = "failed";
+  let conversationId: string | undefined;
   const startTime = Date.now();
 
   emitStructuredEvent({
@@ -118,45 +128,18 @@ export async function executeM365Turn(
 
   try {
     // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
-    const currentUrl = page.url();
-    if (!currentUrl.includes("m365.cloud.microsoft")) {
-      await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 20_000 });
-    }
-
-    // 2. Mở chat mới khi bắt đầu conversation khác; các turn sau tiếp tục trên cùng phiên stateful.
-    const shouldStartNewChat = Boolean(options.isNewConversation) || Boolean(
-      options.conversationKey && activeM365ConversationKey && options.conversationKey !== activeM365ConversationKey
-    );
-
-    console.log(`[m365-worker] Trạng thái phiên stateful: shouldStartNewChat=${shouldStartNewChat}`);
-
-    if (shouldStartNewChat) {
-      // 2.1. Nếu URL đang lưu thread cũ (/chat/c/...), điều hướng thẳng về /chat để mở phiên trắng
-      if (page.url().includes("/chat/c/")) {
-        console.log(`[m365-worker] Điều hướng về /chat từ thread cũ: ${page.url()}`);
-        await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => { });
-        await new Promise(r => setTimeout(r, 400));
+    const currentConversationId = parseM365ConversationId(page.url());
+    if (lease.conversationId) {
+      if (currentConversationId !== lease.conversationId.toLowerCase()) {
+        throw new Error(
+          `M365 retained conversation mismatch: expected ${lease.conversationId}, current URL is ${page.url()}`,
+        );
       }
-
-      await page.evaluate(() => {
-        // Thử click nút "New chat" / "Cuộc trò chuyện mới" (hỗ trợ cả thẻ a và button)
-        const newChatBtn = document.querySelector(
-          'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]'
-        ) as HTMLElement | null;
-        if (newChatBtn) {
-          newChatBtn.click();
-          newChatBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-          return;
-        }
-
-      }).catch(() => { });
-
-      // Chờ giao diện ổn định sau khi kích hoạt new chat
-      await new Promise(r => setTimeout(r, 400));
-
-      activeM365ConversationKey = options.conversationKey || null;
-    } else if (options.conversationKey) {
-      activeM365ConversationKey = options.conversationKey;
+      conversationId = currentConversationId;
+    } else if (lease.reused && currentConversationId) {
+      throw new Error("Launcher reused an unbound M365 surface that already contains a conversation");
+    } else if (page.url() !== M365_CHAT_URL) {
+      await page.goto(M365_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
     }
 
     // 3. Chờ khung nhập liệu xuất hiện
@@ -819,10 +802,10 @@ export async function executeM365Turn(
         console.warn(`[m365-worker] [warning] Sau 20s vẫn chưa nhận được phản hồi từ M365 (có thể nút Gửi chưa được kích hoạt hoặc mạng chậm).`);
       }
 
-      if (options.traceId && attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat tới launcher
+      if (attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat tới launcher
         notifyLauncherTurn(descriptorPath, {
           phase: "heartbeat",
-          traceId: options.traceId,
+          traceId: turnTraceId,
           helperPid: process.pid,
           refreshViewport: false,
         }, undefined, options.signal).catch(() => { });
@@ -1013,6 +996,10 @@ export async function executeM365Turn(
       options.onChunk(finalDelta);
     }
 
+    conversationId = conversationId || await waitForM365ConversationId(page);
+    if (!conversationId) {
+      throw new Error(`M365 did not expose a persistent /chat/conversation/{id} URL after completing the turn`);
+    }
     finalStatus = "completed";
     emitStructuredEvent({
       level: timedOut ? "warning" : "info",
@@ -1076,19 +1063,29 @@ export async function executeM365Turn(
     }
     throw err;
   } finally {
-    if (options.traceId) {
-      const notifyPromise = notifyLauncherTurn(descriptorPath, {
-        phase: "end",
-        traceId: options.traceId,
-        helperPid: process.pid,
-        status: finalStatus,
-        retain: true,
-      }).catch(() => { });
-      await withTimeout(notifyPromise, 2000, undefined);
+    let releaseError: unknown;
+    {
+      try {
+        await notifyLauncherTurn(descriptorPath, {
+          phase: "end",
+          traceId: turnTraceId,
+          helperPid: process.pid,
+          status: finalStatus,
+          retain: true,
+          connectorBound: finalStatus === "completed" && Boolean(conversationId),
+          ...(conversationId ? { conversationId } : {}),
+        });
+      } catch (error) {
+        releaseError = error;
+      }
     }
     console.log(`[m365-worker] [cleanup] closing browser connection (timeout 3000ms)...`);
     await withTimeout(browser.close().catch(() => { }), 3000, undefined);
     console.log(`[m365-worker] [cleanup] browser closed`);
+    if (releaseError) {
+      if (finalStatus === "completed") throw releaseError;
+      console.warn("[m365-worker] Failed to release launcher turn:", releaseError);
+    }
   }
 }
 

@@ -13,6 +13,12 @@ const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
 const { readChatGptAuthSession } = require("./chatgpt-auth-session.cjs");
 const {
+  M365_CHAT_URL,
+  M365SurfaceManager,
+  normalizeM365ConversationId,
+} = require("./m365-surface-manager.cjs");
+const { bindM365TurnContents, markM365TurnSurface } = require("./m365-turn-surface.cjs");
+const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
   sweepGapIndicatesSuspension,
@@ -28,7 +34,6 @@ const {
 
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
-const M365_CHAT_URL = "https://m365.cloud.microsoft/chat";
 const M365_ORIGIN = "https://m365.cloud.microsoft";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
@@ -330,6 +335,7 @@ class BrowserHost {
     clipboardApi = clipboard,
     getBrowserInteractionMode = () => "automatic",
     getUseSavedChats = () => false,
+    getM365MultiSurfaceEnabled = () => false,
     provider = "m365",
   }) {
     if (typeof getConnectorName !== "function") {
@@ -367,6 +373,10 @@ class BrowserHost {
     this.clipboard = clipboardApi;
     this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.getUseSavedChats = getUseSavedChats;
+    this.m365SurfaceManager = new M365SurfaceManager({
+      descriptorPath,
+      getMultiSurfaceEnabled: getM365MultiSurfaceEnabled,
+    });
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -670,7 +680,7 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal) {
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider = "chatgpt") {
     signal?.throwIfAborted();
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
@@ -683,9 +693,16 @@ class BrowserHost {
     const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
+    const isM365 = provider === "m365";
+    const bootstrapUrl = isM365
+      ? this.m365SurfaceManager.initialUrl(conversationKey)
+      : IDLE_BROWSER_URL;
+    const conversationId = isM365
+      ? this.m365SurfaceManager.conversationId(conversationKey)
+      : null;
     const view = new WebContentsView({
       webPreferences: {
-        partition: this.partition,
+        partition: isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt",
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -700,15 +717,17 @@ class BrowserHost {
       conversationKey,
       connectorIdentity,
       connectorBound: false,
+      provider,
+      conversationId,
       helperPid,
       view,
       status: "running",
       ordinal,
-      label: `ChatGPT ${ordinal}`,
-      pageTitle: "ChatGPT",
-      url: IDLE_BROWSER_URL,
+      label: `${isM365 ? "M365" : "ChatGPT"} ${ordinal}`,
+      pageTitle: isM365 ? "M365 Copilot" : "ChatGPT",
+      url: bootstrapUrl,
       loading: true,
-      message: "ChatGPT is working",
+      message: `${isM365 ? "M365 Copilot" : "ChatGPT"} is working`,
       interactionMode: "automatic",
       initializingSurface: true,
       bootstrapReady: false,
@@ -724,7 +743,8 @@ class BrowserHost {
     this.presentTurnView(tab, false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(view.webContents);
-    this.bindTurnContents(tab);
+    if (isM365) bindM365TurnContents(this, tab);
+    else this.bindTurnContents(tab);
     await this.initializeTurnTab(tab, signal);
     return tab;
   }
@@ -738,9 +758,10 @@ class BrowserHost {
     try {
       signal?.throwIfAborted();
       await Promise.race([(async () => {
-        await loadCommittedBrowserSurface(tab.view.webContents, IDLE_BROWSER_URL);
+        await loadCommittedBrowserSurface(tab.view.webContents, tab.url || IDLE_BROWSER_URL);
         signal?.throwIfAborted();
-        await this.markTurnTabSurface(tab);
+        if (tab.provider === "m365") await markM365TurnSurface(tab);
+        else await this.markTurnTabSurface(tab);
       })(), aborted]);
       signal?.throwIfAborted();
       tab.initializingSurface = false;
@@ -1049,8 +1070,8 @@ class BrowserHost {
 
   async configureAnnouncementDismissal(enabled) {
     if (enabled) requireAutomaticBrowserInspection(this, "ChatGPT announcement dismissal");
-    const views = [this.view, ...[...this.turnTabs.values()]
-      .filter(tab => tab.interactionMode === "automatic")
+    const views = [this.chatGptView || this.view, ...[...this.turnTabs.values()]
+      .filter(tab => tab.interactionMode === "automatic" && (tab.provider || "chatgpt") === "chatgpt")
       .map(tab => tab.view)];
     await Promise.all(views.map(view => {
       const contents = view?.webContents;
@@ -2635,9 +2656,15 @@ class BrowserHost {
     conversationKey,
     connectorIdentity,
     requireRetainedConversation = false,
-    signal,
+    providerOrSignal = "chatgpt",
+    acquisitionSignal,
   ) {
+    const provider = typeof providerOrSignal === "string" ? providerOrSignal : "chatgpt";
+    const signal = typeof providerOrSignal === "string" ? acquisitionSignal : providerOrSignal;
     signal?.throwIfAborted();
+    if (provider !== "chatgpt" && provider !== "m365") {
+      throw new Error("Browser turn provider is invalid");
+    }
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
@@ -2649,7 +2676,8 @@ class BrowserHost {
       throw new Error(`Browser turn ${traceId} already belongs to Zero Risk interaction`);
     }
     if (sameTrace && (sameTrace.conversationKey !== conversationKey
-      || sameTrace.connectorIdentity !== connectorIdentity)) {
+      || sameTrace.connectorIdentity !== connectorIdentity
+      || (sameTrace.provider || "chatgpt") !== provider)) {
       throw new Error(`ChatGPT browser turn ${traceId} conversation metadata does not match its owned tab`);
     }
     const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
@@ -2657,6 +2685,7 @@ class BrowserHost {
       && tab.status === "ready"
       && tab.conversationKey === conversationKey
       && tab.connectorIdentity === connectorIdentity
+      && (tab.provider || "chatgpt") === provider
       && (!connectorIdentity || tab.connectorBound === true)
     )) : [];
     if (retainedMatches.length > 1) {
@@ -2685,7 +2714,7 @@ class BrowserHost {
       existing.traceId = traceId;
       existing.status = "running";
       existing.loading = true;
-      existing.message = "ChatGPT is working";
+      existing.message = `${provider === "m365" ? "M365 Copilot" : "ChatGPT"} is working`;
       if (!reused) {
         existing.bootstrapReady = false;
         existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
@@ -2705,6 +2734,9 @@ class BrowserHost {
         tabId: existing.id,
         reused,
         connectorBound: existing.connectorBound === true,
+        ...(provider === "m365" && existing.conversationId
+          ? { conversationId: existing.conversationId }
+          : {}),
       };
     }
     if (requireRetainedConversation) {
@@ -2712,14 +2744,36 @@ class BrowserHost {
       error.code = "retained_conversation_unavailable";
       throw error;
     }
-    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal);
+    if (provider === "m365") {
+      this.m365SurfaceManager.prepareAllocation(
+        this.turnTabs,
+        conversationKey,
+        tab => this.removeTurnTab(tab, false),
+      );
+    }
+    const tab = provider === "m365"
+      ? await this.createTurnTab(
+          traceId,
+          helperPid,
+          conversationKey,
+          connectorIdentity,
+          signal,
+          provider,
+        )
+      : await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal);
     this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
     this.writeDescriptor();
-    return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false };
+    return {
+      surfaceId: tab.surfaceId,
+      tabId: tab.id,
+      reused: false,
+      connectorBound: tab.connectorBound === true,
+      ...(provider === "m365" && tab.conversationId ? { conversationId: tab.conversationId } : {}),
+    };
   }
 
   async endTurn(
@@ -2730,6 +2784,7 @@ class BrowserHost {
     message,
     retain = false,
     connectorBound = false,
+    conversationId,
   ) {
     const tab = [...this.turnTabs.values()].find((candidate) => candidate.traceId === traceId);
     if (!tab) {
@@ -2749,6 +2804,18 @@ class BrowserHost {
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
     const authenticationRequired = tab.authenticationRequired === true;
     if (authenticationRequired && status === "completed") status = "failed";
+    let effectiveConnectorBound = connectorBound === true;
+    if (tab.provider === "m365" && status === "completed") {
+      const normalizedConversationId = normalizeM365ConversationId(conversationId);
+      if (!normalizedConversationId || !tab.conversationKey) {
+        status = "failed";
+        message = "M365 completed without a valid persistent conversation id";
+        effectiveConnectorBound = false;
+      } else {
+        tab.conversationId = this.m365SurfaceManager.bind(tab.conversationKey, normalizedConversationId);
+        effectiveConnectorBound = true;
+      }
+    }
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
@@ -2760,8 +2827,8 @@ class BrowserHost {
     if (status === "completed"
       && retain
       && tab.conversationKey
-      && (!tab.connectorIdentity || connectorBound)) {
-      tab.connectorBound = connectorBound === true;
+      && (!tab.connectorIdentity || effectiveConnectorBound)) {
+      tab.connectorBound = effectiveConnectorBound;
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.activeTraceId) this.hide();
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
@@ -2775,6 +2842,14 @@ class BrowserHost {
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
     return { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };
+  }
+
+  setM365MultiSurfaceEnabled(enabled) {
+    this.m365SurfaceManager.resetLiveSurfaces(
+      this.turnTabs,
+      tab => this.removeTurnTab(tab, false),
+    );
+    return enabled === true;
   }
 
   async returnToIdle() {
