@@ -101,9 +101,7 @@ Trong hệ thống `codex-chatgpt-web`, adapter thực hiện nhiệm vụ:
 
 ### 1.3. Các năng lực cốt lõi (Key Capabilities)
 
-- **Pure Forwarder vs. Stateful Mode:** Hỗ trợ cả 2 chế độ:
-  - *Stateful Mode (Incremental Roundtrip):* Giữ nguyên ngữ cảnh phiên trò chuyện Copilot, mỗi turn kế tiếp chỉ gửi delta lời nhắc và kết quả công cụ mới (tiết kiệm đến 95% token tiêu thụ).
-  - *Pure Forwarder Mode (Temporary Chat Per Request):* Mỗi request tạo một lượt chat tạm thời mới và gửi toàn bộ snapshot ngữ cảnh rút gọn kèm giao thức XML Response Envelope.
+- **Stateful Session (Incremental Roundtrip):** Giữ nguyên ngữ cảnh phiên trò chuyện Copilot; mỗi turn kế tiếp chỉ gửi delta lời nhắc và kết quả công cụ mới (tiết kiệm đến 95% token tiêu thụ). Adapter không còn hỗ trợ Temporary Chat Per Request.
 - **Fast-Path Streaming Scraper:** Trích xuất streaming text trực tiếp từ Scriptor Code Preview DOM qua `[data-line-index]`, không qua thư viện Turndown, cho độ trễ chỉ vài mili-giây và bảo toàn 100% định dạng code.
 - **Zero-Latency Title Guard:** Đánh chặn các yêu cầu sinh tiêu đề ngầm từ Codex IDE và trả lời tức thì sau 5ms, giải phóng 100% tải browser cho tác vụ này.
 - **XML Response Envelope:** Yêu cầu phản hồi của mô hình nằm trong phần tử gốc ``, với phần suy luận `<thought>`, nội dung Markdown và thao tác công cụ được phân tách rõ ràng.
@@ -269,12 +267,11 @@ src/adapters/m365-copilot/
 │   ├── index.ts                     # Explicit public exports của harness
 │   └── agent-loop.ts                # M365AgentLoop, LocalToolExecutor chạy benchmark độc lập
 │
-├── temp-chat/                       # [Subsystem 9] Chế độ Stateless Temporary Chat Per Request
-│   ├── index.ts                     # Explicit public exports của temp-chat
+├── temp-chat/                       # [Subsystem 9] Helper transport và Live DOM scraper
+│   ├── index.ts                     # Explicit public exports của transport helpers
 │   ├── prompts.ts                   # Chỉ thị bao bọc bắt buộc 4-backtick ````markdown
 │   ├── stripCodeFence.ts            # stripOuterCodeFence bóc tách code block ngoài cùng
 │   ├── fastPathScraper.ts           # FastPathStreamBuffer trích xuất LIVE DOM [data-line-index]
-│   └── compileHybridForwardPrompt.ts# Biên dịch hybrid forward prompt kết hợp
 │
 ├── strategies/                      # Thư mục Facade re-export cho command-strategies
 │   ├── index.ts                     # Re-export từ tools/command-strategies
@@ -359,15 +356,12 @@ src/adapters/m365-copilot/
 - **Nhiệm vụ:**
   - Chuyển đổi `NormalizedCodexRequest` thành câu lệnh prompt hoàn chỉnh tối ưu cho mô hình Microsoft 365 Copilot.
   - Quản lý các mẫu system prompt, hướng dẫn giao thức gọi tool qua văn bản (`Text Interaction Protocol`).
-  - Xử lý phân nhánh chế độ thực thi:
-    - *Stateful Mode (Incremental):* Chỉ sinh delta lời nhắc, danh sách công cụ động và kết quả công cụ vừa nhận để giảm 95% token tiêu thụ.
-    - *Full / Stateless Mode:* Biên dịch toàn bộ ngữ cảnh hệ thống, lịch sử hội thoại và hướng dẫn.
+  - Xử lý phiên stateful: biên dịch đầy đủ ngữ cảnh ở lượt đầu, sau đó chỉ sinh delta lời nhắc, danh sách công cụ động và kết quả công cụ vừa nhận để giảm 95% token tiêu thụ.
   - Tự động cắt tỉa nội dung công cụ (`truncateToolResult` ngưỡng 8,000 ký tự) và prompt tổng (`MAX_M365_PROMPT_CHARS = 95,000` ký tự) để ngăn chặn tràn bộ nhớ hoặc từ chối dịch vụ từ Copilot.
   - Đo đạc độ dài từng section (`calculatePromptMetrics`) và ghi log kiểm toán (`logPromptAudit`).
 - **Public Classes / Functions / Constants:**
   - `class M365PromptCompiler` & singleton `promptCompiler`.
   - `compileM365Prompt(parsed, isNewConversation): string`.
-  - `compileM365HybridForwardPrompt(parsed, rawBody): string`.
   - `truncateToolResult(content, maxChars): string`.
   - `renderDynamicToolDeclarations(tools: NormalizedTool[]): string`.
   - Hằng số: `TOOL_DECLARATION_PROMPT`, `PLAN_MODE_PROMPT`, `IMPLEMENT_PLAN_PROMPT`, `TOOL_REMINDER_PROMPT`, `UNIFIED_TOOL_PROTOCOL`, `CANONICAL_TOOL_EXAMPLES`.
@@ -453,11 +447,10 @@ src/adapters/m365-copilot/
   - `../tools/atomic-file-writer`
   - Tách biệt khỏi production server loop của `index.ts`.
 
-### 3.9. Phân hệ `temp-chat` (Stateless Forwarding & Fast-Path Scraper)
+### 3.9. Phân hệ `temp-chat` (Transport Helpers & Fast-Path Scraper)
 
 - **Nhiệm vụ:**
-  - Triển khai chế độ chuyển tiếp phi trạng thái (Stateless Pure Forwarder Mode): mỗi lượt tương tác mở một cuộc trò chuyện tạm thời mới.
-  - Biên dịch prompt chuyển tiếp theo giao thức XML Response Envelope với phần tử gốc ``.
+  - Cung cấp các helper transport dùng chung cho phiên M365 stateful theo giao thức XML Response Envelope.
   - Quy định `<thought>` cho phần phân tích, `<tool_call>` cho lời gọi công cụ dạng JSON và `<custom_tool_call name="apply_patch">` cho Unified Patch dạng freeform.
   - Cung cấp thuật toán `FastPathStreamBuffer`: trích xuất tức thì các dòng code live DOM từ thẻ `[data-line-index]`, giải quyết triệt để độ trễ do ảo hóa DOM và bỏ qua quá trình parse HTML nặng nề của Turndown.
   - Cung cấp hàm `stripOuterCodeFence` để bóc bỏ an toàn lớp 4-backtick ngoài cùng mà vẫn giữ nguyên vẹn các code fence con 3-backtick bên trong mã nguồn người dùng.
@@ -465,11 +458,8 @@ src/adapters/m365-copilot/
   - `extractFastPathFromDom(contentEl: HTMLElement): FastPathExtraction | null`
   - `class FastPathStreamBuffer`
   - `stripOuterCodeFence(raw: string): string`
-  - `compileM365HybridForwardPrompt(parsed, rawBody): string`
   - Hằng số và prompt builder cho XML Response Envelope, tool call JSON và Unified Patch freeform.
-- **Được phép phụ thuộc:**
-  - `../normalization/*`
-  - `../prompts/compiler` (qua facade `../prompt-strategy`)
+- **Được phép phụ thuộc:** Không phụ thuộc vào browser, tool execution hoặc prompt compiler.
 
 ---
 
@@ -483,16 +473,14 @@ Vòng đời của một request từ Codex IDE qua `M365CopilotAdapter` diễn 
    `runTurn(parsed, incoming, emit)` tiếp nhận `CodexParsedRequest`. Kiểm tra `incoming.abortSignal`. Nếu đã bị hủy trước khi bắt đầu, ném `DOMException("AbortError")` và kết thúc ngay.
 2. **Domain Raw Snapshot Ingestion:**  
    Đóng gói parsed request vào domain model `CodexRawPayload.from(parsed._rawBody || parsed)` để lưu giữ deep snapshot toàn vẹn dữ liệu từ wire format.
-3. **Session Key & Mode Resolution:**  
-   Xác định `conversationKey` từ HTTP header `x-codex-conversation-key` hoặc metadata `thread_id`. Đọc cấu hình runtime descriptor từ Launcher (`launcher-browser.json`) để xác định cờ `isTemporaryPerRequest`.
+3. **Session Key Resolution:**
+   Xác định `conversationKey` từ HTTP header `x-codex-conversation-key` hoặc metadata `thread_id` để duy trì đúng phiên M365 stateful.
 4. **Final Answer Short-Circuit Check:**  
    Gọi `isAssistantFinalAnswer(lastMsg)`. Nếu tin nhắn cuối cùng đã là câu trả lời kết luận của assistant (không có tool call đang chờ, không có input người dùng mới), xóa session guard, phát sự kiện `done` (`stopReason: "stop"`, `endTurn: true`) và hoàn tất lượt ngay.
 5. **Canonical Normalization:**  
    Đưa `CodexRawPayload` qua `CodexPayloadNormalizer.normalize()` để sinh ra `NormalizedCodexRequest` với danh sách `activeCodingTools` sạch và chế độ hợp tác chuẩn xác.
 6. **Prompt Compilation:**  
-   Gọi `promptCompiler.compile({ normalized, parsed, isNewConversation })`. Trình biên dịch tự động quyết định giữa:
-   - *Stateful Mode:* Chỉ gửi lời nhắc delta và trailing tool results mới.
-   - *Stateless Mode:* Gửi đầy đủ ngữ cảnh kèm chỉ thị 4-backtick.
+   Gọi `promptCompiler.compile({ normalized, parsed, isNewConversation })`. Lượt đầu gửi ngữ cảnh đầy đủ; các lượt tiếp theo trong cùng phiên chỉ gửi lời nhắc delta và trailing tool results mới.
 7. **Zero-Latency Title Guard:**  
    Kiểm tra `isTitleRequest(parsed, compiledPrompt)`. Nếu Codex đang ngầm yêu cầu tiêu đề cuộc trò chuyện, gọi `generateTitleResponse()` và phát ngay sự kiện `text_delta` + `done` trong vòng 5ms mà không chạm vào trình duyệt.
 8. **Browser Automation via CDP:**  
@@ -702,7 +690,6 @@ Trước đợt tái cấu trúc, module prompt gặp phải lỗi phụ thuộc
 - `prompt.ts`: Định nghĩa prompt builder cũ và re-export.
 - `prompts.ts`: Chứa cả template mẫu lẫn import compiler.
 - `prompt-strategy.ts`: Vừa biên dịch prompt vừa import ngược lại helper từ `prompt.ts`.
-- `temp-chat/compileHybridForwardPrompt.ts`: Import `prompt-strategy.ts` nhưng `prompt-strategy.ts` lại import các hàm từ `temp-chat/prompts.ts`.
 
 Hệ quả là khi một module được load, module đối ứng vẫn đang trong trạng thái chưa khởi tạo (undefined export), gây ra các lỗi runtime bí ẩn như: `TypeError: Cannot read properties of undefined (reading 'compile')`.
 
@@ -728,7 +715,6 @@ graph TD
 
     subgraph TIER_3 ["Tầng 3: Trình lắp ráp cấp cao (High-Level Assembler)"]
         Assembler["prompts/assembler.ts<br/>(compileM365Prompt, truncateToolResult)"]:::t3
-        Hybrid["temp-chat/compileHybridForwardPrompt.ts<br/>(compileM365HybridForwardPrompt)"]:::t3
     end
 
     subgraph FACADES ["Lớp Facade Thư Mục Gốc (Compatibility Facades)"]
@@ -740,7 +726,6 @@ graph TD
     Templates -->|"Chỉ import hằng số"| Compiler
     TempPrompts -->|"Chỉ import hằng số"| Compiler
     Compiler -->|"Import compiler engine"| Assembler
-    Compiler -->|"Import compiler engine"| Hybrid
 
     Compiler -.->|"Re-export"| F_Strategy
     Templates -.->|"Re-export"| F_Prompts
@@ -771,7 +756,7 @@ Bảng dưới đây thống kê danh mục các Public API chính thống sau �
 | | `isAssistantFinalAnswer` | Kiểm tra kết thúc hội thoại | `index.ts` (ngắt lượt sớm) |
 | **`guards`** | `isTitleRequest` | Nhận diện yêu cầu sinh tiêu đề ngầm | `index.ts` (Fast Path) |
 | | `generateTitleResponse` | Sinh tiêu đề 5ms không qua trình duyệt | `index.ts`, Unit tests |
-| **`normalization`**| `CodexRawPayload` | Container lưu trữ raw snapshot | `index.ts`, `compileHybridForwardPrompt` |
+| **`normalization`**| `CodexRawPayload` | Container lưu trữ raw snapshot | `index.ts`, prompt compiler |
 | | `CodexPayloadNormalizer` | Bộ chuẩn hóa Canonical Request | `index.ts`, Prompt compiler |
 | | `NormalizedCodexRequest` | Interface biểu diễn yêu cầu chuẩn | `compiler.ts`, Tool bridge |
 | **`prompts`** | `promptCompiler` | Singleton `M365PromptCompiler` | `index.ts`, `temp-chat` |
@@ -916,13 +901,12 @@ Phần này ghi lại các quyết định thiết kế kiến trúc quan trọn
 - **Bối cảnh (Context):**
   - Trước đây, hệ thống prompt tồn tại chu kỳ phụ thuộc vòng (Circular Dependency) phức tạp giữa 3 module:
     $$\text{prompt.ts} \longleftrightarrow \text{prompts.ts} \longleftrightarrow \text{prompt-strategy.ts}$$
-  - Hơn nữa, `temp-chat/compileHybridForwardPrompt.ts` vừa import từ `prompt-strategy.ts`, trong khi `prompt-strategy.ts` lại import các hằng số từ `temp-chat/prompts.ts`.
   - Hiện tượng này khiến JavaScript module loader tại runtime gặp phải các export chưa được khởi tạo (`undefined`), dẫn đến lỗi sụp đổ tiến trình biên dịch prompt khi có request gửi tới.
 - **Quyết định (Decision):**
   - Tái cấu trúc phân hệ prompt thành mô hình phân tầng 3 lớp đơn hướng nghiêm ngặt (Strict Three-Tier Hierarchy) bên trong `src/adapters/m365-copilot/prompts/`:
     1. **Tầng 1 - Mẫu tĩnh (Pure Static Templates):** [prompts/templates.ts](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts/templates.ts) chỉ chứa các hằng số chuỗi prompt thô (`TOOL_DECLARATION_PROMPT`, `PLAN_MODE_PROMPT`...). Tuyệt đối không import bất kỳ logic nào.
-    2. **Tầng 2 - Động cơ biên dịch lõi (Compiler Engine):** [prompts/compiler.ts](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts/compiler.ts) (`M365PromptCompiler`) chịu trách nhiệm dựng dynamic tools, phân nhánh Stateful/Stateless, đo lường metrics. Tầng này chỉ import từ Tầng 1.
-    3. **Tầng 3 - Trình lắp ráp cấp cao (High-Level Assembler):** [prompts/assembler.ts](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts/assembler.ts) (`compileM365Prompt`, `truncateToolResult`) và `temp-chat/compileHybridForwardPrompt.ts`. Tầng này import từ Tầng 1 và Tầng 2.
+    2. **Tầng 2 - Động cơ biên dịch lõi (Compiler Engine):** [prompts/compiler.ts](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts/compiler.ts) (`M365PromptCompiler`) chịu trách nhiệm dựng dynamic tools, biên dịch stateful và đo lường metrics. Tầng này chỉ import từ Tầng 1.
+    3. **Tầng 3 - Trình lắp ráp cấp cao (High-Level Assembler):** [prompts/assembler.ts](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts/assembler.ts) (`compileM365Prompt`, `truncateToolResult`). Tầng này import từ Tầng 1 và Tầng 2.
 - **Hệ quả (Consequences):**
   - Hướng phụ thuộc hoàn toàn một chiều từ trên xuống dưới ($T_1 \rightarrow T_2 \rightarrow T_3$).
   - Triệt tiêu 100% chu kỳ phụ thuộc vòng trong toàn bộ subsystem prompt.

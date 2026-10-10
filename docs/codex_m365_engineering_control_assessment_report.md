@@ -48,7 +48,7 @@ Hệ thống **Codex-M365** thực chất là một **Local Semantic Gateway & P
 2. **Prompt Orchestrator & Text Interaction Protocol Engine:** Biến đổi cây ngữ cảnh phức tạp của Codex (System prompt, Developer instructions, Environment context, Trailing tool results) thành một chuỗi prompt văn bản phẳng tự nhiên, ép M365 Copilot tuân thủ giao thức văn bản để phát sinh tool call (`<tool_call>`, `<custom_tool_call>`, block commands).
 3. **Browser Automation Layer (CDP Driver):** Điều khiển Chrome DevTools Protocol (CDP) kết nối trực tiếp vào `WebContentsView` của Electron Launcher để paste prompt, click send, giám sát DOM Mutation và stream dữ liệu theo khối ngữ nghĩa (Semantic Block Buffering).
 4. **Tool Translation & Normalization Layer:** Bóc tách kết quả văn bản thô từ M365 (thông qua regex, lenient JSON parser, XML parser, Bash command parser) và ánh xạ ngược lại các công cụ native của Codex (`read_file`, `apply_patch`, `exec_command`).
-5. **Cross-Turn State Bridge:** Đồng bộ hoá và tái cấu trúc lịch sử hội thoại qua `previous_response_id` giữa chế độ Stateful session và Stateless Temporary Chat per Request.
+5. **Cross-Turn State Bridge:** Đồng bộ hoá lịch sử hội thoại qua `previous_response_id` và `conversationKey` trong phiên M365 stateful.
 
 ---
 
@@ -182,7 +182,7 @@ Dưới đây là bản kiểm kê toàn bộ module cấu thành hệ thống C
 | [`src/server.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/server.ts) | Cổng HTTP Server, bắt request từ Codex IDE, mở rộng `previous_response_id`, phân nhánh sang M365 Adapter. | `handleM365ResponseRequest`, `responseRequest`, `resolveTraceContext` | **CRITICAL** | Toàn bộ hệ thống sập. Codex IDE nhận lỗi 500/502 hoặc ngắt kết nối vĩnh viễn. |
 | [`src/adapters/m365-copilot/index.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/index.ts) | Điều phối 1 turn hoàn chỉnh: kiểm tra Title Guard, Assistant Final Answer, gọi browser worker, kiểm tra Loop Guard, bắn SSE. | `M365CopilotAdapter`, `runTurn`, `conversationGuard`, `MAX_TOOL_ITERATIONS` | **CRITICAL** | Lỗi logic turn, loop vô hạn hoặc kết thúc sớm (premature termination) khiến Agent bị đơ. |
 | [`src/adapters/m365-copilot/browser-worker.ts`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/browser-worker.ts) | Kết nối CDP Playwright, tìm ô chat M365, paste prompt, click send, giám sát DOM Mutation và stream dữ liệu theo khối. | `executeM365Turn`, `M365MarkdownBuffer`, `connectLauncherBrowserHost` | **CRITICAL** | Không thể gửi prompt vào M365 Copilot hoặc không đọc được phản hồi, timeout 120s. |
-| [`src/adapters/m365-copilot/prompt.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts) & [`prompts.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts) | Xây dựng prompt tổng hợp, inject giao thức Text Interaction Protocol, Plan Mode rules, cắt tỉa 95k ký tự. | `compileM365Prompt`, `compileM365HybridForwardPrompt`, `TOOL_DECLARATION_PROMPT` | **CRITICAL** | Model Copilot "thoát vai", từ chối gọi tool, in ra câu trả lời vô dụng hoặc bị tràn giới hạn ký tự. |
+| [`src/adapters/m365-copilot/prompt.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts) & [`prompts.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts) | Xây dựng prompt tổng hợp, inject giao thức Text Interaction Protocol, Plan Mode rules, cắt tỉa 95k ký tự. | `promptCompiler.compile`, `compileM365Prompt`, `TOOL_DECLARATION_PROMPT` | **CRITICAL** | Model Copilot "thoát vai", từ chối gọi tool, in ra câu trả lời vô dụng hoặc bị tràn giới hạn ký tự. |
 | [`src/adapters/m365-copilot/output-translator.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/output-translator.ts) | Phân tích cú pháp thô từ phản hồi Copilot bằng các detector có trọng số ưu tiên: Patch -> JSON -> XML -> Bash -> Final Answer. | `M365OutputTranslator`, `PatchToolCallDetector`, `XmlToolCallDetector`, `JsonToolCallDetector` | **CRITICAL** | Model sinh lệnh nhưng parser không nhận ra, dẫn đến fallback sang Final Answer làm Agent dừng lại. |
 | [`src/adapters/m365-copilot/tool-bridge.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/tool-bridge.ts) | Ánh xạ công cụ mà Copilot xuất ra thành tên công cụ và tham số mà Codex IDE hỗ trợ. Xử lý normalize mã nguồn và file staging. | `M365ToolBridge`, `normalizeFileContent`, `TOOL_HANDLERS` | **HIGH** | Codex IDE không nhận diện được công cụ, từ chối thực thi hoặc file ghi bị lỗi định dạng / mất dữ liệu. |
 | [`src/adapters/m365-copilot/bash-translator.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/bash-translator.ts) | Chuyển đổi các câu lệnh bash thường gặp (`cat`, `ls`, `grep`, `git status`) thành function call tương ứng. Chặn câu lệnh phá hủy. | `BashCommandTranslator`, `CatRule`, `isDestructiveCommand` | **HIGH** | Model in ra `cat pom.xml` nhưng không được thực thi; hoặc nguy hiểm hơn là chạy nhầm lệnh phá hủy. |
@@ -223,7 +223,7 @@ sequenceDiagram
     SVR->>ADP: adapter.runTurn(parsedRequest)
     
     Note over ADP: Step 2: Protocol Checks (Title Guard / Final Answer Guard)
-    ADP->>PRM: compileM365Prompt(parsed) / compileM365HybridForwardPrompt()
+    ADP->>PRM: promptCompiler.compile({ normalized, parsed, isNewConversation })
     PRM-->>ADP: Injected System Prompt + Tool Protocol + User Prompt
 
     Note over ADP: Step 3: Browser Dispatch via CDP
@@ -279,11 +279,11 @@ sequenceDiagram
 - **Vai trò:**  
   1. **Title Guard:** Kiểm tra qua `isTitleRequest()`. Nếu Codex gửi ngầm yêu cầu đặt tên hội thoại, tạo ngay phản hồi giả lập trong 5ms và kết thúc turn (không gọi web).
   2. **Assistant Final Answer Guard:** Nếu tin nhắn cuối cùng trong context đã là kết luận của assistant (không có tool result mới), tự động kết thúc để tránh lặp.
-  3. **Read Launcher Descriptor:** Đọc cờ `m365TemporaryChatPerRequest` từ runtime descriptor để quyết định chế độ Stateless (Pure Forwarder) hay Stateful.
+  3. **Resolve Conversation State:** Xác định `conversationKey` và trạng thái lượt đầu để duy trì đúng phiên M365 stateful.
 
 ### Bước 3: Prompt Compilation & Protocol Injection
 - **File:** [`src/adapters/m365-copilot/prompt.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L152-L394)
-- **Class/Function:** `compileM365Prompt()` hoặc `compileM365HybridForwardPrompt()`
+- **Class/Function:** `promptCompiler.compile()` hoặc facade `compileM365Prompt()`
 - **Input:** `CodexParsedRequest` và raw payload từ Codex IDE.
 - **Output:** Chuỗi `compiledPrompt` (độ dài an toàn <= 95,000 ký tự).
 - **Vai trò:**  
@@ -500,12 +500,12 @@ Toàn bộ "trí thông minh" và khả năng hợp tác của M365 Copilot ph�
 
 | Thành phần Prompt | Vị trí định nghĩa (File : Line) | Nội dung / Mục đích | Điều kiện kích hoạt |
 |---|---|---|---|
-| **Text Interaction Protocol** | [`prompts.ts: L13-L70`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L13-L70) | Khai báo vai trò AI trợ lý lập trình, giải thích rằng IDE đang lắng nghe văn bản, hướng dẫn xuất lệnh shell hoặc `<tool_call>`. | Luôn xuất hiện ở đầu prompt cuộc trò chuyện mới hoặc đầu Hybrid Prompt. |
+| **Text Interaction Protocol** | [`prompts.ts: L13-L70`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L13-L70) | Khai báo vai trò AI trợ lý lập trình, giải thích rằng IDE đang lắng nghe văn bản, hướng dẫn xuất lệnh shell hoặc `<tool_call>`. | Luôn xuất hiện ở đầu prompt cuộc trò chuyện mới. |
 | **Tool Declaration** | [`prompts.ts: L22-L33`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L22-L33) | Liệt kê danh sách 9 công cụ IDE: `git_status`, `git_diff`, `read_file`, `list_dir`, `search_files`, `grep_code`, `run_command`, `apply_patch`, `write_file`. | Luôn xuất hiện khi không có `toolResult` trong turn. |
 | **Tool Reminder** | [`prompts.ts: L190-L210`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L190-L210) | Nhắc lại cơ chế thực thi công cụ khi turn hiện tại đang nhận kết quả từ tool trước để model không "thoát vai". | Kích hoạt khi turn có chứa `toolResult`. |
 | **Plan Mode Prompt** | [`prompts.ts: L164-L188`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L164-L188) | Nghiêm cấm sửa code/tạo file (`apply_patch`, `write_file`). Chỉ cho phép đọc khảo sát. Yêu cầu đóng gói kế hoạch trong `<proposed_plan>`. | Kích hoạt khi phát hiện chế độ `/plan` (`isPlanModeRequest() = true`). |
 | **Implement Plan Prompt** | [`prompts.ts: L212-L230`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L212-L230) | Thông báo người dùng đã duyệt kế hoạch, yêu cầu tiến hành chỉnh sửa mã nguồn ngay lập tức. | Kích hoạt khi người dùng bấm "PLEASE IMPLEMENT THIS PLAN". |
-| **Context & Dev Rules** | [`prompt.ts: L331-L349`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L331-L349) | Chèn `[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]` và `[CHỈ THỊ CỦA DỰ ÁN / DEVELOPER RULES]`. | Kích hoạt trong chế độ `compileM365HybridForwardPrompt`. |
+| **Context & Dev Rules** | [`prompt.ts: L331-L349`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L331-L349) | Chèn `[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]` và `[CHỈ THỊ CỦA DỰ ÁN / DEVELOPER RULES]`. | Kích hoạt khi biên dịch lượt đầu của phiên stateful. |
 | **Tool Result Injection** | [`prompt.ts: L246-L258`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L246-L258) | Bọc kết quả công cụ trong `<tool_result>\n${safeText}\n</tool_result>` kèm lời nhắc phân tích tiếp. | Kích hoạt khi có message role `toolResult`. |
 | **Output Format Hints** | [`prompts.ts: L100-L160`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompts.ts#L100-L160) | 9 ví dụ mẫu chuẩn (Few-Shot Examples) hướng dẫn cách in ra từng công cụ. | Chèn ở cuối prompt yêu cầu người dùng nếu chưa có tool result. |
 
@@ -663,7 +663,6 @@ Nếu bạn muốn thay đổi hành vi của Agent, đây là bảng tra cứu 
 | **Tăng/giảm số vòng lặp tối đa của phiên** | [`index.ts: L118`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/index.ts#L118) | Hằng số `MAX_TOOL_ITERATIONS` | **MEDIUM** | Mặc định là `100`. Nếu muốn task phức tạp chạy dài hơn có thể tăng lên `150`; nếu muốn tiết kiệm tài nguyên giảm xuống `30`. |
 | **Thay đổi thời gian chờ ổn định DOM (Settled Time)** | [`browser-worker.ts: L565-L570`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/browser-worker.ts#L565-L570) | Điều kiện `isSettled` | **HIGH** | Giảm thời gian chờ từ `3000ms` xuống `1500ms` để kết thúc turn nhanh hơn; hoặc tăng lên nếu mạng chập chờn khiến text sinh bị ngắt quãng. |
 | **Thay đổi giới hạn cắt tỉa Prompt** | [`prompt.ts: L22-L23`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L22-L23) | `MAX_M365_PROMPT_CHARS` & `MAX_TOOL_RESULT_CHARS` | **HIGH** | Mặc định 95,000 ký tự prompt và 8,000 ký tự tool result. Có thể tăng/giảm tùy thuộc vào dung lượng ô chat M365 cho phép. |
-| **Bật/Tắt chế độ Phiên trắng từng lượt (Pure Forwarder)** | Launcher Settings hoặc file `launcher-browser.json` | Cờ `m365TemporaryChatPerRequest` | **CRITICAL** | Khi BẬT: Mỗi turn là một phiên Temporary Chat độc lập, toàn bộ ngữ cảnh được nén và gửi lại từ đầu. Khi TẮT: Dùng chung một phiên chat liên tục (Stateful). |
 | **Sửa cách thực thi lệnh trên Windows/macOS** | [`strategies/posix.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/strategies/posix.ts) & [`powershell.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/strategies/powershell.ts) | Phương thức `readFile`, `writeFile`, `listDir` | **MEDIUM** | Điều chỉnh cú pháp câu lệnh shell phát sinh cho phù hợp với môi trường đặc thù của dự án. |
 
 ---
@@ -674,7 +673,6 @@ Nếu bạn muốn thay đổi hành vi của Agent, đây là bảng tra cứu 
 |---|---|---|---|---|---|
 | `CODEX_CHATGPT_WEB_HOME` | Environment Variable | `~/.codex-m365-copilot` | [`src/config.ts: L156`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/config.ts#L156) | Thư mục gốc chứa runtime, socket, state cache và logs. | Sai đường dẫn sẽ không tìm thấy file descriptor kết nối với Electron Launcher. |
 | `CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR` | Environment Variable | `~/.codex-m365-copilot/runtime/launcher-browser.json` | [`index.ts: L183`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/index.ts#L183) | Đường dẫn file chứa WebSocket endpoint và surfaceId để Playwright CDP kết nối. | Không kết nối được vào Launcher -> Báo lỗi `Không tìm thấy runtime descriptor`. |
-| `m365TemporaryChatPerRequest` | JSON Flag (`launcher-browser.json`) | `false` | [`index.ts: L188`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/index.ts#L188) | Quyết định có làm mới phiên chat ở mỗi lượt request hay không. | Bật lên sẽ làm mất bộ nhớ lịch sử tự nhiên trên giao diện web của M365 (phải nạp lại qua prompt). |
 | `PORT` / `--port` | CLI Arg / Config | `8787` (hoặc ngẫu nhiên) | [`src/cli.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/cli.ts) & [`server.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/server.ts) | Cổng HTTP mà Bridge Server lắng nghe để Codex IDE gọi vào. | Trùng cổng sẽ khiến server không thể khởi động; đổi cổng mà không báo cho Codex sẽ gây disconnect. |
 | `MAX_M365_PROMPT_CHARS` | Constant trong code | `95_000` ký tự | [`prompt.ts: L22`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L22) | Ngưỡng cắt tỉa bảo vệ bộ đệm ô nhập liệu của M365 Copilot. | Đặt quá cao (> 100k) khiến M365 từ chối gửi tin nhắn; đặt quá thấp làm mất ngữ cảnh. |
 | `MAX_TOOL_RESULT_CHARS` | Constant trong code | `8_000` ký tự | [`prompt.ts: L23`](file:///Users/huytv/IdeaProjects/1.m365-copilot/codex-chatgpt-web/src/adapters/m365-copilot/prompt.ts#L23) | Ngưỡng cắt tỉa kết quả công cụ ở giữa (`truncateToolResult`). | Đặt quá nhỏ làm mất thông tin quan trọng của file hoặc log test; đặt quá lớn gây tràn token. |
@@ -921,7 +919,7 @@ Roadmap 5 cấp độ được thiết kế dành riêng cho bạn để chuyể
 - **Mục tiêu:** Tự tin kiểm soát các tham số vận hành mà không làm vỡ hệ thống:
   1. Nắm quyền kiểm soát Loop Guard: Biết cách điều chỉnh `MAX_IDENTICAL_TOOL_CALLS` và `MAX_TOOL_ITERATIONS` phù hợp với độ phức tạp của bài toán.
   2. Làm chủ Budgeting Guard: Biết cách tinh chỉnh `MAX_M365_PROMPT_CHARS` (95k) và `MAX_TOOL_RESULT_CHARS` (8k).
-  3. Làm chủ cờ `m365TemporaryChatPerRequest`: Hiểu khi nào nên dùng Stateful session và khi nào nên dùng Stateless Pure Forwarder.
+  3. Làm chủ vòng đời stateful session: hiểu cách `conversationKey` và `isNewConversation` quyết định mở chat mới hay tiếp tục phiên hiện tại.
 
 ---
 

@@ -378,7 +378,6 @@ class BrowserHost {
     this.manualTerminalSignals = new Map();
     this.manualCompletionSignals = new Map();
     this.interactionModeOverride = null;
-    this.m365TemporaryChatPerRequest = false;
     this.selectedTabId = "home";
     this.manualOperation = null;
     this.loginOperation = null;
@@ -3259,23 +3258,7 @@ class BrowserHost {
         throw new Error("Vui lòng đăng nhập vào Microsoft 365 Copilot trước khi chạy kiểm tra!");
       }
 
-      // 1. Kích hoạt Temporary chat nếu chưa bật
-      this.setState({ status: "testing", message: "Preparing M365 Copilot temporary chat..." });
-      try {
-        await this.view.webContents.executeJavaScript(`(async () => {
-          const btn = document.querySelector('button[aria-label="Temporary chat"]');
-          if (btn && btn.getAttribute("aria-pressed") !== "true") {
-            btn.click();
-            await new Promise(resolve => setTimeout(resolve, 1500));
-          }
-        })()`, true);
-      } catch (err) {
-        this.logger.warn("smoke.m365_temporary_chat_click_failed", {
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // 2. Chờ khung nhập liệu sẵn sàng
+      // 1. Chờ khung nhập liệu stateful sẵn sàng
       const editorReady = await this.view.webContents.executeJavaScript(`(async () => {
         const maxWait = 15000;
         const start = Date.now();
@@ -3291,7 +3274,7 @@ class BrowserHost {
         throw new Error("Không tìm thấy khung nhập liệu của Microsoft 365 Copilot!");
       }
 
-      // 3. Gửi prompt chuẩn: "Reply with exactly: CODEX WEB GPT READY"
+      // 2. Gửi prompt chuẩn: "Reply with exactly: CODEX WEB GPT READY"
       const promptText = "Reply with exactly: CODEX WEB GPT READY";
       this.setState({ status: "testing", message: "Sending smoke test prompt to M365 Copilot..." });
 
@@ -3599,7 +3582,6 @@ class BrowserHost {
       activeSurfaceId: this.surfaceId,
       surfaceTargets,
       provider: this.provider || "chatgpt",
-      m365TemporaryChatPerRequest: this.m365TemporaryChatPerRequest === true,
       createdAt: new Date().toISOString(),
     };
     writePrivateFileAtomic(this.descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
@@ -3611,11 +3593,6 @@ class BrowserHost {
     const browserSession = contents.session;
     browserSession.flushStorageData();
     await browserSession.cookies.flushStore();
-  }
-
-  setM365TemporaryChatPerRequest(enabled) {
-    this.m365TemporaryChatPerRequest = enabled === true;
-    this.writeDescriptor();
   }
 
   destroy() {

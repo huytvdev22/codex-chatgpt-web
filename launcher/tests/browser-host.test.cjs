@@ -3643,7 +3643,7 @@ test("off-on-off fresh conversation changes retire completed history before it c
     const property = savedChats ? "useSavedChats" : "experimentalFreshConversationPerTurn";
     const method = savedChats ? "setUseSavedChats" : "setFreshConversationPerTurn";
     const channel = savedChats ? "launcher:use-saved-chats" : "launcher:fresh-conversation-per-turn";
-    const nextChannel = savedChats ? "launcher:m365-temporary-chat" : "launcher:use-saved-chats";
+    const nextChannel = savedChats ? "launcher:zero-risk-pro" : "launcher:use-saved-chats";
     const key = "a".repeat(64);
     const stale = { id: "old-chat", traceId: "old-turn", status: "ready", interactionMode: "automatic",
       conversationKey: key, connectorIdentity: "Codex Native2", connectorBound: true };

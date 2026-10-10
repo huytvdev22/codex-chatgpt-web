@@ -2,7 +2,7 @@
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
-import { compileM365Prompt, compileM365HybridForwardPrompt, promptCompiler, buildM365FormatRetryPrompt } from "./prompts/index";
+import { promptCompiler, buildM365FormatRetryPrompt } from "./prompts/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
 import { executeM365Turn } from "./browser";
 import { parseStrictM365Response, maskArgumentsForLog, type StrictM365ResponseResult } from "./translation";
@@ -22,10 +22,7 @@ import {
 import { emitStructuredEvent } from "../../observability/emitter";
 import { logDebugPipelineStation } from "../../observability/debug-logger";
 import { traceStorage, secureToolFingerprint } from "../../observability/trace-context";
-import path from "node:path";
-import { homedir } from "node:os";
 import type { TraceContext } from "../../observability/types";
-import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 
 export * from "./session";
 export * from "./guards";
@@ -117,20 +114,6 @@ export class M365CopilotAdapter implements ProviderAdapter {
       this.lastConversationKey = conversationKey;
     }
 
-    // 1.1. Kiểm tra cấu hình Temporary Chat Per Request từ Launcher
-    let isTemporaryPerRequest = false;
-    const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR
-      || path.join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
-    if (descriptorPath) {
-      try {
-        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        isTemporaryPerRequest = Boolean(descriptor.m365TemporaryChatPerRequest);
-      } catch (err) {
-        console.warn(`[m365-adapter] Không thể đọc descriptor từ ${descriptorPath}:`, err);
-      }
-    }
-    console.log(`[m365-adapter] Chế độ Temporary Chat Per Request: ${isTemporaryPerRequest ? "BẬT (Pure Forwarder)" : "TẮT (Stateful)"}`);
-
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)
     const allMsgs = parsed.context.messages || [];
     const lastMsg = allMsgs[allMsgs.length - 1];
@@ -161,14 +144,13 @@ export class M365CopilotAdapter implements ProviderAdapter {
       return;
     }
 
-    // 2. Biên dịch prompt duy nhất: Tái sử dụng 100% dữ liệu từ Raw Content & Normalizer cho cả Stateful và Stateless
-    const effectiveIsNewConversation = isTemporaryPerRequest ? true : isNewConversation;
+    // 2. Biên dịch prompt cho phiên M365 stateful.
     const payload = CodexRawPayload.from(rawPayload || parsed._rawBody || parsed);
     const normalized = CodexPayloadNormalizer.normalize(payload);
     const compileResult = promptCompiler.compile({
       normalized,
       parsed,
-      isNewConversation: effectiveIsNewConversation,
+      isNewConversation,
     });
     const promptToSend = compileResult.finalPrompt;
     const compiledPrompt = promptToSend;
@@ -234,11 +216,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
           signal: incoming.abortSignal,
           traceId: incoming.headers.get("x-codex-trace-id") || undefined,
           conversationKey,
-          isNewConversation: isTemporaryPerRequest ? true : (formatAttempt === 0 ? isNewConversation : false),
-          forceTemporaryChat: isTemporaryPerRequest,
+          isNewConversation: formatAttempt === 0 ? isNewConversation : false,
           modelSlug: parsed.modelId,
           traceContext,
-          images: formatAttempt === 0 || isTemporaryPerRequest ? normalized.images : [],
+          images: formatAttempt === 0 ? normalized.images : [],
         });
 
         protocolResult = parseStrictM365Response(reply);
@@ -285,11 +266,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
           code: protocolResult.code,
           message: protocolResult.message,
         });
-        // Temporary Chat tạo chat mới mỗi request nên phải gửi lại prompt gốc kèm chỉ thị sửa format.
-        // Stateful Chat chỉ cần follow-up ngắn trong cùng conversation.
-        attemptPrompt = isTemporaryPerRequest
-          ? `${promptToSend}\n\n${retryInstruction}`
-          : retryInstruction;
+        attemptPrompt = retryInstruction;
         totalPromptChars += attemptPrompt.length;
       }
 

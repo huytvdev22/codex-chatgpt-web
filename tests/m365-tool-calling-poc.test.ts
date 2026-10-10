@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileM365Prompt, compileM365HybridForwardPrompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
+import { compileM365Prompt, truncateToolResult } from "../src/adapters/m365-copilot/prompt";
 import { M365ToolCallDetector, M365MarkdownBuffer, normalizeMarkdownFences } from "../src/adapters/m365-copilot/markdown";
 import { M365ToolBridge, normalizeFileContent } from "../src/adapters/m365-copilot/tool-bridge";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
@@ -520,35 +520,6 @@ const b = \\{\\
     expect(finalResult.markdown).toContain("chrome.storage.local");
     expect(finalResult.markdown).toContain("Đúng hướng.");
     expect(finalResult.delta).toContain("chrome.storage.local");
-  });
-
-  test("Phase 14: compileM365HybridForwardPrompt combines protocol directive and raw codex json without coercive output format directive", () => {
-    const parsed: CodexParsedRequest = {
-      modelId: "m365-copilot/think",
-      stream: true,
-      context: {
-        messages: [{
-          role: "user",
-          content: "chỉnh sửa và thêm comment cho file này giúp tôi",
-          timestamp: Date.now(),
-        }],
-      },
-      options: {},
-    };
-    const rawBody = {
-      model: "m365-copilot/think",
-      input: [{ role: "user", content: "chỉnh sửa file" }],
-    };
-
-    const prompt = compileM365HybridForwardPrompt(parsed, rawBody);
-    expect(prompt).toContain("XML RESPONSE ENVELOPE");
-    expect(prompt).not.toContain("sandbox /mnt/data");
-    expect(prompt).toContain("<tool_call>");
-    expect(prompt).toContain("<custom_tool_call");
-    expect(prompt).toContain("[YÊU CẦU CỦA NGƯỜI DÙNG]");
-    expect(prompt).toContain("chỉnh sửa file");
-    // Khẳng định loại bỏ hoàn toàn dòng lệnh ép buộc tool call
-    expect(prompt).not.toContain("[Yêu cầu định dạng đầu ra]");
   });
 
   test("Phase 15: M365OutputTranslator cleans user raw response with unescaped quotes, 2-star End Patch, and BizChat suffix", () => {

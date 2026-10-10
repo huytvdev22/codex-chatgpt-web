@@ -528,7 +528,6 @@ function registerIpc({ logger, stateStore }) {
     "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
     "launcher:browser-passkey-login", "launcher:browser-logout", "launcher:browser-smoke",
     "launcher:limits-setup", "launcher:update-install", "launcher:complete-onboarding",
-    "launcher:m365-temporary-chat",
   ]);
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
     if (runtimeChannels.has(channel)) await runtimeStartup;
@@ -936,12 +935,6 @@ function registerIpc({ logger, stateStore }) {
     await runtimeHost.setUseSavedChats(enabled);
     return syncFreshConversationPreference(stateStore, runtimeHost.runtimeConfigSnapshot().config);
   });
-  handle("launcher:m365-temporary-chat", async (_event, enabled) => {
-    browserHost.setM365TemporaryChatPerRequest(enabled === true);
-    const state = stateStore.update({ m365TemporaryChatPerRequest: enabled === true });
-    send("launcher:state-changed", state);
-    return state;
-  });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
     const browserOperation = browserHost.currentOperation();
     if (browserHost.activeTraceId || browserOperation) {
@@ -1226,7 +1219,6 @@ async function start() {
     provider: stateStore.read().selectedProvider || "m365",
   });
   await browserHost.ready();
-  browserHost.setM365TemporaryChatPerRequest(stateStore.read().m365TemporaryChatPerRequest === true);
   const updaterRuntimeRoot = runtimeRootProvider();
   updateController = createUpdateController({
     currentVersion: app.getVersion(),

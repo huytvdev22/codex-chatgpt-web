@@ -44,7 +44,7 @@ src/adapters/m365-copilot/
 ├── translation/       # Phân tích ngữ pháp đa hình thức, lọc rò rỉ streaming và specialized detectors
 ├── tools/             # Cầu nối công cụ (Tool Bridge), atomic file writer và command strategies đa nền tảng
 ├── harness/           # Khung kiểm thử và đánh giá độc lập (M365AgentLoop, LocalToolExecutor)
-└── temp-chat/         # Chế độ Stateless Temporary Chat Per Request và Live DOM Scraper
+└── temp-chat/         # Transport envelope, code-fence helpers và Live DOM Scraper
 ```
 
 ### Trách nhiệm từng module:
@@ -57,7 +57,7 @@ src/adapters/m365-copilot/
 - [translation/](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/translation/): Tiếp nhận chuỗi phản hồi thô, chặn rò rỉ cú pháp tool call trong lúc stream (`toolcall-detector.ts`) và dịch sang Tool Call chuẩn thông qua chuỗi Detectors chuyên biệt (`patch`, `json`, `xml`, `bash`).
 - [tools/](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/tools/): Ánh xạ lời gọi công cụ sang lệnh phía client ([M365ToolBridge](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/tools/tool-bridge.ts)), ghi file phân đoạn kèm băm kiểm tra ([AtomicFileWriter](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/tools/atomic-file-writer.ts)) và các chiến lược lệnh shell đa nền tảng ([POSIX](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/tools/command-strategies/posix.ts) / [PowerShell](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/tools/command-strategies/powershell.ts)).
 - [harness/](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/harness/): Cung cấp vòng lặp Agent khép kín phục vụ kiểm thử đánh giá benchmark và chạy kịch bản tự động hóa ngoại tuyến mà không cần Codex IDE.
-- [temp-chat/](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/temp-chat/): Chế độ trò chuyện tạm thời không lưu lịch sử, bọc prompt với cú pháp 4-backtick và trích xuất dữ liệu DOM thời gian thực ([FastPathStreamBuffer](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/temp-chat/fastPathScraper.ts)).
+- [temp-chat/](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/temp-chat/): Các helper transport dùng chung để bọc phản hồi bằng cú pháp 4-backtick, bóc outer fence và trích xuất dữ liệu DOM thời gian thực ([FastPathStreamBuffer](file:///d:/HUYTVDEV/codex-chatgpt-web/src/adapters/m365-copilot/temp-chat/fastPathScraper.ts)). Tên thư mục được giữ để tránh di chuyển file hàng loạt; adapter M365 chỉ vận hành theo phiên stateful.
 
 ---
 

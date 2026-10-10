@@ -10,6 +10,12 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
+test("M365 no longer exposes per-request Temporary Chat configuration", () => {
+  for (const source of [appSource, electronMain, browserHostSource, preloadSource]) {
+    assert.doesNotMatch(source, /m365TemporaryChatPerRequest|setM365TemporaryChatPerRequest|launcher:m365-temporary-chat/);
+  }
+});
+
 test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
   for (const fails of [false, true]) {
@@ -453,7 +459,7 @@ test("fresh-conversation IPC commits only after setup succeeds and refuses activ
     const property = savedChats ? "useSavedChats" : "experimentalFreshConversationPerTurn";
     const method = savedChats ? "setUseSavedChats" : "setFreshConversationPerTurn";
     const channel = savedChats ? "launcher:use-saved-chats" : "launcher:fresh-conversation-per-turn";
-    const nextChannel = savedChats ? "launcher:m365-temporary-chat" : "launcher:use-saved-chats";
+    const nextChannel = savedChats ? "launcher:zero-risk-pro" : "launcher:use-saved-chats";
     const source = electronMain.slice(
       electronMain.indexOf(`handle("${channel}",`),
       electronMain.indexOf(`handle("${nextChannel}",`),

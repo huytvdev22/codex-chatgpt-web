@@ -8,7 +8,7 @@
 - Trong khi đó, **Microsoft 365 Copilot Web** (`https://m365.cloud.microsoft/chat`):
   - Được cấp phép và whitelist 100% trên mạng nội bộ ngân hàng.
   - Sử dụng các Edge Node của Microsoft tại khu vực Đông Nam Á (độ trễ cực thấp < 50ms).
-  - Có chế độ **Commercial Data Protection** (bảo vệ dữ liệu thương mại) và **Temporary Chat** (không lưu lịch sử, không rác thanh bên).
+  - Có chế độ **Commercial Data Protection** (bảo vệ dữ liệu thương mại) cho dữ liệu doanh nghiệp.
   - Khung soạn thảo hỗ trợ dung lượng lớn (đã kiểm chứng trên 100.000 ký tự).
 
 ### 1.2. Mục tiêu
@@ -45,7 +45,7 @@ flowchart TD
         PartitionGPT["Partition: persist:codex-web-gpt-chatgpt"]
         PartitionM365["Partition: persist:codex-web-m365"]
         TabGPT["Tabs chatgpt.com"]
-        TabM365["Tabs m365.cloud.microsoft (Temporary Chat)"]
+        TabM365["Tabs m365.cloud.microsoft (Stateful Session)"]
     end
 
     VSCode --> Router
@@ -77,7 +77,7 @@ Triển khai mới theo đúng hợp đồng `ProviderAdapter` trong [src/adapte
 - Kết nối tới cổng CDP do Launcher cung cấp.
 - Quản lý vòng đời tab:
   - Kiểm tra trạng thái đăng nhập tài khoản M365.
-  - Đảm bảo chế độ **Temporary Chat** luôn bật (`button[aria-label="Temporary chat"]`).
+  - Duy trì một phiên chat stateful riêng cho từng conversation key.
   - Xóa sạch nội dung cũ trong editor `#m365-chat-editor-target-element`.
   - Bơm văn bản mới thông qua sự kiện dán nguyên tử `ClipboardEvent("paste")`.
   - Kích hoạt nút gửi qua chuỗi sự kiện con trỏ: `pointerdown ➔ mousedown ➔ pointerup ➔ mouseup ➔ click` trên `.fai-SendButton`.
@@ -161,7 +161,7 @@ gantt
     dateFormat  YYYY-MM-DD
     section Giai đoạn 1: Core Adapter
     Tạo module src/adapters/m365-copilot/          :done, 2026-09-30, 1d
-    browser-worker.ts (CDP + Temporary Chat)       :active, 2026-09-30, 2d
+    browser-worker.ts (CDP + Stateful Session)     :active, 2026-09-30, 2d
     title-guard & prompt optimizer                 :2026-10-01, 1d
 
     section Giai đoạn 2: Model & Routing
@@ -183,7 +183,7 @@ gantt
 #### **Giai đoạn 1: Xây dựng Module Adapter M365 (`src/adapters/m365-copilot/`)**
 - [ ] Tạo `src/adapters/m365-copilot/index.ts` tuân thủ interface `ProviderAdapter`.
 - [ ] Tạo `src/adapters/m365-copilot/browser-worker.ts` điều khiển Playwright CDP gắn vào tab M365.
-- [ ] Tích hợp cơ chế tự động bật Temporary Chat và dán văn bản siêu tốc bằng `ClipboardEvent`.
+- [ ] Tích hợp cơ chế duy trì stateful session và dán văn bản siêu tốc bằng `ClipboardEvent`.
 - [ ] Tích hợp chuỗi sự kiện con trỏ PointerEvents trên nút `.fai-SendButton`.
 - [ ] Tích hợp `title-guard.ts` xử lý tức thì yêu cầu Title ngầm của Codex.
 
@@ -212,5 +212,5 @@ gantt
    - Việc thêm M365 không làm thay đổi hay gãy bất kỳ tính năng nào của ChatGPT Web gốc.
    - Toàn bộ các bài test hiện có (`bun test` hoặc `npm test`) của `codex-chatgpt-web` vẫn pass 100%.
 3. **Bảo mật & Riêng tư**:
-   - Phiên chat M365 luôn chạy ở chế độ **Temporary Chat**, không lưu vết hay làm rác lịch sử tài khoản ngân hàng.
+   - Phiên chat M365 chạy stateful trong surface riêng của Launcher để giữ ngữ cảnh giữa các tool roundtrip.
    - Phiên làm việc chạy trong phân vùng cô lập, không đọc/ghi dữ liệu trình duyệt cá nhân.

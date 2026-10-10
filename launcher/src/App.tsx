@@ -1166,9 +1166,6 @@ function SetupSurface({
   const setZeroRiskPro = (enabled: boolean) => run(async () => {
     updateState(await api!.setZeroRiskPro(enabled));
   });
-  const setM365TemporaryChatPerRequest = (enabled: boolean) => run(async () => {
-    updateState(await api!.setM365TemporaryChatPerRequest(enabled));
-  });
 
   return (
     <ContentSurface
@@ -1215,22 +1212,6 @@ function SetupSurface({
             repeatable={true}
             title="Run browser smoke test (M365)"
           />
-          <div className="setup-row">
-            <span className="setup-index"><Icon name="settings" /></span>
-            <div className="setup-row-copy">
-              <div className="setup-row-heading">
-                <strong>{copy.m365TemporaryChat}</strong>
-              </div>
-              <p>{copy.m365TemporaryChatBody}</p>
-            </div>
-            <div className="setup-actions">
-              <Switch
-                checked={Boolean(snapshot.state.m365TemporaryChatPerRequest)}
-                disabled={globalActionDisabled}
-                onChange={(checked) => void setM365TemporaryChatPerRequest(checked)}
-              />
-            </div>
-          </div>
         </div>
 
         {/* ── ChatGPT Setup Section ── */}
@@ -1778,17 +1759,6 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const setM365TemporaryChatPerRequest = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setM365TemporaryChatPerRequest(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
   const setUseSavedChats = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -1948,13 +1918,6 @@ function SettingsSurface({
             checked={snapshot.state.useSavedChats}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(checked) => void setUseSavedChats(checked)}
-          />
-        </SettingRow>
-        <SettingRow body={copy.m365TemporaryChatBody} label={copy.m365TemporaryChat}>
-          <Switch
-            checked={Boolean(snapshot.state.m365TemporaryChatPerRequest)}
-            disabled={busy}
-            onChange={(checked) => void setM365TemporaryChatPerRequest(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

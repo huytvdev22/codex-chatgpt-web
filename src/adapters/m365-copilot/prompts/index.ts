@@ -34,7 +34,6 @@ export {
 export {
   truncateToolResult,
   compileM365Prompt,
-  compileM365HybridForwardPrompt,
   isPlanModeRequest,
   isImplementingPlanRequest,
 } from "./assembler";

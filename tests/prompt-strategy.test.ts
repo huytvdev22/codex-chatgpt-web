@@ -8,11 +8,15 @@ import {
   UNIFIED_TOOL_PROTOCOL,
 } from "../src/adapters/m365-copilot/prompt-strategy";
 import {
-  compileM365HybridForwardPrompt,
-  compileM365HybridForwardPromptWithResult,
   isPlanModeRequest,
-} from "../src/adapters/m365-copilot/temp-chat/compileHybridForwardPrompt";
+} from "../src/adapters/m365-copilot/prompts/index";
 import type { CodexParsedRequest } from "../src/types";
+
+function compileStatefulPrompt(parsed: CodexParsedRequest, rawBody?: unknown) {
+  const payload = CodexRawPayload.from(rawBody || parsed._rawBody || parsed);
+  const normalized = CodexPayloadNormalizer.normalize(payload);
+  return promptCompiler.compile({ normalized, parsed, isNewConversation: true });
+}
 
 describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
   const sampleRaw: CodexRawRequestWire = {
@@ -143,7 +147,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     expect(isPlanModeRequest(mockParsed)).toBe(false);
 
-    const result = compileM365HybridForwardPromptWithResult(mockParsed, sampleRaw);
+    const result = compileStatefulPrompt(mockParsed, sampleRaw);
     expect(result.collaborationMode).toBe("default");
     expect(result.isPlanMode).toBe(false);
     // TUYỆT ĐỐI KHÔNG chứa cảnh báo cấm sửa file của Plan Mode
@@ -170,7 +174,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
       _rawBody: sampleRaw,
     };
 
-    const finalPrompt = compileM365HybridForwardPrompt(mockParsed, sampleRaw);
+    const finalPrompt = compileStatefulPrompt(mockParsed, sampleRaw).finalPrompt;
     expect(finalPrompt).not.toContain("<permissions instructions>");
     expect(finalPrompt).not.toContain("Escalation Requests");
   });
@@ -184,7 +188,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
       _rawBody: sampleRaw,
     };
 
-    const result = compileM365HybridForwardPromptWithResult(mockParsed, sampleRaw);
+    const result = compileStatefulPrompt(mockParsed, sampleRaw);
 
     // Format tool chuẩn duy nhất
     expect(result.finalPrompt).toContain(UNIFIED_TOOL_PROTOCOL);
@@ -227,7 +231,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
       _rawBody: sampleRaw,
     };
 
-    const planResult = compileM365HybridForwardPromptWithResult(mockImplementingPlanParsed, sampleRaw);
+    const planResult = compileStatefulPrompt(mockImplementingPlanParsed, sampleRaw);
     expect(planResult.isImplementingPlan).toBe(true);
     expect(planResult.finalPrompt).toContain("[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]");
     expect(planResult.finalPrompt).toContain("apply_patch");

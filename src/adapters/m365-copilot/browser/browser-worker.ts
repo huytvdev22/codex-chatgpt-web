@@ -22,7 +22,6 @@ export interface M365BrowserRunOptions {
   shouldStop?: () => boolean;
   modelSlug?: string;
   traceContext?: TraceContext;
-  forceTemporaryChat?: boolean;
   images?: NormalizedImageAttachment[];
 }
 
@@ -124,13 +123,12 @@ export async function executeM365Turn(
       await page.goto("https://m365.cloud.microsoft/chat", { waitUntil: "domcontentloaded", timeout: 20_000 });
     }
 
-    // 2. Kiểm tra chế độ Temporary Chat Per Request
-    const isTemporaryMode = Boolean(options.forceTemporaryChat || descriptor.m365TemporaryChatPerRequest);
-    const shouldStartNewChat = isTemporaryMode || options.isNewConversation || (
+    // 2. Mở chat mới khi bắt đầu conversation khác; các turn sau tiếp tục trên cùng phiên stateful.
+    const shouldStartNewChat = Boolean(options.isNewConversation) || Boolean(
       options.conversationKey && activeM365ConversationKey && options.conversationKey !== activeM365ConversationKey
     );
 
-    console.log(`[m365-worker] Trạng thái phiên: isTemporaryMode=${isTemporaryMode}, shouldStartNewChat=${shouldStartNewChat}`);
+    console.log(`[m365-worker] Trạng thái phiên stateful: shouldStartNewChat=${shouldStartNewChat}`);
 
     if (shouldStartNewChat) {
       // 2.1. Nếu URL đang lưu thread cũ (/chat/c/...), điều hướng thẳng về /chat để mở phiên trắng
@@ -151,34 +149,10 @@ export async function executeM365Turn(
           return;
         }
 
-        // Hoặc tắt rồi bật lại Temporary Chat để làm mới phiên
-        const tempBtn = document.querySelector('button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]') as HTMLButtonElement | null;
-        if (tempBtn) {
-          tempBtn.click();
-          setTimeout(() => {
-            if (tempBtn.getAttribute("aria-pressed") !== "true") {
-              tempBtn.click();
-            }
-          }, 200);
-        }
       }).catch(() => { });
 
       // Chờ giao diện ổn định sau khi kích hoạt new chat
       await new Promise(r => setTimeout(r, 400));
-
-      // Bật Temporary Chat nếu ở chế độ Temporary Mode
-      if (isTemporaryMode) {
-        await page.evaluate(() => {
-          const tempBtn = document.querySelector(
-            'button[aria-label*="Temporary chat" i], button[aria-label*="Cuộc trò chuyện tạm thời" i]'
-          ) as HTMLButtonElement | null;
-          if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
-            tempBtn.click();
-            tempBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-          }
-        }).catch(() => { });
-        await new Promise(r => setTimeout(r, 300));
-      }
 
       activeM365ConversationKey = options.conversationKey || null;
     } else if (options.conversationKey) {
@@ -188,14 +162,6 @@ export async function executeM365Turn(
     // 3. Chờ khung nhập liệu xuất hiện
     const editorSelector = M365_CHAT_EDITOR_SELECTOR;
     await page.waitForSelector(editorSelector, { timeout: 15_000 });
-
-    // Đảm bảo Temporary Chat được bật nếu người dùng chưa bật
-    await page.evaluate(() => {
-      const tempBtn = document.querySelector('button[aria-label="Temporary chat"]') as HTMLButtonElement | null;
-      if (tempBtn && tempBtn.getAttribute("aria-pressed") !== "true") {
-        tempBtn.click();
-      }
-    }).catch(() => { });
 
     // 3.1. Đảm bảo model mong muốn (Capability Mode) được chọn trên giao diện M365 Copilot
     if (options.modelSlug) {

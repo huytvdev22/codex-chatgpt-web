@@ -33,7 +33,6 @@ export interface LauncherState {
   mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
   selectedProvider: "m365" | "chatgpt";
-  m365TemporaryChatPerRequest: boolean;
 }
 
 export interface BrowserState {
@@ -215,7 +214,6 @@ export interface LauncherApi {
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
-  setM365TemporaryChatPerRequest(enabled: boolean): Promise<LauncherState>;
   setUseSavedChats(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{

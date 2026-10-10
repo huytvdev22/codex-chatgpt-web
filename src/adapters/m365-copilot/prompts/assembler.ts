@@ -247,18 +247,3 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
 
   return finalPrompt;
 }
-
-export {
-  compileM365HybridForwardPrompt,
-  compileM365HybridForwardPromptWithResult,
-  renderDynamicToolDeclarations,
-  UNIFIED_TOOL_PROTOCOL,
-  MINIMAL_TOOL_PROTOCOL,
-  promptCompiler,
-  logPromptMetrics,
-  logPromptAudit,
-} from "../temp-chat";
-
-
-
-

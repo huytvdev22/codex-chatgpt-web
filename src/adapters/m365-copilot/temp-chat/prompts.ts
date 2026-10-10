@@ -1,5 +1,5 @@
 /**
- * Chỉ thị bắt buộc định dạng đầu ra cho chế độ Temporary Chat Per Request
+ * Chỉ thị bắt buộc định dạng đầu ra cho transport M365.
  * Yêu cầu M365 Copilot gói toàn bộ phản hồi vào duy nhất 1 khối code block 4-backtick ````markdown
  */
 export const MANDATORY_4_BACKTICK_MARKDOWN_PROMPT = `[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]:

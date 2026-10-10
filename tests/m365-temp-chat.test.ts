@@ -1,11 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { stripOuterCodeFence } from "../src/adapters/m365-copilot/temp-chat/stripCodeFence";
 import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
-import { compileM365HybridForwardPrompt } from "../src/adapters/m365-copilot/temp-chat/compileHybridForwardPrompt";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
-import type { CodexParsedRequest } from "../src/types";
 
-describe("Temporary Chat 4-Backtick Fast-Path Specification Tests", () => {
+describe("M365 4-Backtick Transport Specification Tests", () => {
   const translator = new M365OutputTranslator([new PatchToolCallDetector(), new XmlToolCallDetector()]);
 
   describe("stripOuterCodeFence unit tests", () => {
@@ -114,52 +112,6 @@ public class App {
         expect(result.content.startsWith("````")).toBe(false);
         expect(result.content.endsWith("````")).toBe(false);
       }
-    });
-  });
-
-  describe("compileM365HybridForwardPrompt", () => {
-    it("luôn đính kèm chỉ thị 4-backtick ở cuối cùng của prompt", () => {
-      const dummyRequest: CodexParsedRequest = {
-        modelId: "gpt-4o",
-        stream: true,
-        options: {},
-        context: {
-          messages: [
-            { role: "user", content: "Viết giúp tôi một đoạn code Java", timestamp: Date.now() }
-          ],
-        },
-      };
-
-      const prompt = compileM365HybridForwardPrompt(dummyRequest);
-      expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]");
-      expect(prompt).toContain("4 dấu backtick");
-      expect(prompt).toContain("<m365Response>");
-      expect(prompt.endsWith("Nếu gọi tool, bên trong envelope chỉ được chứa các tool call hoàn chỉnh và không được chèn lời dẫn.")).toBe(true);
-    });
-
-    it("kích hoạt Plan Mode và tiêm MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT khi raw request có marker Plan Mode", () => {
-      const planRequest: CodexParsedRequest = {
-        modelId: "gpt-4o",
-        stream: true,
-        options: {},
-        context: {
-          messages: [
-            { role: "user", content: "## My request:\nHãy lên kế hoạch chi tiết từng bước để xây dựng một REST API Todos", timestamp: Date.now() }
-          ],
-        },
-      };
-      const rawBody = {
-        input: [
-          { role: "developer", content: "<collaboration_mode># Plan Mode (Conversational)\n..." },
-          { role: "user", content: "Hãy lên kế hoạch chi tiết" },
-        ],
-      };
-
-      const prompt = compileM365HybridForwardPrompt(planRequest, rawBody);
-      expect(prompt).toContain("[CHẾ ĐỘ LẬP KẾ HOẠCH - CODEX PLAN MODE ĐANG BẬT]");
-      expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC - CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE)]");
-      expect(prompt).toContain("<proposed_plan>");
-      expect(prompt).toContain("</proposed_plan>");
     });
   });
 
