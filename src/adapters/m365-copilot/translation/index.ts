@@ -18,6 +18,15 @@ export {
 } from "./toolcall-detector";
 
 export {
+  parseStrictM365Response,
+  M365_RESPONSE_OPEN_TAG,
+  M365_RESPONSE_CLOSE_TAG,
+  type M365ProtocolErrorCode,
+  type StrictM365ToolCall,
+  type StrictM365ResponseResult,
+} from "./strict-response-parser";
+
+export {
   BashCommandTranslator,
   stripShellPrefix,
   CatRule,
@@ -48,4 +57,3 @@ export {
 
 export * from "./detectors";
 export * from "./log-masker";
-

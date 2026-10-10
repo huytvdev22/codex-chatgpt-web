@@ -6,8 +6,12 @@ import {
   type StrategyResolveOptions,
 } from "./command-strategies";
 import { SafeCommandGuard } from "./safe-command-guard";
+import { normalizeM365ToolArguments } from "./argument-normalizer";
+import { decodeM365Content } from "./content-decoder";
+import { validateM365ToolCall } from "./tool-validator";
 
 export { SafeCommandGuard } from "./safe-command-guard";
+export { normalizeFileContent, type NormalizeFileContentOptions } from "./content-decoder";
 export * from "./command-strategies";
 
 export interface M365RawToolCall {
@@ -30,107 +34,6 @@ type ToolHandler = (
 ) => { name: string; args: Record<string, any> };
 
 import { AtomicFileWriter, defaultAtomicFileWriter } from "./atomic-file-writer";
-
-export interface NormalizeFileContentOptions {
-  unescapeNewlines?: boolean;
-  targetPath?: string;
-  preserveExact?: boolean;
-}
-
-/**
- * Chuẩn hóa nội dung mã nguồn trước khi ghi file (Tuân thủ Single Responsibility Principle - SOLID):
- * - Đối với tài liệu Markdown (.md, .markdown), YAML, JSON, TXT: BẢO TOÀN 100% BYTE-FOR-BYTE!
- *   Không được làm biến đổi ký tự escape (\[, \], \*, \_) hay dấu \ ở cuối dòng Markdown (hard line break).
- * - Đối với file mã nguồn JavaScript/TypeScript:
- *   1. Khôi phục các ký tự bị Turndown vô tình escape trong code: \[ -> [, \* -> *
- *   2. Khử dấu gạch chéo thừa ở dòng trống
- *   3. Khử dấu gạch chéo thừa ở cuối mỗi dòng
- *   4. Tự động chuyển đổi literal \n, \r, \t thành ký tự điều khiển thực tế khi chuỗi là 1 dòng duy nhất
- */
-export function normalizeFileContent(
-  content: string,
-  optionsOrUnescape: boolean | string | NormalizeFileContentOptions = true
-): string {
-
-  const options: NormalizeFileContentOptions = typeof optionsOrUnescape === "boolean"
-    ? { unescapeNewlines: optionsOrUnescape }
-    : typeof optionsOrUnescape === "string"
-      ? { targetPath: optionsOrUnescape }
-      : optionsOrUnescape;
-
-  if (typeof content !== "string") {
-    return String(content ?? "");
-  }
-
-  // 1. Kiểm tra nếu là file tài liệu (Markdown, YAML, JSON, text) hoặc có cờ preserveExact
-  const targetPath = (options.targetPath || "").toLowerCase();
-  const isDocumentOrData = Boolean(options.preserveExact) ||
-    targetPath.endsWith(".md") ||
-    targetPath.endsWith(".markdown") ||
-    targetPath.endsWith(".json") ||
-    targetPath.endsWith(".yaml") ||
-    targetPath.endsWith(".yml") ||
-    targetPath.endsWith(".toml") ||
-    targetPath.endsWith(".txt") ||
-    targetPath.endsWith(".csv");
-
-  if (isDocumentOrData) {
-    // Bảo toàn 100% byte-for-byte cho tài liệu và dữ liệu!
-    // Chỉ unescape literal \n khi chuỗi là một dòng duy nhất chứa literal \n và KHÔNG có newline thực sự
-    if (options.unescapeNewlines !== false && content.includes("\\n") && !content.includes("\n")) {
-      return content.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
-    }
-    return content;
-  }
-
-  // 2. Với các file code (.js, .ts, .java,...), nếu AI yêu cầu không unescape thì giữ nguyên
-  if (options.unescapeNewlines === false) {
-    return content;
-  }
-
-  let result = content;
-
-  // 1. Khôi phục các ký tự bị Turndown/Markdown escape trong mã nguồn (\[, \], \{, \}, \*, \_, \~)
-  result = result.replace(/\\([\[\]{}*_~])/g, "$1");
-
-  // 2. Khử dấu gạch chéo thừa ở dòng trống (dòng chỉ chứa khoảng trắng và dấu \)
-  result = result.replace(/^[ \t]*\\+[ \t]*(\r?\n|$)/gm, "$1");
-
-  // 3. Khử dấu gạch chéo thừa ở cuối mỗi dòng (cho phép khoảng trắng trước và sau \, hỗ trợ cả CRLF và LF)
-  result = result.replace(/\\+[ \t]*(\r?\n)/g, "$1");
-
-  // 4. Khử dấu gạch chéo thừa trước literal \n
-  result = result.replace(/\\+[ \t]*\\n/g, "\\n");
-
-  // 5. Nếu chuỗi chứa literal \n, chuyển đổi thành ký tự điều khiển thực tế
-  if (result.includes("\\n")) {
-    result = result.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
-  }
-
-  // 6. Quét lại lần nữa để khử bất kỳ trailing backslash nào sau khi bung literal \n
-  result = result.replace(/\\+[ \t]*(\r?\n)/g, "$1");
-
-  // 7. Khử dấu \ ở cuối file nếu dòng cuối cùng kết thúc bằng \
-  result = result.replace(/\\+[ \t]*$/g, "");
-
-  // 8. Tự động phục hồi các thẻ HTML bị biến dạng/cắt cụt nếu là file markup (.html, .htm, .xml, .svg)
-  if (targetPath.endsWith(".html") || targetPath.endsWith(".htm") || targetPath.endsWith(".xml") || targetPath.endsWith(".svg")) {
-    result = result.replace(
-      /^([ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[sS]cript>?/gm,
-      "$1<script src=\"$2\"></script>"
-    );
-    result = result.replace(
-      /^([ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[aA]tch$/gm,
-      "$1<script src=\"$2\"></script>"
-    );
-    result = result.replace(
-      /^([ \t]*)(?:<link\s+[^>\n]*href=["'\s]*)?([a-zA-Z0-9_./-]+\.css)(?:["'\s]*>)?(?:<\/)?[lL]ink>?/gm,
-      "$1<link rel=\"stylesheet\" href=\"$2\">"
-    );
-  }
-
-  return result;
-}
 
 export interface RequestUserInputOption {
   label: string;
@@ -280,19 +183,21 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   run_command: (args, strategy) => {
-    const cmd = args.cmd || args.command || "";
+    const cmd = String(args.cmd || args.command || "");
+    const validation = SafeCommandGuard.validateShellCommand(cmd);
+    const platform = strategy?.platformName === "posix" ? "posix" : "powershell";
+    const finalCmd = validation.allowed
+      ? cmd
+      : SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
     return {
       name: "exec_command",
-      args: { cmd: strategy.runCommand(String(cmd)) },
+      args: { cmd: strategy.runCommand(finalCmd) },
     };
   },
 
   write_file: (args, strategy) => {
     const targetPath = String(args.path || args.file || "");
-    const rawContent = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "");
-    // Cho phép AI quyết định khi nào cần unescape ký tự xuống dòng (mặc định là true nếu không bị cấm)
-    const shouldUnescape = args.unescape_newlines !== false && args.unescape !== false;
-    const content = normalizeFileContent(rawContent, { unescapeNewlines: shouldUnescape, targetPath });
+    const content = decodeM365Content(args.content, { encoding: String(args.content_encoding || "plain") });
     const contentBuffer = Buffer.from(content, "utf8");
 
     // Nếu nội dung dài (> 1024 bytes), sử dụng file staging an toàn để loại bỏ hoàn toàn
@@ -440,21 +345,19 @@ export class M365ToolBridge {
     options?: MapToolCallOptions | PlatformCommandStrategy
   ): M365MappedToolCall {
 
-    // Tự động gọt bỏ tiền tố functions. nếu M365 sinh ra theo namespace cũ
-    let toolName = raw.name;
-    if (typeof toolName === "string" && toolName.startsWith("functions.")) {
-      toolName = toolName.slice("functions.".length);
+    const normalized = normalizeM365ToolArguments(raw.name, raw.arguments);
+    const toolName = normalized.name;
+    let parsedArgs: Record<string, any> = normalized.arguments;
+    if (toolName === "write_file") {
+      parsedArgs.content = decodeM365Content(parsedArgs.content, {
+        encoding: String(parsedArgs.content_encoding || "plain"),
+      });
+      delete parsedArgs.content_encoding;
     }
-    let parsedArgs: Record<string, any> = {};
 
-    if (typeof raw.arguments === "string") {
-      try {
-        parsedArgs = JSON.parse(raw.arguments);
-      } catch {
-        parsedArgs = {};
-      }
-    } else if (raw.arguments && typeof raw.arguments === "object") {
-      parsedArgs = raw.arguments as Record<string, any>;
+    const validation = validateM365ToolCall(toolName, parsedArgs, clientTools);
+    if (!validation.ok) {
+      throw new Error(`[M365 Tool Validation Error] ${validation.code}: ${validation.message}`);
     }
 
     const hasExactTool = clientTools.some((t) => t.name === toolName || t.name === raw.name);
@@ -519,10 +422,8 @@ export class M365ToolBridge {
     // Nếu client đã có sẵn công cụ trùng tên (và không phải read_file hay apply_patch), giữ nguyên
     if (hasExactTool && toolName !== "read_file" && toolName !== "apply_patch") {
       if (toolName === "write_file") {
-        const targetPath = String(parsedArgs.path || parsedArgs.file || "");
-        const rawContent = typeof parsedArgs.content === "string" ? parsedArgs.content : JSON.stringify(parsedArgs.content ?? "");
-        const shouldUnescape = parsedArgs.unescape_newlines !== false && parsedArgs.unescape !== false;
-        parsedArgs.content = normalizeFileContent(rawContent, { unescapeNewlines: shouldUnescape, targetPath });
+        // Nội dung đã được decode đúng một lần trước validation.
+        parsedArgs.content = String(parsedArgs.content);
       }
       if (toolName === "request_user_input") {
         parsedArgs = normalizeRequestUserInputArgs(parsedArgs);

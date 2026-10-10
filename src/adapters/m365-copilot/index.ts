@@ -2,11 +2,11 @@
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
-import { compileM365Prompt, compileM365HybridForwardPrompt, promptCompiler } from "./prompts/index";
+import { compileM365Prompt, compileM365HybridForwardPrompt, promptCompiler, buildM365FormatRetryPrompt } from "./prompts/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
 import { executeM365Turn } from "./browser";
-import { M365ToolCallDetector, M365OutputTranslator, maskArgumentsForLog } from "./translation";
-import { M365ToolBridge } from "./tools";
+import { parseStrictM365Response, maskArgumentsForLog, type StrictM365ResponseResult } from "./translation";
+import { M365ToolBridge, normalizeM365ToolArguments, validateM365ToolCall } from "./tools";
 import {
   conversationGuard,
   cleanExpiredConversationGuards,
@@ -63,7 +63,6 @@ function extractClientShell(parsed: CodexParsedRequest): string | undefined {
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
   private lastConversationKey?: string;
-  private readonly translator = new M365OutputTranslator();
 
   constructor(readonly options?: { enableTitleGuard?: boolean }) { }
 
@@ -216,48 +215,93 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
     // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
-      const toolDetector = new M365ToolCallDetector({ renderThinkingInText: true });
+      // Toàn bộ response bị quarantine cho tới khi strict parser xác nhận envelope hoàn chỉnh.
+      // Không stream trực tiếp để response lỗi format không thể rò rỉ sang Codex UI.
       let streamedAnyText = false;
+      const configuredRetries = Number.parseInt(process.env.M365_FORMAT_MAX_RETRIES || "3", 10);
+      const maxFormatRetries = Number.isFinite(configuredRetries) && configuredRetries >= 0
+        ? Math.min(configuredRetries, 10)
+        : 3;
+      let attemptPrompt = promptToSend;
+      let totalPromptChars = compiledPrompt.length;
+      let reply = "";
+      let protocolResult: StrictM365ResponseResult | null = null;
 
-      const reply = await executeM365Turn(promptToSend, {
-        onChunk: (delta) => {
-          const safeText = toolDetector.feed(delta);
-          if (safeText) {
-            streamedAnyText = true;
-            emit({ type: "text_delta", text: safeText });
+      for (let formatAttempt = 0; formatAttempt <= maxFormatRetries; formatAttempt++) {
+        reply = await executeM365Turn(attemptPrompt, {
+          // Quarantine: browser vẫn thu thập stream nhưng adapter không emit trước validation.
+          onChunk: () => { },
+          signal: incoming.abortSignal,
+          traceId: incoming.headers.get("x-codex-trace-id") || undefined,
+          conversationKey,
+          isNewConversation: isTemporaryPerRequest ? true : (formatAttempt === 0 ? isNewConversation : false),
+          forceTemporaryChat: isTemporaryPerRequest,
+          modelSlug: parsed.modelId,
+          traceContext,
+          images: formatAttempt === 0 || isTemporaryPerRequest ? normalized.images : [],
+        });
+
+        protocolResult = parseStrictM365Response(reply);
+        if (protocolResult.kind === "tool_calls") {
+          const clientTools = parsed.context.tools || [];
+          for (const call of protocolResult.calls) {
+            const normalizedCall = normalizeM365ToolArguments(call.name, call.arguments);
+            const validation = validateM365ToolCall(normalizedCall.name, normalizedCall.arguments, clientTools);
+            if (!validation.ok) {
+              protocolResult = {
+                kind: "protocol_error",
+                code: "INVALID_TOOL_CALL",
+                message: `${validation.code}: ${validation.message}`,
+                rawResponse: reply,
+              };
+              break;
+            }
           }
-        },
-        signal: incoming.abortSignal,
-        traceId: incoming.headers.get("x-codex-trace-id") || undefined,
-        conversationKey,
-        isNewConversation: isTemporaryPerRequest ? true : isNewConversation,
-        forceTemporaryChat: isTemporaryPerRequest,
-        modelSlug: parsed.modelId,
-        traceContext,
-        images: normalized.images,
-      });
+        }
+        if (protocolResult.kind !== "protocol_error") break;
 
-      const { remainingText, toolCall } = toolDetector.finish();
-      let detectedToolCalls: Array<{ id?: string; name: string; arguments: any }> = [];
+        emitStructuredEvent({
+          level: "warning",
+          event: "m365.response.format_retry",
+          traceContext,
+          safeDetails: {
+            attempt: formatAttempt + 1,
+            maxAttempts: maxFormatRetries + 1,
+            code: protocolResult.code,
+            message: protocolResult.message,
+          },
+          diagnosticDetails: {
+            responseChars: reply.length,
+          },
+        });
 
-      // Ưu tiên kiểm tra qua M365OutputTranslator để hỗ trợ đầy đủ JSON, XML, Bash và Parallel Tool Calls
-      const fullContent = reply || remainingText;
-      const translated = this.translator.translate(fullContent);
-      if (translated.type === "tool_call" && translated.tool_calls.length > 0) {
-        detectedToolCalls = translated.tool_calls.map(tc => ({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: tc.function.arguments,
-        }));
-      } else if (toolCall || toolDetector.getToolCall()) {
-        const single = (toolCall || toolDetector.getToolCall())!;
-        detectedToolCalls = [{
-          name: single.name,
-          arguments: single.arguments,
-        }];
+        if (formatAttempt >= maxFormatRetries) {
+          throw new Error(
+            `[M365 Format Error] Đã hủy response sau ${maxFormatRetries + 1} lần vì sai protocol (${protocolResult.code}): ${protocolResult.message}`
+          );
+        }
+
+        const retryInstruction = buildM365FormatRetryPrompt({
+          code: protocolResult.code,
+          message: protocolResult.message,
+        });
+        // Temporary Chat tạo chat mới mỗi request nên phải gửi lại prompt gốc kèm chỉ thị sửa format.
+        // Stateful Chat chỉ cần follow-up ngắn trong cùng conversation.
+        attemptPrompt = isTemporaryPerRequest
+          ? `${promptToSend}\n\n${retryInstruction}`
+          : retryInstruction;
+        totalPromptChars += attemptPrompt.length;
       }
 
-      const inputTokens = Math.ceil(compiledPrompt.length / 4);
+      if (!protocolResult || protocolResult.kind === "protocol_error") {
+        throw new Error("[M365 Format Error] Không nhận được response protocol hợp lệ.");
+      }
+
+      const detectedToolCalls: Array<{ id?: string; name: string; arguments: any }> =
+        protocolResult.kind === "tool_calls" ? protocolResult.calls : [];
+      const finalContent = protocolResult.kind === "final_answer" ? protocolResult.content : "";
+
+      const inputTokens = Math.ceil(totalPromptChars / 4);
       const outputTokens = Math.ceil((reply.length || 10) / 4);
       const usage = {
         inputTokens,
@@ -409,29 +453,6 @@ export class M365CopilotAdapter implements ProviderAdapter {
           return;
         }
 
-        // Cognitive Loop: Phát khối suy nghĩ nội tâm (thinking) và lời dẫn dắt (narrative) trước tool calls
-        if (translated.thinking && !streamedAnyText) {
-          console.log(`[M365 COGNITIVE] emit thinking: ${translated.thinking.slice(0, 100)}...`);
-          emit({ type: "thinking_delta", thinking: translated.thinking });
-        }
-
-        if (!streamedAnyText) {
-          let preToolText = "";
-          if (translated.thinking) {
-            preToolText += `💭 ${translated.thinking.trim()}\n\n`;
-          }
-          if (translated.narrative) {
-            preToolText += translated.narrative;
-          } else if (remainingText) {
-            preToolText += remainingText;
-          }
-          if (preToolText) {
-            console.log(`[M365 COGNITIVE] emit pre-tool text: ${preToolText.slice(0, 100)}...`);
-            emit({ type: "text_delta", text: preToolText });
-            streamedAnyText = true;
-          }
-        }
-
         if (!markTurnConsumed()) {
           console.warn(`[M365 TOOL] Lượt này đã được consume trước đó. Bỏ qua tool emit trùng lặp.`);
           return;
@@ -459,8 +480,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
             terminalReason: "tool_calls_emitted",
             terminalExplanation: `Bridge Server đã phát lệnh gọi ${detectedToolCalls.length} công cụ về Codex: ${mappedCalls.map(c => c.mapped.name).join(", ")}. Codex sẽ tiếp tục thực thi và mở lượt tiếp theo.`,
             toolCount: detectedToolCalls.length,
-            thinking: translated.thinking ? true : false,
-            narrative: translated.narrative ? true : false,
+            thinking: false,
+            narrative: false,
             toolCalls: mappedCalls.map(c => ({
               id: c.callId,
               name: c.mapped.name,
@@ -493,31 +514,10 @@ export class M365CopilotAdapter implements ProviderAdapter {
         return;
       }
 
-      // Xử lý nhánh Final Answer: Phát thinking (nếu có) trước khi phát text kết luận nếu chưa từng stream text
-      if (translated.thinking && !streamedAnyText) {
-        console.log(`[M365 COGNITIVE] emit final answer thinking: ${translated.thinking.slice(0, 100)}...`);
-        emit({ type: "thinking_delta", thinking: translated.thinking });
-      }
-
-      if (streamedAnyText) {
-        // Đã stream realtime qua onChunk: chỉ xả phần text dở dang còn sót lại trong buffer (nếu có)
-        // Tuyệt đối không emit lại toàn bộ finalText để tránh nhân đôi câu trả lời trên Codex UI
-        if (remainingText) {
-          emit({ type: "text_delta", text: remainingText });
-        }
-      } else {
-        // Fallback an toàn: Nếu chưa từng stream chunk nào qua onChunk, emit toàn bộ câu trả lời hoàn chỉnh
-        let finalText = translated.type === "final_answer" ? translated.content : (remainingText || fullContent);
-        finalText = finalText.replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "").trim();
-        if (translated.thinking && !finalText.includes("💭")) {
-          finalText = `💭 ${translated.thinking.trim()}\n\n${finalText}`;
-        }
-        if (finalText) {
-          emit({ type: "text_delta", text: finalText });
-          streamedAnyText = true;
-        } else {
-          emit({ type: "text_delta", text: "" });
-        }
+      // Chỉ emit sau khi toàn bộ m365Response đã được strict parser xác nhận hợp lệ.
+      if (finalContent) {
+        emit({ type: "text_delta", text: finalContent });
+        streamedAnyText = true;
       }
 
       // Đảm bảo Responses stream có ít nhất 1 chunk text nếu không có tool calls
@@ -529,18 +529,8 @@ export class M365CopilotAdapter implements ProviderAdapter {
       if (conversationKey) {
         conversationGuard.delete(conversationKey);
       }
-      const isSuspiciousFallback = Boolean(translated.parseDiagnostics?.suspiciousToolDetected);
-      const terminalReason = isSuspiciousFallback
-        ? "parse_failed_fallback_final_answer"
-        : (translated.parseDiagnostics?.terminalReason || "model_final_answer");
-
-      const terminalExplanation = isSuspiciousFallback
-        ? `CẢNH BÁO: M365 có sinh khối công cụ nhưng parser bị lỗi JSON (${translated.parseDiagnostics?.warningMessage || "cú pháp hỏng"}), dẫn đến bị fallback sang văn bản thường làm Codex dừng lại.`
-        : (translated.parseDiagnostics?.warningMessage || "M365 Copilot hoàn tất câu trả lời kết luận (Final Answer). Codex dừng chu trình agent và chờ người dùng.");
-
-      if (isSuspiciousFallback) {
-        console.warn(`[m365-adapter] [PARSER-FALLBACK-WARNING] Phát hiện fallback nguy hiểm sang final_answer:`, translated.parseDiagnostics);
-      }
+      const terminalReason = "model_final_answer";
+      const terminalExplanation = "M365 Copilot hoàn tất một m365Response hợp lệ dạng Final Answer. Codex dừng chu trình agent và chờ người dùng.";
       console.log(`[m365-adapter] [turn-completed] terminalReason=${terminalReason} explanation=${terminalExplanation}`);
 
       if (!markTurnConsumed()) {
@@ -549,16 +539,15 @@ export class M365CopilotAdapter implements ProviderAdapter {
       }
 
       emitStructuredEvent({
-        level: isSuspiciousFallback ? "warning" : "info",
+        level: "info",
         event: "m365.turn.completed",
         traceContext,
         safeDetails: {
-          completionType: isSuspiciousFallback ? "parse_failed" : "final_answer",
+          completionType: "final_answer",
           terminalReason,
           terminalExplanation,
-          ...(translated.parseDiagnostics ? { parseDiagnostics: translated.parseDiagnostics } : {}),
           toolCount: 0,
-          finalAnswer: reply || remainingText || "",
+          finalAnswer: finalContent,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
         },
@@ -571,7 +560,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
       });
 
       // [DEBUG PIPELINE] STEP 4: Bridge Server ➔ Codex IDE (OUTGOING SSE / TOOL CALLS)
-      const step4TextContent = (reply || remainingText || "").trim();
+      const step4TextContent = finalContent.trim();
       logDebugPipelineStation(4, "BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)", step4TextContent || "(Phản hồi hoàn tất)");
     } catch (err: unknown) {
       if (conversationKey) {
@@ -627,4 +616,3 @@ export function createM365CopilotAdapter(): ProviderAdapter {
 
   return new M365CopilotAdapter();
 }
-

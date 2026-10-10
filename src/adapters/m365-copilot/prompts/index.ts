@@ -27,6 +27,11 @@ export {
 } from "./compiler";
 
 export {
+  buildM365FormatRetryPrompt,
+  type M365FormatRetryOptions,
+} from "./format-retry";
+
+export {
   truncateToolResult,
   compileM365Prompt,
   compileM365HybridForwardPrompt,

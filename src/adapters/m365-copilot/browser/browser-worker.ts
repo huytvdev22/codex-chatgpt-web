@@ -1036,19 +1036,6 @@ export async function executeM365Turn(
       }
     }
 
-    // Auto-Healing: Nếu patch bị cắt cụt do model dừng sinh giữa chừng, tự động đóng thẻ
-    if (/(?:\\?\*){2,3}\s*Begin Patch/i.test(fullMarkdown) && !/(?:\\?\*){2,3}\s*End Patch/i.test(fullMarkdown)) {
-      console.warn(`[m365-worker] [auto-heal] Phát hiện patch chưa đóng do model dừng sinh giữa chừng. Tự động bổ sung *** End Patch ***.`);
-      const closingPatch = "\n*** End Patch ***\n";
-      fullMarkdown = `${fullMarkdown.trimEnd()}${closingPatch}`;
-      finalDelta = `${finalDelta}${closingPatch}`;
-      if (/<custom_tool_call(?:\s+name=["']apply_patch["'])?[^>]*>/i.test(fullMarkdown) && !/<\/custom_tool_call>/i.test(fullMarkdown)) {
-        const closingTag = "</custom_tool_call>\n";
-        fullMarkdown = `${fullMarkdown}${closingTag}`;
-        finalDelta = `${finalDelta}${closingTag}`;
-      }
-    }
-
     // Đảm bảo có nội dung phản hồi hợp lệ trước khi hoàn tất lượt
     if (!fullMarkdown || !fullMarkdown.trim()) {
       throw new Error(

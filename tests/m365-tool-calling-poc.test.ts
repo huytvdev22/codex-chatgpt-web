@@ -285,7 +285,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     expect(args.content.split("\n").length).toBeGreaterThan(1);
   });
 
-  test("Phase 8: M365ToolBridge automatically unescapes literal \\n in single-line write_file payload", async () => {
+  test("Phase 8: M365ToolBridge preserves literal \\n unless content_encoding explicitly requests decoding", async () => {
     const { PosixCommandStrategy } = await import("../src/adapters/m365-copilot/tool-bridge");
     const singleLineEscaped = "const http = require('http');\\nconst PORT = 3000;\\nconsole.log(PORT);";
     const mapped = M365ToolBridge.mapToolCall({
@@ -297,9 +297,7 @@ describe("M365 Tool Calling PoC Tests", () => {
     const match = parsedArgs.cmd.match(/node -e "[^"]+"\s+"[^"]+"\s+"([^"]+)"/);
     expect(match).not.toBeNull();
     const base64Decoded = Buffer.from(match[1], "base64").toString("utf8");
-    // Phải được unescape thành các dòng mới thực tế
-    expect(base64Decoded).toContain("\n");
-    expect(base64Decoded.split("\n").length).toBe(3);
+    expect(base64Decoded).toBe(singleLineEscaped);
   });
 
   test("Phase 9: normalizeFileContent handles byte 5c 0a (trailing backslash), Turndown \\*, and unescapeNewlines flag", async () => {
@@ -707,4 +705,3 @@ const b = \\{\\
     }
   });
 });
-

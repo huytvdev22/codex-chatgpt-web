@@ -4,6 +4,7 @@ import {
   JsonToolCallDetector,
   XmlToolCallDetector,
   BashCommandDetector,
+  PatchToolCallDetector,
   stripShellPrefix,
   BashCommandTranslator,
   M365AgentLoop,
@@ -12,7 +13,13 @@ import {
 } from "../src/adapters/m365-copilot";
 
 describe("M365 Output Translator Specification Tests", () => {
-  const translator = new M365OutputTranslator();
+  // Explicit legacy detector injection only; production adapter uses strict response protocol.
+  const translator = new M365OutputTranslator([
+    new PatchToolCallDetector(),
+    new JsonToolCallDetector(),
+    new XmlToolCallDetector(),
+    new BashCommandDetector(),
+  ]);
 
   // ==========================================
   // CASE 1: XML Tool Call

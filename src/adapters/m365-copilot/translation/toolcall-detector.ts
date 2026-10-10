@@ -370,9 +370,15 @@ export class M365ToolCallDetector {
    * Yêu cầu 4 & 5: TUYỆT ĐỐI KHÔNG thực thi tool call khi thẻ mở chưa có thẻ đóng
    * hoặc khi JSON arguments chưa hoàn chỉnh!
    */
-  finish(): { remainingText: string; toolCall: ParsedToolCall | null; detectedToolCall?: ParsedToolCall } {
+  finish(): {
+    remainingText: string;
+    toolCall: ParsedToolCall | null;
+    detectedToolCall?: ParsedToolCall;
+    protocolError?: "INCOMPLETE_TOOL_CALL" | "INCOMPLETE_PATCH_CALL";
+  } {
 
     let remainingText = "";
+    let protocolError: "INCOMPLETE_TOOL_CALL" | "INCOMPLETE_PATCH_CALL" | undefined;
     if (this.inThought) {
       this.thoughtContent += this.buffer;
       this.buffer = "";
@@ -393,27 +399,28 @@ export class M365ToolCallDetector {
       this.buffer = "";
     } else if (this.inToolCall && !this.detectedToolCall) {
       // Thẻ <tool_call> chưa đóng -> Stream bị ngắt giữa JSON arguments.
-      // Không được tự sửa hay thực thi dở dang!
-      remainingText += `<tool_call>${this.toolContent}${this.buffer}`;
+      // Fail closed: không tự sửa, không thực thi và tuyệt đối không rò control frame ra UI.
+      protocolError = "INCOMPLETE_TOOL_CALL";
       this.toolContent = "";
       this.buffer = "";
     } else if (this.inPatch && !this.detectedToolCall) {
       // Khối patch chưa có *** End Patch -> Dở dang, không thực thi.
-      remainingText += `${this.patchContent}${this.buffer}`;
+      protocolError = "INCOMPLETE_PATCH_CALL";
       this.patchContent = "";
       this.buffer = "";
     }
 
-    // Làm sạch thẻ root </m365Response> và trailing backticks dở dang ở cuối câu trả lời nếu có
+    // Chỉ loại bỏ root transport tag. Không xóa trailing backticks vì đó có thể là
+    // closing fence Markdown hợp lệ của final answer.
     remainingText = remainingText
       .replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "")
-      .replace(/(?:\r?\n\s*)?`{1,5}\s*$/g, "")
       .trimEnd();
 
     return {
       remainingText,
       toolCall: this.detectedToolCall,
       detectedToolCall: this.detectedToolCall ?? undefined,
+      ...(protocolError ? { protocolError } : {}),
     };
   }
 
@@ -762,4 +769,3 @@ export function autoHealHtmlMangledTags(text: string): string {
 }
 
 export { chatGptHtmlToMarkdown };
-

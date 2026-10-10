@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { stripOuterCodeFence } from "../src/adapters/m365-copilot/temp-chat/stripCodeFence";
-import { M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
+import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
 import { compileM365HybridForwardPrompt } from "../src/adapters/m365-copilot/temp-chat/compileHybridForwardPrompt";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
 import type { CodexParsedRequest } from "../src/types";
 
 describe("Temporary Chat 4-Backtick Fast-Path Specification Tests", () => {
-  const translator = new M365OutputTranslator();
+  const translator = new M365OutputTranslator([new PatchToolCallDetector(), new XmlToolCallDetector()]);
 
   describe("stripOuterCodeFence unit tests", () => {
     it("bóc chính xác lớp vỏ 4-backtick ````markdown và bảo toàn khối ```java bên trong", () => {
@@ -133,7 +133,8 @@ public class App {
       const prompt = compileM365HybridForwardPrompt(dummyRequest);
       expect(prompt).toContain("[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]");
       expect(prompt).toContain("4 dấu backtick");
-      expect(prompt.endsWith("TUYỆT ĐỐI KHÔNG VIẾT BẤT KỲ KÝ TỰ HAY VĂN BẢN NÀO BÊN NGOÀI KHỐI CODE NÀY.")).toBe(true);
+      expect(prompt).toContain("<m365Response>");
+      expect(prompt.endsWith("Nếu gọi tool, bên trong envelope chỉ được chứa các tool call hoàn chỉnh và không được chèn lời dẫn.")).toBe(true);
     });
 
     it("kích hoạt Plan Mode và tiêm MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT khi raw request có marker Plan Mode", () => {

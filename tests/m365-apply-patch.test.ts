@@ -68,7 +68,7 @@ describe("M365 Native apply_patch Tests", () => {
   });
 
   test("Phase 2: M365OutputTranslator translates patch into OpenAI tool_call format", () => {
-    const translator = new M365OutputTranslator();
+    const translator = new M365OutputTranslator([new PatchToolCallDetector()]);
     const translated = translator.translate(`Dưới đây là bản vá:\n${samplePatch}`);
     expect(translated.type).toBe("tool_call");
     if (translated.type === "tool_call") {

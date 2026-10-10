@@ -188,7 +188,7 @@ Không ghi log chứa thông tin nhạy cảm.
   // =========================================================================
   // Test 3: Stream bị ngắt giữa JSON arguments -> KHÔNG thực thi tool call dở dang
   // =========================================================================
-  test("TEST 3: Stream bị ngắt giữa chừng khi arguments chưa hoàn chỉnh -> không được emit tool call, finish trả về remainingText", () => {
+  test("TEST 3: Stream bị ngắt giữa chừng -> fail closed và không leak control frame", () => {
     const detector = new M365ToolCallDetector();
 
     // Bắt đầu tool call nhưng bị đứt đoạn ở mục 5.7 (không có dấu đóng JSON và không có </tool_call>)
@@ -200,8 +200,8 @@ Không ghi log chứa thông tin nhạy cảm.
     // Giả lập stream kết thúc đột ngột (finish() được gọi khi inToolCall = true)
     const finishRes = detector.finish();
     expect(finishRes.detectedToolCall).toBeUndefined();
-    expect(finishRes.remainingText).toContain("Đang ghi dở ở đây");
-    expect(finishRes.remainingText.includes("<tool_call>")).toBe(true);
+    expect(finishRes.remainingText).toBe("");
+    expect(finishRes.protocolError).toBe("INCOMPLETE_TOOL_CALL");
   });
 
   test("TEST 3b: XmlToolCallDetector không bao giờ nhận diện thẻ <tool_call> mở mà chưa có thẻ đóng </tool_call>", () => {

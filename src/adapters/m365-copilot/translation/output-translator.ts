@@ -78,9 +78,6 @@ export function extractCognitiveBlocks(rawText: string): {
     .replace(/(?:<|\b)\s*(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>[\s\S]*?(?:<\s*\/|\/\s*)(?:custom[\\_]*)?tool[\\_]*call\s*>/gi, "")
     .replace(/(?:\\?\*){2,3}\s*Begin Patch[\s\S]*?(?:\\?\*){2,3}\s*End Patch(?:\s*\\?\*+)?/gi, "");
 
-  // Nếu có khối code block bash mang tính thực thi
-  textWithoutTools = textWithoutTools.replace(/```(?:bash|sh|zsh|shell)?\s*\n[\s\S]*?```/gi, "");
-
   const narrativeCandidate = textWithoutTools.trim();
   const narrative = narrativeCandidate.length > 0 ? narrativeCandidate : undefined;
 
@@ -106,12 +103,10 @@ export class M365OutputTranslator {
     if (customDetectors && customDetectors.length > 0) {
       this.detectors = [...customDetectors].sort((a, b) => a.priority - b.priority);
     } else {
-      // Đăng ký theo thứ tự ưu tiên chuẩn: Patch (0) -> JSON (1) -> XML (2) -> Bash (3)
+      // Runtime chỉ nhận explicit XML tool envelope. Không suy đoán tool call từ
+      // standalone JSON, patch text hoặc Markdown shell code fence.
       this.detectors = [
-        new PatchToolCallDetector(),
-        new JsonToolCallDetector(),
         new XmlToolCallDetector(),
-        new BashCommandDetector(),
       ].sort((a, b) => a.priority - b.priority);
     }
   }

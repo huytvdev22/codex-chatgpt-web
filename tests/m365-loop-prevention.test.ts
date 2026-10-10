@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
+import { BashCommandDetector, M365OutputTranslator, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
 import { compileM365Prompt, TOOL_REMINDER_PROMPT } from "../src/adapters/m365-copilot/prompt";
 import {
   M365CopilotAdapter,
@@ -13,7 +13,7 @@ import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 describe("M365 Loop Prevention & Final Answer Integrity Tests", () => {
-  const translator = new M365OutputTranslator();
+  const translator = new M365OutputTranslator([new XmlToolCallDetector(), new BashCommandDetector()]);
 
   // ----------------------------------------------------
   // Test 1: Final answer không sinh tool call

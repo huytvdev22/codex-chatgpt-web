@@ -377,14 +377,14 @@ Hệ thống hoàn toàn sạch sẽ.`;
     expect(detector.getToolCall()?.name).toBe("read_file");
   });
 
-  test("M365ToolCallDetector tự động gọt sạch dấu backtick dở dang ở cuối finish()", () => {
+  test("M365ToolCallDetector bảo toàn trailing backtick vì có thể là Markdown fence hợp lệ", () => {
     const detector = new M365ToolCallDetector();
     const emitted = detector.feed("Xin chào anh Huy! Mình có thể hỗ trợ anh.\n`");
     const { remainingText } = detector.finish();
 
-    // Dấu backtick mồ côi dở dang phải được hoãn và loại bỏ để không làm vỡ Markdown formatting
+    // Không suy đoán và xóa trailing backtick theo vị trí chuỗi.
     expect(emitted).toBe("Xin chào anh Huy! Mình có thể hỗ trợ anh.\n");
-    expect(remainingText).toBe("");
+    expect(remainingText).toBe("`");
   });
 
   test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ m365Response, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
@@ -471,4 +471,3 @@ Tôi đã sửa xong lỗi cú pháp trong file \`app.js\`. Mọi test đều đ
     }
   });
 });
-
