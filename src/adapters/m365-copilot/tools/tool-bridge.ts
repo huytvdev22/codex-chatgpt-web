@@ -9,7 +9,6 @@ import { SafeCommandGuard } from "./safe-command-guard";
 import { normalizeM365ToolArguments } from "./argument-normalizer";
 import { decodeM365Content } from "./content-decoder";
 import { validateM365ToolCall } from "./tool-validator";
-import { createApplyPatchFallbackCommand } from "./apply-patch-fallback";
 import { AtomicFileWriter, defaultAtomicFileWriter } from "./atomic-file-writer";
 
 export { SafeCommandGuard } from "./safe-command-guard";
@@ -228,12 +227,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     };
   },
 
-  apply_patch: (args, strategy) => {
-    const patch = String(args.input || "").trim();
-    return {
-      name: "exec_command",
-      args: { cmd: createApplyPatchFallbackCommand(patch, strategy) },
-    };
+  apply_patch: () => {
+    throw new Error(
+      "[M365 Tool Capability Error] apply_patch requires the client to advertise the native apply_patch tool."
+    );
   },
 
   write_stdin: (args) => {
@@ -366,13 +363,17 @@ export class M365ToolBridge {
       const patch = String(parsedArgs.input).trim();
       parsedArgs = { ...parsedArgs, input: patch };
 
-      if (hasExactTool) {
-        console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);
-        return {
-          name: "apply_patch",
-          arguments: JSON.stringify({ input: patch }),
-        };
+      if (!hasExactTool) {
+        throw new Error(
+          "[M365 Tool Capability Error] Client does not advertise native apply_patch; fallback execution is disabled."
+        );
       }
+
+      console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);
+      return {
+        name: "apply_patch",
+        arguments: JSON.stringify({ input: patch }),
+      };
     }
 
     // Xác định strategy theo Dependency Inversion Principle

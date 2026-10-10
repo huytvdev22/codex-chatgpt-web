@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { PatchToolCallDetector, normalizePatchEnvelope, M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
 import { M365ToolBridge } from "../src/adapters/m365-copilot/tool-bridge";
-import { PowerShellCommandStrategy } from "../src/adapters/m365-copilot/strategies/powershell";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent, CodexTool } from "../src/types";
 
@@ -130,7 +129,7 @@ describe("M365 Native apply_patch Tests", () => {
     expect(parsedArgs.input).toBe(samplePatch);
   });
 
-  test("Phase 4: M365ToolBridge uses a fail-closed apply_patch command when the client lacks the native tool", () => {
+  test("Phase 4: M365ToolBridge rejects apply_patch when the client lacks the native tool", () => {
     const clientTools: CodexTool[] = [
       { name: "exec_command", description: "Run command", parameters: {} },
     ];
@@ -140,12 +139,8 @@ describe("M365 Native apply_patch Tests", () => {
       arguments: { patch: samplePatch },
     };
 
-    const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools);
-    expect(mapped.name).toBe("exec_command");
-    const parsedArgs = JSON.parse(mapped.arguments);
-    expect(parsedArgs.cmd).toContain("apply_patch");
-    expect(parsedArgs.cmd).not.toContain("git apply");
-    expect(parsedArgs.cmd).not.toContain("|| true");
+    expect(() => M365ToolBridge.mapToolCall(rawCall, clientTools))
+      .toThrow("Client does not advertise native apply_patch; fallback execution is disabled");
   });
 
   test("Phase 4: M365ToolBridge rejects incomplete patches instead of auto-closing them", () => {
@@ -156,20 +151,6 @@ describe("M365 Native apply_patch Tests", () => {
       },
     }, [{ name: "apply_patch", description: "Patch files", parameters: {}, freeform: true }]))
       .toThrow("complete *** Begin Patch ... *** End Patch envelope");
-  });
-
-  test("Phase 4: PowerShell fallback preserves apply_patch failure exit status", () => {
-    const mapped = M365ToolBridge.mapToolCall({
-      name: "apply_patch",
-      arguments: { input: samplePatch },
-    }, [{ name: "exec_command", description: "Run command", parameters: {} }], new PowerShellCommandStrategy());
-
-    const cmd = JSON.parse(mapped.arguments).cmd as string;
-    const encoded = cmd.split(" ").at(-1)!;
-    const script = Buffer.from(encoded, "base64").toString("utf16le");
-    expect(script).toContain("Get-Command apply_patch");
-    expect(script).toContain("exit $LASTEXITCODE");
-    expect(script).not.toContain("git apply");
   });
 
   test("Phase 5: bridgeToResponsesSSE outputs custom_tool_call with unwrapped patch input for Codex UI", async () => {
