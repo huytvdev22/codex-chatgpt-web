@@ -9,6 +9,8 @@ import { SafeCommandGuard } from "./safe-command-guard";
 import { normalizeM365ToolArguments } from "./argument-normalizer";
 import { decodeM365Content } from "./content-decoder";
 import { validateM365ToolCall } from "./tool-validator";
+import { createApplyPatchFallbackCommand } from "./apply-patch-fallback";
+import { AtomicFileWriter, defaultAtomicFileWriter } from "./atomic-file-writer";
 
 export { SafeCommandGuard } from "./safe-command-guard";
 export { normalizeFileContent, type NormalizeFileContentOptions } from "./content-decoder";
@@ -32,8 +34,6 @@ type ToolHandler = (
   args: Record<string, any>,
   strategy: PlatformCommandStrategy
 ) => { name: string; args: Record<string, any> };
-
-import { AtomicFileWriter, defaultAtomicFileWriter } from "./atomic-file-writer";
 
 export interface RequestUserInputOption {
   label: string;
@@ -228,12 +228,11 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     };
   },
 
-  apply_patch: (args) => {
-    const rawPatch = typeof args === "string" ? args : (args.input || args.patch || args.content || "");
-    const base64Patch = Buffer.from(String(rawPatch), "utf8").toString("base64");
+  apply_patch: (args, strategy) => {
+    const patch = String(args.input || "").trim();
     return {
       name: "exec_command",
-      args: { cmd: `echo ${base64Patch} | base64 -d | git apply --whitespace=nowarn - || true` },
+      args: { cmd: createApplyPatchFallbackCommand(patch, strategy) },
     };
   },
 
@@ -364,42 +363,8 @@ export class M365ToolBridge {
 
     // Xử lý riêng biệt cho apply_patch (công cụ native của Codex để hiển thị diff +X -Y và Undo)
     if (toolName === "apply_patch" || toolName === "applypatch") {
-      const rawPatch = typeof parsedArgs === "string"
-        ? parsedArgs
-        : (parsedArgs.input || parsedArgs.patch || parsedArgs.content || "");
-      let patch = String(rawPatch)
-        .replaceAll("\\*", "*")
-        .replaceAll("\\_", "_")
-        .replaceAll("\\[", "[")
-        .replaceAll("\\]", "]")
-        .replaceAll("\\{", "{")
-        .replaceAll("\\}", "}");
-
-      // Nếu chứa literal \n thì chuyển sang ký tự xuống dòng thực tế
-      if (patch.includes("\\n") && !patch.includes("\n")) {
-        patch = patch.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
-      }
-      patch = patch.replace(/\\+[ \t]*(\r?\n)/g, "$1").trim();
-
-      const beginIdx = patch.indexOf("*** Begin Patch");
-      if (beginIdx >= 0) patch = patch.slice(beginIdx);
-      const endIdx = patch.lastIndexOf("*** End Patch");
-      if (endIdx >= 0) patch = patch.slice(0, endIdx + "*** End Patch".length);
-      else if (!patch.endsWith("*** End Patch")) patch = `${patch}\n*** End Patch`;
-
-      // Khôi phục các thẻ HTML bị cắt cụt/biến dạng do bộ lọc web của Microsoft Copilot
-      patch = patch.replace(
-        /^([ \t]*[-+ ]?[ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[sS]cript>?/gm,
-        "$1<script src=\"$2\"></script>"
-      );
-      patch = patch.replace(
-        /^([ \t]*[-+ ]?[ \t]*)(?:<script\s+src=["'\s]*)?([a-zA-Z0-9_./-]+\.js)(?:["'\s]*>)?(?:<\/)?[aA]tch$/gm,
-        "$1<script src=\"$2\"></script>"
-      );
-      patch = patch.replace(
-        /^([ \t]*[-+ ]?[ \t]*)(?:<link\s+[^>\n]*href=["'\s]*)?([a-zA-Z0-9_./-]+\.css)(?:["'\s]*>)?(?:<\/)?[lL]ink>?/gm,
-        "$1<link rel=\"stylesheet\" href=\"$2\">"
-      );
+      const patch = String(parsedArgs.input).trim();
+      parsedArgs = { ...parsedArgs, input: patch };
 
       if (hasExactTool) {
         console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);

@@ -98,6 +98,31 @@ Ví dụ tool call:
     if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
   });
 
+  test("rejects truncated apply_patch aliases before tool-name normalization", () => {
+    for (const name of ["applypatch", "functions.apply_patch"]) {
+      const raw = `<m365Response>
+<tool_call>{"name":"${name}","arguments":{"input":"*** Begin Patch\\n*** Add File: a.txt\\n+hello"}}</tool_call>
+</m365Response>`;
+      const result = parseStrictM365Response(raw);
+      expect(result.kind).toBe("protocol_error");
+      if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
+    }
+  });
+
+  test("rejects nested patch control envelopes", () => {
+    const raw = `<m365Response>
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Begin Patch
+*** End Patch
+*** End Patch
+</custom_tool_call>
+</m365Response>`;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
+  });
+
   test("accepts exact outer 4-backtick transport wrapper", () => {
     const raw = `\`\`\`\`markdown
 <m365Response>

@@ -42,6 +42,20 @@ const TOOL_CLOSE = "</tool_call>";
 const PATCH_OPEN = '<custom_tool_call name="apply_patch">';
 const PATCH_CLOSE = "</custom_tool_call>";
 
+function isApplyPatchToolName(name: string): boolean {
+  const shortName = name.startsWith("functions.") ? name.slice("functions.".length) : name;
+  return shortName === "apply_patch" || shortName === "applypatch";
+}
+
+function hasCompletePatchEnvelope(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const lines = value.trim().split(/\r?\n/);
+  if (lines[0] !== "*** Begin Patch" || lines[lines.length - 1] !== "*** End Patch") {
+    return false;
+  }
+  return !lines.slice(1, -1).some(line => line === "*** Begin Patch" || line === "*** End Patch");
+}
+
 function protocolError(
   rawResponse: string,
   code: M365ProtocolErrorCode,
@@ -93,11 +107,9 @@ function parseFunctionToolCall(
   }
 
   const args = record.arguments as Record<string, unknown>;
-  if (record.name === "apply_patch") {
+  if (isApplyPatchToolName(record.name)) {
     const patch = args.input;
-    if (typeof patch !== "string"
-      || !patch.trim().startsWith("*** Begin Patch")
-      || !patch.trim().endsWith("*** End Patch")) {
+    if (!hasCompletePatchEnvelope(patch)) {
       return protocolError(
         rawResponse,
         "INVALID_PATCH_ENVELOPE",
@@ -118,7 +130,7 @@ function parsePatchToolCall(
   rawResponse: string
 ): StrictM365ToolCall | StrictM365ResponseResult {
   const patch = payload.trim();
-  if (!patch.startsWith("*** Begin Patch") || !patch.endsWith("*** End Patch")) {
+  if (!hasCompletePatchEnvelope(patch)) {
     return protocolError(
       rawResponse,
       "INVALID_PATCH_ENVELOPE",

@@ -24,6 +24,28 @@ function requireString(args: Record<string, unknown>, key: string): ToolValidati
     : { ok: false, code: "MISSING_ARGUMENT", message: `Tool argument ${key} must be a non-empty string.` };
 }
 
+function validateApplyPatch(args: Record<string, unknown>): ToolValidationResult {
+  const required = requireString(args, "input");
+  if (!required.ok) return required;
+
+  const lines = (args.input as string).trim().split(/\r?\n/);
+  if (lines[0] !== "*** Begin Patch" || lines[lines.length - 1] !== "*** End Patch") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "apply_patch.input must contain a complete *** Begin Patch ... *** End Patch envelope.",
+    };
+  }
+  if (lines.slice(1, -1).some(line => line === "*** Begin Patch" || line === "*** End Patch")) {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "apply_patch.input must contain exactly one outer patch envelope.",
+    };
+  }
+  return { ok: true };
+}
+
 /** Validate tool inventory và các trường bắt buộc sau normalization, trước mapping/execution. */
 export function validateM365ToolCall(
   name: string,
@@ -55,7 +77,7 @@ export function validateM365ToolCall(
       return { ok: true };
     }
     case "apply_patch":
-      return requireString(args, "input");
+      return validateApplyPatch(args);
     case "exec_command":
     case "run_command":
       return requireString(args, "cmd");
