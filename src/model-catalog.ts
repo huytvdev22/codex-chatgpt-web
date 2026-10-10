@@ -403,19 +403,17 @@ export function buildM365Model(
     display_name: route.displayName,
     description: route.description,
     input_modalities: route.inputModalities ? [...route.inputModalities] : ["text", "image"],
-    visibility: route.legacy ? "hide" : "list",
+    visibility: "list",
     supported_in_api: true,
     priority: 100,
     ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
     tool_mode: null,
     upgrade: null,
     default_reasoning_level: "low",
-    supported_reasoning_levels: route.legacy
-      ? [reasoningLevel(template, "low", route.displayName)]
-      : [
-          reasoningLevel(template, "low", "Quick"),
-          reasoningLevel(template, "high", "Deeper"),
-        ],
+    supported_reasoning_levels: [
+      reasoningLevel(template, "low", "Quick"),
+      reasoningLevel(template, "high", "Deeper"),
+    ],
     context_window: route.contextWindow,
     max_context_window: route.contextWindow,
     effective_context_window_percent: route.effectiveContextWindowPercent,

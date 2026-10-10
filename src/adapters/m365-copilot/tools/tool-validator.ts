@@ -46,6 +46,123 @@ function validateApplyPatch(args: Record<string, unknown>): ToolValidationResult
   return { ok: true };
 }
 
+function validateExecCommand(args: Record<string, unknown>): ToolValidationResult {
+  const command = requireString(args, "cmd");
+  if (!command.ok) return command;
+
+  const permission = args.sandbox_permissions;
+  if (
+    permission !== undefined
+    && permission !== "use_default"
+    && permission !== "require_escalated"
+  ) {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.sandbox_permissions must be use_default or require_escalated.",
+    };
+  }
+
+  if (
+    permission === "require_escalated"
+    && (
+      typeof args.justification !== "string"
+      || args.justification.trim().length === 0
+    )
+  ) {
+    return {
+      ok: false,
+      code: "MISSING_ARGUMENT",
+      message: "exec_command.justification is required for require_escalated.",
+    };
+  }
+
+  if (args.justification !== undefined && typeof args.justification !== "string") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.justification must be a string.",
+    };
+  }
+
+  if (args.prefix_rule !== undefined) {
+    if (
+      !Array.isArray(args.prefix_rule)
+      || args.prefix_rule.length === 0
+      || args.prefix_rule.some(
+        value => typeof value !== "string" || value.trim().length === 0
+      )
+    ) {
+      return {
+        ok: false,
+        code: "INVALID_ARGUMENT",
+        message: "exec_command.prefix_rule must be a non-empty string array.",
+      };
+    }
+
+    if (permission !== "require_escalated") {
+      return {
+        ok: false,
+        code: "INVALID_ARGUMENT",
+        message: "exec_command.prefix_rule is only valid with require_escalated.",
+      };
+    }
+  }
+
+  if (args.workdir !== undefined && typeof args.workdir !== "string") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.workdir must be a string.",
+    };
+  }
+
+  if (args.shell !== undefined && typeof args.shell !== "string") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.shell must be a string.",
+    };
+  }
+
+  if (args.tty !== undefined && typeof args.tty !== "boolean") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.tty must be a boolean.",
+    };
+  }
+
+  if (args.login !== undefined && typeof args.login !== "boolean") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.login must be a boolean.",
+    };
+  }
+
+  if (args.yield_time_ms !== undefined && typeof args.yield_time_ms !== "number") {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.yield_time_ms must be a number.",
+    };
+  }
+
+  if (
+    args.max_output_tokens !== undefined
+    && typeof args.max_output_tokens !== "number"
+  ) {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: "exec_command.max_output_tokens must be a number.",
+    };
+  }
+
+  return { ok: true };
+}
+
 /** Validate tool inventory và các trường bắt buộc sau normalization, trước mapping/execution. */
 export function validateM365ToolCall(
   name: string,
@@ -80,7 +197,7 @@ export function validateM365ToolCall(
       return validateApplyPatch(args);
     case "exec_command":
     case "run_command":
-      return requireString(args, "cmd");
+      return validateExecCommand(args);
     case "grep_code":
       return requireString(args, "query");
     case "create_goal":

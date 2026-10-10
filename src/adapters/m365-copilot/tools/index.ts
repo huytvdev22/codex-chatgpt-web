@@ -43,4 +43,12 @@ export {
   type CommandValidationResult,
 } from "./safe-command-guard";
 
+export {
+  validateCommandApproval,
+  buildCodexExecCommandArguments,
+  type SandboxPermission,
+  type CodexExecCommandArguments,
+  type CommandApprovalDecision,
+} from "./approval-policy";
+
 export * from "./command-strategies";

@@ -162,6 +162,21 @@ export const CORE_CODING_TOOLS_DECLARATION = `- read_file
   Thực thi câu lệnh dòng lệnh/CLI không tương tác trong terminal của dự án (như: npm test, npm install, node server.js, mkdir -p ...).
   Tham số:
   + command (string, BẮT BUỘC): Câu lệnh CLI cần chạy.
+  + sandbox_permissions (string, tùy chọn): Chỉ nhận "use_default" hoặc "require_escalated". Mặc định là "use_default". Dùng "require_escalated" khi câu lệnh cần chạy ngoài sandbox mặc định và cần Codex yêu cầu người dùng phê duyệt.
+  + justification (string, bắt buộc khi sandbox_permissions là "require_escalated"): Câu hỏi ngắn gọn, rõ ràng để Codex hiển thị cho người dùng trong popup approval.
+  + prefix_rule (array of string, tùy chọn, chỉ dùng với "require_escalated"): Tiền tố lệnh cụ thể có thể được Codex đề nghị phê duyệt để tái sử dụng, ví dụ ["git", "commit"]. Không dùng prefix quá rộng như ["git"], ["bash"] hoặc ["sh"].
+  + workdir (string, tùy chọn): Thư mục làm việc của câu lệnh.
+  + shell (string, tùy chọn): Shell binary cần sử dụng.
+  + tty (boolean, tùy chọn): Có cấp PTY hay không.
+  + login (boolean, tùy chọn): Có chạy shell với login semantics hay không.
+  + yield_time_ms (number, tùy chọn): Thời gian chờ trước khi trả output.
+  + max_output_tokens (number, tùy chọn): Giới hạn token output.
+  Quy tắc approval:
+  + Mặc định dùng "use_default".
+  + Nếu biết trước thao tác cần quyền ngoài sandbox, hãy gọi ngay với "require_escalated", justification và prefix_rule phù hợp.
+  + Nếu một lệnh hợp lệ thất bại do sandbox hoặc "Operation not permitted", hãy gọi lại cùng lệnh với "require_escalated" thay vì chỉ báo người dùng tự xử lý.
+  + Nếu người dùng từ chối approval, không retry, không đổi sang lệnh khác để bypass và không báo thao tác đã thành công.
+  + Adapter chỉ kiểm tra và chuyển tiếp approval metadata; Codex runtime là thành phần quyết định hiển thị popup theo approval mode hiện tại.
   Lưu ý an toàn: TUYỆT ĐỐI KHÔNG dùng để tạo/sửa file hoặc script duyệt mảng đọc file (foreach Get-Content).
 
 - apply_patch

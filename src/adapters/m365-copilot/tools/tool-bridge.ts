@@ -10,6 +10,7 @@ import { normalizeM365ToolArguments } from "./argument-normalizer";
 import { decodeM365Content } from "./content-decoder";
 import { validateM365ToolCall } from "./tool-validator";
 import { AtomicFileWriter, defaultAtomicFileWriter } from "./atomic-file-writer";
+import { buildCodexExecCommandArguments } from "./approval-policy";
 
 export { SafeCommandGuard } from "./safe-command-guard";
 export { normalizeFileContent, type NormalizeFileContentOptions } from "./content-decoder";
@@ -190,7 +191,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       : SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
     return {
       name: "exec_command",
-      args: { cmd: strategy.runCommand(finalCmd) },
+      args: buildCodexExecCommandArguments(
+        args,
+        strategy.runCommand(finalCmd)
+      ),
     };
   },
 
@@ -307,10 +311,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       : SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
     return {
       name: "exec_command",
-      args: {
-        ...args,
-        cmd: finalCmd,
-      },
+      args: buildCodexExecCommandArguments(args, finalCmd),
     };
   },
 
@@ -399,9 +400,12 @@ export class M365ToolBridge {
         const validation = SafeCommandGuard.validateShellCommand(cmd);
         if (!validation.allowed) {
           const platform = strategy.platformName === "posix" ? "posix" : "powershell";
-          parsedArgs.cmd = SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
+          parsedArgs = buildCodexExecCommandArguments(
+            parsedArgs,
+            SafeCommandGuard.createStructuredRefusalCommand(validation, platform)
+          );
         } else {
-          parsedArgs.cmd = cmd;
+          parsedArgs = buildCodexExecCommandArguments(parsedArgs, cmd);
         }
       }
       return {
