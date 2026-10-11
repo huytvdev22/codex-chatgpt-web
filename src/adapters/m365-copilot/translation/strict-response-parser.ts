@@ -9,7 +9,8 @@ export type M365ProtocolErrorCode =
   | "INVALID_TOOL_SHAPE"
   | "INVALID_TOOL_CALL"
   | "INCOMPLETE_PATCH_CALL"
-  | "INVALID_PATCH_ENVELOPE";
+  | "INVALID_PATCH_ENVELOPE"
+  | "INVALID_PATCH_GRAMMAR";
 
 export interface StrictM365ToolCall {
   id?: string;
@@ -54,6 +55,67 @@ function hasCompletePatchEnvelope(value: unknown): value is string {
     return false;
   }
   return !lines.slice(1, -1).some(line => line === "*** Begin Patch" || line === "*** End Patch");
+}
+
+interface PatchGrammarError {
+  line: number;
+  message: string;
+}
+
+/**
+ * Kiểm tra grammar tối thiểu của patch trước khi forward sang IDE.
+ *
+ * Đặc biệt với `*** Add File`, mọi dòng nội dung bắt buộc phải bắt đầu
+ * bằng `+`. Nếu không kiểm tra tại đây, một response có protocol envelope
+ * hoàn toàn hợp lệ vẫn bị apply_patch từ chối bằng lỗi `invalid hunk`,
+ * dễ bị hiểu nhầm thành lỗi response format.
+ */
+function validatePatchGrammar(patch: string): PatchGrammarError | null {
+  const lines = patch.trim().split(/\r?\n/);
+  let mode: "add" | "update" | "delete" | null = null;
+
+  for (let index = 1; index < lines.length - 1; index += 1) {
+    const line = lines[index];
+
+    if (line.startsWith("*** Add File: ")) {
+      mode = "add";
+      continue;
+    }
+    if (line.startsWith("*** Update File: ")) {
+      mode = "update";
+      continue;
+    }
+    if (line.startsWith("*** Delete File: ")) {
+      mode = "delete";
+      continue;
+    }
+
+    if (line.startsWith("*** ")) {
+      return {
+        line: index + 1,
+        message: `Patch chứa directive không hợp lệ tại dòng ${index + 1}: ${line}`,
+      };
+    }
+
+    if (mode === "add" && !line.startsWith("+")) {
+      return {
+        line: index + 1,
+        message:
+          `Dòng ${index + 1} trong phần Add File phải bắt đầu bằng dấu +. ` +
+          `Nội dung nhận được: ${JSON.stringify(line)}`,
+      };
+    }
+
+    if (mode === "delete" && line.trim()) {
+      return {
+        line: index + 1,
+        message:
+          `Delete File không được chứa nội dung patch tại dòng ${index + 1}.`,
+      };
+    }
+  }
+
+  return null;
 }
 
 function protocolError(
@@ -137,6 +199,16 @@ function parsePatchToolCall(
       "apply_patch phải chứa nguyên vẹn *** Begin Patch ... *** End Patch; parser không tự đóng patch bị cắt."
     );
   }
+
+  const grammarError = validatePatchGrammar(patch);
+  if (grammarError) {
+    return protocolError(
+      rawResponse,
+      "INVALID_PATCH_GRAMMAR",
+      `Response protocol hợp lệ nhưng nội dung apply_patch sai grammar. ${grammarError.message}`
+    );
+  }
+
   return { name: "apply_patch", arguments: { input: patch } };
 }
 

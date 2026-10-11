@@ -123,6 +123,101 @@ Ví dụ tool call:
     if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
   });
 
+  test("accepts valid Add File patch when every content line starts with +", () => {
+    const rootName = "m365Response";
+    const customName = "custom_tool_call";
+    const responseOpen = `<${rootName}>`;
+    const responseClose = `</${rootName}>`;
+    const actionOpen = `<${customName} name="apply_patch">`;
+    const actionClose = `</${customName}>`;
+    const patchBegin = ["***", "Begin", "Patch"].join(" ");
+    const patchEnd = ["***", "End", "Patch"].join(" ");
+    const addFile = ["***", "Add", "File:", "a.txt"].join(" ");
+    const raw = [
+      responseOpen,
+      actionOpen,
+      patchBegin,
+      addFile,
+      "+first line",
+      "+",
+      "+third line",
+      patchEnd,
+      actionClose,
+      responseClose,
+    ].join("\n");
+
+    const result = parseStrictM365Response(raw);
+
+    expect(result.kind).toBe("tool_calls");
+    if (result.kind === "tool_calls") {
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0]?.name).toBe("apply_patch");
+    }
+  });
+
+  test("classifies invalid Add File line prefix as patch grammar error", () => {
+    const rootName = "m365Response";
+    const customName = "custom_tool_call";
+    const responseOpen = `<${rootName}>`;
+    const responseClose = `</${rootName}>`;
+    const actionOpen = `<${customName} name="apply_patch">`;
+    const actionClose = `</${customName}>`;
+    const patchBegin = ["***", "Begin", "Patch"].join(" ");
+    const patchEnd = ["***", "End", "Patch"].join(" ");
+    const addFile = ["***", "Add", "File:", "a.txt"].join(" ");
+    const raw = [
+      responseOpen,
+      actionOpen,
+      patchBegin,
+      addFile,
+      "+first line",
+      "missing plus prefix",
+      "+third line",
+      patchEnd,
+      actionClose,
+      responseClose,
+    ].join("\n");
+
+    const result = parseStrictM365Response(raw);
+
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("INVALID_PATCH_GRAMMAR");
+      expect(result.message).toContain("Add File");
+      expect(result.message).toContain("dấu +");
+    }
+  });
+
+  test("classifies Delete File content as patch grammar error", () => {
+    const rootName = "m365Response";
+    const customName = "custom_tool_call";
+    const responseOpen = `<${rootName}>`;
+    const responseClose = `</${rootName}>`;
+    const actionOpen = `<${customName} name="apply_patch">`;
+    const actionClose = `</${customName}>`;
+    const patchBegin = ["***", "Begin", "Patch"].join(" ");
+    const patchEnd = ["***", "End", "Patch"].join(" ");
+    const deleteFile = ["***", "Delete", "File:", "a.txt"].join(" ");
+    const raw = [
+      responseOpen,
+      actionOpen,
+      patchBegin,
+      deleteFile,
+      "+unexpected content",
+      patchEnd,
+      actionClose,
+      responseClose,
+    ].join("\n");
+
+    const result = parseStrictM365Response(raw);
+
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("INVALID_PATCH_GRAMMAR");
+      expect(result.message).toContain("Delete File");
+    }
+  });
+
   test("accepts exact outer 4-backtick transport wrapper", () => {
     const raw = `\`\`\`\`markdown
 <m365Response>
