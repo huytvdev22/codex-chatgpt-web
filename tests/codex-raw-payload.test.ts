@@ -3,7 +3,7 @@ import {
   CodexRawPayload,
   CodexWireParser,
   type CodexRawRequestWire,
-} from "../src/adapters/m365-copilot/codex-raw-payload";
+} from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
 
 describe("CodexRawPayload & CodexWireParser Tests (Giai đoạn 1)", () => {
   const sampleWireRequest: CodexRawRequestWire = {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/m365-copilot/codex-raw-payload";
-import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/codex-normalizer";
+import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
+import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalization/codex-normalizer";
 import {
   renderDynamicToolDeclarations,
   promptCompiler,
@@ -111,13 +111,13 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
-    expect(dynamicText).toContain("AVAILABLE TOOLS");
-    expect(dynamicText).toContain("- exec_command");
-    expect(dynamicText).toContain("- apply_patch");
-    expect(dynamicText).toContain("- request_user_input");
-    // Không còn nhồi các additional_tools ngoài lề từ client vào prompt M365 Copilot
-    expect(dynamicText).not.toContain("- create_goal");
-    expect(dynamicText).not.toContain("- web.run");
+    expect(dynamicText).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
+    expect(dynamicText).toContain('"wire_name": "exec_command"');
+    expect(dynamicText).toContain('"wire_name": "apply_patch"');
+    expect(dynamicText).toContain('"wire_name": "request_user_input"');
+    // Contract chỉ render action từ inventory hiện tại và giữ nguyên exact wire_name.
+    expect(dynamicText).toContain('"wire_name": "create_goal"');
+    expect(dynamicText).toContain('"wire_name": "web.run"');
 
     // Không còn các tên alias tự chế hay lẫn lộn
     expect(dynamicText).not.toContain("run_command(cmd)");
@@ -201,14 +201,14 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(result.audit.finalPromptChars).toBe(result.finalPrompt.length);
   });
 
-  test("Khắc phục triệt để lỗi treo PTY heredoc: Khai báo write_file và cấm cat <<EOF", () => {
+  test("Khắc phục triệt để lỗi treo PTY heredoc: dùng native apply_patch và cấm cat <<EOF", () => {
     const payload = CodexRawPayload.from(sampleRaw);
     const normalized = CodexPayloadNormalizer.normalize(payload);
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
-    // 1. Phải khai báo write_file trong danh sách AVAILABLE TOOLS để M365 Copilot biết cách gọi
-    expect(dynamicText).toContain("- write_file");
-    expect(dynamicText).toContain("Tạo file mới hoặc ghi đè nội dung file");
+    // 1. Dynamic contract chỉ được khai báo action thực sự có trong inventory.
+    expect(dynamicText).toContain('"wire_name": "apply_patch"');
+    expect(dynamicText).not.toContain('"wire_name": "write_file"');
 
     // 2. UNIFIED_TOOL_PROTOCOL phải có quy tắc cấm heredoc shell và hướng dẫn tạo file
     expect(UNIFIED_TOOL_PROTOCOL).toContain("TẠO FILE MỚI HOẶC SỬA FILE");
@@ -283,30 +283,27 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(devText).not.toContain("¨C24C");
     expect(devText).toContain("Tuân thủ nghiêm ngặt kiến trúc module và nguyên lý SOLID.");
 
-    // 2. Kiểm tra Dynamic Tool Declarations chứa đầy đủ schema tham số cho core coding tools
+    // 2. Kiểm tra Dynamic Action Contract chỉ chứa action của current inventory.
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-    expect(dynamicText).toContain("- read_file");
-    expect(dynamicText).toContain("path (string, BẮT BUỘC)");
-    expect(dynamicText).toContain("TUYỆT ĐỐI KHÔNG truyền mảng \"paths\"");
-    expect(dynamicText).toContain("- list_dir");
-    expect(dynamicText).toContain("- search_files");
-    expect(dynamicText).toContain("pattern (string, BẮT BUỘC)");
-    expect(dynamicText).toContain("- grep_code");
-    expect(dynamicText).toContain("query (string, BẮT BUỘC)");
-    expect(dynamicText).toContain("- git_status");
-    expect(dynamicText).toContain("- git_diff");
-    expect(dynamicText).toContain("- exec_command");
-    expect(dynamicText).toContain("- apply_patch");
+    expect(dynamicText).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
+    expect(dynamicText).toContain('"wire_name": "exec_command"');
+    expect(dynamicText).toContain('"wire_name": "update_goal"');
+    expect(dynamicText).not.toContain('"wire_name": "read_file"');
+    expect(dynamicText).not.toContain('"wire_name": "list_dir"');
+    expect(dynamicText).not.toContain('"wire_name": "search_files"');
+    expect(dynamicText).not.toContain('"wire_name": "grep_code"');
+    expect(dynamicText).not.toContain('"wire_name": "git_status"');
+    expect(dynamicText).not.toContain('"wire_name": "git_diff"');
 
     // 3. Kiểm tra cleanToolDescription đã cắt Windows safety rules và token rác trong update_goal
     expect(dynamicText).not.toContain("Windows safety rules:");
     expect(dynamicText).not.toContain("¨C11C");
     expect(dynamicText).not.toContain("¨C12C");
 
-    // 4. Kiểm tra CANONICAL_TOOL_EXAMPLES có đầy đủ ví dụ cho core tools
-    expect(dynamicText).toContain('{"name": "list_dir", "arguments": {"path": "."}}');
-    expect(dynamicText).toContain('{"name": "search_files", "arguments": {"pattern": "*.js", "path": "."}}');
-    expect(dynamicText).toContain('{"name": "grep_code", "arguments": {"query":');
-    expect(dynamicText).toContain('{"name": "git_status", "arguments": {}}');
+    // 4. Dynamic contract không được chèn ví dụ của action ngoài current inventory.
+    expect(dynamicText).not.toContain('{"name": "list_dir"');
+    expect(dynamicText).not.toContain('{"name": "search_files"');
+    expect(dynamicText).not.toContain('{"name": "grep_code"');
+    expect(dynamicText).not.toContain('{"name": "git_status"');
   });
 });
