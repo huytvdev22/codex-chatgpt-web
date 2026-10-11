@@ -13,7 +13,7 @@ import { UNIFIED_TOOL_PROTOCOL } from "./compiler";
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
   MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
-} from "../temp-chat/prompts";
+} from "./output-format";
 
 // Re-export để đảm bảo 100% tương thích ngược cho các module và tests đang import từ ./prompt
 export {

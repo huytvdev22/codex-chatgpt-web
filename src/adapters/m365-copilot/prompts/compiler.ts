@@ -10,7 +10,7 @@ import {
 import {
   MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
   MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
-} from "../temp-chat/prompts";
+} from "./output-format";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
 const MAX_TOOL_RESULT_CHARS = 8_000;

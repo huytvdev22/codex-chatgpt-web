@@ -1,5 +1,5 @@
 
-import { stripOuterCodeFence } from "../../temp-chat/stripCodeFence";
+import { stripOuterCodeFence } from "../strip-code-fence";
 
 export { stripOuterCodeFence };
 

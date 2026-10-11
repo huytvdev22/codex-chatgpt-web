@@ -3,7 +3,7 @@ import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalizati
 import { CodexRawPayload } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
 import { M365ToolBridge } from "../src/adapters/m365-copilot/tools/tool-bridge";
 import { M365OutputTranslator, normalizeToolName } from "../src/adapters/m365-copilot/output-translator";
-import { FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/m365-copilot/temp-chat/fastPathScraper";
+import { FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/m365-copilot/browser/fast-path-stream-buffer";
 import type { CodexTool } from "../src/types";
 
 describe("M365 Investigation & Fix Verification Tests", () => {

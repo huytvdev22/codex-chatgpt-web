@@ -4,7 +4,7 @@ import { getConfigDir } from "../../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "../translation/semantic-detector";
-import { FastPathStreamBuffer } from "../temp-chat/fastPathScraper";
+import { FastPathStreamBuffer } from "./fast-path-stream-buffer";
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../../m365-models";
 import { emitStructuredEvent } from "../../../observability/emitter";

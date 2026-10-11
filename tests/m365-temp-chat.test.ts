@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { stripOuterCodeFence } from "../src/adapters/m365-copilot/temp-chat/stripCodeFence";
+import { stripOuterCodeFence } from "../src/adapters/m365-copilot/translation/strip-code-fence";
 import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
 
