@@ -221,12 +221,33 @@ function parsePatchToolCall(
  */
 export function parseStrictM365Response(rawResponse: string): StrictM365ResponseResult {
   const framed = unwrapTransportFence(rawResponse);
-  if (!framed.startsWith(ROOT_OPEN) || !framed.endsWith(ROOT_CLOSE)) {
-    return protocolError(
+
+  if (!framed.trim()) {
+    return protocolError(rawResponse, "EMPTY_RESPONSE", "Phản hồi M365 không được rỗng.");
+  }
+
+  const hasOpeningEnvelope = framed.startsWith(ROOT_OPEN);
+  const hasClosingEnvelope = framed.endsWith(ROOT_CLOSE);
+
+  // Strict Actions, Tolerant Answers:
+  // - Tool/action responses remain fail-closed and must use the complete root envelope.
+  // - Plain final answers may omit the root envelope and are returned as opaque Markdown.
+  // - Reserved control markers are never downgraded to final text, because doing so could
+  //   expose a malformed action as a harmless answer and hide a failed tool invocation.
+  if (!hasOpeningEnvelope || !hasClosingEnvelope) {
+    if (hasReservedControlMarker(framed) || framed.includes(ROOT_OPEN) || framed.includes(ROOT_CLOSE)) {
+      return protocolError(
+        rawResponse,
+        "MISSING_RESPONSE_ENVELOPE",
+        `Phản hồi có action/control marker nên bắt buộc phải được bọc chính xác bởi ${ROOT_OPEN} ... ${ROOT_CLOSE}.`
+      );
+    }
+
+    return {
+      kind: "final_answer",
+      content: framed.trim(),
       rawResponse,
-      "MISSING_RESPONSE_ENVELOPE",
-      `Phản hồi phải được bọc chính xác bởi ${ROOT_OPEN} ... ${ROOT_CLOSE}.`
-    );
+    };
   }
 
   const inner = framed.slice(ROOT_OPEN.length, framed.length - ROOT_CLOSE.length);

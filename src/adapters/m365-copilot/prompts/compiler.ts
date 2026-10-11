@@ -8,8 +8,8 @@ import {
   M365_IMAGE_ATTACHMENT_HINT,
 } from "./templates";
 import {
-  MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
-  MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
+  STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT,
+  STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT,
 } from "./output-format";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
@@ -496,11 +496,11 @@ function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): st
 
     examples.push(`FUNCTION ACTION EXAMPLE
 \`\`\`\`markdown
-&lt;m365Response&gt;
-&lt;tool_call&gt;
+<m365Response>
+<tool_call>
 ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
-&lt;/tool_call&gt;
-&lt;/m365Response&gt;
+</tool_call>
+</m365Response>
 \`\`\`\``);
   }
 
@@ -509,16 +509,16 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
       applyPatchTool.identity.qualifiedName || applyPatchTool.identity.name;
     examples.push(`FREEFORM ACTION EXAMPLE
 \`\`\`\`markdown
-&lt;m365Response&gt;
-&lt;custom_tool_call name="${wireName}"&gt;
+<m365Response>
+<custom_tool_call name="${wireName}">
 *** Begin Patch
 *** Update File: path/to/file.ext
 @@
 -old content
 +new content
 *** End Patch
-&lt;/custom_tool_call&gt;
-&lt;/m365Response&gt;
+</custom_tool_call>
+</m365Response>
 \`\`\`\`
 
 File chưa tồn tại dùng *** Add File. File đã tồn tại dùng *** Update File.
@@ -849,7 +849,11 @@ export class M365PromptCompiler {
       }
 
       // 7. Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
-      incrementalSections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
+      incrementalSections.push(
+        isPlanMode
+          ? STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT
+          : STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT
+      );
 
       const finalPrompt = incrementalSections.join("\n\n").trim();
 
@@ -898,7 +902,20 @@ export class M365PromptCompiler {
 
     // 2. Giao thức tương tác văn bản thống nhất + Dynamic Tool Declaration
     const dynamicToolsText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-    const toolDeclarationSection = `${UNIFIED_TOOL_PROTOCOL}\n\n${dynamicToolsText}`;
+    // Bỏ phần output contract cũ vốn bắt buộc root envelope cho mọi phản hồi.
+    // Giữ lại các quy tắc action/file từ mục 2 trở đi, sau đó ghép với contract
+    // Strict Actions, Tolerant Answers mới.
+    const actionRulesStart = UNIFIED_TOOL_PROTOCOL.indexOf(
+      "2. KHI CẦN THAO TÁC / GỌI CÔNG CỤ"
+    );
+    const actionRules = actionRulesStart >= 0
+      ? UNIFIED_TOOL_PROTOCOL.slice(actionRulesStart)
+      : UNIFIED_TOOL_PROTOCOL;
+    const outputContract = isPlanMode
+      ? STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT
+      : STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT;
+    const toolDeclarationSection =
+      `${outputContract}\n\n${actionRules}\n\n${dynamicToolsText}`;
     sections.push(toolDeclarationSection);
 
     // 3. Chỉ dẫn Plan Mode hoặc Triển khai kế hoạch nếu có (Chỉ khi thực sự active)
@@ -992,7 +1009,11 @@ export class M365PromptCompiler {
     }
 
     // 11. Chỉ thị Fast-Path 4 backticks ở cuối cùng
-    sections.push(isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT);
+    sections.push(
+      isPlanMode
+        ? STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT
+        : STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT
+    );
 
     let finalPrompt = sections.join("\n\n").trim();
 

@@ -62,9 +62,66 @@ Ví dụ tool call:
     }
   });
 
-  test("rejects missing response root and standalone JSON", () => {
-    expect(parseStrictM365Response('{"name":"exec_command","arguments":{"cmd":"git status"}}').kind)
-      .toBe("protocol_error");
+  test("accepts plain final answers without response envelope", () => {
+    const result = parseStrictM365Response("Đây là câu trả lời Markdown thông thường.");
+    expect(result.kind).toBe("final_answer");
+    if (result.kind === "final_answer") {
+      expect(result.content).toBe("Đây là câu trả lời Markdown thông thường.");
+    }
+  });
+
+  test("keeps standalone JSON without control markers as final answer", () => {
+    const raw = '{"name":"exec_command","arguments":{"cmd":"git status"}}';
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("final_answer");
+    if (result.kind === "final_answer") {
+      expect(result.content).toBe(raw);
+    }
+  });
+
+  test("accepts fenced plain final answers without response envelope", () => {
+    const raw = `\`\`\`\`markdown
+# Kết quả
+
+Không cần gọi công cụ.
+\`\`\`\``;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("final_answer");
+    if (result.kind === "final_answer") {
+      expect(result.content).toBe("# Kết quả\n\nKhông cần gọi công cụ.");
+    }
+  });
+
+  test("rejects action syntax without response envelope", () => {
+    const toolOpen = `${"<"}tool_call>`;
+    const toolClose = `${"<"}/tool_call>`;
+    const raw = `${toolOpen}{"name":"exec_command","arguments":{"cmd":"git status"}}${toolClose}`;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
+    }
+  });
+
+  test("rejects incomplete response envelope even for plain text", () => {
+    const responseOpen = `${"<"}m365Response>`;
+    const result = parseStrictM365Response(`${responseOpen}Câu trả lời chưa đóng envelope`);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
+    }
+  });
+
+  test("rejects patch markers without response envelope", () => {
+    const raw = `*** Begin Patch
+*** Add File: a.txt
++hello
+*** End Patch`;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
+    }
   });
 
   test("rejects malformed JSON without auto-healing", () => {
