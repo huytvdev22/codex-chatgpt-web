@@ -903,7 +903,7 @@ export async function executeM365Turn(
       const patchFullyClosed = /(?:\\?\*){2,3}\s*End Patch/i.test(combinedText) || /<\s*\/\s*custom_tool_call\s*>/i.test(combinedText);
       const hasM365ResponseOpen = /<\s*m365[\\_]*response\s*>/i.test(combinedText);
       const m365ResponseFullyClosed = /(?:<\s*\/|\/\s*)m365[\\_]*response\s*>/i.test(combinedText);
-      const hasUnclosedM365Response = hasM365ResponseOpen && !m365ResponseFullyClosed;
+      const completionGraceMs = 1_500;
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
       // 1. Nếu có thẻ tool_call, patch hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
@@ -913,25 +913,12 @@ export async function executeM365Turn(
       //      Tuyệt đối KHÔNG ngắt sớm sau 8s vì mô hình reasoning/think có thể pause giữa các file tới 15-25s.
       //      Chỉ kích hoạt hard deadlock breaker khi bất động ít nhất 30 giây (120 chu kỳ polling).
       //    - Nếu không có khối dở dang: 8 giây (32 chu kỳ).
-      const isLongResponse = combinedText.length > 2000;
-      const minStableTime = isLongResponse ? 6000 : 3000;
-      const minStableCycles = isLongResponse ? 24 : 8;
 
       // Khi response sử dụng m365Response envelope, chỉ frame đóng ngoài cùng mới
       // được phép chứng minh response đã hoàn tất. End Patch hoặc closing
       // custom_tool_call có thể xuất hiện trước closing m365Response trong chunk
       // cuối, nên không được kết thúc polling chỉ vì patch đã đóng.
-      const hasFullyClosedMarker = hasM365ResponseOpen
-        ? m365ResponseFullyClosed
-        : toolCallFullyClosed || planFullyClosed || patchFullyClosed;
-      const hasAnyUnclosedMarker =
-        hasUnclosedToolCall ||
-        hasUnclosedPatch ||
-        hasUnclosedPlan ||
-        hasUnclosedM365Response;
       const timeSinceChange = Date.now() - lastTextChangeAt;
-      const deadlockTimeoutMs = hasAnyUnclosedMarker ? 30_000 : 8_000;
-      const deadlockCycles = hasAnyUnclosedMarker ? 120 : 32;
 
       // Khi M365 đã có nội dung và không còn nút Stop generating (!status.isGenerating):
       // - Chuyển sang Trạng thái 1 (Trạng thái rảnh tuyệt đối): Trong .fai-BebopLiteChatInput__actions không còn nút submit/stop
@@ -943,14 +930,15 @@ export async function executeM365Turn(
       const isStopDismissedStable = hasSeenGenerating && !status.isGenerating && completedCandidateAt !== null && (Date.now() - completedCandidateAt >= stableCompletionMs);
       const isState1Idle = Boolean((status as any).isInputActionsIdle) && !status.isGenerating && (stableCycles >= 1);
 
-      const protocolEnvelopeReady = !hasM365ResponseOpen || m365ResponseFullyClosed;
-      const isSettled = !status.isGenerating && protocolEnvelopeReady && (
-        isState1Idle ||
-        isStopDismissedStable ||
-        (hasFullyClosedMarker && stableCycles >= 1) ||
-        (!hasAnyUnclosedMarker && (stableCycles >= minStableCycles || timeSinceChange >= minStableTime)) ||
-        (timeSinceChange >= deadlockTimeoutMs || stableCycles >= deadlockCycles)
-      );
+      // Browser Worker chỉ xác định M365 đã sinh xong hay chưa.
+      // Strict parser chịu trách nhiệm xác định response đúng hay sai format.
+      //
+      // - Còn generating hoặc text còn thay đổi: tiếp tục chờ.
+      // - Đã dừng generating và text ổn định 1,5 giây: kết thúc thu thập.
+      // - Không dùng protocol marker để kéo dài hoặc rút ngắn thời gian chờ.
+      const generationFinished = isState1Idle || isStopDismissedStable;
+      const textStable = timeSinceChange >= completionGraceMs;
+      const isSettled = !status.isGenerating && generationFinished && textStable;
 
       if (status.hasContent && !status.isGenerating && isSettled) {
         console.log(`[m365-worker] [completed] attempts=${attempts} durationMs=${attempts * pollIntervalMs} hasSeenGenerating=${hasSeenGenerating} isState1Idle=${Boolean((status as any).isInputActionsIdle)} timeSinceCandidate=${completedCandidateAt ? Date.now() - completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} m365ResponseOpen=${hasM365ResponseOpen} m365ResponseClosed=${m365ResponseFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
