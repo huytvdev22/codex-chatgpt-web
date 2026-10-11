@@ -120,6 +120,10 @@ export class CodexPayloadNormalizer {
       .replace(/<sandbox_mode[\s\S]*?<\/sandbox_mode[^>]*>/gi, "")
       .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
       .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
+      .replace(/<apps_instructions>[\s\S]*?<\/apps_instructions>/gi, "")
+      .replace(/<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi, "")
+      .replace(/<tools>[\s\S]*?<\/tools>/gi, "")
+      .replace(/<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools)>/gi, "")
       .replace(/`?\s*change it;\s*user requests or tool descriptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
       .replace(/##\s*request_user_input availability[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
       .replace(/In Default mode, strongly prefer making reasonable assumptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
@@ -144,6 +148,8 @@ export class CodexPayloadNormalizer {
         .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
         .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
         .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Plugins[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/Deferred tool namespaces:[\s\S]*?(?=\n# |\n\[|$)/i, "")
         .trim();
     }
 

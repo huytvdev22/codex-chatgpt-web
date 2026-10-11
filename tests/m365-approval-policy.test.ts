@@ -140,8 +140,7 @@ describe("M365 local approval policy", () => {
           prefix_rule: ["git", "init"],
         },
       },
-      EXEC_COMMAND_TOOL,
-      { platform: "darwin" }
+      EXEC_COMMAND_TOOL
     );
 
     expect(mapped.name).toBe("exec_command");

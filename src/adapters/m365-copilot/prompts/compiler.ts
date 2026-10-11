@@ -5,8 +5,6 @@ import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
-  COMPACT_CORE_TOOLS_DECLARATION,
-  COMPACT_APPLY_PATCH_EXAMPLES,
   M365_IMAGE_ATTACHMENT_HINT,
 } from "./templates";
 import {
@@ -16,6 +14,91 @@ import {
 
 const MAX_M365_PROMPT_CHARS = 95_000;
 const MAX_TOOL_RESULT_CHARS = 8_000;
+const MAX_COMPACT_TOOL_DESCRIPTION_CHARS = 320;
+const MAX_FULL_TOOL_DESCRIPTION_CHARS = 1_200;
+
+/**
+ * Viết lại mô tả action cho M365 thay vì forward nguyên văn instruction dài
+ * từ Codex. Contract kỹ thuật như wire_name, kind và parameters vẫn giữ nguyên.
+ */
+function curateToolDescription(
+  tool: NormalizedTool,
+  compact: boolean
+): string {
+  const wireName =
+    tool.identity.qualifiedName || tool.identity.name;
+  const canonicalDescriptions: Record<string, string> = {
+    exec_command:
+      "Chạy câu lệnh CLI không tương tác trong môi trường và shell đã khai báo. Chỉ dùng khi không có semantic action phù hợp.",
+    write_stdin:
+      "Gửi thêm dữ liệu vào phiên exec_command đang chạy bằng session_id.",
+    list_mcp_resources:
+      "Liệt kê resource do MCP server cung cấp. Chỉ dùng khi yêu cầu cần dữ liệu từ MCP resource.",
+    list_mcp_resource_templates:
+      "Liệt kê resource template do MCP server cung cấp.",
+    read_mcp_resource:
+      "Đọc một MCP resource bằng server và URI chính xác.",
+    request_user_input:
+      "Mở hộp thoại hỏi người dùng khi action khả dụng và cần làm rõ thông tin quan trọng.",
+    apply_patch:
+      "Tạo hoặc sửa file bằng raw patch. Đây là freeform action; không bọc patch trong JSON arguments.",
+    view_image:
+      "Mở ảnh cục bộ để kiểm tra trực quan.",
+    get_goal:
+      "Đọc trạng thái goal hiện tại khi workflow goal được sử dụng.",
+    create_goal:
+      "Tạo goal chỉ khi người dùng hoặc instruction yêu cầu rõ ràng.",
+    update_goal:
+      "Cập nhật trạng thái goal hiện tại theo đúng lifecycle được hỗ trợ.",
+    "web.run":
+      "Truy cập web khi yêu cầu cần thông tin trực tuyến, dữ liệu mới hoặc nguồn bên ngoài. Chỉ truyền các tham số đúng schema.",
+    "image_gen.imagegen":
+      "Tạo hoặc chỉnh sửa hình ảnh khi người dùng yêu cầu nội dung trực quan.",
+  };
+
+  const curated =
+    canonicalDescriptions[wireName] ||
+    canonicalDescriptions[tool.identity.name];
+  if (curated) return curated;
+
+  const raw = (tool.description || "Không có mô tả.")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const maxChars = compact
+    ? MAX_COMPACT_TOOL_DESCRIPTION_CHARS
+    : MAX_FULL_TOOL_DESCRIPTION_CHARS;
+
+  return raw.length > maxChars
+    ? `${raw.slice(0, maxChars).trimEnd()}…`
+    : raw;
+}
+
+/**
+ * Loại bỏ instruction nội bộ của Codex khỏi prompt gửi sang M365.
+ * Chỉ giữ project/developer rules có ý nghĩa đối với quá trình thực thi.
+ */
+function sanitizeCodexInstructions(text: string): string {
+  return text
+    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
+    .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
+    .replace(/<apps_instructions>[\s\S]*?<\/apps_instructions>/gi, "")
+    .replace(/<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi, "")
+    .replace(/<tools>[\s\S]*?<\/tools>/gi, "")
+    .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
+    .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
+    .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
+    .replace(
+      /<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools|skills_instructions)>/gi,
+      ""
+    )
+    .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/gi, "")
+    .replace(/# Plugins[\s\S]*?(?=\n# |\n\[|$)/gi, "")
+    .replace(/Deferred tool namespaces:[\s\S]*?(?=\n# |\n\[|$)/gi, "")
+    .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/gi, "")
+    .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
+    .trim();
+}
 
 /**
  * Thực hiện xử lý truncateToolResult cho quy trình M365 Copilot Adapter.
@@ -365,22 +448,182 @@ export const CANONICAL_TOOL_EXAMPLES = `VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN 
 \`\`\`\``;
 
 /**
- * Render Tool Declaration chuẩn mực cho M365 Copilot.
- * Sử dụng bộ công cụ Core Coding Tools tối ưu, không nhồi các additional_tools ngoài lề từ client
- * giúp prompt tinh gọn tối đa, bảo vệ ngữ cảnh và chống phân tâm cho M365 Copilot.
+ * Sinh ví dụ transport tối thiểu dựa trên đúng inventory của turn hiện tại.
+ * Không quảng bá tool không tồn tại và không duy trì bộ ví dụ hard-code.
  */
-export function renderDynamicToolDeclarations(_tools?: NormalizedTool[]): string {
+function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): string {
+  const functionTool = tools.find(tool => tool.kind === "function");
+  const applyPatchTool = tools.find(
+    tool => tool.kind === "custom" && tool.identity.name === "apply_patch"
+  );
+  const examples: string[] = [];
 
-  return `AVAILABLE TOOLS\n\n${CORE_CODING_TOOLS_DECLARATION}\n\n${CANONICAL_TOOL_EXAMPLES}`;
+  if (!compact && functionTool?.kind === "function") {
+    const wireName =
+      functionTool.identity.qualifiedName || functionTool.identity.name;
+    const required = Array.isArray(functionTool.rawParameters.required)
+      ? functionTool.rawParameters.required.map(String)
+      : [];
+    const properties =
+      functionTool.rawParameters.properties &&
+      typeof functionTool.rawParameters.properties === "object" &&
+      !Array.isArray(functionTool.rawParameters.properties)
+        ? functionTool.rawParameters.properties as Record<string, unknown>
+        : {};
+    const argumentsExample = Object.fromEntries(
+      required.map(name => {
+        const schema = properties[name];
+        const type =
+          schema &&
+          typeof schema === "object" &&
+          !Array.isArray(schema) &&
+          typeof (schema as Record<string, unknown>).type === "string"
+            ? (schema as Record<string, unknown>).type
+            : "string";
+        const value =
+          type === "number" || type === "integer"
+            ? 1
+            : type === "boolean"
+              ? true
+              : type === "array"
+                ? []
+                : type === "object"
+                  ? {}
+                  : `<${name}>`;
+        return [name, value];
+      })
+    );
+
+    examples.push(`FUNCTION ACTION EXAMPLE
+\`\`\`\`markdown
+&lt;m365Response&gt;
+&lt;tool_call&gt;
+${JSON.stringify({ name: wireName, arguments: argumentsExample })}
+&lt;/tool_call&gt;
+&lt;/m365Response&gt;
+\`\`\`\``);
+  }
+
+  if (applyPatchTool) {
+    const wireName =
+      applyPatchTool.identity.qualifiedName || applyPatchTool.identity.name;
+    examples.push(`FREEFORM ACTION EXAMPLE
+\`\`\`\`markdown
+&lt;m365Response&gt;
+&lt;custom_tool_call name="${wireName}"&gt;
+*** Begin Patch
+*** Update File: path/to/file.ext
+@@
+-old content
++new content
+*** End Patch
+&lt;/custom_tool_call&gt;
+&lt;/m365Response&gt;
+\`\`\`\`
+
+File chưa tồn tại dùng *** Add File. File đã tồn tại dùng *** Update File.
+Không dùng *** Add File để giả định ghi đè file đã tồn tại.`);
+  }
+
+  return examples.length > 0
+    ? `IDE BRIDGE TRANSPORT EXAMPLES\n\n${examples.join("\n\n")}`
+    : "";
+}
+
+/**
+ * Render Tool Declaration chuẩn mực cho M365 Copilot.
+ * Sinh inventory trực tiếp từ native tools do Codex cung cấp, tương tự mô hình
+ * codex_tool_inventory của ChatGPT Web. M365 phải gọi đúng qualifiedName
+ * và truyền arguments theo đúng JSON Schema được quảng bá.
+ */
+export function renderDynamicToolDeclarations(tools: NormalizedTool[] = []): string {
+  if (tools.length === 0) {
+    return "CODEX ACTION CONTRACT FOR THIS IDE TURN\n\nKhông có action nào được Codex quảng bá cho turn hiện tại.";
+  }
+
+  const inventory = tools.map((tool, index) => {
+    const wireName = tool.identity.qualifiedName || tool.identity.name;
+    const base = {
+      wire_name: wireName,
+      name: tool.identity.name,
+      namespace: tool.identity.namespace ?? null,
+      description: curateToolDescription(tool, false),
+      kind: tool.kind === "custom" ? "freeform" : "function",
+      ...(tool.kind === "function"
+        ? {
+            parameters: tool.rawParameters,
+            ...(tool.strict !== undefined ? { strict: tool.strict } : {}),
+          }
+        : {
+            input: {
+              type: "string",
+              description: "Freeform input. Không bọc nội dung tool này trong arguments JSON.",
+              ...(tool.format !== undefined ? { format: tool.format } : {}),
+            },
+          }),
+    };
+
+    return `${index + 1}. ${wireName}\n${JSON.stringify(base, null, 2)}`;
+  }).join("\n\n");
+
+  const examples = renderDynamicToolExamples(tools);
+
+  return `CODEX ACTION CONTRACT FOR THIS IDE TURN
+
+Các action sau do IDE bridge cung cấp cho turn hiện tại. Đây KHÔNG phải tool registry nội bộ của M365.
+- Chỉ yêu cầu action có trong contract này.
+- Bắt buộc dùng đúng wire_name; không tự tạo alias.
+- kind=function: dùng tool_call và JSON arguments đúng parameters schema.
+- kind=freeform: dùng custom_tool_call và raw input; không chuyển raw input thành arguments JSON.
+- Nếu semantic action phù hợp tồn tại, không thay thế bằng exec_command.
+- Không thay IDE action bằng web.run, container.exec, python hoặc system tool nội bộ của M365.
+- Adapter chỉ validate và forward; Codex runtime chịu trách nhiệm thực thi, sandbox, approval và UI lifecycle.
+
+${inventory}
+
+${examples}`;
 }
 
 /**
  * Render Tool Declaration phiên bản COMPACT cho M365 Copilot từ Turn 2 trở đi.
- * Chỉ giữ danh mục công cụ tóm tắt 1 dòng và DUY NHẤT mẫu ví dụ của apply_patch.
+ * Vẫn lấy từ inventory thực tế để không quảng bá tool đã biến mất khỏi turn hiện tại.
  */
-export function renderCompactDynamicToolDeclarations(_tools?: NormalizedTool[]): string {
+export function renderCompactDynamicToolDeclarations(tools: NormalizedTool[] = []): string {
+  if (tools.length === 0) {
+    return "CODEX ACTION CONTRACT (COMPACT): Không có action nào được Codex quảng bá.";
+  }
 
-  return `${COMPACT_CORE_TOOLS_DECLARATION}\n\n${COMPACT_APPLY_PATCH_EXAMPLES}`;
+  const inventory = tools.map(tool => {
+    const wireName = tool.identity.qualifiedName || tool.identity.name;
+    if (tool.kind === "custom") {
+      return `- ${wireName} [freeform] — ${curateToolDescription(tool, true)}`;
+    }
+
+    const required = Array.isArray(tool.rawParameters.required)
+      ? tool.rawParameters.required.map(String)
+      : [];
+    const properties =
+      tool.rawParameters.properties &&
+      typeof tool.rawParameters.properties === "object" &&
+      !Array.isArray(tool.rawParameters.properties)
+        ? Object.keys(tool.rawParameters.properties as Record<string, unknown>)
+        : [];
+    const fields = properties.map(name => required.includes(name) ? `${name}*` : name);
+
+    return `- ${wireName} [function]${fields.length > 0 ? `: ${fields.join(", ")}` : ""} — ${curateToolDescription(tool, true)}`;
+  }).join("\n");
+
+  const examples = renderDynamicToolExamples(tools, true);
+
+  return `CODEX ACTION CONTRACT FOR THIS IDE TURN (COMPACT)
+
+Đây là IDE bridge contract, không phải tool registry nội bộ của M365.
+Chỉ dùng đúng wire_name dưới đây. Dấu * là trường bắt buộc.
+Function action dùng JSON arguments; freeform action dùng raw input.
+Không thay semantic action bằng exec_command hoặc system tool nội bộ của M365.
+${inventory}
+
+${examples}`;
 }
 
 export interface PromptSectionMetrics {
@@ -669,18 +912,13 @@ export class M365PromptCompiler {
     let devInstructionsContent = "";
     if (parsed?.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
       const filteredSystem = parsed.context.systemPrompt
-        .map(sp => sp.trim())
+        .map(sp => sanitizeCodexInstructions(sp))
         .filter(
           sp =>
             sp.length > 0 &&
-            !sp.startsWith("<environment_context>") &&
             !sp.includes("spawn_agent") &&
-            !sp.includes("You are Codex, a coding assistant") &&
-            !sp.includes("You are Codex") &&
-            !sp.includes("<permissions") &&
-            !sp.includes("<sandbox")
+            !sp.includes("You are Codex, a coding assistant")
         )
-        .map(sp => sp.replace(/¨C[a-zA-Z0-9_-]+C/g, "").trim())
         .filter(sp => sp.length > 0)
         .join("\n\n");
       if (filteredSystem) {
@@ -699,7 +937,7 @@ export class M365PromptCompiler {
     // 6. Chỉ thị của Dự án / Developer Rules (Đã được lọc sạch permissions và sandbox instructions)
     if (normalized.developerInstructions && normalized.developerInstructions.length > 0) {
       const cleanedRules = normalized.developerInstructions
-        .map(r => r.replace(/¨C[a-zA-Z0-9_-]+C/g, "").trim())
+        .map(r => sanitizeCodexInstructions(r))
         .filter(r => r.length > 0);
       if (cleanedRules.length > 0) {
         const devRules = cleanedRules.map(r => `- ${r}`).join("\n");

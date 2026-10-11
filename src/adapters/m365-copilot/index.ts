@@ -36,27 +36,6 @@ export * from "./harness";
 /**
  * Trích xuất thông tin môi trường shell của client từ các tham số hoặc context của request.
  */
-function extractClientShell(parsed: CodexParsedRequest): string | undefined {
-
-  // 1. Kiểm tra trong system prompt
-  for (const sp of parsed.context.systemPrompt || []) {
-    const match = sp.match(/<shell>([^<]+)<\/shell>/i);
-    if (match) return match[1].trim();
-  }
-  // 2. Kiểm tra trong messages (user / developer)
-  for (const msg of parsed.context.messages || []) {
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : Array.isArray(msg.content)
-        ? msg.content.map(c => c.type === "text" ? c.text : "").join(" ")
-        : "";
-    const match = text.match(/<shell>([^<]+)<\/shell>/i);
-    if (match) return match[1].trim();
-  }
-
-  return undefined;
-}
-
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
 
@@ -283,10 +262,9 @@ export class M365CopilotAdapter implements ProviderAdapter {
 
       if (detectedToolCalls.length > 0) {
         const clientTools = parsed.context.tools || [];
-        const detectedShell = extractClientShell(parsed);
         const mappedCalls = detectedToolCalls.map(rawCall => ({
           rawCall,
-          mapped: M365ToolBridge.mapToolCall(rawCall, clientTools, { shell: detectedShell }),
+          mapped: M365ToolBridge.mapToolCall(rawCall, clientTools),
           callId: rawCall.id || `call_${Math.random().toString(36).slice(2, 10)}`,
         }));
 

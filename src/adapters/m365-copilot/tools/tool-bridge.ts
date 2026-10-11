@@ -1,20 +1,13 @@
 
 import type { CodexTool } from "../../../types";
-import {
-  CommandStrategyResolver,
-  type PlatformCommandStrategy,
-  type StrategyResolveOptions,
-} from "./command-strategies";
 import { SafeCommandGuard } from "./safe-command-guard";
 import { normalizeM365ToolArguments } from "./argument-normalizer";
 import { decodeM365Content } from "./content-decoder";
 import { validateM365ToolCall } from "./tool-validator";
-import { AtomicFileWriter, defaultAtomicFileWriter } from "./atomic-file-writer";
 import { buildCodexExecCommandArguments } from "./approval-policy";
 
 export { SafeCommandGuard } from "./safe-command-guard";
 export { normalizeFileContent, type NormalizeFileContentOptions } from "./content-decoder";
-export * from "./command-strategies";
 
 export interface M365RawToolCall {
   name: string;
@@ -25,15 +18,6 @@ export interface M365MappedToolCall {
   name: string;
   arguments: string;
 }
-
-export interface MapToolCallOptions extends StrategyResolveOptions {
-  strategy?: PlatformCommandStrategy;
-}
-
-type ToolHandler = (
-  args: Record<string, any>,
-  strategy: PlatformCommandStrategy
-) => { name: string; args: Record<string, any> };
 
 export interface RequestUserInputOption {
   label: string;
@@ -132,214 +116,18 @@ export function normalizeRequestUserInputArgs(args: Record<string, any>): { ques
   return { questions };
 }
 
-export const TOOL_HANDLERS: Record<string, ToolHandler> = {
-  read_file: (args, strategy) => {
-    return SafeCommandGuard.handleReadFile(args, strategy);
-  },
-
-  list_dir: (args, strategy) => {
-    const targetPath = args.path || args.dir || ".";
-    const cmd = strategy.listDir(String(targetPath));
-    return {
-      name: "exec_command",
-      args: { cmd },
-    };
-  },
-
-  search_files: (args, strategy) => {
-    const pattern = args.pattern || args.query || "*";
-    const targetPath = args.path || args.dir || ".";
-    const cmd = strategy.searchFiles(String(pattern), String(targetPath));
-    return {
-      name: "exec_command",
-      args: { cmd },
-    };
-  },
-
-  grep_code: (args, strategy) => {
-    const query = args.query || args.pattern || "";
-    const targetPath = args.path || args.dir || ".";
-    const cmd = strategy.grepCode(String(query), String(targetPath));
-    return {
-      name: "exec_command",
-      args: { cmd },
-    };
-  },
-
-  git_status: (_args, strategy) => {
-    return {
-      name: "exec_command",
-      args: { cmd: strategy.gitStatus() },
-    };
-  },
-
-  git_diff: (args, strategy) => {
-    const file = args.path || args.file;
-    const cmd = strategy.gitDiff(file ? String(file) : undefined);
-    return {
-      name: "exec_command",
-      args: { cmd },
-    };
-  },
-
-  run_command: (args, strategy) => {
-    const cmd = String(args.cmd || args.command || "");
-    const validation = SafeCommandGuard.validateShellCommand(cmd);
-    const platform = strategy?.platformName === "posix" ? "posix" : "powershell";
-    const finalCmd = validation.allowed
-      ? cmd
-      : SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
-    return {
-      name: "exec_command",
-      args: buildCodexExecCommandArguments(
-        args,
-        strategy.runCommand(finalCmd)
-      ),
-    };
-  },
-
-  write_file: (args, strategy) => {
-    const targetPath = String(args.path || args.file || "");
-    const content = decodeM365Content(args.content, { encoding: String(args.content_encoding || "plain") });
-    const contentBuffer = Buffer.from(content, "utf8");
-
-    // Nếu nội dung dài (> 1024 bytes), sử dụng file staging an toàn để loại bỏ hoàn toàn
-    // nguy cơ vượt giới hạn độ dài dòng lệnh (ARG_MAX trên POSIX / 8191 chars trên PowerShell Windows)
-    if (contentBuffer.length > 1024) {
-      const staging = defaultAtomicFileWriter.createStagingFile(contentBuffer, "codex_wf_");
-      const cmd = strategy.writeFile(targetPath, staging.stagingPath, {
-        stagingPath: staging.stagingPath,
-        expectedLength: staging.bytesWritten,
-        expectedSha256: staging.sha256,
-      });
-      return {
-        name: "exec_command",
-        args: { cmd },
-      };
-    }
-
-    // Với nội dung ngắn, giữ Base64 tương thích cho regression tests, có kèm metadata xác thực
-    const base64Content = contentBuffer.toString("base64");
-    const sha256 = AtomicFileWriter.computeSha256(contentBuffer);
-    const cmd = strategy.writeFile(targetPath, base64Content, {
-      expectedLength: contentBuffer.length,
-      expectedSha256: sha256,
-    });
-    return {
-      name: "exec_command",
-      args: { cmd },
-    };
-  },
-
-  apply_patch: () => {
-    throw new Error(
-      "[M365 Tool Capability Error] apply_patch requires the client to advertise the native apply_patch tool."
-    );
-  },
-
-  write_stdin: (args) => {
-    const sessionId = typeof args.session_id === "number" ? args.session_id : parseInt(String(args.session_id || 0), 10);
-    const chars = typeof args.chars === "string" ? args.chars : "";
-    const yieldTimeMs = typeof args.yield_time_ms === "number" ? args.yield_time_ms : undefined;
-    const maxTokens = typeof args.max_output_tokens === "number" ? args.max_output_tokens : undefined;
-    return {
-      name: "write_stdin",
-      args: {
-        session_id: sessionId,
-        chars,
-        ...(yieldTimeMs !== undefined ? { yield_time_ms: yieldTimeMs } : {}),
-        ...(maxTokens !== undefined ? { max_output_tokens: maxTokens } : {}),
-      },
-    };
-  },
-
-  view_image: (args) => {
-    const targetPath = String(args.path || args.file || args.image_path || "");
-    const detail = args.detail === "original" ? "original" : "high";
-    return {
-      name: "view_image",
-      args: {
-        path: targetPath,
-        detail,
-      },
-    };
-  },
-
-  request_user_input: (args) => {
-    const normalized = normalizeRequestUserInputArgs(args);
-    return {
-      name: "request_user_input",
-      args: normalized,
-    };
-  },
-
-  create_goal: (args) => {
-    const objective = String(args.objective || args.goal || "");
-    const tokenBudget = typeof args.token_budget === "number" ? args.token_budget : undefined;
-    return {
-      name: "create_goal",
-      args: {
-        objective,
-        ...(tokenBudget !== undefined ? { token_budget: tokenBudget } : {}),
-      },
-    };
-  },
-
-  update_goal: (args) => {
-    const status = String(args.status || "complete");
-    return {
-      name: "update_goal",
-      args: {
-        status,
-      },
-    };
-  },
-
-  get_goal: () => {
-    return {
-      name: "get_goal",
-      args: {},
-    };
-  },
-
-  exec_command: (args, strategy) => {
-    const cmd = String(args.cmd || args.command || "");
-    const validation = SafeCommandGuard.validateShellCommand(cmd);
-    const platform = strategy?.platformName === "posix" ? "posix" : "powershell";
-    const finalCmd = validation.allowed
-      ? cmd
-      : SafeCommandGuard.createStructuredRefusalCommand(validation, platform);
-    return {
-      name: "exec_command",
-      args: buildCodexExecCommandArguments(args, finalCmd),
-    };
-  },
-
-  // Aliases tương thích cao (phòng trường hợp M365 Copilot gọi không dấu gạch dưới)
-  readfile: (args, strategy) => TOOL_HANDLERS.read_file(args, strategy),
-  listdir: (args, strategy) => TOOL_HANDLERS.list_dir(args, strategy),
-  searchfiles: (args, strategy) => TOOL_HANDLERS.search_files(args, strategy),
-  grepcode: (args, strategy) => TOOL_HANDLERS.grep_code(args, strategy),
-  gitstatus: (args, strategy) => TOOL_HANDLERS.git_status(args, strategy),
-  gitdiff: (args, strategy) => TOOL_HANDLERS.git_diff(args, strategy),
-  execcommand: (args, strategy) => TOOL_HANDLERS.exec_command(args, strategy),
-  applypatch: (args, strategy) => TOOL_HANDLERS.apply_patch(args, strategy),
-  writefile: (args, strategy) => TOOL_HANDLERS.write_file(args, strategy),
-  requestuserinput: (args, strategy) => TOOL_HANDLERS.request_user_input(args, strategy),
-};
-
 /**
- * Lớp điều phối chuyển đổi các công cụ M365 sang Native Codex Tools (Tuân thủ SOLID & Cross-Platform)
+ * Cầu nối native-first giữa M365 Copilot và Codex runtime.
+ * Adapter chỉ chuẩn hóa, kiểm tra capability và forward tool call;
+ * Codex chịu trách nhiệm thực thi, sandbox, approval và hành vi theo hệ điều hành.
  */
 export class M365ToolBridge {
   /**
-   * Ánh xạ một tool call nhận được từ M365 Copilot thành dạng tương thích với Client (Codex)
-   * Sử dụng PlatformCommandStrategy để sinh câu lệnh phù hợp với shell và hệ điều hành của client.
+   * Chuẩn hóa và forward tool call M365 sang đúng native tool do Codex quảng bá.
    */
   static mapToolCall(
     raw: M365RawToolCall,
-    clientTools: CodexTool[] = [],
-    options?: MapToolCallOptions | PlatformCommandStrategy
+    clientTools: CodexTool[] = []
   ): M365MappedToolCall {
 
     const normalized = normalizeM365ToolArguments(raw.name, raw.arguments);
@@ -359,16 +147,19 @@ export class M365ToolBridge {
 
     const hasExactTool = clientTools.some((t) => t.name === toolName || t.name === raw.name);
 
+    // Native-first forwarding: M365 chỉ chuẩn hóa và kiểm tra giao thức, còn Codex runtime
+    // chịu trách nhiệm thực thi tool, xử lý hệ điều hành, sandbox, approval và UI lifecycle.
+    // Không hạ cấp các semantic tools như read_file/list_dir thành shell command.
+    if (!hasExactTool) {
+      throw new Error(
+        `[M365 Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
+      );
+    }
+
     // Xử lý riêng biệt cho apply_patch (công cụ native của Codex để hiển thị diff +X -Y và Undo)
     if (toolName === "apply_patch" || toolName === "applypatch") {
       const patch = String(parsedArgs.input).trim();
       parsedArgs = { ...parsedArgs, input: patch };
-
-      if (!hasExactTool) {
-        throw new Error(
-          "[M365 Tool Capability Error] Client does not advertise native apply_patch; fallback execution is disabled."
-        );
-      }
 
       console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);
       return {
@@ -377,55 +168,22 @@ export class M365ToolBridge {
       };
     }
 
-    // Xác định strategy theo Dependency Inversion Principle
-    let strategy: PlatformCommandStrategy;
-    if (options && typeof (options as any).readFile === "function") {
-      strategy = options as PlatformCommandStrategy;
-    } else {
-      const opts = (options || {}) as MapToolCallOptions;
-      strategy = opts.strategy || CommandStrategyResolver.resolve(opts);
+    if (toolName === "request_user_input") {
+      parsedArgs = normalizeRequestUserInputArgs(parsedArgs);
     }
 
-    // Nếu client đã có sẵn công cụ trùng tên (và không phải read_file hay apply_patch), giữ nguyên
-    if (hasExactTool && toolName !== "read_file" && toolName !== "apply_patch") {
-      if (toolName === "write_file") {
-        // Nội dung đã được decode đúng một lần trước validation.
-        parsedArgs.content = String(parsedArgs.content);
+    if (toolName === "exec_command" || toolName === "run_command") {
+      const cmd = String(parsedArgs.cmd || parsedArgs.command || "");
+      const commandValidation = SafeCommandGuard.validateShellCommand(cmd);
+      if (!commandValidation.allowed) {
+        throw new Error(
+          "[M365 Safe Command Error] Command was rejected by the safety policy."
+        );
       }
-      if (toolName === "request_user_input") {
-        parsedArgs = normalizeRequestUserInputArgs(parsedArgs);
-      }
-      if (toolName === "exec_command") {
-        const cmd = String(parsedArgs.cmd || parsedArgs.command || "");
-        const validation = SafeCommandGuard.validateShellCommand(cmd);
-        if (!validation.allowed) {
-          const platform = strategy.platformName === "posix" ? "posix" : "powershell";
-          parsedArgs = buildCodexExecCommandArguments(
-            parsedArgs,
-            SafeCommandGuard.createStructuredRefusalCommand(validation, platform)
-          );
-        } else {
-          parsedArgs = buildCodexExecCommandArguments(parsedArgs, cmd);
-        }
-      }
-      return {
-        name: toolName,
-        arguments: JSON.stringify(parsedArgs),
-      };
+      parsedArgs = buildCodexExecCommandArguments(parsedArgs, cmd);
     }
 
-    // Nếu có handler ánh xạ tương ứng
-    const handler = TOOL_HANDLERS[toolName];
-    if (handler) {
-      const mapped = handler(parsedArgs, strategy);
-      console.log(`[M365 TOOL BRIDGE] Mapped ${toolName} -> ${mapped.name} (strategy: ${strategy.platformName})`);
-      return {
-        name: mapped.name,
-        arguments: JSON.stringify(mapped.args),
-      };
-    }
-
-    // Mặc định fallback: giữ nguyên
+    console.log(`[M365 TOOL BRIDGE] Forwarded ${toolName} -> native ${toolName}`);
     return {
       name: toolName,
       arguments: JSON.stringify(parsedArgs),

@@ -34,12 +34,12 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.isTitleRequest).toBeDefined();
     expect(rootModule.generateTitleResponse).toBeDefined();
 
-    // Tool Bridge & Strategies
+    // Native-first Tool Bridge
     expect(rootModule.M365ToolBridge).toBeDefined();
     expect(rootModule.AtomicFileWriter).toBeDefined();
-    expect(rootModule.PosixCommandStrategy).toBeDefined();
-    expect(rootModule.PowerShellCommandStrategy).toBeDefined();
-    expect(rootModule.CommandStrategyResolver).toBeDefined();
+    expect("PosixCommandStrategy" in rootModule).toBe(false);
+    expect("PowerShellCommandStrategy" in rootModule).toBe(false);
+    expect("CommandStrategyResolver" in rootModule).toBe(false);
 
     // Translation Detectors & Helpers
     expect(rootModule.PatchToolCallDetector).toBeDefined();

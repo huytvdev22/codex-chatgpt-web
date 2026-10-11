@@ -11,7 +11,6 @@ export {
 export {
   M365ToolBridge,
   normalizeFileContent,
-  TOOL_HANDLERS,
 } from "./tool-bridge";
 
 export {
@@ -50,5 +49,3 @@ export {
   type CodexExecCommandArguments,
   type CommandApprovalDecision,
 } from "./approval-policy";
-
-export * from "./command-strategies";
