@@ -287,30 +287,6 @@ export const CORE_CODING_TOOLS_DECLARATION = `- read_file
       + label (string): Tên phương án. Nếu là phương án tối ưu được đề xuất, đính kèm đuôi " (Recommended)" (ví dụ: "Tailwind CSS (Recommended)").
       + description (string): Giải thích chi tiết ưu điểm, nhược điểm của phương án.`;
 
-const CORE_TOOL_NAMES = new Set([
-  "read_file",
-  "readfile",
-  "list_dir",
-  "listdir",
-  "search_files",
-  "searchfiles",
-  "grep_code",
-  "grepcode",
-  "git_status",
-  "gitstatus",
-  "git_diff",
-  "gitdiff",
-  "exec_command",
-  "execcommand",
-  "apply_patch",
-  "applypatch",
-  "write_file",
-  "writefile",
-  "run_command",
-  "request_user_input",
-  "requestuserinput",
-]);
-
 /**
  * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI và control tokens rác.
  */
