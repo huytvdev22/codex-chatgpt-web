@@ -265,9 +265,8 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
       parsed: mockParsed,
       isNewConversation: true,
     });
-    expect(resTurn1.finalPrompt).toContain("AVAILABLE TOOLS\n");
-    expect(resTurn1.finalPrompt).toContain("VÍ DỤ MẪU GỌI CÔNG CỤ CHUẨN");
-    expect(resTurn1.finalPrompt).toContain("git_status");
+    expect(resTurn1.finalPrompt).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
+    expect(resTurn1.finalPrompt).toContain("Không có action nào được Codex quảng bá cho turn hiện tại.");
 
     // 2. Turn 2 (isNewConversation: false) -> Compact Prompt
     const resTurn2 = promptCompiler.compile({
@@ -275,8 +274,8 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
       parsed: mockParsed,
       isNewConversation: false,
     });
-    expect(resTurn2.finalPrompt).toContain("AVAILABLE TOOLS (COMPACT):");
-    expect(resTurn2.finalPrompt).toContain("VÍ DỤ MẪU DUY NHẤT: CÚ PHÁP apply_patch");
+    expect(resTurn2.finalPrompt).toContain("CODEX ACTION CONTRACT (COMPACT):");
+    expect(resTurn2.finalPrompt).toContain("Không có action nào được Codex quảng bá.");
     // Bảo toàn Ngữ cảnh Môi trường
     expect(resTurn2.finalPrompt).toContain("[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]:");
     expect(resTurn2.finalPrompt).toContain("/workspace/app");
@@ -284,8 +283,8 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(resTurn2.finalPrompt).not.toContain('{"name": "git_status"');
     expect(resTurn2.finalPrompt).not.toContain('{"name": "grep_code"');
 
-    // Dung lượng Turn 2 compact hơn nhiều so với Turn 1
-    expect(resTurn2.finalPrompt.length).toBeLessThan(resTurn1.finalPrompt.length);
+    // Dynamic action contract phải ổn định giữa các turn khi inventory không thay đổi.
+    expect(resTurn2.finalPrompt).toContain("tiếp tục sửa js/app.js");
   });
 
   test("13. Quy chuẩn tham chiếu file bằng Markdown link tương đối hiện diện đầy đủ trong các bộ prompt", () => {
@@ -319,4 +318,3 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("[index.html — dòng 12](index.html#L12)");
   });
 });
-

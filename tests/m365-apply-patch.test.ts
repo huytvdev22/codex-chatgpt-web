@@ -140,7 +140,7 @@ describe("M365 Native apply_patch Tests", () => {
     };
 
     expect(() => M365ToolBridge.mapToolCall(rawCall, clientTools))
-      .toThrow("Client does not advertise native apply_patch; fallback execution is disabled");
+      .toThrow("Client does not advertise native apply_patch; platform-specific shell fallback is disabled.");
   });
 
   test("Phase 4: M365ToolBridge rejects incomplete patches instead of auto-closing them", () => {
