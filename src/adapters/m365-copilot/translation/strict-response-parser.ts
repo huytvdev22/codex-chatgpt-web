@@ -141,6 +141,47 @@ function hasReservedControlMarker(content: string): boolean {
     || /\*{3}\s*(?:Begin|End) Patch/i.test(content);
 }
 
+type ReservedControlMarker =
+  | "FUNCTION_ACTION_OPEN"
+  | "FUNCTION_ACTION_CLOSE"
+  | "CUSTOM_ACTION_OPEN"
+  | "CUSTOM_ACTION_CLOSE"
+  | "INTERNAL_REASONING_OPEN"
+  | "INTERNAL_REASONING_CLOSE"
+  | "PATCH_BEGIN"
+  | "PATCH_END"
+  | "ROOT_OPEN"
+  | "ROOT_CLOSE";
+
+function detectReservedControlMarkers(content: string): ReservedControlMarker[] {
+  const markerPatterns: ReadonlyArray<readonly [ReservedControlMarker, RegExp]> = [
+    ["FUNCTION_ACTION_OPEN", new RegExp("<" + "tool_call\\b", "i")],
+    ["FUNCTION_ACTION_CLOSE", new RegExp("<" + "\\/tool_call\\s*>", "i")],
+    ["CUSTOM_ACTION_OPEN", new RegExp("<" + "custom_tool_call\\b", "i")],
+    ["CUSTOM_ACTION_CLOSE", new RegExp("<" + "\\/custom_tool_call\\s*>", "i")],
+    ["INTERNAL_REASONING_OPEN", new RegExp("<" + "(?:thought|thinking)\\b", "i")],
+    ["INTERNAL_REASONING_CLOSE", new RegExp("<" + "\\/(?:thought|thinking)\\s*>", "i")],
+    ["PATCH_BEGIN", /\*{3}\s*Begin Patch/i],
+    ["PATCH_END", /\*{3}\s*End Patch/i],
+    ["ROOT_OPEN", new RegExp("<" + "m365Response\\s*>", "i")],
+    ["ROOT_CLOSE", new RegExp("<" + "\\/m365Response\\s*>", "i")],
+  ];
+
+  return markerPatterns
+    .filter(([, pattern]) => pattern.test(content))
+    .map(([type]) => type);
+}
+
+function buildMissingEnvelopeMessage(markers: readonly ReservedControlMarker[]): string {
+  return [
+    "Phản hồi không có root response envelope hợp lệ nhưng chứa reserved control marker.",
+    `Các loại marker được phát hiện: ${markers.join(", ")}.`,
+    "Nếu phản hồi nhằm thực thi action: phát lại toàn bộ action trong đúng một root response envelope hoàn chỉnh; không chèn final answer hoặc lời dẫn vào envelope.",
+    "Nếu phản hồi chỉ là final answer: giữ nguyên ý nghĩa, loại bỏ các reserved control marker trên hoặc diễn đạt chúng bằng ngôn ngữ tự nhiên; không chép nguyên cú pháp điều khiển.",
+    "Chỉ phát lại phản hồi vừa bị từ chối, không tiếp tục sang bước mới.",
+  ].join("\n");
+}
+
 function parseFunctionToolCall(
   payload: string,
   rawResponse: string
@@ -235,11 +276,12 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
   // - Reserved control markers are never downgraded to final text, because doing so could
   //   expose a malformed action as a harmless answer and hide a failed tool invocation.
   if (!hasOpeningEnvelope || !hasClosingEnvelope) {
-    if (hasReservedControlMarker(framed) || framed.includes(ROOT_OPEN) || framed.includes(ROOT_CLOSE)) {
+    const detectedMarkers = detectReservedControlMarkers(framed);
+    if (detectedMarkers.length > 0) {
       return protocolError(
         rawResponse,
         "MISSING_RESPONSE_ENVELOPE",
-        `Phản hồi có action/control marker nên bắt buộc phải được bọc chính xác bởi ${ROOT_OPEN} ... ${ROOT_CLOSE}.`
+        buildMissingEnvelopeMessage(detectedMarkers)
       );
     }
 
