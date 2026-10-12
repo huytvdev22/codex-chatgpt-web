@@ -81,13 +81,8 @@ test("proxies official /models auth and query, then appends grouped and legacy W
     "chatgpt-web/high",
     "chatgpt-web/extra-high",
     "chatgpt-web/pro",
-    "m365-copilot/auto",
-    "m365-copilot/gpt-5.6-think",
-    "m365-copilot/gpt-5.6-quick",
-    "m365-copilot/think",
-    "m365-copilot/quick",
-    "m365-copilot/gpt-5",
-    "m365-copilot/fast",
+    "m365-copilot/gpt-5.6",
+    "m365-copilot",
   ]);
   expect(body.models[0]!.context_window).toBe(300_000);
   expect(body.models[0]!.max_context_window).toBe(371_851);
@@ -224,13 +219,8 @@ test("API Key auth returns augmented model catalog with M365 models without call
   expect(response.status).toBe(200);
   const body = await response.json() as { models: Array<{ slug: string }> };
   const slugs = body.models.map(m => m.slug);
-  expect(slugs).toContain("m365-copilot/auto");
-  expect(slugs).toContain("m365-copilot/gpt-5.6-think");
-  expect(slugs).toContain("m365-copilot/gpt-5.6-quick");
-  expect(slugs).toContain("m365-copilot/think");
-  expect(slugs).toContain("m365-copilot/quick");
-  expect(slugs).toContain("m365-copilot/gpt-5");
-  expect(slugs).toContain("m365-copilot/fast");
+  expect(slugs).toContain("m365-copilot");
+  expect(slugs).toContain("m365-copilot/gpt-5.6");
   expect(slugs).toContain("gpt-5.6-sol");
 });
 

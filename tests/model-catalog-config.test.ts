@@ -57,7 +57,7 @@ multi_agent = true
   }
 });
 
-test("ensureManagedModelCatalogFile generates a valid catalog containing all 7 M365 models", () => {
+test("ensureManagedModelCatalogFile generates a valid catalog containing all active M365 models", () => {
   const tempDir = join(tmpdir(), `codex-catalog-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(tempDir, { recursive: true });
   const catalogPath = join(tempDir, "test-catalog.json");
@@ -71,13 +71,8 @@ test("ensureManagedModelCatalogFile generates a valid catalog containing all 7 M
     expect(Array.isArray(raw.models)).toBe(true);
     const slugs = raw.models.map((m: { slug: string }) => m.slug);
 
-    expect(slugs).toContain("m365-copilot/auto");
-    expect(slugs).toContain("m365-copilot/gpt-5.6-think");
-    expect(slugs).toContain("m365-copilot/gpt-5.6-quick");
-    expect(slugs).toContain("m365-copilot/think");
-    expect(slugs).toContain("m365-copilot/quick");
-    expect(slugs).toContain("m365-copilot/gpt-5");
-    expect(slugs).toContain("m365-copilot/fast");
+    expect(slugs).toContain("m365-copilot/gpt-5.6");
+    expect(slugs).toContain("m365-copilot");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -112,12 +112,12 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
     expect(dynamicText).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
-    expect(dynamicText).toContain('"wire_name": "exec_command"');
-    expect(dynamicText).toContain('"wire_name": "apply_patch"');
-    expect(dynamicText).toContain('"wire_name": "request_user_input"');
+    expect(dynamicText).toContain("exec_command (function)");
+    expect(dynamicText).toContain("apply_patch (freeform)");
+    expect(dynamicText).toContain("request_user_input (function)");
     // Contract chỉ render action từ inventory hiện tại và giữ nguyên exact wire_name.
-    expect(dynamicText).toContain('"wire_name": "create_goal"');
-    expect(dynamicText).toContain('"wire_name": "web.run"');
+    expect(dynamicText).toContain("create_goal (function)");
+    expect(dynamicText).toContain("web.run (function)");
 
     // Không còn các tên alias tự chế hay lẫn lộn
     expect(dynamicText).not.toContain("run_command(cmd)");
@@ -207,8 +207,8 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
     // 1. Dynamic contract chỉ được khai báo action thực sự có trong inventory.
-    expect(dynamicText).toContain('"wire_name": "apply_patch"');
-    expect(dynamicText).not.toContain('"wire_name": "write_file"');
+    expect(dynamicText).toContain("apply_patch (freeform)");
+    expect(dynamicText).not.toContain("write_file");
 
     // 2. UNIFIED_TOOL_PROTOCOL phải có quy tắc cấm heredoc shell và hướng dẫn tạo file
     expect(UNIFIED_TOOL_PROTOCOL).toContain("TẠO FILE MỚI HOẶC SỬA FILE");
@@ -286,14 +286,14 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     // 2. Kiểm tra Dynamic Action Contract chỉ chứa action của current inventory.
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
     expect(dynamicText).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
-    expect(dynamicText).toContain('"wire_name": "exec_command"');
-    expect(dynamicText).toContain('"wire_name": "update_goal"');
-    expect(dynamicText).not.toContain('"wire_name": "read_file"');
-    expect(dynamicText).not.toContain('"wire_name": "list_dir"');
-    expect(dynamicText).not.toContain('"wire_name": "search_files"');
-    expect(dynamicText).not.toContain('"wire_name": "grep_code"');
-    expect(dynamicText).not.toContain('"wire_name": "git_status"');
-    expect(dynamicText).not.toContain('"wire_name": "git_diff"');
+    expect(dynamicText).toContain("exec_command (function)");
+    expect(dynamicText).toContain("update_goal (function)");
+    expect(dynamicText).not.toContain("read_file");
+    expect(dynamicText).not.toContain("list_dir");
+    expect(dynamicText).not.toContain("search_files");
+    expect(dynamicText).not.toContain("grep_code");
+    expect(dynamicText).not.toContain("git_status");
+    expect(dynamicText).not.toContain("git_diff");
 
     // 3. Kiểm tra cleanToolDescription đã cắt Windows safety rules và token rác trong update_goal
     expect(dynamicText).not.toContain("Windows safety rules:");
