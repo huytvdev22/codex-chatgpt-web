@@ -184,14 +184,104 @@ function detectReservedControlMarkers(content: string): ReservedControlMarker[] 
     .map(([type]) => type);
 }
 
-function buildMissingEnvelopeMessage(markers: readonly ReservedControlMarker[]): string {
-  return [
+const MARKER_SYNTAX_LABELS: Record<ReservedControlMarker, string> = {
+  FUNCTION_ACTION_OPEN: "<tool_call>",
+  FUNCTION_ACTION_CLOSE: "</tool_call>",
+  CUSTOM_ACTION_OPEN: '<custom_tool_call name="apply_patch">',
+  CUSTOM_ACTION_CLOSE: "</custom_tool_call>",
+  INTERNAL_REASONING_OPEN: "<thought>",
+  INTERNAL_REASONING_CLOSE: "</thought>",
+  PATCH_BEGIN: "*** Begin Patch",
+  PATCH_END: "*** End Patch",
+  ROOT_OPEN: "<m365Response>",
+  ROOT_CLOSE: "</m365Response>",
+};
+
+interface MissingEnvelopeDiagnosticContext {
+  framed: string;
+  hasOpeningEnvelope: boolean;
+  hasClosingEnvelope: boolean;
+}
+
+function buildMissingEnvelopeMessage(
+  markers: readonly ReservedControlMarker[],
+  context?: MissingEnvelopeDiagnosticContext
+): string {
+  const readableMarkers = markers.map(m => MARKER_SYNTAX_LABELS[m] ?? m);
+  const markerListStr = readableMarkers.join(", ");
+
+  const lines: string[] = [
     "Phản hồi không có root response envelope hợp lệ nhưng chứa reserved control marker.",
-    `Các loại marker được phát hiện: ${markers.join(", ")}.`,
+    `Các cú pháp điều khiển được phát hiện trong phản hồi: ${markerListStr}.`,
+  ];
+
+  // Chẩn đoán định vị chính xác vị trí sai nếu có ngữ cảnh
+  if (context) {
+    const hasRootOpen = context.framed.includes(ROOT_OPEN);
+    const hasRootClose = context.framed.includes(ROOT_CLOSE);
+
+    if (hasRootOpen && !hasRootClose) {
+      lines.push(
+        "Chẩn đoán lỗi: Bạn đã mở thẻ <m365Response> nhưng THIẾU thẻ đóng </m365Response> ở cuối phản hồi. Thẻ </m365Response> là bắt buộc để khép lại envelope."
+      );
+    } else if (!hasRootOpen && hasRootClose) {
+      lines.push(
+        "Chẩn đoán lỗi: Bạn có thẻ đóng </m365Response> nhưng THIẾU thẻ mở <m365Response> ở đầu phản hồi."
+      );
+    } else if (hasRootOpen && hasRootClose && (!context.hasOpeningEnvelope || !context.hasClosingEnvelope)) {
+      lines.push(
+        "Chẩn đoán lỗi: Phát hiện văn bản/lời dẫn nằm BÊN NGOÀI cặp thẻ <m365Response>...</m365Response>. Thẻ <m365Response> phải là nội dung đầu tiên ngay sau 4 dấu backtick và </m365Response> phải là nội dung cuối cùng trước khi đóng 4 dấu backtick; TUYỆT ĐỐI không chèn câu chào hoặc lời dẫn bên ngoài envelope."
+      );
+    } else if (!hasRootOpen && !hasRootClose) {
+      lines.push(
+        "Chẩn đoán lỗi: Bạn đang xuất cú pháp điều khiển/gọi công cụ nhưng CHƯA BỌC trong cặp thẻ <m365Response>...</m365Response>. Toàn bộ nội dung công cụ bắt buộc phải nằm bên trong đúng một root response envelope."
+      );
+    }
+  }
+
+  const hasPatchMarker = markers.some(
+    m => m === "CUSTOM_ACTION_OPEN" || m === "CUSTOM_ACTION_CLOSE" || m === "PATCH_BEGIN" || m === "PATCH_END"
+  );
+  const hasFunctionMarker = markers.some(
+    m => m === "FUNCTION_ACTION_OPEN" || m === "FUNCTION_ACTION_CLOSE"
+  );
+
+  lines.push(
     "Nếu phản hồi nhằm thực thi action: phát lại toàn bộ action trong đúng một root response envelope hoàn chỉnh; không chèn final answer hoặc lời dẫn vào envelope.",
     "Nếu phản hồi chỉ là final answer: giữ nguyên ý nghĩa, loại bỏ các reserved control marker trên hoặc diễn đạt chúng bằng ngôn ngữ tự nhiên; không chép nguyên cú pháp điều khiển.",
-    "Chỉ phát lại phản hồi vừa bị từ chối, không tiếp tục sang bước mới.",
-  ].join("\n");
+    "Chỉ phát lại phản hồi vừa bị từ chối, không tiếp tục sang bước mới."
+  );
+
+  if (hasPatchMarker) {
+    lines.push(
+      "",
+      "Mẫu chuẩn bắt buộc khi gọi apply_patch:",
+      "````markdown",
+      "<m365Response>",
+      '<custom_tool_call name="apply_patch">',
+      "*** Begin Patch",
+      "*** Update File: path/to/file.ext (hoặc *** Add File: path/to/file.ext)",
+      "...",
+      "*** End Patch",
+      "</custom_tool_call>",
+      "</m365Response>",
+      "````"
+    );
+  } else if (hasFunctionMarker) {
+    lines.push(
+      "",
+      "Mẫu chuẩn bắt buộc khi gọi function tool:",
+      "````markdown",
+      "<m365Response>",
+      "<tool_call>",
+      '{"name": "tên_công_cụ", "arguments": {"tham_số": "giá_trị"}}',
+      "</tool_call>",
+      "</m365Response>",
+      "````"
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function parseFunctionToolCall(
@@ -294,7 +384,11 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
       return protocolError(
         rawResponse,
         "MISSING_RESPONSE_ENVELOPE",
-        buildMissingEnvelopeMessage(detectedMarkers)
+        buildMissingEnvelopeMessage(detectedMarkers, {
+          framed,
+          hasOpeningEnvelope,
+          hasClosingEnvelope,
+        })
       );
     }
 

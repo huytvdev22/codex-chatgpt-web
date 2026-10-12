@@ -295,4 +295,58 @@ Hoàn tất.
     const result = parseStrictM365Response(raw);
     expect(result.kind).toBe("final_answer");
   });
+
+  test("reports readable marker syntax instead of internal enum codes when envelope is missing", () => {
+    const raw = `\`\`\`\`markdown
+Dưới đây là bản vá:
+<m365Response>
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Update File: a.ts
+@@ anchor @@
+-old
++new
+*** End Patch
+</custom_tool_call>
+\`\`\`\``;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
+      // Phải chứa cú pháp thực tế
+      expect(result.message).toContain('<custom_tool_call name="apply_patch">');
+      expect(result.message).toContain("*** Begin Patch");
+      expect(result.message).toContain("<m365Response>");
+      // Tuyệt đối không chứa enum nội bộ
+      expect(result.message).not.toContain("CUSTOM_ACTION_OPEN");
+      expect(result.message).not.toContain("PATCH_BEGIN");
+      expect(result.message).not.toContain("ROOT_OPEN");
+      // Chẩn đoán thiếu thẻ đóng
+      expect(result.message).toContain("THIẾU thẻ đóng </m365Response>");
+      // Chứa mẫu chuẩn của apply_patch
+      expect(result.message).toContain("Mẫu chuẩn bắt buộc khi gọi apply_patch:");
+    }
+  });
+
+  test("diagnoses narrative text outside envelope when both open and close tags exist", () => {
+    const raw = `\`\`\`\`markdown
+Lời dẫn trước envelope:
+<m365Response>
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Update File: a.ts
+@@ anchor @@
+-old
++new
+*** End Patch
+</custom_tool_call>
+</m365Response>
+\`\`\`\``;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
+      expect(result.message).toContain("BÊN NGOÀI cặp thẻ <m365Response>...</m365Response>");
+    }
+  });
 });
