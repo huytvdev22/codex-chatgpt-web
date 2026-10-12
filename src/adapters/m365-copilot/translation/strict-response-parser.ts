@@ -1,4 +1,5 @@
 export type M365ProtocolErrorCode =
+  | "MISSING_TRANSPORT_FENCE"
   | "MISSING_RESPONSE_ENVELOPE"
   | "MULTIPLE_RESPONSE_ENVELOPES"
   | "EMPTY_RESPONSE"
@@ -136,6 +137,17 @@ function unwrapTransportFence(rawResponse: string): string {
   return match ? match[1].trim() : trimmed;
 }
 
+/**
+ * Kiểm tra transport wrapper bắt buộc trước khi bóc nội dung.
+ *
+ * Strict Actions, Tolerant Answers chỉ cho phép final answer bỏ
+ * m365Response envelope. Quy tắc này không cho phép bỏ khối
+ * 4-backtick markdown bao quanh toàn bộ phản hồi.
+ */
+function hasCompleteTransportFence(rawResponse: string): boolean {
+  return /^````markdown[ \t]*\r?\n[\s\S]*\r?\n````$/.test(rawResponse.trim());
+}
+
 function hasReservedControlMarker(content: string): boolean {
   return /<\/?(?:tool_call|custom_tool_call|thought|thinking)\b/i.test(content)
     || /\*{3}\s*(?:Begin|End) Patch/i.test(content);
@@ -261,6 +273,7 @@ function parsePatchToolCall(
  * chính xác; nội dung Markdown không bao giờ được quét để suy đoán shell/JSON tool call.
  */
 export function parseStrictM365Response(rawResponse: string): StrictM365ResponseResult {
+  const hasTransportFence = hasCompleteTransportFence(rawResponse);
   const framed = unwrapTransportFence(rawResponse);
 
   if (!framed.trim()) {
@@ -282,6 +295,22 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
         rawResponse,
         "MISSING_RESPONSE_ENVELOPE",
         buildMissingEnvelopeMessage(detectedMarkers)
+      );
+    }
+
+    if (!hasTransportFence) {
+      return protocolError(
+        rawResponse,
+        "MISSING_TRANSPORT_FENCE",
+        [
+          "Final answer của M365 không được bọc trọn trong đúng một khối 4-backtick markdown.",
+          "Final answer được phép bỏ m365Response envelope nhưng transport wrapper vẫn là bắt buộc.",
+          "Hãy phát lại nguyên phản hồi vừa bị từ chối theo dạng:",
+          "````markdown",
+          "... toàn bộ final answer Markdown ...",
+          "````",
+          "Không viết bất kỳ ký tự nào bên ngoài transport wrapper.",
+        ].join("\n")
       );
     }
 

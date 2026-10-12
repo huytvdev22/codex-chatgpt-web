@@ -62,20 +62,31 @@ Ví dụ tool call:
     }
   });
 
-  test("accepts plain final answers without response envelope", () => {
+  test("rejects plain final answers without the required transport fence", () => {
     const result = parseStrictM365Response("Đây là câu trả lời Markdown thông thường.");
-    expect(result.kind).toBe("final_answer");
-    if (result.kind === "final_answer") {
-      expect(result.content).toBe("Đây là câu trả lời Markdown thông thường.");
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_TRANSPORT_FENCE");
     }
   });
 
-  test("keeps standalone JSON without control markers as final answer", () => {
+  test("rejects standalone JSON without the required transport fence", () => {
     const raw = '{"name":"exec_command","arguments":{"cmd":"git status"}}';
     const result = parseStrictM365Response(raw);
-    expect(result.kind).toBe("final_answer");
-    if (result.kind === "final_answer") {
-      expect(result.content).toBe(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_TRANSPORT_FENCE");
+    }
+  });
+
+  test("rejects an unfenced narrative final answer like the M365 UI regression", () => {
+    const raw = `Mình chưa truy cập được repo của bạn từ môi trường hiện tại nên không thể đánh giá thực tế mã nguồn.
+
+Để mình review nhanh, hãy gửi cây thư mục hoặc nội dung các file chính.`;
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("protocol_error");
+    if (result.kind === "protocol_error") {
+      expect(result.code).toBe("MISSING_TRANSPORT_FENCE");
     }
   });
 
