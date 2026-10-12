@@ -297,6 +297,7 @@ export function renderDynamicToolDeclarations(tools: NormalizedTool[] = []): str
       `(${tool.kind === "custom" ? "freeform" : "function"})`;
     const lines = [
       header,
+      `   "wire_name": "${wireName}"`,
       `   Mô tả: ${curateToolDescription(tool, false)}`,
     ];
 
