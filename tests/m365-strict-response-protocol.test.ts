@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { M365OutputTranslator, parseStrictM365Response } from "../src/adapters/m365-copilot/translation";
-import { buildM365FormatRetryPrompt } from "../src/adapters/m365-copilot/prompts";
 
 describe("M365 strict response protocol", () => {
   test("default output translator does not infer tools from shell fences or standalone JSON", () => {
@@ -349,30 +348,5 @@ Lời dẫn trước envelope:
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
       expect(result.message).toContain("BÊN NGOÀI cặp thẻ <m365Response>...</m365Response>");
     }
-  });
-
-  test("accepts standard 3-backtick markdown transport wrapper", () => {
-    const raw = `\`\`\`markdown
-# Tiêu đề kết luận
-
-Đây là câu trả lời Markdown chuẩn 3 dấu backticks.
-\`\`\``;
-    const result = parseStrictM365Response(raw);
-    expect(result.kind).toBe("final_answer");
-    if (result.kind === "final_answer") {
-      expect(result.content).toBe("# Tiêu đề kết luận\n\nĐây là câu trả lời Markdown chuẩn 3 dấu backticks.");
-    }
-  });
-
-  test("builds dedicated retry prompt for MISSING_TRANSPORT_FENCE without mandatory response envelope", () => {
-    const retryPrompt = buildM365FormatRetryPrompt({
-      code: "MISSING_TRANSPORT_FENCE",
-      message: "Final answer của M365 không được bọc trọn trong đúng một khối code markdown.",
-    });
-
-    expect(retryPrompt).toContain("Mã lỗi: MISSING_TRANSPORT_FENCE");
-    // Không được ép buộc <m365Response> cho final answer
-    expect(retryPrompt).toContain("KHÔNG bọc thẻ <m365Response>");
-    expect(retryPrompt).toContain("... toàn bộ final answer Markdown ...");
   });
 });

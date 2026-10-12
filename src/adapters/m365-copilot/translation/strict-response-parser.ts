@@ -133,7 +133,7 @@ function protocolError(
  */
 function unwrapTransportFence(rawResponse: string): string {
   const trimmed = rawResponse.trim();
-  const match = trimmed.match(/^`{3,5}markdown[ \t]*\r?\n([\s\S]*)\r?\n`{3,5}$/);
+  const match = trimmed.match(/^````markdown[ \t]*\r?\n([\s\S]*)\r?\n````$/);
   return match ? match[1].trim() : trimmed;
 }
 
@@ -142,10 +142,10 @@ function unwrapTransportFence(rawResponse: string): string {
  *
  * Strict Actions, Tolerant Answers chỉ cho phép final answer bỏ
  * m365Response envelope. Quy tắc này không cho phép bỏ khối
- * code markdown bao quanh toàn bộ phản hồi (chấp nhận từ 3 đến 5 backticks).
+ * 4-backtick markdown bao quanh toàn bộ phản hồi.
  */
 function hasCompleteTransportFence(rawResponse: string): boolean {
-  return /^`{3,5}markdown[ \t]*\r?\n[\s\S]*\r?\n`{3,5}$/.test(rawResponse.trim());
+  return /^````markdown[ \t]*\r?\n[\s\S]*\r?\n````$/.test(rawResponse.trim());
 }
 
 function hasReservedControlMarker(content: string): boolean {

@@ -997,13 +997,6 @@ export async function executeM365Turn(
       );
     }
 
-    // Nếu nội dung được trích xuất từ Scriptor Code Block (Fast-Path)
-    // nhưng DOM Web M365 đã nuốt mất lớp vỏ transport wrapper ngoài cùng,
-    // hoàn trả lại lớp vỏ 4-backtick để bảo toàn transport protocol cho strict parser.
-    if (fastPathActive && fullMarkdown && !/^`{3,5}markdown[ \t]*\r?\n[\s\S]*\r?\n`{3,5}$/.test(fullMarkdown.trim())) {
-      fullMarkdown = `\`\`\`\`markdown\n${fullMarkdown.trim()}\n\`\`\`\``;
-    }
-
     if (finalDelta.length > 0 && !options.shouldStop?.()) {
       options.onChunk(finalDelta);
     }
