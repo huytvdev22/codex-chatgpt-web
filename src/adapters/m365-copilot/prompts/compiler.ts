@@ -249,29 +249,97 @@ export function renderDynamicToolDeclarations(tools: NormalizedTool[] = []): str
     return "CODEX ACTION CONTRACT FOR THIS IDE TURN\n\nKhông có action nào được Codex quảng bá cho turn hiện tại.";
   }
 
+  const formatSchemaType = (schema: unknown): string => {
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+      return "unknown";
+    }
+
+    const record = schema as Record<string, unknown>;
+    if (typeof record.type === "string") {
+      return record.type;
+    }
+    if (Array.isArray(record.type)) {
+      return record.type.map(String).join(" | ");
+    }
+    if (Array.isArray(record.enum) && record.enum.length > 0) {
+      return "enum";
+    }
+    return "unknown";
+  };
+
+  const formatSchemaDescription = (schema: unknown): string => {
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+      return "";
+    }
+
+    const record = schema as Record<string, unknown>;
+    const description =
+      typeof record.description === "string"
+        ? record.description.replace(/\s+/g, " ").trim()
+        : "";
+    const enumValues = Array.isArray(record.enum)
+      ? record.enum.map(value => JSON.stringify(value)).join(" | ")
+      : "";
+
+    return [
+      description,
+      enumValues ? `Giá trị hợp lệ: ${enumValues}.` : "",
+    ].filter(Boolean).join(" ");
+  };
+
   const inventory = tools.map((tool, index) => {
     const wireName = tool.identity.qualifiedName || tool.identity.name;
-    const base = {
-      wire_name: wireName,
-      name: tool.identity.name,
-      namespace: tool.identity.namespace ?? null,
-      description: curateToolDescription(tool, false),
-      kind: tool.kind === "custom" ? "freeform" : "function",
-      ...(tool.kind === "function"
-        ? {
-            parameters: tool.rawParameters,
-            ...(tool.strict !== undefined ? { strict: tool.strict } : {}),
-          }
-        : {
-            input: {
-              type: "string",
-              description: "Freeform input. Không bọc nội dung tool này trong arguments JSON.",
-              ...(tool.format !== undefined ? { format: tool.format } : {}),
-            },
-          }),
-    };
+    const header =
+      `${index + 1}. ${wireName} ` +
+      `(${tool.kind === "custom" ? "freeform" : "function"})`;
+    const lines = [
+      header,
+      `   Mô tả: ${curateToolDescription(tool, false)}`,
+    ];
 
-    return `${index + 1}. ${wireName}\n${JSON.stringify(base, null, 2)}`;
+    if (tool.identity.namespace) {
+      lines.push(`   Namespace: ${tool.identity.namespace}`);
+    }
+
+    if (tool.kind === "custom") {
+      lines.push(
+        "   Input: raw text hoàn chỉnh; không bọc trong arguments JSON."
+      );
+      if (tool.format !== undefined) {
+        lines.push("   Ràng buộc: input phải tuân theo grammar/format được IDE cung cấp.");
+      }
+      return lines.join("\n");
+    }
+
+    const required = new Set(
+      Array.isArray(tool.rawParameters.required)
+        ? tool.rawParameters.required.map(String)
+        : []
+    );
+    const properties =
+      tool.rawParameters.properties &&
+      typeof tool.rawParameters.properties === "object" &&
+      !Array.isArray(tool.rawParameters.properties)
+        ? tool.rawParameters.properties as Record<string, unknown>
+        : {};
+    const entries = Object.entries(properties);
+
+    if (entries.length === 0) {
+      lines.push("   Tham số: không có.");
+      return lines.join("\n");
+    }
+
+    lines.push("   Tham số:");
+    for (const [name, schema] of entries) {
+      const requiredLabel = required.has(name) ? "bắt buộc" : "tùy chọn";
+      const description = formatSchemaDescription(schema);
+      lines.push(
+        `   - ${name}: ${formatSchemaType(schema)}, ${requiredLabel}` +
+        `${description ? ` — ${description}` : ""}`
+      );
+    }
+
+    return lines.join("\n");
   }).join("\n\n");
 
   const examples = renderDynamicToolExamples(tools);
