@@ -10,6 +10,8 @@ import {
   MINIMAL_TOOL_PROTOCOL as MINIMAL_TOOL_PROTOCOL_TEMPLATE,
   CORE_CODING_TOOLS_DECLARATION as CORE_CODING_TOOLS_DECLARATION_TEMPLATE,
   CANONICAL_TOOL_EXAMPLES as CANONICAL_TOOL_EXAMPLES_TEMPLATE,
+  SHORT_OUTPUT_FORMAT_ANCHOR,
+  SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
 } from "./templates";
 import {
   STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT,
@@ -69,13 +71,14 @@ function curateToolDescription(
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  const cleaned = cleanToolDescription(wireName, raw);
   const maxChars = compact
     ? MAX_COMPACT_TOOL_DESCRIPTION_CHARS
     : MAX_FULL_TOOL_DESCRIPTION_CHARS;
 
-  return raw.length > maxChars
-    ? `${raw.slice(0, maxChars).trimEnd()}…`
-    : raw;
+  return cleaned.length > maxChars
+    ? `${cleaned.slice(0, maxChars).trimEnd()}…`
+    : cleaned;
 }
 
 /**
@@ -586,7 +589,14 @@ export class M365PromptCompiler {
       const reminderSection = isImplementingPlan
         ? IMPLEMENT_PLAN_PROMPT
         : (isPlanMode ? `${PLAN_MODE_PROMPT}\n\n${TOOL_REMINDER_PROMPT}` : TOOL_REMINDER_PROMPT);
-      incrementalSections.push(reminderSection);
+      incrementalSections.push(
+        [
+          "================================================================================",
+          "# THỰC THI NHIỆM VỤ TIẾP THEO (STATEFUL INCREMENTAL TURN)",
+          "================================================================================",
+          reminderSection,
+        ].join("\n")
+      );
 
       // 2. Bảo toàn Ngữ cảnh Môi trường / Thư mục làm việc (forward từ raw Codex)
       let envSection = "";
@@ -624,11 +634,11 @@ export class M365PromptCompiler {
         incrementalSections.push(M365_IMAGE_ATTACHMENT_HINT);
       }
 
-      // 7. Luôn luôn kết thúc bằng chỉ thị 4-backtick markdown bắt buộc (Tinh túy 1)
+      // 7. Lời nhắc định dạng ở cuối cùng
       incrementalSections.push(
         isPlanMode
-          ? STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT
-          : STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT
+          ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR
+          : SHORT_OUTPUT_FORMAT_ANCHOR
       );
 
       const finalPrompt = incrementalSections.join("\n\n").trim();
@@ -676,25 +686,42 @@ export class M365PromptCompiler {
 
     const sections: string[] = [];
 
-    // 2. Giao thức tương tác văn bản thống nhất + Dynamic Tool Declaration.
-    // Với request đầu tiên của một M365 conversation, UNIFIED_TOOL_PROTOCOL
-    // phải đứng đầu để bootstrap đầy đủ giao thức IDE cho thread mới.
-    const dynamicToolsText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-    const outputContract = isPlanMode
-      ? STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT
-      : STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT;
-    const toolDeclarationSection =
-      `${UNIFIED_TOOL_PROTOCOL_TEMPLATE}\n\n${outputContract}\n\n${dynamicToolsText}`;
-    sections.push(toolDeclarationSection);
+    // =========================================================================
+    // PHẦN 1: GIAO THỨC HỆ THỐNG VÀ VAI TRÒ IDE (SYSTEM ROLE & PROTOCOL)
+    // =========================================================================
+    const systemProtocolSection = [
+      "================================================================================",
+      "# PHẦN 1: GIAO THỨC HỆ THỐNG VÀ VAI TRÒ IDE (SYSTEM ROLE & PROTOCOL)",
+      "================================================================================",
+      UNIFIED_TOOL_PROTOCOL_TEMPLATE,
+    ].join("\n");
+    sections.push(systemProtocolSection);
 
-    // 3. Chỉ dẫn Plan Mode hoặc Triển khai kế hoạch nếu có (Chỉ khi thực sự active)
+    // =========================================================================
+    // PHẦN 2: DANH MỤC CÔNG CỤ KHẢ DỤNG (CODEX ACTION CONTRACT)
+    // =========================================================================
+    const dynamicToolsText = renderDynamicToolDeclarations(normalized.activeCodingTools);
+    const actionContractSection = [
+      "================================================================================",
+      "# PHẦN 2: DANH MỤC CÔNG CỤ KHẢ DỤNG (CODEX ACTION CONTRACT)",
+      "================================================================================",
+      dynamicToolsText,
+    ].join("\n");
+    sections.push(actionContractSection);
+
+    // =========================================================================
+    // PHẦN 3: BỐI CẢNH DỰ ÁN VÀ QUY TẮC PHÁT TRIỂN (PROJECT CONTEXT & RULES)
+    // =========================================================================
+    const projectContextBlocks: string[] = [];
+
+    // Chỉ dẫn Plan Mode hoặc Triển khai kế hoạch nếu có (Chỉ khi thực sự active)
     if (isPlanMode) {
-      sections.push(PLAN_MODE_PROMPT);
+      projectContextBlocks.push(PLAN_MODE_PROMPT);
     } else if (isImplementingPlan) {
-      sections.push(IMPLEMENT_PLAN_PROMPT);
+      projectContextBlocks.push(IMPLEMENT_PLAN_PROMPT);
     }
 
-    // 4. System Instructions từ Codex IDE (Lọc bỏ các hướng dẫn nội bộ thừa)
+    // System Instructions từ Codex IDE (Lọc bỏ các hướng dẫn nội bộ thừa)
     let devInstructionsContent = "";
     if (parsed?.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
       const filteredSystem = parsed.context.systemPrompt
@@ -709,18 +736,18 @@ export class M365PromptCompiler {
         .join("\n\n");
       if (filteredSystem) {
         devInstructionsContent = `[System Instructions]:\n${filteredSystem}`;
-        sections.push(devInstructionsContent);
+        projectContextBlocks.push(devInstructionsContent);
       }
     }
 
-    // 5. Ngữ cảnh Môi trường làm việc (Environment Context)
+    // Ngữ cảnh Môi trường làm việc (Environment Context)
     let envContent = "";
     if (normalized.environmentContext) {
       envContent = `[NGỮ CẢNH DỰ ÁN & MÔI TRƯỜNG]:\n${normalized.environmentContext}`;
-      sections.push(envContent);
+      projectContextBlocks.push(envContent);
     }
 
-    // 6. Chỉ thị của Dự án / Developer Rules (Đã được lọc sạch permissions và sandbox instructions)
+    // Chỉ thị của Dự án / Developer Rules (Đã được lọc sạch permissions và sandbox instructions)
     if (normalized.developerInstructions && normalized.developerInstructions.length > 0) {
       const cleanedRules = normalized.developerInstructions
         .map(r => sanitizeCodexInstructions(r))
@@ -729,11 +756,26 @@ export class M365PromptCompiler {
         const devRules = cleanedRules.map(r => `- ${r}`).join("\n");
         const devBlock = `[CHỈ THỊ CỦA DỰ ÁN / DEVELOPER RULES]:\n${devRules}`;
         devInstructionsContent = devInstructionsContent ? `${devInstructionsContent}\n\n${devBlock}` : devBlock;
-        sections.push(devBlock);
+        projectContextBlocks.push(devBlock);
       }
     }
 
-    // 7. Lịch sử trao đổi đầy đủ
+    if (projectContextBlocks.length > 0) {
+      const projectContextSection = [
+        "================================================================================",
+        "# PHẦN 3: BỐI CẢNH DỰ ÁN VÀ QUY TẮC PHÁT TRIỂN (PROJECT CONTEXT & RULES)",
+        "================================================================================",
+        projectContextBlocks.join("\n\n"),
+      ].join("\n");
+      sections.push(projectContextSection);
+    }
+
+    // =========================================================================
+    // PHẦN 4: NHIỆM VỤ NGƯỜI DÙNG VÀ YÊU CẦU THỰC THI (USER TASK & EXECUTION)
+    // =========================================================================
+    const userTaskBlocks: string[] = [];
+
+    // Lịch sử trao đổi đầy đủ
     let historyContent = "";
     if (normalized.priorHistory.length > 0) {
       const historyLines: string[] = [];
@@ -748,11 +790,11 @@ export class M365PromptCompiler {
       }
       if (historyLines.length > 0) {
         historyContent = `[LỊCH SỬ TRAO ĐỔI]:\n${historyLines.join("\n\n")}`;
-        sections.push(historyContent);
+        userTaskBlocks.push(historyContent);
       }
     }
 
-    // 8. Kết quả Tool gần nhất (Trailing tool results của turn hiện tại)
+    // Kết quả Tool gần nhất (Trailing tool results của turn hiện tại)
     let toolResultsContent = "";
     if (normalized.trailingToolResults.length > 0) {
       const resultBlocks = normalized.trailingToolResults.map(res => {
@@ -762,27 +804,34 @@ export class M365PromptCompiler {
         return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
       });
       toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
-      sections.push(toolResultsContent);
+      userTaskBlocks.push(toolResultsContent);
     }
 
-    // 9. Yêu cầu của người dùng mới nhất
+    // Yêu cầu của người dùng mới nhất
     let userReqContent = "";
     if (normalized.latestUserInstruction) {
       userReqContent = `[YÊU CẦU CỦA NGƯỜI DÙNG]:\n${normalized.latestUserInstruction}`;
-      sections.push(userReqContent);
+      userTaskBlocks.push(userReqContent);
     }
 
-    // 10. Thông báo hình ảnh đính kèm (nếu có)
+    // Thông báo hình ảnh đính kèm (nếu có)
     if (normalized.images && normalized.images.length > 0) {
-      sections.push(M365_IMAGE_ATTACHMENT_HINT);
+      userTaskBlocks.push(M365_IMAGE_ATTACHMENT_HINT);
     }
 
-    // 11. Chỉ thị Fast-Path 4 backticks ở cuối cùng
-    sections.push(
-      isPlanMode
-        ? STRICT_ACTIONS_TOLERANT_ANSWERS_PLAN_PROMPT
-        : STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT
-    );
+    // Lời nhắc định dạng chốt hạ ở cuối cùng (Anchor)
+    const outputAnchorPrompt = isPlanMode
+      ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR
+      : SHORT_OUTPUT_FORMAT_ANCHOR;
+    userTaskBlocks.push(outputAnchorPrompt);
+
+    const userTaskSection = [
+      "================================================================================",
+      "# PHẦN 4: NHIỆM VỤ NGƯỜI DÙNG VÀ YÊU CẦU THỰC THI (USER TASK & EXECUTION)",
+      "================================================================================",
+      userTaskBlocks.join("\n\n"),
+    ].join("\n");
+    sections.push(userTaskSection);
 
     let finalPrompt = sections.join("\n\n").trim();
 
@@ -803,7 +852,7 @@ export class M365PromptCompiler {
     );
 
     const metrics = calculatePromptMetrics({
-      toolDeclaration: toolDeclarationSection,
+      toolDeclaration: `${systemProtocolSection}\n\n${actionContractSection}`,
       developerInstructions: devInstructionsContent,
       history: historyContent,
       toolResults: toolResultsContent,
@@ -819,7 +868,7 @@ export class M365PromptCompiler {
       developerRulesCount: normalized.developerInstructions?.length || 0,
       historyTurns: normalized.priorHistory.length,
       toolResultsCount: normalized.trailingToolResults.length,
-      toolPromptChars: toolDeclarationSection.length,
+      toolPromptChars: systemProtocolSection.length + actionContractSection.length,
       historyChars: historyContent.length,
       developerChars: devInstructionsContent.length,
       environmentChars: envContent.length,
