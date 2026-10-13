@@ -4,7 +4,10 @@ export class FormatRetryBuilder {
   /**
    * Tạo follow-up yêu cầu mô hình phát lại cùng nội dung, tuyệt đối không tiếp tục tác vụ.
    */
-  static buildFormatRetryPrompt(options: FormatRetryOptions): string {
+  static buildFormatRetryPrompt(optionsOrCode: FormatRetryOptions | string, maybeMessage?: string): string {
+    const options: FormatRetryOptions = typeof optionsOrCode === "string"
+      ? { code: optionsOrCode, message: maybeMessage || "" }
+      : optionsOrCode;
     return `[M365 RESPONSE FORMAT ERROR - BẮT BUỘC PHÁT LẠI PHẢN HỒI TRƯỚC]
 Phản hồi ngay trước của bạn đã bị IDE hủy toàn bộ và KHÔNG có công cụ nào được thực thi.
 Mã lỗi: ${options.code}

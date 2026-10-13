@@ -23,5 +23,6 @@ export const renderCompactDynamicToolDeclarations = ToolDeclarationRenderer.rend
 export const truncateToolResult = PromptSanitizer.truncateToolResult;
 export const sanitizeCodexInstructions = PromptSanitizer.sanitizeCodexInstructions;
 export const buildFormatRetryPrompt = FormatRetryBuilder.buildFormatRetryPrompt;
+export const buildM365FormatRetryPrompt = buildFormatRetryPrompt;
 export const isPlanModeRequest = PlanModeDetector.isPlanModeRequest.bind(PlanModeDetector);
 export const isImplementingPlanRequest = PlanModeDetector.isImplementingPlanRequest;

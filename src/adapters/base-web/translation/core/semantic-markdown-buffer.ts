@@ -1,3 +1,5 @@
+import { m365HtmlToMarkdown, normalizeMarkdownFences } from "./html-to-markdown";
+
 export interface SemanticMarkdownBlock {
   key: string;
   tag: string;
@@ -5,6 +7,8 @@ export interface SemanticMarkdownBlock {
   text: string;
   streamable: boolean;
 }
+
+export type M365MarkdownBlock = SemanticMarkdownBlock;
 
 /**
  * SemanticMarkdownBuffer quản lý luồng streaming append-only của Web Chat Bot
@@ -94,5 +98,11 @@ export class SemanticMarkdownBuffer {
     const delta = `${separator}${cleanMd}`;
     this.markdown += delta;
     return delta;
+  }
+}
+
+export class M365MarkdownBuffer extends SemanticMarkdownBuffer {
+  constructor(transform: (md: string) => string = md => md) {
+    super(m365HtmlToMarkdown, (md) => normalizeMarkdownFences(transform(md)));
   }
 }

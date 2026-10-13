@@ -1,4 +1,5 @@
 import { stripOuterCodeFence } from "../core/strip-code-fence";
+import { autoHealHtmlMangledTags } from "../core/streaming-tool-call-detector";
 
 export { stripOuterCodeFence };
 
@@ -168,15 +169,8 @@ export function sanitizeCodexPatchContent(rawPatch: string): string {
   patch = patch.replace(/^\*{2,3}\s*Begin Patch/i, "*** Begin Patch");
   patch = patch.replace(/\*{2,3}\s*End Patch$/i, "*** End Patch");
 
-  const literalNewlineCount = (patch.match(/\\n/g) || []).length;
-  const actualNewlineCount = (patch.match(/\n/g) || []).length;
-  if (literalNewlineCount > 0 && (actualNewlineCount < 3 || literalNewlineCount > actualNewlineCount)) {
-    patch = patch
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"');
-  }
+  patch = patch.replace(/\\+[ \t]*(\r?\n)/g, "$1");
+  patch = autoHealHtmlMangledTags(patch);
 
   return patch.trim();
 }

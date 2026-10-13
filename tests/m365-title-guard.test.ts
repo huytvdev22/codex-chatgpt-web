@@ -3,7 +3,7 @@ import {
   isTitleRequest,
   generateTitleResponse,
   isTitleGuardEnabled,
-} from "../src/adapters/m365-copilot/guards/title-guard";
+} from "../src/adapters/base-web/guards";
 import type { CodexParsedRequest } from "../src/types";
 
 function createMockParsedRequest(

@@ -43,6 +43,27 @@ export class ConversationLoopGuard implements IConversationLoopGuard {
     };
   }
 
+  public get(key: string): ConversationGuardState | undefined {
+    return this.store.get(key);
+  }
+
+  public set(key: string, state: ConversationGuardState): this {
+    this.store.set(key, state);
+    return this;
+  }
+
+  public has(key: string): boolean {
+    return this.store.has(key);
+  }
+
+  public delete(key: string): boolean {
+    return this.store.delete(key);
+  }
+
+  public clear(): void {
+    this.store.clear();
+  }
+
   public getOrCreateState(conversationKey: string): ConversationGuardState {
     let state = this.store.get(conversationKey);
     if (!state) {

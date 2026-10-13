@@ -11,8 +11,7 @@ import {
   type ChatSelectorsDto,
   type BrowserTurnOptionsDto,
 } from "../../base-web/browser";
-import { M365CapabilityPicker } from "./capability-picker";
-import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
+import { defaultM365CapabilityPicker } from "./m365-capability-specs";
 import { M365_CHAT_URL, parseM365ConversationId, waitForM365ConversationId } from "./conversation-url";
 import { emitStructuredEvent } from "../../../observability/emitter";
 import { logDebugPipelineStation } from "../../../observability/debug-logger";
@@ -35,16 +34,134 @@ export const CHAT_SELECTORS: ChatSelectorsDto = {
   dictationButton: 'button[aria-label="Start dictation"]',
 };
 
+export interface M365ImagePayload {
+  name: string;
+  mimeType: string;
+  buffer: Buffer;
+}
+
+export const PLUS_MENU_SELECTORS = {
+  plusButton: [
+    'button[data-testid="PlusMenuButton"]',
+    '#plus-menu-container button',
+    'button[aria-label="Add and manage sources"]',
+    'button[aria-label*="manage sources" i]',
+    'button[aria-label*="Add" i][aria-haspopup="menu"]',
+  ].join(", "),
+  popover: [
+    '[data-testid="PlusMenuPopover"]',
+    '.fui-MenuPopover',
+  ].join(", "),
+  uploadMenuItem: [
+    '[data-testid="PlusMenuPopover"] [role="menuitem"]',
+    '.fui-MenuPopover [role="menuitem"]',
+    '[role="menuitem"]',
+  ].join(", "),
+  fileInput: 'input[type="file"]',
+};
+
+export function m365ImageFilePayloads(images: { name: string; mimeType: string; buffer: Buffer }[]): M365ImagePayload[] {
+  return images.map(img => ({
+    name: img.name,
+    mimeType: img.mimeType,
+    buffer: img.buffer,
+  }));
+}
+
+/**
+ * Đính kèm hình ảnh/tệp tin vào M365 Copilot Web qua Plus Menu
+ */
+export async function attachFilesViaPlusMenu(
+  page: Page,
+  files: M365ImagePayload[],
+  options?: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<boolean> {
+  if (!files || files.length === 0) return false;
+  if (options?.signal?.aborted) {
+    throw new DOMException("Đã hủy lượt đính kèm file do nhận tín hiệu abort", "AbortError");
+  }
+
+  // M365 Copilot chỉ cho phép tối đa 3 ảnh/files trong 1 lần gửi
+  let effectiveFiles = files;
+  if (effectiveFiles.length > 3) {
+    console.warn(
+      `[m365-attachments] Số lượng file (${effectiveFiles.length}) vượt quá giới hạn 3 ảnh của M365 Copilot. Chỉ giữ lại 3 file.`
+    );
+    effectiveFiles = effectiveFiles.slice(0, 3);
+  }
+
+  const popover = page.locator(PLUS_MENU_SELECTORS.popover).first();
+  const plusButton = page.locator(PLUS_MENU_SELECTORS.plusButton).first();
+
+  let isPopoverVisible = await popover.isVisible().catch(() => false);
+  if (!isPopoverVisible) {
+    const hasPlusButton = (await plusButton.count().catch(() => 0)) > 0;
+    if (hasPlusButton) {
+      await plusButton.click({ timeout: 4000, force: true }).catch(() => {});
+      if (typeof popover.waitFor === "function") {
+        isPopoverVisible = await popover.waitFor({ state: "visible", timeout: 4000 }).then(() => true).catch(() => false);
+      } else {
+        isPopoverVisible = await popover.isVisible().catch(() => false);
+      }
+    }
+  }
+
+  let uploadTarget = popover.locator('[role="menuitem"]').filter({
+    hasText: /Upload images and files/i,
+  }).first();
+
+  let targetFound = isPopoverVisible && (await uploadTarget.count().catch(() => 0)) > 0;
+
+  if (!targetFound && isPopoverVisible) {
+    const fallbackTarget = popover.locator('[role="menuitem"]').filter({
+      hasText: /upload|tải lên|images and files|attach/i,
+    }).first();
+    if ((await fallbackTarget.count().catch(() => 0)) > 0) {
+      uploadTarget = fallbackTarget;
+      targetFound = true;
+    }
+  }
+
+  if (targetFound) {
+    try {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent("filechooser", { timeout: 10_000 }),
+        uploadTarget.click({ timeout: 4000, force: true }),
+      ]);
+      await fileChooser.setFiles(effectiveFiles);
+    } catch {
+      const directInput = page.locator(PLUS_MENU_SELECTORS.fileInput).first();
+      if ((await directInput.count().catch(() => 0)) > 0) {
+        await directInput.setInputFiles(effectiveFiles);
+      } else {
+        throw new Error("Không thể đính kèm file qua Plus Menu");
+      }
+    }
+  } else {
+    const directInput = page.locator(PLUS_MENU_SELECTORS.fileInput).first();
+    if ((await directInput.count().catch(() => 0)) > 0) {
+      await directInput.setInputFiles(effectiveFiles);
+    } else {
+      throw new Error("Không tìm thấy nút Upload images and files hoặc thẻ input file để đính kèm!");
+    }
+  }
+
+  if (await popover.isVisible().catch(() => false)) {
+    await page.keyboard?.press("Escape").catch(() => {});
+  }
+
+  await new Promise(r => setTimeout(r, 600));
+  return true;
+}
+
 /**
  * Lớp Browser Worker chuyên biệt cho Microsoft 365 Copilot
  * Kế thừa BaseChatBrowserWorker chuẩn Clean Architecture OOP Template Method Pattern
- * Bảo toàn cuộc hội thoại tiếp diễn qua nhiều request và hỗ trợ làm sạch khi bắt đầu hội thoại mới.
  */
 export class M365BrowserWorker extends BaseChatBrowserWorker {
   readonly workerName = "m365-worker";
-
   protected readonly selectors: ChatSelectorsDto = CHAT_SELECTORS;
-  protected readonly modelSelector = new M365CapabilityPicker();
+  protected readonly modelSelector = defaultM365CapabilityPicker;
 
   private readonly promptInjector = new ClipboardPromptInjector();
   private readonly formSubmitter = new GuaranteedFormSubmitter();
@@ -122,7 +239,6 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
         await new Promise(r => setTimeout(r, 400));
       }
 
-      // Thử bấm nút New Chat trên giao diện M365 để đảm bảo phiên chat sạch hoàn toàn
       await page.evaluate(() => {
         const newChatBtn = document.querySelector(
           'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]'
@@ -161,10 +277,13 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
     const images = (options as any).images;
     if (images && images.length > 0) {
       try {
-        const payloads = m365ImageFilePayloads(images);
+        const payloads = images.map((img: any) => ({
+          name: img.name,
+          mimeType: img.mimeType,
+          buffer: img.buffer,
+        }));
         console.log(`[m365-worker] Đang đính kèm ${payloads.length} hình ảnh vào Copilot Web qua Plus Menu...`);
         await attachFilesViaPlusMenu(page, payloads, { signal: options.signal });
-        console.log(`[m365-worker] Đính kèm hình ảnh hoàn tất!`);
       } catch (err: any) {
         console.warn(`[m365-worker] Lỗi trong quá trình đính kèm hình ảnh:`, err?.message);
       }
@@ -172,11 +291,8 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
 
     // 2. Chèn prompt qua clipboard paste event
     await this.promptInjector.inject(page, prompt, this.selectors, options as any);
-
-    // Chờ ngắn để React cập nhật DOM
     await new Promise(r => setTimeout(r, 300));
 
-    // Nếu có ảnh, chờ nút Send được bật
     if (images && images.length > 0) {
       const sendLocator = page.locator(this.selectors.sendButton).first();
       const sendWaitDeadline = Date.now() + 30_000;
@@ -210,14 +326,12 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
 
     let fullMarkdown = currentText;
     if (needsEnvelopeFix || hasUnclosedMarkers || hasCodeBlockOnPage) {
-      console.log("[m365-worker] [salvage-eval] Kích hoạt ClipboardCopySalvager...");
       const copiedCode = await this.salvager.salvage(page);
       if (copiedCode) {
         const copiedHasClose = /<\/m365Response\s*>/i.test(copiedCode);
         const currentLacksClose = !/<\/m365Response\s*>/i.test(fullMarkdown);
 
         if ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length) {
-          console.log(`[m365-worker] [copy-salvage] ÁP DỤNG THAY THẾ: Chuỗi từ Copy Button (${copiedCode.length} chars) hoàn chỉnh hơn.`);
           if (copiedCode.length > fullMarkdown.length && !options.shouldStop?.()) {
             const extra = copiedCode.startsWith(fullMarkdown) ? copiedCode.slice(fullMarkdown.length) : copiedCode;
             if (extra) {
@@ -309,4 +423,3 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
 }
 
 export const defaultM365BrowserWorker = new M365BrowserWorker();
-

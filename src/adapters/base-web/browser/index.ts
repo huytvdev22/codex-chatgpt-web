@@ -19,6 +19,7 @@ export {
   GuaranteedFormSubmitter,
   CdpLauncherConnector,
   FastPathStreamBuffer,
+  findSuffixPrefixOverlap,
   FastPathStreamObserver,
   type BrowserAttachmentResult,
   type SalvageSelectorsOptions,

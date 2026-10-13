@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
-import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalization/codex-normalizer";
+import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/base-web/normalization";
+import { CodexPayloadNormalizer } from "../src/adapters/base-web/normalization";
 
 describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
   test("Namespace preservation & lookup collision handling", () => {

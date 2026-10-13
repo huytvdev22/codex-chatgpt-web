@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import path from "path";
-import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation/strict-response-parser";
-import { buildM365FormatRetryPrompt } from "../src/adapters/m365-copilot/prompts/format-retry";
+import { parseStrictM365Response } from "../src/adapters/base-web/translation";
+import { buildM365FormatRetryPrompt } from "../src/adapters/base-web/prompts";
 
 describe("M365 Raw Response Reproduction & Analysis", () => {
   let rawContent = "";

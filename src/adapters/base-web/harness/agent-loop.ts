@@ -1,11 +1,11 @@
 
 import { randomUUID } from "node:crypto";
-import type { OpenAIToolCall } from "../translation/detectors/types";
-import { parseStrictM365Response, type M365ProtocolErrorCode } from "../translation/strict-response-parser";
-import { truncateToolResult } from "../prompts/assembler";
-import { buildM365FormatRetryPrompt } from "../prompts/format-retry";
-import { normalizeM365ToolArguments } from "../tools/argument-normalizer";
-import { validateM365ToolCall } from "../tools/tool-validator";
+import type { OpenAIToolCall } from "../translation";
+import { parseStrictM365Response, type M365ProtocolErrorCode } from "../translation";
+import { truncateToolResult } from "../prompts";
+import { buildM365FormatRetryPrompt } from "../prompts";
+import { normalizeM365ToolArguments } from "../tools";
+import { validateM365ToolCall } from "../tools";
 import type { CodexTool } from "../../../types";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -71,7 +71,7 @@ type HarnessTranslationResult =
   | { type: "final_answer"; content: string; rawResponse: string }
   | { type: "tool_call"; tool_calls: OpenAIToolCall[]; rawResponse: string };
 
-import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../tools/atomic-file-writer";
+import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../tools";
 
 /**
  * Tool Executor mặc định hỗ trợ chạy các công cụ read_file, list_dir, grep_code, git_status, git_diff, run_command, write_file
@@ -509,3 +509,5 @@ export class M365AgentLoop {
     };
   }
 }
+
+export { M365AgentLoop as AgentLoop };

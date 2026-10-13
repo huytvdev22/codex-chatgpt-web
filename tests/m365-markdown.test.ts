@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "../src/adapters/m365-copilot/markdown";
+import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "../src/adapters/base-web/translation";
 
 describe("m365HtmlToMarkdown", () => {
   it("strips thinking indicators from response start", () => {

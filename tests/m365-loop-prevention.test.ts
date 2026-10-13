@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { BashCommandDetector, M365OutputTranslator, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
-import { compileM365Prompt, TOOL_REMINDER_PROMPT } from "../src/adapters/m365-copilot/prompt";
+import { BashCommandDetector, M365OutputTranslator, XmlToolCallDetector } from "../src/adapters/base-web/translation";
+import { compileM365Prompt, TOOL_REMINDER_PROMPT } from "../src/adapters/base-web/prompts";
+import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
 import {
-  M365CopilotAdapter,
   conversationGuard,
   MAX_IDENTICAL_TOOL_CALLS,
   isAssistantFinalAnswer,
   stableToolFingerprint,
   cleanExpiredConversationGuards,
-} from "../src/adapters/m365-copilot";
+} from "../src/adapters/base-web/session";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 

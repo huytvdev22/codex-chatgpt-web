@@ -14,3 +14,16 @@ export {
   type AtomicWriteOptions,
   type IAtomicFileWriter,
 } from "./atomic-file-writer";
+
+import { ToolArgumentNormalizer } from "./argument-normalizer";
+import { ToolCallValidator } from "./tool-validator";
+import { ToolApprovalPolicy } from "./approval-policy";
+import { ToolContentDecoder } from "./content-decoder";
+
+export const normalizeToolArguments = ToolArgumentNormalizer.normalizeToolArguments.bind(ToolArgumentNormalizer);
+export const normalizeM365ToolArguments = normalizeToolArguments;
+export const validateToolCall = ToolCallValidator.validateToolCall.bind(ToolCallValidator);
+export const validateM365ToolCall = validateToolCall;
+export const validateCommandApproval = ToolApprovalPolicy.validateCommandApproval.bind(ToolApprovalPolicy);
+export const buildCodexExecCommandArguments = ToolApprovalPolicy.buildCodexExecCommandArguments.bind(ToolApprovalPolicy);
+export const normalizeFileContent = ToolContentDecoder.normalizeFileContent.bind(ToolContentDecoder);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { stripOuterCodeFence } from "../src/adapters/m365-copilot/translation/strip-code-fence";
-import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
-import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
+import { stripOuterCodeFence } from "../src/adapters/base-web/translation";
+import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector } from "../src/adapters/base-web/translation";
+import { M365ToolCallDetector } from "../src/adapters/base-web/translation";
 
 describe("M365 4-Backtick Transport Specification Tests", () => {
   const translator = new M365OutputTranslator([new PatchToolCallDetector(), new XmlToolCallDetector()]);

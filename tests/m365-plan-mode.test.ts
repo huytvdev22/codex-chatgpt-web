@@ -5,8 +5,8 @@ import {
   isImplementingPlanRequest,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
-} from "../src/adapters/m365-copilot/prompt";
-import { M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
+} from "../src/adapters/base-web/prompts";
+import { M365OutputTranslator } from "../src/adapters/base-web/translation";
 import type { CodexParsedRequest } from "../src/types";
 
 describe("M365 Plan Mode Support", () => {

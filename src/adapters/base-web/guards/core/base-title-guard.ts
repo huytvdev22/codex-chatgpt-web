@@ -14,8 +14,8 @@ export class BaseTitleGuard implements ITitleGuard {
     this.options = {
       enableTitleGuard: options?.enableTitleGuard,
       defaultSubject: options?.defaultSubject ?? "Coding Session",
-      defaultProviderName: options?.defaultProviderName ?? "Web Chat",
-      defaultDescription: options?.defaultDescription,
+      defaultProviderName: options?.defaultProviderName ?? "M365",
+      defaultDescription: options?.defaultDescription ?? "Phiên lập trình với M365 Copilot",
       envFlagNames: options?.envFlagNames ?? [
         "M365_ENABLE_TITLE_GUARD",
         "CODEX_M365_ENABLE_TITLE_GUARD",
@@ -24,7 +24,10 @@ export class BaseTitleGuard implements ITitleGuard {
     };
   }
 
-  public isEnabled(customFlag?: boolean): boolean {
+  public isEnabled(customFlagOrOptions?: boolean | { enableTitleGuard?: boolean }): boolean {
+    const customFlag = typeof customFlagOrOptions === "object"
+      ? customFlagOrOptions?.enableTitleGuard
+      : customFlagOrOptions;
     if (typeof customFlag === "boolean") return customFlag;
     if (typeof this.options.enableTitleGuard === "boolean") return this.options.enableTitleGuard;
 
@@ -38,9 +41,9 @@ export class BaseTitleGuard implements ITitleGuard {
   public isTitleRequest(
     parsed: CodexParsedRequest,
     _compiledPrompt: string,
-    customFlag?: boolean
+    customFlagOrOptions?: boolean | { enableTitleGuard?: boolean }
   ): boolean {
-    if (!this.isEnabled(customFlag)) {
+    if (!this.isEnabled(customFlagOrOptions)) {
       return false;
     }
 

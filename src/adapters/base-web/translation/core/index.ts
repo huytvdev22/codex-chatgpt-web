@@ -31,5 +31,13 @@ export {
 } from "./streaming-tool-call-detector";
 export {
   SemanticMarkdownBuffer,
+  M365MarkdownBuffer,
   type SemanticMarkdownBlock,
+  type M365MarkdownBlock,
 } from "./semantic-markdown-buffer";
+export {
+  chatGptHtmlToMarkdown,
+  m365HtmlToMarkdown,
+  normalizeMarkdownFences,
+  STATUS_PATTERNS,
+} from "./html-to-markdown";

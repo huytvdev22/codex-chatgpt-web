@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { M365OutputTranslator, parseStrictM365Response } from "../src/adapters/m365-copilot/translation";
+import { M365OutputTranslator, parseStrictM365Response } from "../src/adapters/base-web/translation";
 
 describe("M365 strict response protocol", () => {
   test("default output translator does not infer tools from shell fences or standalone JSON", () => {

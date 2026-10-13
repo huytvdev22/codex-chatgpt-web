@@ -13,6 +13,7 @@ import {
 } from "../templates/plan-mode.template";
 import {
   TOOL_REMINDER_PROMPT,
+  TOOL_RESULT_HINTS,
 } from "../templates/tool-reminder.template";
 import {
   STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT,
@@ -51,7 +52,7 @@ export class BasePromptCompiler implements IPromptCompiler {
 
       // 1. Lời nhắc vai trò thực thi công cụ IDE
       const reminderSection = isImplementingPlan
-        ? IMPLEMENT_PLAN_PROMPT
+        ? `${IMPLEMENT_PLAN_PROMPT}\n\n${TOOL_REMINDER_PROMPT}`
         : (isPlanMode ? `${PLAN_MODE_PROMPT}\n\n${TOOL_REMINDER_PROMPT}` : TOOL_REMINDER_PROMPT);
       incrementalSections.push(
         [
@@ -82,7 +83,10 @@ export class BasePromptCompiler implements IPromptCompiler {
           const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
           return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
         });
-        toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
+        const hint = isPlanMode
+          ? TOOL_RESULT_HINTS.planMode
+          : (isImplementingPlan ? TOOL_RESULT_HINTS.implementPlan : TOOL_RESULT_HINTS.default);
+        toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\n${hint}`;
         incrementalSections.push(toolResultsContent);
       }
 
@@ -99,9 +103,12 @@ export class BasePromptCompiler implements IPromptCompiler {
       }
 
       // 7. Lời nhắc định dạng đầu ra ở cuối cùng
-      const outputAnchorPrompt = isPlanMode
+      let outputAnchorPrompt = isPlanMode
         ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR
         : SHORT_OUTPUT_FORMAT_ANCHOR;
+      if (isImplementingPlan) {
+        outputAnchorPrompt = `${outputAnchorPrompt}\n\n${STRICT_ACTIONS_TOLERANT_ANSWERS_PROMPT}`;
+      }
       incrementalSections.push(outputAnchorPrompt);
 
       let finalPrompt = incrementalSections.join("\n\n").trim();
@@ -260,7 +267,10 @@ export class BasePromptCompiler implements IPromptCompiler {
         const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
         return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
       });
-      toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\nHãy phân tích kết quả trên. Nếu cần thực hiện bước kế tiếp, hãy xuất khối công cụ tương ứng (luôn dùng apply_patch thay vì write_file nếu tạo/sửa file, hoặc exec_command). Nếu đã hoàn thành nhiệm vụ, hãy trả lời kết luận cho người dùng.`;
+      const hint = isPlanMode
+        ? TOOL_RESULT_HINTS.planMode
+        : (isImplementingPlan ? TOOL_RESULT_HINTS.implementPlan : TOOL_RESULT_HINTS.default);
+      toolResultsContent = `[KẾT QUẢ THỰC THI CÔNG CỤ VỪA NHẬN ĐƯỢC TỪ IDE]:\n${resultBlocks.join("\n\n")}\n\n${hint}`;
       userTaskBlocks.push(toolResultsContent);
     }
 

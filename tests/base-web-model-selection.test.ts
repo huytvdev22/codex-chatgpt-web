@@ -15,9 +15,9 @@ import {
 import {
   M365CapabilityPicker,
   M365_CAPABILITY_SPECS,
-  ensureM365CapabilityMode,
-  defaultCapabilityPicker,
-} from "../src/adapters/m365-copilot/browser/capability-picker";
+  defaultM365CapabilityPicker as defaultCapabilityPicker,
+} from "../src/adapters/m365-copilot/browser/m365-capability-specs";
+const ensureM365CapabilityMode = (page: any, mode: any) => defaultCapabilityPicker.ensureMode(page, mode);
 
 /**
  * Trình giả lập Mock IDomDriver cho Unit Test thuần túy (không cần bật Chromium)

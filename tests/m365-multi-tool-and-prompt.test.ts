@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { M365OutputTranslator } from "../src/adapters/m365-copilot/translation/output-translator";
-import { XmlToolCallDetector } from "../src/adapters/m365-copilot/translation/detectors/xml-detector";
+import { M365OutputTranslator } from "../src/adapters/base-web/translation";
+import { XmlToolCallDetector } from "../src/adapters/base-web/translation";
 import {
   UNIFIED_TOOL_PROTOCOL,
   renderDynamicToolDeclarations,
   renderCompactDynamicToolDeclarations,
   promptCompiler,
-} from "../src/adapters/m365-copilot/prompts/compiler";
+} from "../src/adapters/base-web/prompts";
 import {
   TOOL_REMINDER_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
-} from "../src/adapters/m365-copilot/prompts/templates";
-import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/m365-copilot/tools/tool-bridge";
+} from "../src/adapters/base-web/prompts";
+import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/base-web/tools";
 
 describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   test("1. UNIFIED_TOOL_PROTOCOL đã loại bỏ hoàn toàn <thought> và hướng dẫn xuất trực tiếp", () => {

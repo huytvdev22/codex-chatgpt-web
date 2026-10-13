@@ -86,12 +86,12 @@ export const OUTPUT_FORMAT_HINTS = {
 /**
  * Lời nhắc định dạng đầu ra chốt hạ súc tích ở cuối prompt.
  */
-export const SHORT_OUTPUT_FORMAT_ANCHOR = `[LỜI NHẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]:
+export const SHORT_OUTPUT_FORMAT_ANCHOR = `[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]:
 1. MỌI phản hồi BẮT BUỘC nằm trọn trong DUY NHẤT một khối code block 4 dấu backtick: \`\`\`\`markdown ... \`\`\`\`. Tuyệt đối không viết bất kỳ ký tự nào bên ngoài khối này.
 2. NẾU GỌI CÔNG CỤ (ACTION): BẮT BUỘC bọc toàn bộ khối công cụ trong đúng một cặp <m365Response>...</m365Response>. Không chèn lời dẫn, giải thích hay câu chào bên trong hoặc bên ngoài envelope.
 3. NẾU TRẢ LỜI KẾT LUẬN (FINAL ANSWER): Viết Markdown tự nhiên trực tiếp trong khối 4-backtick. Không chứa cú pháp gọi tool. CHỈ dùng khi đã hoàn thành nhiệm vụ; TUYỆT ĐỐI KHÔNG dùng để từ chối hay yêu cầu người dùng gửi mã nguồn thủ công.`;
 
-export const SHORT_OUTPUT_FORMAT_PLAN_ANCHOR = `[LỜI NHẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC - PLAN MODE]:
+export const SHORT_OUTPUT_FORMAT_PLAN_ANCHOR = `[QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC - PLAN MODE]:
 1. MỌI phản hồi BẮT BUỘC nằm trọn trong DUY NHẤT một khối code block 4 dấu backtick: \`\`\`\`markdown ... \`\`\`\`. Tuyệt đối không viết bất kỳ ký tự nào bên ngoài khối này.
 2. KHI XUẤT BẢN KẾ HOẠCH (PLAN): Bọc toàn bộ nội dung kế hoạch trong đúng một cặp <proposed_plan>...</proposed_plan>.
 3. KHI KHẢO SÁT FILE (READ ACTION): BẮT BUỘC bọc khối công cụ đọc trong đúng một cặp <m365Response>...</m365Response>. Tuyệt đối không gọi lệnh sửa file trong Plan Mode.`;

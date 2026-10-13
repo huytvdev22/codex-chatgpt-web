@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CodexTool } from "../src/types";
-import { M365ToolBridge } from "../src/adapters/m365-copilot/tools/tool-bridge";
+import { M365ToolBridge } from "../src/adapters/base-web/tools";
 
 const functionTool = (
   name: string,

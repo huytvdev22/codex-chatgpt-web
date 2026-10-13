@@ -5,9 +5,9 @@ import {
   parseM365ConversationId,
   M365_CHAT_URL,
   M365BrowserWorker,
-} from "../src/adapters/m365-copilot/browser";
+  M365CopilotAdapter,
+} from "../src/adapters/m365-copilot";
 import { BrowserTurnOptionsDto } from "../src/adapters/base-web/browser";
-import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
 
 const CONVERSATION_ID = "8cbbbab7-10a3-4f92-950e-f0a1b18b8f89";
 

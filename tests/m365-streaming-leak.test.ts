@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { M365ToolCallDetector } from "../src/adapters/m365-copilot/translation/toolcall-detector";
+import { M365ToolCallDetector } from "../src/adapters/base-web/translation";
 
 /**
  * Regression: M365ToolCallDetector không được làm rò rỉ thẻ nội bộ (m365Response, thought, tool_call,

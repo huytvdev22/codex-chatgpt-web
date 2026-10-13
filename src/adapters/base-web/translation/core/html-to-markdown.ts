@@ -1,4 +1,4 @@
-import { chatGptHtmlToMarkdown } from "../../chatgpt-web/markdown";
+import { chatGptHtmlToMarkdown } from "../../../chatgpt-web/markdown";
 export { chatGptHtmlToMarkdown };
 
 export const STATUS_PATTERNS = [

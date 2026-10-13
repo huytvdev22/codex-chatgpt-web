@@ -12,7 +12,7 @@ import {
   type NormalizedExecutionPolicy,
   type NormalizedImageAttachment,
 } from "../dto/canonical-types.dto";
-import type { CodexRawPayload } from "./codex-raw-payload";
+import { CodexRawPayload } from "./codex-raw-payload";
 import type {
   ICodexPayloadNormalizer,
   NormalizerOptions,
@@ -325,7 +325,10 @@ export class CodexPayloadNormalizer implements ICodexPayloadNormalizer {
     return input;
   }
 
-  static normalize(rawPayload: CodexRawPayload, options?: NormalizerOptions): NormalizedCodexRequest {
+  static normalize(rawPayloadOrParsed: unknown, options?: NormalizerOptions): NormalizedCodexRequest {
+    const rawPayload = rawPayloadOrParsed instanceof CodexRawPayload
+      ? rawPayloadOrParsed
+      : CodexRawPayload.from((rawPayloadOrParsed as any)?._rawBody || rawPayloadOrParsed);
     const rawContextMsgs = (rawPayload as any).context?.messages || (rawPayload.extra as any)?.context?.messages;
     const input = (rawPayload.input && rawPayload.input.length > 0)
       ? rawPayload.input

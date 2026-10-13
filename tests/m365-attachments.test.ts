@@ -1,14 +1,14 @@
 import { describe, expect, test, mock } from "bun:test";
-import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalization/codex-normalizer";
-import { CodexRawPayload } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
+import { CodexPayloadNormalizer } from "../src/adapters/base-web/normalization";
+import { CodexRawPayload } from "../src/adapters/base-web/normalization";
 import {
   m365ImageFilePayloads,
   attachFilesViaPlusMenu,
   PLUS_MENU_SELECTORS,
-} from "../src/adapters/m365-copilot/browser/attachments";
-import { promptCompiler } from "../src/adapters/m365-copilot/prompts/compiler";
-import { M365_IMAGE_ATTACHMENT_HINT } from "../src/adapters/m365-copilot/prompts/templates";
-import type { NormalizedImageAttachment } from "../src/adapters/m365-copilot/normalization/canonical-types";
+} from "../src/adapters/m365-copilot/browser/m365-browser-worker";
+import { promptCompiler } from "../src/adapters/base-web/prompts";
+import { M365_IMAGE_ATTACHMENT_HINT } from "../src/adapters/base-web/prompts";
+import type { NormalizedImageAttachment } from "../src/adapters/base-web/normalization";
 
 describe("M365 Copilot Image Attachments (Phương án 1)", () => {
   const samplePngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVQIW2Nk+M/wnwEIGMEEwAIAZAgD/74Q12UAAAAASUVORK5CYII=";

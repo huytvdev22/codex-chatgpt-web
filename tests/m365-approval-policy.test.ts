@@ -3,7 +3,7 @@ import {
   buildCodexExecCommandArguments,
   validateCommandApproval,
   M365ToolBridge,
-} from "../src/adapters/m365-copilot/tools";
+} from "../src/adapters/base-web/tools";
 
 const EXEC_COMMAND_TOOL = [{
   type: "function" as const,

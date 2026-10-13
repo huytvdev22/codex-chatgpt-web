@@ -7,10 +7,12 @@ import {
   PatchToolCallDetector,
   stripShellPrefix,
   BashCommandTranslator,
+} from "../src/adapters/base-web/translation";
+import {
   M365AgentLoop,
   type IM365ModelClient,
   type IToolExecutor,
-} from "../src/adapters/m365-copilot";
+} from "../src/adapters/base-web/harness";
 
 describe("M365 Output Translator Specification Tests", () => {
   // Explicit legacy detector injection only; production adapter uses strict response protocol.

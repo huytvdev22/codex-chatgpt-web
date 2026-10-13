@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { autoHealHtmlMangledTags, sanitizeCodexPatchContent } from "../src/adapters/m365-copilot/translation/toolcall-detector";
-import { normalizeFileContent } from "../src/adapters/m365-copilot/tools/tool-bridge";
+import { autoHealHtmlMangledTags, sanitizeCodexPatchContent } from "../src/adapters/base-web/translation";
+import { normalizeFileContent } from "../src/adapters/base-web/tools";
 
 describe("M365 HTML & Tag Mangling Auto-Healing Tests", () => {
   test("1. Phục hồi thẻ script bị biến dạng thành js/storage.jsscript> và js/app.jsatch", () => {
