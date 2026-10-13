@@ -4,6 +4,7 @@ import type { ChatSelectorsDto } from "../dto/chat-selectors.dto";
 import type { BrowserTurnOptionsDto } from "../dto/browser-turn-options.dto";
 import { FastPathStreamBuffer } from "./fast-path-stream-buffer";
 import { SemanticMarkdownBuffer, type SemanticMarkdownBlock } from "../../translation/core/semantic-markdown-buffer";
+import { CdpLauncherConnector } from "./cdp-launcher-connector";
 import { notifyLauncherTurn } from "../../../../launcher-browser-host";
 import { emitStructuredEvent } from "../../../../observability/emitter";
 
@@ -379,8 +380,9 @@ export class FastPathStreamObserver implements IStreamObserver {
         throw new Error(`[${this.providerName} Web Error] ${status.detectedWebError}`);
       }
 
-      if (attempts % 40 === 0 && options.descriptorPath) {
-        notifyLauncherTurn(options.descriptorPath, {
+      if (attempts % 40 === 0) {
+        const descPath = CdpLauncherConnector.resolveDescriptorPath(options.descriptorPath);
+        notifyLauncherTurn(descPath, {
           phase: "heartbeat",
           traceId: options.traceId || "",
           helperPid: process.pid,

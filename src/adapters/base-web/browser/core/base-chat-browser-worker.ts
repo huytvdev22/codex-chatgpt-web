@@ -1,17 +1,22 @@
-import type { Page } from "playwright-core";
+import type { Browser, Page } from "playwright-core";
 import type { IChatBrowserWorker } from "../contracts/chat-browser-worker.interface";
 import type { ChatSelectorsDto } from "../dto/chat-selectors.dto";
 import type { BrowserTurnOptionsDto } from "../dto/browser-turn-options.dto";
 import type { IModelSelector } from "../../model-selection/contracts/model-selector.interface";
+import { CdpLauncherConnector, type LauncherTurnLease } from "./cdp-launcher-connector";
 
 export interface BrowserAttachmentResult {
   readonly page: Page;
+  readonly browser?: Browser;
+  readonly descriptorPath?: string;
+  readonly lease?: LauncherTurnLease;
   readonly context?: unknown;
 }
 
 /**
  * Lớp điều phối trừu tượng hóa cho toàn bộ Web Chat Browser Workers
- * Áp dụng Template Method Pattern để chuẩn hóa quy trình 10 bước tương tác qua CDP/Playwright
+ * Áp dụng Template Method Pattern để chuẩn hóa quy trình 12 bước tương tác qua CDP/Playwright
+ * Đảm bảo tính toàn vẹn vòng đời: Giải phóng lease, bind conversationId, và đóng kết nối CDP an toàn.
  */
 export abstract class BaseChatBrowserWorker implements IChatBrowserWorker {
   abstract readonly workerName: string;
@@ -25,7 +30,7 @@ export abstract class BaseChatBrowserWorker implements IChatBrowserWorker {
   abstract getChatUrl(): string;
 
   // ===========================================================================
-  // TEMPLATE METHOD: Quy trình 10 bước thực thi một lượt tương tác (Turn)
+  // TEMPLATE METHOD: Quy trình 12 bước thực thi một lượt tương tác (Turn)
   // ===========================================================================
   public async executeTurn(prompt: string, options: BrowserTurnOptionsDto): Promise<string> {
     const startTime = Date.now();
@@ -34,36 +39,61 @@ export abstract class BaseChatBrowserWorker implements IChatBrowserWorker {
     // BƯỚC 1: Kiểm tra tiền điều kiện (Preconditions & AbortSignal)
     this.checkPreconditions(options);
 
-    // BƯỚC 2: Gắn kết nối với Browser Tab (CDP Connection)
-    const { page } = await this.attachToBrowser(options);
+    let attachment: BrowserAttachmentResult | undefined;
+    let finalStatus: "completed" | "failed" | "aborted" = "failed";
+    let conversationId: string | undefined;
 
-    // BƯỚC 3: Đảm bảo trang web đang ở đúng URL chat
-    await this.preparePageNavigation(page, options);
+    try {
+      // BƯỚC 2: Gắn kết nối với Browser Tab (CDP Connection)
+      attachment = await this.attachToBrowser(options);
+      const { page } = attachment;
 
-    // BƯỚC 4: Chờ khung soạn thảo sẵn sàng
-    await this.waitForComposerReady(page, options);
+      // BƯỚC 3: Đảm bảo trang web đang ở đúng URL chat (bảo toàn cuộc trò chuyện nếu đang tiếp diễn)
+      await this.preparePageNavigation(page, options, attachment);
 
-    // BƯỚC 5: Đảm bảo Model mong muốn đã được kích hoạt qua ModelSelector
-    await this.ensureModelSelected(page, options);
+      // BƯỚC 4: Chờ khung soạn thảo sẵn sàng
+      await this.waitForComposerReady(page, options);
 
-    // BƯỚC 6: Đảm bảo trạng thái Idle (Không còn sinh dở từ lượt trước)
-    await this.waitForIdle(page, options);
+      // BƯỚC 5: Đảm bảo Model mong muốn đã được kích hoạt qua ModelSelector
+      await this.ensureModelSelected(page, options);
 
-    // BƯỚC 7: Bơm nội dung prompt và đính kèm tệp/ảnh vào khung soạn thảo
-    await this.injectPromptContent(page, prompt, options);
+      // BƯỚC 6: Đảm bảo trạng thái Idle (Không còn sinh dở từ lượt trước)
+      await this.waitForIdle(page, options);
 
-    // BƯỚC 8: Kích hoạt nút Send (Chuỗi sự kiện con trỏ PointerEvents)
-    await this.dispatchSend(page, options);
+      // BƯỚC 7: Bơm nội dung prompt và đính kèm tệp/ảnh vào khung soạn thảo
+      await this.injectPromptContent(page, prompt, options);
 
-    // BƯỚC 9: Quan sát luồng phản hồi theo thời gian thực (Live DOM Streaming)
-    let reply = await this.observeStreamingResponse(page, options);
+      // BƯỚC 8: Kích hoạt nút Send (Chuỗi sự kiện con trỏ PointerEvents)
+      await this.dispatchSend(page, options);
 
-    // BƯỚC 10: Cứu hộ mã nguồn nếu DOM bị ảo hóa (Virtualization Copy Salvage)
-    reply = await this.salvageOutputIfNeeded(page, reply, options);
+      // BƯỚC 9: Quan sát luồng phản hồi theo thời gian thực (Live DOM Streaming)
+      let reply = await this.observeStreamingResponse(page, options);
 
-    const duration = Date.now() - startTime;
-    console.log(`[${this.workerName}] Hoàn tất turn trong ${duration}ms (outputChars=${reply.length}).`);
-    return reply;
+      // BƯỚC 10: Cứu hộ mã nguồn nếu DOM bị ảo hóa (Virtualization Copy Salvage)
+      reply = await this.salvageOutputIfNeeded(page, reply, options);
+
+      // BƯỚC 11: Trích xuất / bảo toàn Conversation ID sau khi turn hoàn tất
+      conversationId = await this.resolveConversationIdAfterTurn(page, options, attachment);
+
+      finalStatus = "completed";
+      const duration = Date.now() - startTime;
+      console.log(`[${this.workerName}] Hoàn tất turn trong ${duration}ms (outputChars=${reply.length}).`);
+      return reply;
+    } catch (error) {
+      if (options.signal?.aborted) {
+        finalStatus = "aborted";
+      } else {
+        finalStatus = "failed";
+      }
+      throw error;
+    } finally {
+      // BƯỚC 12: Dọn dẹp phiên kết nối, giải phóng lease và đóng browser connection an toàn
+      if (attachment) {
+        await this.releaseBrowserAttachment(attachment, finalStatus, conversationId, options).catch((err) => {
+          console.warn(`[${this.workerName}] Cảnh báo khi dọn dẹp browser attachment:`, err);
+        });
+      }
+    }
   }
 
   // ===========================================================================
@@ -95,7 +125,11 @@ export abstract class BaseChatBrowserWorker implements IChatBrowserWorker {
     }
   }
 
-  protected async preparePageNavigation(page: Page, options: BrowserTurnOptionsDto): Promise<void> {
+  protected async preparePageNavigation(
+    page: Page,
+    options: BrowserTurnOptionsDto,
+    attachment?: BrowserAttachmentResult,
+  ): Promise<void> {
     const chatUrl = this.getChatUrl();
     if (page.url() !== chatUrl) {
       await page.goto(chatUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
@@ -180,7 +214,51 @@ export abstract class BaseChatBrowserWorker implements IChatBrowserWorker {
   }
 
   protected async salvageOutputIfNeeded(page: Page, currentText: string, options: BrowserTurnOptionsDto): Promise<string> {
-    // Mặc định không áp dụng cứu hộ nếu lớp con không cài đặt
     return currentText;
+  }
+
+  protected async resolveConversationIdAfterTurn(
+    page: Page,
+    options: BrowserTurnOptionsDto,
+    attachment?: BrowserAttachmentResult,
+  ): Promise<string | undefined> {
+    return attachment?.lease?.conversationId;
+  }
+
+  protected async releaseBrowserAttachment(
+    attachment: BrowserAttachmentResult,
+    status: "completed" | "failed" | "aborted",
+    conversationId: string | undefined,
+    options: BrowserTurnOptionsDto,
+  ): Promise<void> {
+    const descriptorPath = attachment.descriptorPath
+      || CdpLauncherConnector.resolveDescriptorPath(options.descriptorPath);
+    const traceId = options.traceId || (attachment.context as any)?.traceId || "default-trace";
+    const connector = (attachment.context as any)?.connector instanceof CdpLauncherConnector
+      ? (attachment.context as any).connector
+      : new CdpLauncherConnector();
+
+    let releaseError: unknown;
+    try {
+      await connector.releaseLease(descriptorPath, {
+        traceId,
+        status,
+        conversationId,
+        retain: true,
+      });
+    } catch (error) {
+      releaseError = error;
+    }
+
+    if (attachment.browser) {
+      console.log(`[${this.workerName}] [cleanup] closing browser connection (timeout 3000ms)...`);
+      await connector.closeConnectionWithTimeout(attachment.browser, 3000);
+      console.log(`[${this.workerName}] [cleanup] browser closed`);
+    }
+
+    if (releaseError) {
+      if (status === "completed") throw releaseError;
+      console.warn(`[${this.workerName}] Failed to release launcher turn:`, releaseError);
+    }
   }
 }

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Page } from "playwright-core";
 import {
   BaseChatBrowserWorker,
@@ -36,7 +37,8 @@ export const CHAT_SELECTORS: ChatSelectorsDto = {
 
 /**
  * Lớp Browser Worker chuyên biệt cho Microsoft 365 Copilot
- * Kế thừa BaseChatBrowserWorker chuẩn Java Enterprise Template Method Pattern
+ * Kế thừa BaseChatBrowserWorker chuẩn Clean Architecture OOP Template Method Pattern
+ * Bảo toàn cuộc hội thoại tiếp diễn qua nhiều request và hỗ trợ làm sạch khi bắt đầu hội thoại mới.
  */
 export class M365BrowserWorker extends BaseChatBrowserWorker {
   readonly workerName = "m365-worker";
@@ -59,23 +61,79 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
     return M365_CHAT_URL;
   }
 
-  protected async attachToBrowser(options: BrowserTurnOptionsDto): Promise<BrowserAttachmentResult> {
-    const connection = await CdpLauncherConnector.acquireLeaseAndConnect({
-      descriptorPath: options.descriptorPath,
+  protected override async attachToBrowser(options: BrowserTurnOptionsDto): Promise<BrowserAttachmentResult> {
+    if (!options.conversationKey) {
+      throw new Error("M365 multi-surface requires a stable conversation key");
+    }
+    const descriptorPath = CdpLauncherConnector.resolveDescriptorPath(options.descriptorPath);
+    const traceId = options.traceId || randomBytes(12).toString("base64url");
+    const connector = new CdpLauncherConnector();
+
+    const lease = await connector.acquireLease(descriptorPath, {
+      traceId,
       conversationKey: options.conversationKey,
-      traceId: options.traceId,
-      signal: options.signal,
       connectorIdentity: "m365-copilot",
       provider: "m365",
+      signal: options.signal,
       requireRetainedConversation: false,
     });
-    return { page: connection.page, context: connection };
+
+    const connection = await connector.connect(descriptorPath, lease.surfaceId!, options.signal);
+    return {
+      page: connection.page,
+      browser: connection.browser,
+      descriptorPath,
+      lease,
+      context: { connector, traceId },
+    };
   }
 
-  protected override async preparePageNavigation(page: Page, options: BrowserTurnOptionsDto): Promise<void> {
+  protected override async preparePageNavigation(
+    page: Page,
+    options: BrowserTurnOptionsDto,
+    attachment?: BrowserAttachmentResult,
+  ): Promise<void> {
+    const lease = attachment?.lease;
     const currentConversationId = parseM365ConversationId(page.url());
-    if (page.url() !== M365_CHAT_URL && !currentConversationId) {
-      await page.goto(M365_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
+
+    // 1. Trường hợp tiếp diễn cuộc hội thoại: Đã có conversationId được giữ lại từ turn trước
+    if (lease?.conversationId) {
+      if (currentConversationId !== lease.conversationId.toLowerCase()) {
+        throw new Error(
+          `M365 retained conversation mismatch: expected ${lease.conversationId}, current URL is ${page.url()}`
+        );
+      }
+      console.log(`[m365-worker] [continue] Tiếp tục cuộc hội thoại hiện tại: ${lease.conversationId}`);
+      return;
+    }
+
+    // 2. Trường hợp surface tái sử dụng nhưng chưa được bind mà lại chứa URL hội thoại cũ
+    if (lease?.reused && currentConversationId && !options.isNewConversation) {
+      throw new Error("Launcher reused an unbound M365 surface that already contains a conversation");
+    }
+
+    // 3. Trường hợp bắt đầu cuộc trò chuyện mới: isNewConversation = true hoặc chưa có conversationId
+    const shouldStartNewChat = Boolean(options.isNewConversation) || !currentConversationId;
+
+    if (shouldStartNewChat) {
+      if (currentConversationId || page.url() !== M365_CHAT_URL) {
+        console.log(`[m365-worker] [new-chat] Điều hướng về chat mới từ URL: ${page.url()}`);
+        await page.goto(M365_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
+        await new Promise(r => setTimeout(r, 400));
+      }
+
+      // Thử bấm nút New Chat trên giao diện M365 để đảm bảo phiên chat sạch hoàn toàn
+      await page.evaluate(() => {
+        const newChatBtn = document.querySelector(
+          'a[aria-label*="New chat" i], button[aria-label*="New chat" i], [aria-label*="New chat" i], [aria-label*="Cuộc trò chuyện mới" i], [aria-label*="New topic" i], [title*="New chat" i]'
+        ) as HTMLElement | null;
+        if (newChatBtn) {
+          newChatBtn.click();
+          newChatBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        }
+      }).catch(() => {});
+
+      await new Promise(r => setTimeout(r, 400));
     }
   }
 
@@ -89,6 +147,7 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
       safeDetails: {
         provider: "m365-copilot",
         modelSlug: options.modelSlug,
+        isNewConversation: Boolean(options.isNewConversation),
         injectedPromptPreview: prompt,
         rawPrompt: prompt,
         promptBytes: Buffer.byteLength(prompt, "utf8"),
@@ -149,36 +208,105 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
       "button#copy-button, button#preview-toggle-button, button[aria-label='Copy code'], button[aria-label='Code']"
     ).count().catch(() => 0) > 0;
 
+    let fullMarkdown = currentText;
     if (needsEnvelopeFix || hasUnclosedMarkers || hasCodeBlockOnPage) {
       console.log("[m365-worker] [salvage-eval] Kích hoạt ClipboardCopySalvager...");
       const copiedCode = await this.salvager.salvage(page);
       if (copiedCode) {
         const copiedHasClose = /<\/m365Response\s*>/i.test(copiedCode);
-        const currentLacksClose = !/<\/m365Response\s*>/i.test(currentText);
+        const currentLacksClose = !/<\/m365Response\s*>/i.test(fullMarkdown);
 
-        if ((currentLacksClose && copiedHasClose) || copiedCode.length > currentText.length) {
+        if ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length) {
           console.log(`[m365-worker] [copy-salvage] ÁP DỤNG THAY THẾ: Chuỗi từ Copy Button (${copiedCode.length} chars) hoàn chỉnh hơn.`);
-          if (copiedCode.length > currentText.length && !options.shouldStop?.()) {
-            const extra = copiedCode.startsWith(currentText) ? copiedCode.slice(currentText.length) : copiedCode;
+          if (copiedCode.length > fullMarkdown.length && !options.shouldStop?.()) {
+            const extra = copiedCode.startsWith(fullMarkdown) ? copiedCode.slice(fullMarkdown.length) : copiedCode;
             if (extra) {
               options.onChunk?.(extra);
             }
           }
-          return copiedCode;
+          fullMarkdown = copiedCode;
         }
       }
     }
 
-    if (!currentText || !currentText.trim()) {
+    if (!fullMarkdown || !fullMarkdown.trim()) {
       throw new Error(`[M365 Format Error] M365 Copilot không trả về bất kỳ nội dung phản hồi nào.`);
     }
 
-    // Đợi persistent URL nếu có
-    await waitForM365ConversationId(page).catch(() => {});
+    emitStructuredEvent({
+      level: "info",
+      event: "m365.provider.finished",
+      traceContext: (options as any).traceContext,
+      safeDetails: {
+        provider: "m365-copilot",
+        status: "completed",
+        outputChars: fullMarkdown.length,
+        responsePreview: fullMarkdown,
+        rawResponse: fullMarkdown,
+        terminalReason: "completed_settled",
+        terminalExplanation: "M365 đã hoàn tất và văn bản đã ổn định.",
+      },
+      diagnosticDetails: {
+        outputBytes: Buffer.byteLength(fullMarkdown, "utf8"),
+      },
+    });
 
-    logDebugPipelineStation(3, "M365 COPILOT WEB ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)", currentText);
-    return currentText;
+    logDebugPipelineStation(3, "M365 COPILOT WEB ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)", fullMarkdown);
+    return fullMarkdown;
+  }
+
+  protected override async resolveConversationIdAfterTurn(
+    page: Page,
+    options: BrowserTurnOptionsDto,
+    attachment?: BrowserAttachmentResult,
+  ): Promise<string | undefined> {
+    let conversationId = attachment?.lease?.conversationId || parseM365ConversationId(page.url());
+    if (!conversationId) {
+      conversationId = await waitForM365ConversationId(page, 15_000);
+    }
+    if (!conversationId) {
+      throw new Error("M365 did not expose a persistent /chat/conversation/{id} URL after completing the turn");
+    }
+    return conversationId;
+  }
+
+  protected override async releaseBrowserAttachment(
+    attachment: BrowserAttachmentResult,
+    status: "completed" | "failed" | "aborted",
+    conversationId: string | undefined,
+    options: BrowserTurnOptionsDto,
+  ): Promise<void> {
+    const descriptorPath = attachment.descriptorPath
+      || CdpLauncherConnector.resolveDescriptorPath(options.descriptorPath);
+    const traceId = (attachment.context as any)?.traceId || options.traceId || "default-trace";
+    const connector = (attachment.context as any)?.connector instanceof CdpLauncherConnector
+      ? (attachment.context as any).connector
+      : new CdpLauncherConnector();
+
+    let releaseError: unknown;
+    try {
+      await connector.releaseLease(descriptorPath, {
+        traceId,
+        status,
+        conversationId,
+        retain: true,
+      });
+    } catch (error) {
+      releaseError = error;
+    }
+
+    if (attachment.browser) {
+      console.log(`[${this.workerName}] [cleanup] closing browser connection (timeout 3000ms)...`);
+      await connector.closeConnectionWithTimeout(attachment.browser, 3000);
+      console.log(`[${this.workerName}] [cleanup] browser closed`);
+    }
+
+    if (releaseError) {
+      if (status === "completed") throw releaseError;
+      console.warn(`[${this.workerName}] Failed to release launcher turn:`, releaseError);
+    }
   }
 }
 
 export const defaultM365BrowserWorker = new M365BrowserWorker();
+
