@@ -82,6 +82,7 @@ describe("BaseChatBrowserWorker - Template Method Execution", () => {
       sendButton: "#send",
       stopButton: "#stop",
     });
+    protected readonly modelSelector = undefined;
 
     getChatUrl(): string {
       return "https://test.chat.url/app";

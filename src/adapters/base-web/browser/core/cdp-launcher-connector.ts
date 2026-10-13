@@ -50,7 +50,7 @@ export class CdpLauncherConnector {
         helperPid: process.pid,
         conversationKey: options.conversationKey,
         connectorIdentity: options.connectorIdentity,
-        provider: options.provider,
+        provider: options.provider as "m365" | "chatgpt" | undefined,
         requireRetainedConversation: options.requireRetainedConversation ?? false,
       },
       undefined,
@@ -116,5 +116,32 @@ export class CdpLauncherConnector {
     await Promise.race([browser.close().catch(() => {}), timeoutPromise]).finally(() => {
       if (timer) clearTimeout(timer);
     });
+  }
+
+  public static async acquireLeaseAndConnect(options: {
+    descriptorPath?: string;
+    conversationKey?: string;
+    traceId?: string;
+    signal?: AbortSignal;
+    connectorIdentity: string;
+    provider: string;
+    requireRetainedConversation?: boolean;
+  }): Promise<CdpBrowserConnection & { lease: LauncherTurnLease }> {
+    const connector = new CdpLauncherConnector();
+    const descriptorPath = CdpLauncherConnector.resolveDescriptorPath(options.descriptorPath);
+    const traceId = options.traceId || Math.random().toString(36).slice(2);
+    const conversationKey = options.conversationKey || "default-key";
+
+    const lease = await connector.acquireLease(descriptorPath, {
+      traceId,
+      conversationKey,
+      connectorIdentity: options.connectorIdentity,
+      provider: options.provider,
+      signal: options.signal,
+      requireRetainedConversation: options.requireRetainedConversation,
+    });
+
+    const connection = await connector.connect(descriptorPath, lease.surfaceId!, options.signal);
+    return Object.assign(connection, { lease });
   }
 }

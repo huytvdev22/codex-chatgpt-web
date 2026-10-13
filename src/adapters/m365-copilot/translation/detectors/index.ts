@@ -1,3 +1,6 @@
+/**
+ * Facade tương thích ngược cho Detectors Barrel Export
+ */
 export * from "./types";
 export * from "./sanitizers";
 export * from "./patch-detector";

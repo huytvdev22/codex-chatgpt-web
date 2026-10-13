@@ -1,4 +1,4 @@
-import type { CodexTool } from "../../../types";
+import type { CodexTool } from "../../../../types";
 
 export interface ToolValidationSuccess {
   ok: true;

@@ -1,4 +1,4 @@
-import type { CodexMessage } from "../../../types";
+import type { CodexMessage } from "../../../../types";
 import type { ConversationGuardState } from "../dto/conversation-guard-state.dto";
 import type { ToolRepetitionPolicy } from "../dto/tool-repetition-policy.dto";
 import type {

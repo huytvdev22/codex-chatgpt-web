@@ -1,4 +1,4 @@
-import type { CodexMessage } from "../../../types";
+import type { CodexMessage } from "../../../../types";
 import type { ConversationGuardState } from "../dto/conversation-guard-state.dto";
 
 export interface RecordToolCallResult {

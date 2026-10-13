@@ -1,7 +1,8 @@
 import type { TraceContext } from "../../../../observability/types";
 
 export interface BrowserImageAttachment {
-  readonly filename: string;
+  readonly filename?: string;
+  readonly name?: string;
   readonly mimeType: string;
   readonly buffer: Buffer;
   readonly detail?: string;

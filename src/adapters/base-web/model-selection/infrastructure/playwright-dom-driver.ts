@@ -15,9 +15,9 @@ export class PlaywrightDomDriver implements IDomDriver {
   public async evaluate<R>(fn: () => R | Promise<R>): Promise<R>;
   public async evaluate<T, R>(fn: ((param: T) => R | Promise<R>) | (() => R | Promise<R>), arg?: T): Promise<R> {
     if (arguments.length > 1) {
-      return this.page.evaluate(fn as (param: T) => R | Promise<R>, arg as T);
+      return (this.page as any).evaluate(fn, arg);
     }
-    return this.page.evaluate(fn as () => R | Promise<R>);
+    return (this.page as any).evaluate(fn);
   }
 
   public async waitForSelector(selector: string, timeoutMs: number): Promise<boolean> {

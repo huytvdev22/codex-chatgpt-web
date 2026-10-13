@@ -1,4 +1,4 @@
-import type { CodexParsedRequest } from "../../../types";
+import type { CodexParsedRequest } from "../../../../types";
 
 export interface ITitleGuard {
   isEnabled(customFlag?: boolean): boolean;

@@ -18,9 +18,12 @@ export {
   ClipboardCopySalvager,
   GuaranteedFormSubmitter,
   CdpLauncherConnector,
+  FastPathStreamBuffer,
+  FastPathStreamObserver,
   type BrowserAttachmentResult,
   type SalvageSelectorsOptions,
   type FormSubmitterOptions,
   type LauncherTurnLease,
   type CdpBrowserConnection,
+  type FastPathStreamObserverOptions,
 } from "./core";

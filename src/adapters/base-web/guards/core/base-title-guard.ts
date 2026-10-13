@@ -1,4 +1,4 @@
-import type { CodexParsedRequest } from "../../../types";
+import type { CodexParsedRequest } from "../../../../types";
 import type { TitleGuardOptions } from "../dto/title-guard-options.dto";
 import type { ITitleGuard } from "../contracts/title-guard.interface";
 
@@ -49,7 +49,7 @@ export class BaseTitleGuard implements ITitleGuard {
       (anyParsed.context?.toolResults && anyParsed.context.toolResults.length > 0) ||
       (parsed.context?.messages &&
         parsed.context.messages.some(
-          (m) => m.role === "toolResult" || (m as any).role === "tool"
+          (m: any) => m.role === "toolResult" || (m as any).role === "tool"
         )) ||
       (anyParsed.input &&
         Array.isArray(anyParsed.input) &&
@@ -77,7 +77,7 @@ export class BaseTitleGuard implements ITitleGuard {
         ? lastDevMsgObj.content.map((c: any) => (typeof c === "string" ? c : c?.text || "")).join(" ").toLowerCase()
         : "";
 
-    const systemPrompts = (parsed.context?.systemPrompt || []).map((s) => s.toLowerCase()).join(" ");
+    const systemPrompts = (parsed.context?.systemPrompt || []).map((s: any) => String(s).toLowerCase()).join(" ");
     const specificText = `${lastUserMsg} ${lastDevMsg} ${systemPrompts}`.trim();
     if (!specificText) return false;
 

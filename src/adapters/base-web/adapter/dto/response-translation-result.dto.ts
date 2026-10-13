@@ -1,7 +1,7 @@
 export interface GenericDetectedToolCall {
   readonly id?: string;
   readonly name: string;
-  readonly arguments: unknown;
+  readonly arguments: string | Record<string, unknown>;
 }
 
 export type ResponseTranslationKind = "tool_calls" | "final_answer" | "protocol_error";

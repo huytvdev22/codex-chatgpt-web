@@ -26,6 +26,7 @@ class TestWebChatAdapter extends BaseWebChatAdapter {
   readonly name = "test-web-adapter";
   readonly mockWorker = new MockChatBrowserWorker();
   readonly browserWorker = this.mockWorker;
+  readonly modelSelector = undefined;
 
   public titleHandled = false;
 
@@ -93,7 +94,7 @@ describe("BaseWebChatAdapter - Template Method Execution", () => {
       context: {
         messages: [
           { role: "user", content: "Làm gì đó", timestamp: 1000 },
-          { role: "assistant", content: "Tôi đã làm xong", timestamp: 2000 },
+          { role: "assistant", content: [{ type: "text", text: "Tôi đã làm xong" }], timestamp: 2000 },
         ],
         tools: [],
       },
