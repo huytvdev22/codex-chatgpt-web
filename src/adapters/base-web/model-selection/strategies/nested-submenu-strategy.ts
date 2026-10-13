@@ -58,7 +58,7 @@ export class NestedSubmenuStrategy<TMode extends string = string>
 
       // 1. Kích hoạt parent submenu trigger
       const parentTrigger = (
-        (params.parentId ? document.querySelector(`[data-test-id="${params.parentId}"]`) : null) ||
+        (params.parentId ? document.querySelector(`[data-test-id="${params.parentId}"], [data-testid="${params.parentId}"]`) : null) ||
         Array.from(document.querySelectorAll('.fui-MenuItem, [role="menuitem"]')).find(el => (el.textContent || "").includes("GPT"))
       ) as HTMLElement | null;
 

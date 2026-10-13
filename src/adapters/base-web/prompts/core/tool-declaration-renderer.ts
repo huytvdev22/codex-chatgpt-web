@@ -49,11 +49,11 @@ export class ToolDeclarationRenderer {
 
       examples.push(`FUNCTION ACTION EXAMPLE
 \`\`\`\`markdown
-<m365Response>
+<webResponse>
 <tool_call>
 ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
 </tool_call>
-</m365Response>
+</webResponse>
 \`\`\`\``);
     }
 
@@ -61,7 +61,7 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
       const wireName = applyPatchTool.identity.qualifiedName || applyPatchTool.identity.name;
       examples.push(`FREEFORM ACTION EXAMPLE
 \`\`\`\`markdown
-<m365Response>
+<webResponse>
 <custom_tool_call name="${wireName}">
 *** Begin Patch
 *** Update File: path/to/file.ext
@@ -70,7 +70,7 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
 +new content
 *** End Patch
 </custom_tool_call>
-</m365Response>
+</webResponse>
 \`\`\`\`
 
 File chưa tồn tại dùng *** Add File. File đã tồn tại dùng *** Update File.

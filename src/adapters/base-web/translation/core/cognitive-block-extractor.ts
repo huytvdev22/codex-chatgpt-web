@@ -10,8 +10,8 @@ export class CognitiveBlockExtractor {
   public static extract(rawText: string): CognitiveBlocksDto {
     let thinking: string | undefined;
 
-    // 0. Gọt bỏ thẻ bọc envelope <m365Response>...</m365Response> (hoặc tương tự)
-    const textWithoutEnvelope = rawText.replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "");
+    // 0. Gọt bỏ thẻ bọc envelope <webResponse>...</webResponse>
+    const textWithoutEnvelope = rawText.replace(/<\s*\/?\s*web[\\_]*response\s*>/gi, "");
 
     // 1. Trích xuất nội dung thẻ <thought>...</thought> hoặc <thinking>...</thinking>
     const thoughtMatch = textWithoutEnvelope.match(/<\s*(?:thought|thinking)\s*>([\s\S]*?)<\s*\/(?:thought|thinking)\s*>/i);

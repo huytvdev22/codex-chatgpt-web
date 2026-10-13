@@ -320,19 +320,19 @@ describe("M365 Output Translator Specification Tests", () => {
     // Lượt 2: Sau khi có kết quả git status, M365 trả về strict tool_call read_file "pom.xml"
     // Lượt 3: Sau khi đọc pom.xml, M365 trả về Final Answer
     const mockResponses = [
-      `<m365Response><tool_call>
+      `<webResponse><tool_call>
 {
   "name": "git_status",
   "arguments": {}
 }
-</tool_call></m365Response>`,
-      `<m365Response><tool_call>
+</tool_call></webResponse>`,
+      `<webResponse><tool_call>
 {
   "name": "read_file",
   "arguments": { "path": "pom.xml" }
 }
-</tool_call></m365Response>`,
-      "<m365Response>Phân tích hoàn tất. Dự án sử dụng Java 17 và đã sửa lỗi phụ thuộc trong pom.xml.</m365Response>"
+</tool_call></webResponse>`,
+      "<webResponse>Phân tích hoàn tất. Dự án sử dụng Java 17 và đã sửa lỗi phụ thuộc trong pom.xml.</webResponse>"
     ];
 
     let turn = 0;

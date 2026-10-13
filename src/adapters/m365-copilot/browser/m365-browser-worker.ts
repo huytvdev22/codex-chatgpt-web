@@ -317,7 +317,7 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
   }
 
   protected override async salvageOutputIfNeeded(page: Page, currentText: string, options: BrowserTurnOptionsDto): Promise<string> {
-    const needsEnvelopeFix = /<m365Response\b/i.test(currentText) && !/<\/m365Response\s*>/i.test(currentText);
+    const needsEnvelopeFix = /<webResponse\b/i.test(currentText) && !/<\/webResponse\s*>/i.test(currentText);
     const hasUnclosedMarkers = /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(currentText) &&
       !(/(?:<\/custom_tool_call>|\*{3}\s*End Patch)/i.test(currentText));
     const hasCodeBlockOnPage = await page.locator(
@@ -328,8 +328,8 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
     if (needsEnvelopeFix || hasUnclosedMarkers || hasCodeBlockOnPage) {
       const copiedCode = await this.salvager.salvage(page);
       if (copiedCode) {
-        const copiedHasClose = /<\/m365Response\s*>/i.test(copiedCode);
-        const currentLacksClose = !/<\/m365Response\s*>/i.test(fullMarkdown);
+        const copiedHasClose = /<\/webResponse\s*>/i.test(copiedCode);
+        const currentLacksClose = !/<\/webResponse\s*>/i.test(fullMarkdown);
 
         if ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length) {
           if (copiedCode.length > fullMarkdown.length && !options.shouldStop?.()) {

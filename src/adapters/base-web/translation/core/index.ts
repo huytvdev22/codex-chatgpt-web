@@ -16,11 +16,17 @@ export {
 } from "./bash-translator";
 export {
   parseStrictM365Response,
-  M365_RESPONSE_OPEN_TAG,
-  M365_RESPONSE_CLOSE_TAG,
+  parseStrictWebResponse,
+  WEB_ROOT_OPEN,
+  WEB_ROOT_CLOSE,
+  WEB_RESPONSE_OPEN_TAG,
+  WEB_RESPONSE_CLOSE_TAG,
   type M365ProtocolErrorCode,
+  type WebProtocolErrorCode,
   type StrictM365ToolCall,
+  type StrictWebToolCall,
   type StrictM365ResponseResult,
+  type StrictWebResponseResult,
 } from "./strict-response-parser";
 export {
   M365ToolCallDetector,

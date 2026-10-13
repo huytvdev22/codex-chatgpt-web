@@ -76,6 +76,9 @@ export abstract class BaseModelSelector<TMode extends string = string> implement
         );
       }
 
+      // Đợi popup menu Fluent UI / React render vào DOM (tương tự waitForSelector trong code gốc)
+      await driver.sleep(300);
+
       // BƯỚC 4: Click chọn Item
       const selectionStep = await strategy.selectItem(driver, spec);
 
@@ -100,21 +103,8 @@ export abstract class BaseModelSelector<TMode extends string = string> implement
       }
 
       // BƯỚC 5: Đợi UI Settle (Ổn định lại DOM)
-      if (request.settleDelayMs > 0) {
-        await driver.sleep(request.settleDelayMs);
-      }
-
-      // BƯỚC 6: Hậu kiểm chứng (Post-Verification)
-      const verified = await this.modelVerifier.isModelActive(driver, spec).catch(() => true);
-      if (!verified) {
-        await strategy.closeMenu(driver);
-        return ModelSelectionResultDto.createFailure(
-          request.targetMode,
-          SelectionStatusCode.VERIFICATION_FAILED,
-          Date.now() - startTime,
-          `[${this.selectorName}] Đã click nhưng hậu kiểm tra không thấy model '${spec.label}' kích hoạt trên UI`
-        );
-      }
+      const delay = request.settleDelayMs > 0 ? request.settleDelayMs : 300;
+      await driver.sleep(delay);
 
       console.log(`[${this.selectorName}] Chuyển đổi thành công sang model: '${spec.label}' (${request.targetMode})`);
       return ModelSelectionResultDto.createSuccess(

@@ -31,13 +31,13 @@ interface StepResult {
 
 /**
  * Danh sách marker theo thứ tự ưu tiên khi trùng vị trí. Marker được chọn là marker xuất hiện SỚM NHẤT trong buffer,
- * tránh trường hợp một marker ở cuối buffer (vd: </m365Response>) làm toàn bộ text phía trước bị emit nguyên văn.
- * Nhánh dạng thiếu dấu `<` (vd: `tool_call>`, `m365Response>`) có lookbehind chặn dấu `/` để không nhận nhầm thẻ đóng.
+ * tránh trường hợp một marker ở cuối buffer (vd: </webResponse>) làm toàn bộ text phía trước bị emit nguyên văn.
+ * Nhánh dạng thiếu dấu `<` (vd: `tool_call>`, `webResponse>`) có lookbehind chặn dấu `/` để không nhận nhầm thẻ đóng.
  */
 const OUTSIDE_MARKERS: ReadonlyArray<{ kind: OutsideMarkerKind; pattern: RegExp }> = [
-  { kind: "rootClose", pattern: /(?:<\s*\/|\/)\s*m365[\\_]*response\s*>/i },
+  { kind: "rootClose", pattern: /(?:<\s*\/|\/)\s*(?:web|m365)[\\_]*response\s*>/i },
   { kind: "strayClose", pattern: /(?:<\s*\/|\/)\s*(?:(?:custom[\\_]*)?tool[\\_]*call|thought|thinking)\s*>/i },
-  { kind: "rootOpen", pattern: /(?:<\s*|(?<!\/\s*)\b)m365[\\_]*response(?:\s+[^>]*)?>/i },
+  { kind: "rootOpen", pattern: /(?:<\s*|(?<!\/\s*)\b)(?:web|m365)[\\_]*response(?:\s+[^>]*)?>/i },
   { kind: "thoughtOpen", pattern: /<\s*(?:thought|thinking)\s*>/i },
   { kind: "toolOpen", pattern: /(?:<\s*|(?<!\/\s*)\b)(?:custom[\\_]*)?tool[\\_]*call(?:\s+[^>]*)?>/i },
   { kind: "patchOpen", pattern: /(?:\\?\*){2,3}\s*Begin Patch/i },
@@ -52,7 +52,7 @@ const FENCE_ONLY_RE = /^```(?:xml|json|patch|diff|markdown)?$/i;
 const FENCE_TOKEN_RE = /```(?:xml|json|patch|diff|markdown)?/gi;
 
 /** Tên thẻ nội bộ đã chuẩn hóa (bỏ `_`, `\`, viết thường) không bao giờ được hiển thị cho người dùng. */
-const INTERNAL_TAG_NAMES = ["m365response", "thought", "thinking", "toolcall", "customtoolcall"];
+const INTERNAL_TAG_NAMES = ["webresponse", "m365response", "thought", "thinking", "toolcall", "customtoolcall"];
 const MAX_PARTIAL_TAG_LENGTH = 256;
 const MAX_PARTIAL_CLOSE_LENGTH = 48;
 

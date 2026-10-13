@@ -17,9 +17,9 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    - TUYỆT ĐỐI KHÔNG xuất thẻ XML, thẻ HTML hay bất kỳ ký tự nào BÊN NGOÀI khối 4-backtick này (để bảo đảm các thẻ <script>, <meta>, <link>, <html> không bị bộ lọc giao diện web làm hỏng).
 
 2. KHI CẦN THAO TÁC / GỌI CÔNG CỤ (ACTION - CHẠY LỆNH TERMINAL, KHẢO SÁT, TẠO HOẶC SỬA FILE):
-   - BẮT BUỘC bọc toàn bộ action trong đúng một root response envelope <m365Response>...</m365Response> (luôn nằm trọn trong khối 4-backtick \`\`\`\`markdown).
-   - XUẤT THẲNG KHỐI <tool_call>...</tool_call> HOẶC <custom_tool_call name="apply_patch"> bên trong <m365Response>.
-   - Bên trong <m365Response> CHỈ ĐƯỢC CHỨA các khối action hoàn chỉnh; TUYỆT ĐỐI KHÔNG CHÊM VĂN BẢN DẪN DẮT RƯỜM RÀ (như "Tôi sẽ chạy lệnh...", "Đang đọc file...", "Để tôi kiểm tra...").
+   - BẮT BUỘC bọc toàn bộ action trong đúng một root response envelope <webResponse>...</webResponse> (luôn nằm trọn trong khối 4-backtick \`\`\`\`markdown).
+   - XUẤT THẲNG KHỐI <tool_call>...</tool_call> HOẶC <custom_tool_call name="apply_patch"> bên trong <webResponse>.
+   - Bên trong <webResponse> CHỈ ĐƯỢC CHỨA các khối action hoàn chỉnh; TUYỆT ĐỐI KHÔNG CHÊM VĂN BẢN DẪN DẮT RƯỜM RÀ (như "Tôi sẽ chạy lệnh...", "Đang đọc file...", "Để tôi kiểm tra...").
    - Cú pháp chuẩn của công cụ function:
      <tool_call>
      {"name": "<TOOL_NAME>", "arguments": {"<PARAM_NAME>": "<VALUE>"}}
@@ -29,17 +29,17 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    - IDE dùng strict atomic parser: thiếu root envelope, thiếu bất kỳ thẻ đóng, JSON sai hoặc patch bị cắt sẽ khiến TOÀN BỘ batch bị hủy và bạn phải phát lại phản hồi.
 
 3. KHI HOÀN THÀNH HOẶC TRẢ LỜI NGƯỜI DÙNG (FINAL ANSWER KẾT LUẬN CUỐI CÙNG):
-   - BẮT BUỘC dùng root response envelope <m365Response> cho final answer thuần văn bản (bạn có thể viết trực tiếp trong 4-backtick hoặc bọc trong <m365Response> đều hợp lệ).
+   - BẮT BUỘC dùng root response envelope <webResponse> cho final answer thuần văn bản (bạn có thể viết trực tiếp trong 4-backtick hoặc bọc trong <webResponse> đều hợp lệ).
    - QUY TẮC THAM CHIẾU TỆP TIN : Khi nhắc đến bất kỳ tệp tin nào trong câu trả lời, giải thích mã nguồn hoặc kế hoạch, BẮT BUỘC sử dụng cú pháp Markdown link tương đối:
      + Link tệp tin tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html), js/app.js)
      + Link tới dòng cụ thể: [tên_file — dòng N](đường_dẫn_tương_đối#LN) (Ví dụ: [index.html — dòng 12](index.html#L12), js/storage.js#L25)
    - TUYỆT ĐỐI KHÔNG xuất thẻ <tool_call> trong lượt này.
 
 4. TẠO FILE MỚI HOẶC SỬA FILE (BẮT BUỘC DÙNG apply_patch):
-   Ưu tiên sử dụng <custom_tool_call name="apply_patch"> cho cả tạo file mới lẫn sửa file (luôn đặt trong khối 4-backtick \`\`\`\`markdown bên trong <m365Response>, TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG chêm lời dẫn dắt):
+   Ưu tiên sử dụng <custom_tool_call name="apply_patch"> cho cả tạo file mới lẫn sửa file (luôn đặt trong khối 4-backtick \`\`\`\`markdown bên trong <webResponse>, TUYỆT ĐỐI KHÔNG bọc trong JSON, KHÔNG chêm lời dẫn dắt):
    a) Khi chỉnh sửa file mã nguồn logic thông thường (.js, .ts, .py, .java,...):
    \`\`\`\`markdown
-   <m365Response>
+   <webResponse>
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Update File: path/to/file.ext
@@ -49,13 +49,13 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    +dòng thêm
    *** End Patch
    </custom_tool_call>
-   </m365Response>
+   </webResponse>
    \`\`\`\`
 
    b) Khi tạo file mới hoàn toàn HOẶC tạo/sửa file dạng thẻ (HTML, XML, SVG, VUE, JSX) (Add File):
    - Đối với file dạng thẻ (HTML, XML, SVG, JSX) hoặc tạo file mới: BẮT BUỘC viết lại toàn bộ nội dung file bằng *** Add File: (hoặc write_file), TUYỆT ĐỐI KHÔNG DÙNG *** Update File: với diff @@ để tránh lệch anchor và biến dạng thẻ.
    \`\`\`\`markdown
-   <m365Response>
+   <webResponse>
    <custom_tool_call name="apply_patch">
    *** Begin Patch
    *** Add File: path/to/file.ext
@@ -63,7 +63,7 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
    +nội dung hoàn chỉnh dòng 2
    *** End Patch
    </custom_tool_call>
-   </m365Response>
+   </webResponse>
    \`\`\`\`
 
 QUY TẮC QUAN TRỌNG VỀ THAO TÁC FILE VÀ TERMINAL:

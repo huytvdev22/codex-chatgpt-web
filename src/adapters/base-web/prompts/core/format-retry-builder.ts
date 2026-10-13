@@ -16,13 +16,13 @@ Chi tiết: ${options.message}
 Không tiếp tục sang bước mới. Hãy phát lại đúng nội dung dự định của phản hồi trước theo DUY NHẤT format sau:
 
 \`\`\`\`markdown
-<m365Response>
+<webResponse>
 ... toàn bộ final answer Markdown HOẶC một hay nhiều tool call hoàn chỉnh ...
-</m365Response>
+</webResponse>
 \`\`\`\`
 
 Ràng buộc bắt buộc:
-- Chỉ đúng một cặp <m365Response>...</m365Response>.
+- Chỉ đúng một cặp <webResponse>...</webResponse>.
 - Nếu gọi tool: bên trong chỉ được có các <tool_call> JSON hoàn chỉnh hoặc <custom_tool_call name="apply_patch"> hoàn chỉnh; không chèn lời dẫn.
 - Nếu trả final answer: không được chứa tool syntax.
 - Không xuất <thought>/<thinking>.
