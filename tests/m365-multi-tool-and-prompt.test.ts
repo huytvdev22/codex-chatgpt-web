@@ -3,17 +3,14 @@ import { M365OutputTranslator } from "../src/adapters/m365-copilot/translation/o
 import { XmlToolCallDetector } from "../src/adapters/m365-copilot/translation/detectors/xml-detector";
 import {
   UNIFIED_TOOL_PROTOCOL,
-  CORE_CODING_TOOLS_DECLARATION,
-  CANONICAL_TOOL_EXAMPLES,
+  renderDynamicToolDeclarations,
+  renderCompactDynamicToolDeclarations,
   promptCompiler,
 } from "../src/adapters/m365-copilot/prompts/compiler";
 import {
-  FILE_REFERENCING_CONVENTION_PROMPT,
   TOOL_REMINDER_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
-  COMPACT_CORE_TOOLS_DECLARATION,
-  COMPACT_APPLY_PATCH_EXAMPLES,
 } from "../src/adapters/m365-copilot/prompts/templates";
 import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/m365-copilot/tools/tool-bridge";
 
@@ -21,7 +18,7 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   test("1. UNIFIED_TOOL_PROTOCOL đã loại bỏ hoàn toàn <thought> và hướng dẫn xuất trực tiếp", () => {
     // Không còn khối khai báo cấu trúc <thought>
     expect(UNIFIED_TOOL_PROTOCOL).not.toContain("[Suy luận nội tâm");
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("TUYỆT ĐỐI KHÔNG VIẾT THẺ <thought>...</thought>");
+    expect(UNIFIED_TOOL_PROTOCOL).not.toContain("<thought>");
 
     // Có chỉ thị xuất trực tiếp và cấm văn bản rườm rà
     expect(UNIFIED_TOOL_PROTOCOL).toContain("XUẤT THẲNG KHỐI <tool_call>");
@@ -37,6 +34,10 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(UNIFIED_TOOL_PROTOCOL).toContain("ĐỌC FILE AN TOÀN (SAFE READING)");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("150 dòng");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("node_modules");
+
+    // Hard Negative Constraint chống từ chối và xin mã nguồn thủ công
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("NEGATIVE CONSTRAINT");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("TUYỆT ĐỐI KHÔNG từ chối với lý do");
   });
 
   test("2. Cảnh báo quét đệ quy node_modules hiện diện trong các mẫu templates", () => {
@@ -46,8 +47,8 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(TOOL_REMINDER_PROMPT).toContain("node_modules");
   });
 
-  test("3. Ví dụ mẫu CANONICAL_TOOL_EXAMPLES chứa mẫu gọi nhiều tool song song", () => {
-    expect(CANONICAL_TOOL_EXAMPLES).toContain("Parallel Tool Calls");
+  test("3. UNIFIED_TOOL_PROTOCOL chứa chỉ dẫn gọi nhiều tool song song", () => {
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("PARALLEL TOOL CALLS");
   });
 
   test("4. XmlToolCallDetector phát hiện nhiều khối <tool_call> song song (Multi-Tool)", () => {
@@ -214,30 +215,35 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   });
 
   test("10. Prompts và templates chứa đầy đủ hướng dẫn phỏng vấn request_user_input", () => {
-    expect(CORE_CODING_TOOLS_DECLARATION).toContain("request_user_input");
-    expect(CORE_CODING_TOOLS_DECLARATION).toContain("Interactive User Interview Wizard");
-    expect(CORE_CODING_TOOLS_DECLARATION).toContain("(Recommended)");
-    expect(CANONICAL_TOOL_EXAMPLES).toContain("request_user_input");
     expect(PLAN_MODE_PROMPT).toContain("request_user_input");
     expect(PLAN_MODE_PROMPT).toContain("Interactive User Interview Wizard");
+
+    const mockTool: any = {
+      kind: "function",
+      identity: { name: "request_user_input" },
+      rawParameters: {
+        properties: { questions: { type: "array", description: "Questions to show the user." } },
+        required: ["questions"]
+      }
+    };
+    const declared = renderDynamicToolDeclarations([mockTool]);
+    expect(declared).toContain("request_user_input");
+    expect(declared).toContain("Mở hộp thoại hỏi người dùng");
   });
 
-  test("11. COMPACT_CORE_TOOLS_DECLARATION và COMPACT_APPLY_PATCH_EXAMPLES định nghĩa tóm tắt súc tích", () => {
-    // Bản compact có tên các tool chính
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("AVAILABLE TOOLS (COMPACT):");
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("apply_patch");
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("read_file");
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("exec_command");
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("request_user_input");
-
-    // Bản compact ví dụ: CHỈ GIỮ LẠI cú pháp apply_patch
-    expect(COMPACT_APPLY_PATCH_EXAMPLES).toContain("VÍ DỤ MẪU DUY NHẤT: CÚ PHÁP apply_patch");
-    expect(COMPACT_APPLY_PATCH_EXAMPLES).toContain("*** Update File:");
-    expect(COMPACT_APPLY_PATCH_EXAMPLES).toContain("*** Add File:");
-    // Tuyệt đối không chứa các ví dụ thừa khác
-    expect(COMPACT_APPLY_PATCH_EXAMPLES).not.toContain("git_status");
-    expect(COMPACT_APPLY_PATCH_EXAMPLES).not.toContain("grep_code");
-    expect(COMPACT_APPLY_PATCH_EXAMPLES).not.toContain("search_files");
+  test("11. renderCompactDynamicToolDeclarations định nghĩa tóm tắt súc tích cho Turn 2", () => {
+    const mockTools: any = [
+      { kind: "custom", identity: { name: "apply_patch" }, rawParameters: {} },
+      { kind: "function", identity: { name: "read_file" }, rawParameters: { required: ["path"], properties: { path: { type: "string" } } } },
+      { kind: "function", identity: { name: "exec_command" }, rawParameters: { required: ["cmd"], properties: { cmd: { type: "string" } } } },
+      { kind: "function", identity: { name: "request_user_input" }, rawParameters: { required: ["questions"], properties: { questions: { type: "array" } } } },
+    ];
+    const compact = renderCompactDynamicToolDeclarations(mockTools);
+    expect(compact).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN (COMPACT)");
+    expect(compact).toContain("apply_patch [freeform]");
+    expect(compact).toContain("read_file [function]: path*");
+    expect(compact).toContain("exec_command [function]: cmd*");
+    expect(compact).toContain("request_user_input [function]: questions*");
   });
 
   test("12. promptCompiler từ Turn 2 (isNewConversation: false) sinh ra Compact Prompt và bảo toàn Environment Context", () => {
@@ -288,33 +294,24 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   });
 
   test("13. Quy chuẩn tham chiếu file bằng Markdown link tương đối hiện diện đầy đủ trong các bộ prompt", () => {
-    // 1. FILE_REFERENCING_CONVENTION_PROMPT
-    expect(FILE_REFERENCING_CONVENTION_PROMPT).toContain("[tên_file](đường_dẫn_tương_đối)");
-    expect(FILE_REFERENCING_CONVENTION_PROMPT).toContain("[index.html](index.html)");
-    expect(FILE_REFERENCING_CONVENTION_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
-
-    // 2. UNIFIED_TOOL_PROTOCOL
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("QUY TẮC THAM CHIẾU TỆP TIN (CLICKABLE LINKS)");
+    // 1. UNIFIED_TOOL_PROTOCOL
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("[index.html](index.html)");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("[index.html — dòng 12](index.html#L12)");
 
-    // 3. PLAN_MODE_PROMPT
+    // 2. PLAN_MODE_PROMPT
     expect(PLAN_MODE_PROMPT).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
     expect(PLAN_MODE_PROMPT).toContain("[index.html](index.html)");
     expect(PLAN_MODE_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
 
-    // 4. IMPLEMENT_PLAN_PROMPT
+    // 3. IMPLEMENT_PLAN_PROMPT
     expect(IMPLEMENT_PLAN_PROMPT).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
     expect(IMPLEMENT_PLAN_PROMPT).toContain("[index.html](index.html)");
     expect(IMPLEMENT_PLAN_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
 
-    // 5. TOOL_REMINDER_PROMPT
+    // 4. TOOL_REMINDER_PROMPT
     expect(TOOL_REMINDER_PROMPT).toContain("QUY TẮC THAM CHIẾU TỆP TIN");
     expect(TOOL_REMINDER_PROMPT).toContain("[index.html](index.html)");
     expect(TOOL_REMINDER_PROMPT).toContain("[index.html — dòng 12](index.html#L12)");
-
-    // 6. COMPACT_CORE_TOOLS_DECLARATION (Turn 2 trở đi)
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("[index.html](index.html)");
-    expect(COMPACT_CORE_TOOLS_DECLARATION).toContain("[index.html — dòng 12](index.html#L12)");
   });
 });

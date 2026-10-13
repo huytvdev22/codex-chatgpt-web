@@ -8,8 +8,6 @@ import {
   M365_IMAGE_ATTACHMENT_HINT,
   UNIFIED_TOOL_PROTOCOL as UNIFIED_TOOL_PROTOCOL_TEMPLATE,
   MINIMAL_TOOL_PROTOCOL as MINIMAL_TOOL_PROTOCOL_TEMPLATE,
-  CORE_CODING_TOOLS_DECLARATION as CORE_CODING_TOOLS_DECLARATION_TEMPLATE,
-  CANONICAL_TOOL_EXAMPLES as CANONICAL_TOOL_EXAMPLES_TEMPLATE,
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
 } from "./templates";
@@ -177,8 +175,8 @@ function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): st
       : [];
     const properties =
       functionTool.rawParameters.properties &&
-      typeof functionTool.rawParameters.properties === "object" &&
-      !Array.isArray(functionTool.rawParameters.properties)
+        typeof functionTool.rawParameters.properties === "object" &&
+        !Array.isArray(functionTool.rawParameters.properties)
         ? functionTool.rawParameters.properties as Record<string, unknown>
         : {};
     const argumentsExample = Object.fromEntries(
@@ -186,9 +184,9 @@ function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): st
         const schema = properties[name];
         const type =
           schema &&
-          typeof schema === "object" &&
-          !Array.isArray(schema) &&
-          typeof (schema as Record<string, unknown>).type === "string"
+            typeof schema === "object" &&
+            !Array.isArray(schema) &&
+            typeof (schema as Record<string, unknown>).type === "string"
             ? (schema as Record<string, unknown>).type
             : "string";
         const value =
@@ -321,8 +319,8 @@ export function renderDynamicToolDeclarations(tools: NormalizedTool[] = []): str
     );
     const properties =
       tool.rawParameters.properties &&
-      typeof tool.rawParameters.properties === "object" &&
-      !Array.isArray(tool.rawParameters.properties)
+        typeof tool.rawParameters.properties === "object" &&
+        !Array.isArray(tool.rawParameters.properties)
         ? tool.rawParameters.properties as Record<string, unknown>
         : {};
     const entries = Object.entries(properties);
@@ -383,8 +381,8 @@ export function renderCompactDynamicToolDeclarations(tools: NormalizedTool[] = [
       : [];
     const properties =
       tool.rawParameters.properties &&
-      typeof tool.rawParameters.properties === "object" &&
-      !Array.isArray(tool.rawParameters.properties)
+        typeof tool.rawParameters.properties === "object" &&
+        !Array.isArray(tool.rawParameters.properties)
         ? Object.keys(tool.rawParameters.properties as Record<string, unknown>)
         : [];
     const fields = properties.map(name => required.includes(name) ? `${name}*` : name);
@@ -891,6 +889,4 @@ export const promptCompiler = new M365PromptCompiler();
 export {
   UNIFIED_TOOL_PROTOCOL_TEMPLATE as UNIFIED_TOOL_PROTOCOL,
   MINIMAL_TOOL_PROTOCOL_TEMPLATE as MINIMAL_TOOL_PROTOCOL,
-  CORE_CODING_TOOLS_DECLARATION_TEMPLATE as CORE_CODING_TOOLS_DECLARATION,
-  CANONICAL_TOOL_EXAMPLES_TEMPLATE as CANONICAL_TOOL_EXAMPLES,
 };
