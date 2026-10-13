@@ -92,15 +92,46 @@ export class CodexPayloadNormalizer implements ICodexPayloadNormalizer {
     return rawContext.trim();
   }
 
-  private static cleanDeveloperInstructions(rawInstructions: string): string {
-    let cleaned = rawInstructions
+  private static cleanDeveloperInstructions(text: string): string {
+    let cleaned = text
       .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
+      .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
+      .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
+      .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
+      .replace(/<recommended_plugins>[\s\S]*?<\/recommended_plugins>/gi, "")
+      .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
+      .replace(/<permissions\s+instructions>[\s\S]*?<\/permissions\s+instructions>/gi, "")
+      .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
+      .replace(/<sandbox_mode[\s\S]*?<\/sandbox_mode[^>]*>/gi, "")
+      .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
       .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
+      .replace(/<apps_instructions>[\s\S]*?<\/apps_instructions>/gi, "")
+      .replace(/<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi, "")
+      .replace(/<tools>[\s\S]*?<\/tools>/gi, "")
+      .replace(/<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools)>/gi, "")
+      .replace(/`?\s*change it;\s*user requests or tool descriptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
+      .replace(/##\s*request_user_input availability[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
+      .replace(/In Default mode, strongly prefer making reasonable assumptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
+      .replace(/Known mode names are Default and Plan\.?/gi, "")
+      .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
       .trim();
 
-    if (cleaned.includes("# Current App Page") || cleaned.includes("# Apps (Connectors)")) {
+    const isCodexBuiltInBoilerplate =
+      cleaned.includes("You are Codex") ||
+      cleaned.includes("# Rules for getting work done") ||
+      cleaned.includes("# Personality\nAs Codex") ||
+      cleaned.includes("Exercise caution when escaping text for execcommand calls");
+
+    if (isCodexBuiltInBoilerplate) {
       cleaned = cleaned
-        .replace(/# Current App Page[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Personality[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# When to ask the user for permission[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Autonomy and persistence[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Working with the user[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Rules for getting work done(?:\n(?:\s*[-*]|\s{2,}).*)*(?=\n# |\n\[|\n<|\n[^\s\-*]|$)/gi, "")
+        .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
+        .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
         .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")
         .replace(/# Plugins[\s\S]*?(?=\n# |\n\[|$)/i, "")
         .replace(/Deferred tool namespaces:[\s\S]*?(?=\n# |\n\[|$)/i, "")
@@ -420,7 +451,7 @@ export class CodexPayloadNormalizer implements ICodexPayloadNormalizer {
     const images = this.extractImages(rawPayload, options?.maxInputImages ?? DEFAULT_MAX_INPUT_IMAGES);
 
     return {
-      model: rawPayload.model || options?.defaultModel || "m365-copilot/think",
+      model: rawPayload.model || options?.defaultModel || "web-chat/default",
       stream: rawPayload.stream ?? true,
       threadId: rawPayload.getThreadId(),
       turnId: rawPayload.getTurnId(),
