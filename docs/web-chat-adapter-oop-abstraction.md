@@ -1080,9 +1080,10 @@ Tính đến phiên bản hiện tại, toàn bộ các phân hệ cốt lõi đ
 | **Guards** | `BaseTitleGuard` | `M365TitleGuard` (M365 description) | ✅ Hoàn thành 100% |
 | **Tools Subsystem** | `BaseToolBridge`, `AtomicFileWriter`, `SafeCommandGuard` | `M365ToolBridge` | ✅ Hoàn thành 100% |
 | **Translation Subsystem**| `BaseOutputTranslator`, `Xml/Json/Patch/BashDetectors`, `StreamingToolCallDetector` | `M365OutputTranslator`, `M365MarkdownBuffer` | ✅ Hoàn thành 100% |
+| **Prompts Subsystem** | `BasePromptCompiler`, `BasePromptAssembler`, `ToolDeclarationRenderer`, `PromptSanitizer` | `M365PromptCompiler`, Facade `compileM365Prompt` | ✅ Hoàn thành 100% |
 
 - **Kết quả kiểm định chất lượng:**
   - `bun run typecheck`: **0 errors** (TypeScript pass 100%).
-  - `bun test`: **288/288 passed** (100% Green).
-  - Phụ thuộc vòng: **0 cycles** trên cả `base-web` (110 modules) và `m365-copilot` (60 modules).
+  - `bun test`: **305/305 passed** (100% Green trên 31 test files).
+  - Phụ thuộc vòng: **0 cycles** trên cả `base-web` (134 modules) và `m365-copilot` (60 modules).
   - Tương thích ngược: **100% Facade Integrity**.
