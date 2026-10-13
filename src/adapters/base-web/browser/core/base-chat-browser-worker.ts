@@ -144,9 +144,28 @@ export abstract class BaseChatBrowserWorker implements IChatBrowserWorker {
     if (options.modelSlug && this.modelSelector && "ensureMode" in this.modelSelector) {
       const selector = this.modelSelector as any;
       const targetMode = selector.resolveMode(options.modelSlug, options.reasoning);
-      await selector.ensureMode(page, targetMode).catch((err: unknown) => {
-        console.warn(`[${this.workerName}] Cảnh báo khi chọn mode '${targetMode}':`, err);
-      });
+      let selected = await selector.ensureMode(page, targetMode);
+
+      // Khôi phục tính ổn định của luồng cũ: nếu lần đầu thất bại do menu
+      // Fluent UI đang đóng dở hoặc DOM portal chưa ổn định, đóng menu,
+      // chờ ngắn rồi thử lại đúng một lần.
+      if (!selected) {
+        console.warn(
+          `[${this.workerName}] Lần chọn model đầu tiên thất bại với mode '${targetMode}', đang thử lại.`
+        );
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(150);
+        selected = await selector.ensureMode(page, targetMode);
+      }
+
+      // Không được tiếp tục submit prompt khi UI vẫn ở Auto. Trước đây
+      // ensureMode trả false nhưng worker bỏ qua vì chỉ bắt exception.
+      if (!selected) {
+        throw new Error(
+          `[${this.workerName}] Không thể chọn model '${targetMode}' ` +
+          `cho model slug '${options.modelSlug}'. Đã dừng submit để tránh gửi request bằng chế độ Auto.`
+        );
+      }
     }
   }
 

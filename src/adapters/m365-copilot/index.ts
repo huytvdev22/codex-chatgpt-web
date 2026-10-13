@@ -8,11 +8,11 @@ import {
   CodexRawPayload,
   CodexPayloadNormalizer,
   BasePromptCompiler,
-  BaseOutputTranslator,
   buildM365FormatRetryPrompt,
   BaseTitleGuard,
   ConversationLoopGuard,
 } from "../base-web";
+import { parseStrictWebResponse } from "../base-web/translation";
 import {
   M365BrowserWorker,
   defaultM365BrowserWorker,
@@ -71,7 +71,6 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
   readonly modelSelector = defaultM365CapabilityPicker;
 
   private readonly promptCompiler = new BasePromptCompiler();
-  private readonly outputTranslator = new BaseOutputTranslator();
   private readonly titleGuard = new BaseTitleGuard();
   private readonly loopGuard = new ConversationLoopGuard();
 
@@ -108,24 +107,33 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
   }
 
   protected translateResponse(rawReply: string, _parsed: CodexParsedRequest): ResponseTranslationResultDto {
-    const result = this.outputTranslator.translate(rawReply);
-    if (result.type === "tool_call" && result.tool_calls) {
+    // Khôi phục pipeline strict của adapter M365 cũ:
+    // Browser raw reply -> strict protocol parser -> format retry / tool calls / final answer.
+    //
+    // BaseOutputTranslator là tolerant translator. Nếu dùng nó làm cổng
+    // production, response sai envelope hoặc tool call bị cắt có thể bị hạ
+    // thành final_answer, khiến format retry không được kích hoạt.
+    const result = parseStrictWebResponse(rawReply);
+
+    if (result.kind === "protocol_error") {
+      return ResponseTranslationResultDto.protocolError(
+        result.code,
+        result.message,
+        result.rawResponse
+      );
+    }
+
+    if (result.kind === "tool_calls") {
       return ResponseTranslationResultDto.toolCalls(
-        result.tool_calls.map(tc => ({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: tc.function.arguments,
+        result.calls.map(call => ({
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments,
         }))
       );
     }
-    if (result.type === "final_answer") {
-      return ResponseTranslationResultDto.finalAnswer(result.content || "");
-    }
-    return ResponseTranslationResultDto.protocolError(
-      result.parseDiagnostics?.terminalReason || "PROTOCOL_ERROR",
-      result.parseDiagnostics?.warningMessage || "Lỗi giao thức",
-      rawReply
-    );
+
+    return ResponseTranslationResultDto.finalAnswer(result.content);
   }
 
   protected buildFormatRetryPrompt(code: string, message: string): string {

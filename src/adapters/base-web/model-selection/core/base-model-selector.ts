@@ -76,8 +76,27 @@ export abstract class BaseModelSelector<TMode extends string = string> implement
         );
       }
 
-      // Đợi popup menu Fluent UI / React render vào DOM (tương tự waitForSelector trong code gốc)
-      await driver.sleep(300);
+      // Khôi phục cơ chế đồng bộ ổn định của M365 adapter cũ:
+      // chờ menu thực sự được mount vào DOM thay vì sleep cố định 300ms.
+      // Fluent UI render menu qua portal nên thời gian xuất hiện phụ thuộc
+      // trạng thái tab, animation và tải hệ thống.
+      const menuVisible = await driver.waitForSelector(
+        '.fui-MenuList[role="menu"], [role="menu"]',
+        request.timeoutMs > 0 ? request.timeoutMs : 2500
+      );
+
+      if (!menuVisible) {
+        await strategy.closeMenu(driver).catch(() => {});
+        return ModelSelectionResultDto.createFailure(
+          request.targetMode,
+          SelectionStatusCode.MENU_OPEN_FAILED,
+          Date.now() - startTime,
+          `[${this.selectorName}] Đã click trigger nhưng menu chọn model không xuất hiện trong DOM`
+        );
+      }
+
+      // Cho React/Fluent UI hoàn tất một nhịp render sau khi menu xuất hiện.
+      await driver.sleep(50);
 
       // BƯỚC 4: Click chọn Item
       const selectionStep = await strategy.selectItem(driver, spec);
