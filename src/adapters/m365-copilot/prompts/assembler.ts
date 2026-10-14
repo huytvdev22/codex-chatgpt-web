@@ -8,12 +8,10 @@ import {
   TOOL_REMINDER_PROMPT,
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
+  SHORT_OUTPUT_FORMAT_ANCHOR,
+  SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
 } from "./templates";
 import { UNIFIED_TOOL_PROTOCOL } from "./compiler";
-import {
-  MANDATORY_4_BACKTICK_MARKDOWN_PROMPT,
-  MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT,
-} from "./output-format";
 
 // Re-export để đảm bảo 100% tương thích ngược cho các module và tests đang import từ ./prompt
 export {
@@ -22,6 +20,8 @@ export {
   TOOL_REMINDER_PROMPT,
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
+  SHORT_OUTPUT_FORMAT_ANCHOR,
+  SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
 } from "./templates";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
@@ -228,8 +228,8 @@ export function compileM365Prompt(parsed: CodexParsedRequest, isNewConversation 
     }
   }
 
-  // Tinh túy 1: Luôn luôn kết thúc bằng chỉ thị 4-Backtick Markdown Envelope cho MỌI lượt
-  const formatPrompt = isPlanMode ? MANDATORY_4_BACKTICK_PLAN_MODE_PROMPT : MANDATORY_4_BACKTICK_MARKDOWN_PROMPT;
+  // Tinh túy 1: Luôn luôn kết thúc bằng lời nhắc định dạng 4-Backtick Markdown Envelope cho MỌI lượt
+  const formatPrompt = isPlanMode ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR : SHORT_OUTPUT_FORMAT_ANCHOR;
   parts.push(formatPrompt);
 
   let finalPrompt = parts.join("\n\n").trim();

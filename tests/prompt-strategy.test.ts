@@ -111,7 +111,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
-    expect(dynamicText).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
+    expect(dynamicText).toContain("[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]");
     expect(dynamicText).toContain("exec_command (function)");
     expect(dynamicText).toContain("apply_patch (freeform)");
     expect(dynamicText).toContain("request_user_input (function)");
@@ -151,7 +151,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(result.collaborationMode).toBe("default");
     expect(result.isPlanMode).toBe(false);
     // TUYỆT ĐỐI KHÔNG chứa cảnh báo cấm sửa file của Plan Mode
-    expect(result.finalPrompt).not.toContain("[CHẾ ĐỘ LẬP KẾ HOẠCH - CODEX PLAN MODE ĐANG BẬT]");
+    expect(result.finalPrompt).not.toContain("[MÌNH ĐANG BẬT CHẾ ĐỘ LẬP KẾ HOẠCH - PLAN MODE]");
     expect(result.finalPrompt).not.toContain("TUYỆT ĐỐI KHÔNG CHỈNH SỬA CODE");
   });
 
@@ -211,11 +211,11 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(dynamicText).not.toContain("write_file");
 
     // 2. UNIFIED_TOOL_PROTOCOL phải có quy tắc cấm heredoc shell và hướng dẫn tạo file
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("TẠO FILE MỚI HOẶC SỬA FILE");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("Khi bạn tạo mới hoặc chỉnh sửa file (Sử dụng apply_patch):");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("apply_patch");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("write_file");
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("cat <<EOF");
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("NGHIÊM CẤM TUYỆT ĐỐI");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("cat/echo/heredoc");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("*** Begin Patch");
 
     // 3. Trong forward prompt khi implement plan phải có chỉ thị đúng đắn
     const mockImplementingPlanParsed: CodexParsedRequest = {
@@ -233,10 +233,10 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     const planResult = compileStatefulPrompt(mockImplementingPlanParsed, sampleRaw);
     expect(planResult.isImplementingPlan).toBe(true);
-    expect(planResult.finalPrompt).toContain("[TRIỂN KHAI KẾ HOẠCH - IMPLEMENTING APPROVED PLAN]");
+    expect(planResult.finalPrompt).toContain("[KẾ HOẠCH ĐÃ ĐƯỢC DUYỆT - BẮT TAY VÀO LÀM THÔI!]");
     expect(planResult.finalPrompt).toContain("apply_patch");
     expect(planResult.finalPrompt).toContain("write_file");
-    expect(planResult.finalPrompt).toContain("TUYỆT ĐỐI NGHIÊM CẤM: Không dùng các lệnh shell (cat <<EOF");
+    expect(planResult.finalPrompt).toContain("Tuyệt đối không dùng các lệnh shell (cat <<EOF");
   });
 
   test("Chiến lược 1: Khai báo toàn bộ Core Coding Tools kèm schema chi tiết và lọc sạch OpenAI boilerplate", () => {
@@ -285,7 +285,7 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     // 2. Kiểm tra Dynamic Action Contract chỉ chứa action của current inventory.
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-    expect(dynamicText).toContain("CODEX ACTION CONTRACT FOR THIS IDE TURN");
+    expect(dynamicText).toContain("[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]");
     expect(dynamicText).toContain("exec_command (function)");
     expect(dynamicText).toContain("update_goal (function)");
     expect(dynamicText).not.toContain("read_file");

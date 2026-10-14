@@ -83,8 +83,8 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
         message: result.message,
       });
 
-      expect(retryPrompt).toContain("[M365 RESPONSE FORMAT ERROR - BẮT BUỘC PHÁT LẠI PHẢN HỒI TRƯỚC]");
-      expect(retryPrompt).toContain("Mã lỗi: MISSING_RESPONSE_ENVELOPE");
+      expect(retryPrompt).toContain("Bạn ơi, tin nhắn vừa rồi bạn gửi hơi lệch quy ước định dạng một chút");
+      expect(retryPrompt).toContain("[MISSING_RESPONSE_ENVELOPE]");
     }
   });
 

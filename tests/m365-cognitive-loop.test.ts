@@ -190,8 +190,8 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
     expect(result.status).toBe("completed");
     expect(result.turns).toBe(2);
     expect(toolExecutions).toBe(1);
-    expect(formatErrors).toEqual(["MISSING_RESPONSE_ENVELOPE"]);
-    expect(prompts[1]).toContain("M365 RESPONSE FORMAT ERROR");
+    expect(prompts[1]).toContain("[MISSING_RESPONSE_ENVELOPE]");
+    expect(prompts[1]).toContain("Bạn ơi, tin nhắn vừa rồi bạn gửi hơi lệch quy ước định dạng một chút");
   });
 
   test("Default harness rejects an incomplete atomic batch without executing its valid prefix", async () => {
