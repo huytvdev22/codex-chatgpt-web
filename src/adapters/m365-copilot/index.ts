@@ -168,6 +168,25 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
     return buildM365FormatRetryPrompt(code, message);
   }
 
+  /**
+   * Khôi phục cấu hình retry riêng của M365 adapter cũ.
+   *
+   * Giá trị hợp lệ nằm trong khoảng 0..10:
+   * - 0: không retry
+   * - 3: mặc định
+   * - tối đa 10 để tránh vòng phát lại quá dài
+   */
+  protected override getMaxFormatRetries(): number {
+    const configuredRetries = Number.parseInt(
+      process.env.M365_FORMAT_MAX_RETRIES || "3",
+      10
+    );
+
+    return Number.isFinite(configuredRetries) && configuredRetries >= 0
+      ? Math.min(configuredRetries, 10)
+      : 3;
+  }
+
   protected override async handleTitleGuardFastPath(
     parsed: CodexParsedRequest,
     prompt: string,
