@@ -128,6 +128,12 @@ export class CodexPayloadNormalizer {
       .replace(/##\s*request_user_input availability[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
       .replace(/In Default mode, strongly prefer making reasonable assumptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
       .replace(/Known mode names are Default and Plan\.?/gi, "")
+      .replace(/(?:^|\n)\s*[-*]?\s*Use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+      .replace(/If `?request_user_input`? returns no answers[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+      .replace(/Never use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+      .replace(/If explicit user input is required for another reason[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+      .replace(/Never write a multiple choice question as a textual assistant message\.?/gi, "")
+      .replace(/(?:^|\n)[^\n]*`?request_user_input`?[^\n]*(?:\n|$)/gi, "\n")
       .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
       .trim();
 

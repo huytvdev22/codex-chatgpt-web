@@ -11,6 +11,7 @@ import {
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
 } from "./templates";
+import { conversationScenarioBuilder } from "./conversation-scenario-builder";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
 const MAX_TOOL_RESULT_CHARS = 8_000;
@@ -79,7 +80,7 @@ function curateToolDescription(
  * Loại bỏ instruction nội bộ của Codex khỏi prompt gửi sang M365.
  * Chỉ giữ project/developer rules có ý nghĩa đối với quá trình thực thi.
  */
-function sanitizeCodexInstructions(text: string): string {
+export function sanitizeCodexInstructions(text: string): string {
   return text
     .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
     .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
@@ -97,6 +98,12 @@ function sanitizeCodexInstructions(text: string): string {
     .replace(/# Plugins[\s\S]*?(?=\n# |\n\[|$)/gi, "")
     .replace(/Deferred tool namespaces:[\s\S]*?(?=\n# |\n\[|$)/gi, "")
     .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/gi, "")
+    .replace(/(?:^|\n)\s*[-*]?\s*Use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+    .replace(/If `?request_user_input`? returns no answers[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+    .replace(/Never use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+    .replace(/If explicit user input is required for another reason[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
+    .replace(/Never write a multiple choice question as a textual assistant message\.?/gi, "")
+    .replace(/(?:^|\n)[^\n]*`?request_user_input`?[^\n]*(?:\n|$)/gi, "\n")
     .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
     .trim();
 }
@@ -550,7 +557,6 @@ export class M365PromptCompiler {
  * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
  */
   compile(input: PromptCompileInput): PromptCompileResult {
-
     const { normalized, parsed } = input;
 
     // 1. Phân định chính xác Collaboration Mode (Loại bỏ triệt để mâu thuẫn Plan Mode / Default Mode)
@@ -565,128 +571,16 @@ export class M365PromptCompiler {
     const isPlanMode = !isImplementingPlan && collaborationMode === "plan";
     const isNewConversation = input.isNewConversation ?? true;
 
-    // -------------------------------------------------------------
-    // CHẾ ĐỘ INCREMENTAL ROUNDTRIP (STATEFUL MODE - LƯỢT TIẾP THEO)
-    // Tối ưu hóa cực hạn: Chỉ gửi delta (lời nhắc thực thi, tool_result mới, user instruction mới)
-    // Giảm 95% token, model phản hồi nhanh tức thì, không bị quá tải ngữ cảnh!
-    // -------------------------------------------------------------
-    if (!isNewConversation) {
-      const incrementalSections: string[] = [];
+    // 2. Chuẩn bị các thành phần nội dung ngữ cảnh đã được làm sạch
+    const actionContractText = isNewConversation
+      ? renderDynamicToolDeclarations(normalized.activeCodingTools)
+      : renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
 
-      // 1. Lời nhắc vai trò thực thi công cụ IDE
-      const reminderSection = isImplementingPlan
-        ? IMPLEMENT_PLAN_PROMPT
-        : (isPlanMode ? `${PLAN_MODE_PROMPT}\n\n${TOOL_REMINDER_PROMPT}` : TOOL_REMINDER_PROMPT);
-      incrementalSections.push(reminderSection);
-
-      // 2. Bảo toàn Ngữ cảnh Môi trường / Thư mục làm việc (forward từ raw Codex)
-      let envSection = "";
-      if (normalized.environmentContext) {
-        envSection = `[Thư mục làm việc trên máy mình]:\n${normalized.environmentContext}`;
-        incrementalSections.push(envSection);
-      }
-
-      // 3. Danh sách tools phiên bản COMPACT và DUY NHẤT mẫu ví dụ apply_patch từ Turn 2
-      const compactToolsText = renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
-      incrementalSections.push(compactToolsText);
-
-      // 4. TOÀN BỘ KHÔNG GIAN DÀNH CHO KẾT QUẢ TOOL CALL VỪA NHẬN ĐƯỢC
-      let toolResultsContent = "";
-      if (normalized.trailingToolResults.length > 0) {
-        const resultBlocks = normalized.trailingToolResults.map(res => {
-          const content = truncateToolResult(res.output);
-          const isFenced = content.startsWith("```");
-          const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
-          return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
-        });
-        toolResultsContent = `[Kết quả các lệnh vừa chạy xong]:\n${resultBlocks.join("\n\n")}`;
-        incrementalSections.push(toolResultsContent);
-      }
-
-      // 5. Yêu cầu của người dùng mới nhất (nếu có)
-      let userReqContent = "";
-      if (normalized.latestUserInstruction) {
-        userReqContent = `[Yêu cầu hiện tại của mình]:\n${normalized.latestUserInstruction}`;
-        incrementalSections.push(userReqContent);
-      }
-
-      // 6. Thông báo hình ảnh đính kèm (nếu có)
-      if (normalized.images && normalized.images.length > 0) {
-        incrementalSections.push(M365_IMAGE_ATTACHMENT_HINT);
-      }
-
-      // 7. Lời nhắc định dạng ở cuối cùng
-      incrementalSections.push(
-        isPlanMode
-          ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR
-          : SHORT_OUTPUT_FORMAT_ANCHOR
-      );
-
-      const finalPrompt = incrementalSections.join("\n\n").trim();
-
-      console.log(
-        `planMode=${isPlanMode}\n` +
-        `collaborationMode=${collaborationMode}\n` +
-        `finalPromptLength=${finalPrompt.length}\n` +
-        `mode=incremental_stateful_compact`
-      );
-
-      const metrics = calculatePromptMetrics({
-        toolDeclaration: `${reminderSection}\n\n${compactToolsText}`,
-        developerInstructions: "",
-        history: "",
-        toolResults: toolResultsContent,
-        environment: envSection,
-        userRequest: userReqContent,
-        finalPrompt,
-      });
-
-      const audit: PromptAuditData = {
-        threadId: normalized.threadId,
-        turnId: normalized.turnId,
-        toolsCount: normalized.activeCodingTools.length,
-        developerRulesCount: 0,
-        historyTurns: 0,
-        toolResultsCount: normalized.trailingToolResults.length,
-        toolPromptChars: reminderSection.length + compactToolsText.length,
-        historyChars: 0,
-        developerChars: 0,
-        environmentChars: envSection.length,
-        finalPromptChars: finalPrompt.length,
-      };
-
-      return {
-        finalPrompt,
-        metrics,
-        audit,
-        collaborationMode,
-        isPlanMode,
-        isImplementingPlan,
-      };
+    let environmentText = "";
+    if (normalized.environmentContext) {
+      environmentText = `[Thư mục làm việc trên máy mình]:\n${normalized.environmentContext}`;
     }
 
-    const sections: string[] = [];
-
-    // 1. Giao thức hệ thống và vai trò bạn đồng hành
-    const systemProtocolSection = UNIFIED_TOOL_PROTOCOL_TEMPLATE;
-    sections.push(systemProtocolSection);
-
-    // 2. Danh mục công cụ khả dụng
-    const dynamicToolsText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-    const actionContractSection = dynamicToolsText;
-    sections.push(actionContractSection);
-
-    // 3. Bối cảnh dự án và quy ước phát triển
-    const projectContextBlocks: string[] = [];
-
-    // Chỉ dẫn Plan Mode hoặc Triển khai kế hoạch nếu có (Chỉ khi thực sự active)
-    if (isPlanMode) {
-      projectContextBlocks.push(PLAN_MODE_PROMPT);
-    } else if (isImplementingPlan) {
-      projectContextBlocks.push(IMPLEMENT_PLAN_PROMPT);
-    }
-
-    // System Instructions từ Codex IDE (Lọc bỏ các hướng dẫn nội bộ thừa)
     let devInstructionsContent = "";
     if (parsed?.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
       const filteredSystem = parsed.context.systemPrompt
@@ -701,40 +595,25 @@ export class M365PromptCompiler {
         .join("\n\n");
       if (filteredSystem) {
         devInstructionsContent = `[Chỉ dẫn từ hệ thống]:\n${filteredSystem}`;
-        projectContextBlocks.push(devInstructionsContent);
       }
     }
 
-    // Ngữ cảnh Môi trường làm việc (Environment Context)
-    let envContent = "";
-    if (normalized.environmentContext) {
-      envContent = `[Thư mục làm việc trên máy mình]:\n${normalized.environmentContext}`;
-      projectContextBlocks.push(envContent);
-    }
-
-    // Chỉ thị của Dự án / Developer Rules (Đã được lọc sạch permissions và sandbox instructions)
+    let developerRulesText = "";
     if (normalized.developerInstructions && normalized.developerInstructions.length > 0) {
       const cleanedRules = normalized.developerInstructions
         .map(r => sanitizeCodexInstructions(r))
         .filter(r => r.length > 0);
       if (cleanedRules.length > 0) {
         const devRules = cleanedRules.map(r => `- ${r}`).join("\n");
-        const devBlock = `[Một số quy ước làm việc trong dự án của mình]:\n${devRules}`;
-        devInstructionsContent = devInstructionsContent ? `${devInstructionsContent}\n\n${devBlock}` : devBlock;
-        projectContextBlocks.push(devBlock);
+        developerRulesText = `[Một số quy ước làm việc trong dự án của mình]:\n${devRules}`;
+        devInstructionsContent = devInstructionsContent
+          ? `${devInstructionsContent}\n\n${developerRulesText}`
+          : developerRulesText;
       }
     }
 
-    if (projectContextBlocks.length > 0) {
-      sections.push(projectContextBlocks.join("\n\n"));
-    }
-
-    // 4. Nhiệm vụ và yêu cầu thực thi
-    const userTaskBlocks: string[] = [];
-
-    // Lịch sử trao đổi đầy đủ
-    let historyContent = "";
-    if (normalized.priorHistory.length > 0) {
+    let priorHistoryText = "";
+    if (isNewConversation && normalized.priorHistory.length > 0) {
       const historyLines: string[] = [];
       for (const h of normalized.priorHistory) {
         if (h.role === "user") {
@@ -746,13 +625,11 @@ export class M365PromptCompiler {
         }
       }
       if (historyLines.length > 0) {
-        historyContent = `[Lịch sử trao đổi trước đó]:\n${historyLines.join("\n\n")}`;
-        userTaskBlocks.push(historyContent);
+        priorHistoryText = `[Lịch sử trao đổi trước đó]:\n${historyLines.join("\n\n")}`;
       }
     }
 
-    // Kết quả Tool gần nhất (Trailing tool results của turn hiện tại)
-    let toolResultsContent = "";
+    let toolResultsText = "";
     if (normalized.trailingToolResults.length > 0) {
       const resultBlocks = normalized.trailingToolResults.map(res => {
         const content = truncateToolResult(res.output);
@@ -760,33 +637,46 @@ export class M365PromptCompiler {
         const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
         return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;
       });
-      toolResultsContent = `[Kết quả các lệnh vừa chạy xong]:\n${resultBlocks.join("\n\n")}`;
-      userTaskBlocks.push(toolResultsContent);
+      toolResultsText = `[Kết quả các lệnh vừa chạy xong]:\n${resultBlocks.join("\n\n")}`;
     }
 
-    // Yêu cầu của người dùng mới nhất
-    let userReqContent = "";
+    let userInstructionText = "";
     if (normalized.latestUserInstruction) {
-      userReqContent = `[Yêu cầu hiện tại của mình]:\n${normalized.latestUserInstruction}`;
-      userTaskBlocks.push(userReqContent);
+      userInstructionText = `[Yêu cầu hiện tại của mình]:\n${normalized.latestUserInstruction}`;
     }
 
-    // Thông báo hình ảnh đính kèm (nếu có)
-    if (normalized.images && normalized.images.length > 0) {
-      userTaskBlocks.push(M365_IMAGE_ATTACHMENT_HINT);
-    }
+    const hasToolResults = normalized.trailingToolResults.length > 0;
+    const hasToolErrors = normalized.trailingToolResults.some(
+      r =>
+        r.output.includes("Process exited with code 1") ||
+        r.output.includes("exit code: 1") ||
+        r.output.includes("Exit code: 1") ||
+        r.output.startsWith("Error:") ||
+        r.output.startsWith("Lỗi:") ||
+        r.output.includes("Command failed:")
+    );
 
-    // Lời nhắc định dạng chốt hạ ở cuối cùng (Anchor)
-    const outputAnchorPrompt = isPlanMode
-      ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR
-      : SHORT_OUTPUT_FORMAT_ANCHOR;
-    userTaskBlocks.push(outputAnchorPrompt);
+    // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
+    const scenarioResult = conversationScenarioBuilder.buildTurnPrompt({
+      isNewConversation,
+      isPlanMode,
+      isImplementingPlan,
+      hasToolResults,
+      hasToolErrors,
+      fullToolProtocol: UNIFIED_TOOL_PROTOCOL_TEMPLATE,
+      actionContractText,
+      environmentText,
+      developerRulesText,
+      systemPromptText: devInstructionsContent,
+      priorHistoryText,
+      toolResultsText,
+      userInstructionText,
+      hasImages: Boolean(normalized.images && normalized.images.length > 0),
+    });
 
-    sections.push(userTaskBlocks.join("\n\n"));
+    let finalPrompt = scenarioResult.finalPrompt;
 
-    let finalPrompt = sections.join("\n\n").trim();
-
-    // Budget Guard: Cắt tỉa nếu vượt quá ngưỡng an toàn
+    // 4. Budget Guard: Cắt tỉa nếu vượt quá ngưỡng an toàn của M365 (95,000 ký tự)
     if (finalPrompt.length > MAX_M365_PROMPT_CHARS) {
       const headLimit = 25_000;
       const tailLimit = MAX_M365_PROMPT_CHARS - headLimit - 200;
@@ -795,20 +685,21 @@ export class M365PromptCompiler {
       finalPrompt = `${head}\n\n... [Một số ngữ cảnh cũ được rút gọn để tối ưu độ dài cho M365 Copilot] ...\n\n${tail}`;
     }
 
-    // Yêu cầu 4: Thêm log bắt buộc
     console.log(
+      `scenario=${scenarioResult.scenario}\n` +
       `planMode=${isPlanMode}\n` +
       `collaborationMode=${collaborationMode}\n` +
-      `finalPromptLength=${finalPrompt.length}`
+      `finalPromptLength=${finalPrompt.length}\n` +
+      `mode=${isNewConversation ? "full_handshake" : "incremental_scenario"}`
     );
 
     const metrics = calculatePromptMetrics({
-      toolDeclaration: `${systemProtocolSection}\n\n${actionContractSection}`,
+      toolDeclaration: `${scenarioResult.openingSection}\n\n${actionContractText}`.trim(),
       developerInstructions: devInstructionsContent,
-      history: historyContent,
-      toolResults: toolResultsContent,
-      environment: envContent,
-      userRequest: userReqContent,
+      history: priorHistoryText,
+      toolResults: toolResultsText,
+      environment: environmentText,
+      userRequest: userInstructionText,
       finalPrompt,
     });
 
@@ -819,10 +710,10 @@ export class M365PromptCompiler {
       developerRulesCount: normalized.developerInstructions?.length || 0,
       historyTurns: normalized.priorHistory.length,
       toolResultsCount: normalized.trailingToolResults.length,
-      toolPromptChars: systemProtocolSection.length + actionContractSection.length,
-      historyChars: historyContent.length,
+      toolPromptChars: scenarioResult.openingSection.length + actionContractText.length,
+      historyChars: priorHistoryText.length,
       developerChars: devInstructionsContent.length,
-      environmentChars: envContent.length,
+      environmentChars: environmentText.length,
       finalPromptChars: finalPrompt.length,
     };
 

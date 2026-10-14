@@ -122,7 +122,7 @@ describe("M365 Plan Mode Support", () => {
     const prompt = compileM365Prompt(parsed, false);
     expect(prompt).not.toContain(PLAN_MODE_PROMPT);
     expect(prompt).toContain(IMPLEMENT_PLAN_PROMPT);
-    expect(prompt).toContain("Bản kế hoạch vừa rồi rất ổn");
+    expect(prompt).toContain("Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý");
     expect(prompt).toContain("apply_patch");
   });
 

@@ -83,7 +83,7 @@ export const MINIMAL_TOOL_PROTOCOL = UNIFIED_TOOL_PROTOCOL;
  * Chỉ dẫn kích hoạt chế độ lập kế hoạch (Plan Mode)
  */
 export const PLAN_MODE_PROMPT = `[MÌNH ĐANG BẬT CHẾ ĐỘ LẬP KẾ HOẠCH - PLAN MODE]
-Ở bước này mình muốn cùng bạn khảo sát dự án và thống nhất kế hoạch trước nhé:
+Bạn ơi, với yêu cầu này mình muốn cùng bạn khảo sát kỹ và lên kế hoạch trước chứ chưa sửa code vội nhé:
 1. TUYỆT ĐỐI KHÔNG CHỈNH SỬA CODE, KHÔNG TẠO FILE VÀ KHÔNG SỬA FILE:
    - Chưa gọi công cụ apply_patch hoặc write_file.
    - Không chạy bất kỳ lệnh terminal nào làm thay đổi trạng thái file trong dự án.
@@ -115,8 +115,8 @@ export const PLAN_MODE_PROMPT = `[MÌNH ĐANG BẬT CHẾ ĐỘ LẬP KẾ HOẠ
  * Chỉ dẫn khi kế hoạch đã được phê duyệt và bắt đầu triển khai
  */
 export const IMPLEMENT_PLAN_PROMPT = `[KẾ HOẠCH ĐÃ ĐƯỢC DUYỆT - BẮT TAY VÀO LÀM THÔI!]
-Bản kế hoạch vừa rồi rất ổn, mình đã duyệt rồi nhé. Giờ tụi mình bắt đầu triển khai code:
-1. Bạn bắt đầu ngay bằng cách xuất thẳng khối <custom_tool_call name="apply_patch"> cho bước đầu tiên (không cần viết lời dẫn dắt):
+Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệt rồi nhé! Tụi mình bắt tay vào làm luôn nha:
+1. Bạn bắt đầu ngay bằng cách xuất thẳng khối <custom_tool_call name="apply_patch"> cho bước đầu tiên để script trên máy mình chạy nhé:
    - Tạo file mới hoặc sửa file: Luôn dùng <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file khi tạo file mới hoặc *** Update File: path/to/file khi sửa file). Tuyệt đối không dùng write_file.
    - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Làm tuần tự từng file (sửa file 1 -> nhận kết quả -> sửa file 2).
    - Tuyệt đối không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
@@ -129,12 +129,12 @@ Bản kế hoạch vừa rồi rất ổn, mình đã duyệt rồi nhé. Giờ 
 /**
  * Lời nhắc thực thi công cụ trong quá trình trao đổi để tránh Copilot thoát vai
  */
-export const TOOL_REMINDER_PROMPT = `Mình vừa chạy các công cụ bạn yêu cầu trên máy xong và đính kèm kết quả trong thẻ <tool_result> bên dưới nhé.
+export const TOOL_REMINDER_PROMPT = `Mình vừa chạy các lệnh bạn yêu cầu xong, gửi bạn kết quả trong thẻ <tool_result> bên dưới nhé.
 (Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là lệnh vừa rồi đã chạy thành công mỹ mãn rồi đó).
 
-Bạn xem kết quả rồi xử lý bước tiếp theo giúp mình nha:
-- Nếu cần gọi thêm công cụ hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <m365Response> mà không cần viết lời dẫn hay thẻ <thought>.
-- Nếu mọi thứ đã hoàn tất, bạn viết câu trả lời kết luận (kèm link file tương đối [tên_file](đường_dẫn)) gửi cho mình đọc nhé!`;
+Bạn xem kết quả rồi xử lý tiếp giúp mình nha:
+- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <m365Response> mà không cần viết lời dẫn hay thẻ <thought>.
+- Nếu đã xong hết việc, bạn viết câu trả lời kết luận (kèm link file tương đối [tên_file](đường_dẫn)) cho mình đọc nha!`;
 
 /**
  * Các lời nhắc kèm theo kết quả tool_result
@@ -175,3 +175,28 @@ Nhắc nhẹ định dạng ở chế độ Lập Kế Hoạch (Plan Mode) nhé:
 - Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
 - Khi xuất bản kế hoạch: Bọc toàn bộ kế hoạch trong đúng một cặp <proposed_plan>...</proposed_plan>.
 - Khi khảo sát file: Đặt khối công cụ đọc trong đúng một cặp <m365Response>...</m365Response>. Đừng gọi lệnh sửa file trong Plan Mode nha.`;
+
+/**
+ * Lời nhắc khi đang tiếp tục các bước kế tiếp của một kế hoạch đã được duyệt (Turn 4+)
+ */
+export const IMPLEMENT_PLAN_CONTINUATION_PROMPT = `Mình gửi bạn kết quả bước vừa rồi trong thẻ <tool_result> bên dưới nhé.
+(Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là bước vừa rồi đã chạy thành công mỹ mãn rồi đó).
+
+Bước trước đã hoàn tất, bạn kiểm tra kết quả rồi triển khai tiếp bước kế tiếp trong kế hoạch đã duyệt giúp mình nha:
+- Nhớ mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT bằng <custom_tool_call name="apply_patch"> (hoặc chạy test/lệnh kiểm tra bằng exec_command).
+- Khi tất cả các bước trong kế hoạch đã hoàn thành, bạn viết câu trả lời kết luận tổng kết lại toàn bộ các thay đổi kèm link file tương đối [tên_file](đường_dẫn) cho mình đọc nhé!`;
+
+/**
+ * Lời báo khi công cụ hoặc câu lệnh kiểm thử trên máy bị lỗi
+ */
+export const TOOL_ERROR_FEEDBACK_PROMPT = `Bạn ơi, lệnh hoặc công cụ vừa rồi trên máy mình chạy bị báo lỗi như trong thẻ <tool_result> bên dưới nhé.
+Bạn xem lại nguyên nhân lỗi rồi xuất lệnh kiểm tra hoặc xuất khối <custom_tool_call name="apply_patch"> sửa lại giúp mình nha!`;
+
+/**
+ * Lời nhắc định dạng nhẹ nhàng cho các lượt đàm thoại / hỏi đáp bình thường hàng ngày
+ */
+export const PURE_CONVERSATION_ANCHOR = `---
+Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:
+- Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
+- Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <m365Response>...</m365Response> cho mình đọc nha.
+- Nếu cần xem file hay chạy lệnh trên máy mình: Đặt trọn các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <m365Response> mà không chêm lời dẫn.`;
