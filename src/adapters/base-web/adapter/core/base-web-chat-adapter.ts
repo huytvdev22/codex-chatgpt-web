@@ -58,6 +58,7 @@ export abstract class BaseWebChatAdapter implements ProviderAdapter {
       let reply = "";
       let translationResult: ResponseTranslationResultDto | null = null;
       let totalPromptChars = compiledPrompt.length;
+      let previousProtocolFailureFingerprint: string | undefined;
 
       for (let attempt = 0; attempt <= maxFormatRetries; attempt++) {
         const browserOptions = this.createBrowserTurnOptions(parsed, incoming, meta, attempt);
@@ -68,6 +69,30 @@ export abstract class BaseWebChatAdapter implements ProviderAdapter {
           break;
         }
 
+        // Dừng sớm nếu model/browser trả lại đúng cùng một lỗi với cùng raw
+        // response sau Format Retry. Việc tiếp tục gửi cùng chỉ dẫn không thể
+        // tự chữa lỗi extraction và chỉ làm model lặp vô ích.
+        const normalizedRawResponse = (translationResult.rawResponse || reply)
+          .replace(/\s+/g, " ")
+          .trim();
+        const currentProtocolFailureFingerprint = JSON.stringify({
+          code: translationResult.errorCode || "PROTOCOL_ERROR",
+          rawResponse: normalizedRawResponse,
+        });
+
+        if (
+          previousProtocolFailureFingerprint !== undefined &&
+          previousProtocolFailureFingerprint === currentProtocolFailureFingerprint
+        ) {
+          throw new Error(
+            `[${this.name} Format Error] Dừng retry sớm vì cùng lỗi protocol ` +
+            `'${translationResult.errorCode || "PROTOCOL_ERROR"}' và cùng raw response ` +
+            `đã lặp lại sau lần phát lại. Khả năng cao browser extraction hoặc clipboard ` +
+            `salvage đang trả lại cùng nội dung lỗi.`
+          );
+        }
+
+        previousProtocolFailureFingerprint = currentProtocolFailureFingerprint;
         this.emitFormatRetryWarning(attempt, maxFormatRetries, translationResult, meta, reply);
 
         if (attempt >= maxFormatRetries) {

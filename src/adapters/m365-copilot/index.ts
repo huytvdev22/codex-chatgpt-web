@@ -11,6 +11,8 @@ import {
   buildM365FormatRetryPrompt,
   BaseTitleGuard,
   ConversationLoopGuard,
+  ToolArgumentNormalizer,
+  ToolCallValidator,
 } from "../base-web";
 import { parseStrictWebResponse } from "../base-web/translation";
 import {
@@ -106,7 +108,7 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
     return res.finalPrompt;
   }
 
-  protected translateResponse(rawReply: string, _parsed: CodexParsedRequest): ResponseTranslationResultDto {
+  protected translateResponse(rawReply: string, parsed: CodexParsedRequest): ResponseTranslationResultDto {
     // Khôi phục pipeline strict của adapter M365 cũ:
     // Browser raw reply -> strict protocol parser -> format retry / tool calls / final answer.
     //
@@ -124,12 +126,38 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
     }
 
     if (result.kind === "tool_calls") {
-      return ResponseTranslationResultDto.toolCalls(
-        result.calls.map(call => ({
+      const normalizedCalls = result.calls.map(call => {
+        const normalized = ToolArgumentNormalizer.normalizeToolArguments(
+          call.name,
+          call.arguments
+        );
+
+        return {
           id: call.id,
-          name: call.name,
-          arguments: call.arguments,
-        }))
+          name: normalized.name,
+          arguments: normalized.arguments,
+        };
+      });
+
+      const clientTools = parsed.context.tools || [];
+      for (const call of normalizedCalls) {
+        const validation = ToolCallValidator.validateToolCall(
+          call.name,
+          call.arguments,
+          clientTools
+        );
+
+        if (!validation.ok) {
+          return ResponseTranslationResultDto.protocolError(
+            "INVALID_TOOL_CALL",
+            `${validation.code}: ${validation.message}`,
+            rawReply
+          );
+        }
+      }
+
+      return ResponseTranslationResultDto.toolCalls(
+        normalizedCalls
       );
     }
 
