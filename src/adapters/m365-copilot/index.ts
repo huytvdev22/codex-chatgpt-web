@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AdapterEvent, CodexParsedRequest, CodexUsage } from "../../types";
+import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { IncomingMeta } from "../base";
 import {
   BaseWebChatAdapter,
@@ -34,6 +34,7 @@ import {
   parseM365ConversationId,
   waitForM365ConversationId,
 } from "./browser/conversation-url";
+import { emitStructuredEvent } from "../../observability/emitter";
 
 export {
   M365BrowserWorker,
@@ -166,7 +167,7 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
     calls: readonly GenericDetectedToolCall[],
     parsed: CodexParsedRequest,
     meta: TurnExecutionMetaDto,
-    usage: CodexUsage,
+    usage: { inputTokens: number; outputTokens: number; totalTokens: number },
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
     const clientTools = parsed.context.tools || [];
@@ -185,6 +186,20 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
         arguments: mapped.arguments,
       };
     });
+
+    for (const call of mappedCalls) {
+      emitStructuredEvent({
+        level: "info",
+        event: "m365.tool.detected",
+        traceContext: meta.traceContext,
+        toolCallId: call.id,
+        safeDetails: {
+          toolName: call.name,
+          callId: call.id,
+          argBytes: Buffer.byteLength(call.arguments, "utf8"),
+        },
+      });
+    }
 
     this.loopGuard.cleanExpired();
 
@@ -207,8 +222,50 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
       batchFingerprint
     );
 
+    emitStructuredEvent({
+      level: "info",
+      event: "m365.loop.updated",
+      traceContext: meta.traceContext,
+      safeDetails: {
+        toolIterations: guardResult.state.toolIterations,
+        identicalToolCount: guardResult.state.identicalToolCount,
+        primaryToolName,
+        toolCount: mappedCalls.length,
+      },
+    });
+
     if (guardResult.isLoopDetected) {
       this.loopGuard.delete(conversationKey);
+
+      emitStructuredEvent({
+        level: "error",
+        event: "m365.loop.blocked",
+        traceContext: meta.traceContext,
+        safeDetails: {
+          reason: guardResult.reason,
+          toolIterations: guardResult.state.toolIterations,
+          identicalToolCount: guardResult.state.identicalToolCount,
+          primaryToolName,
+        },
+      });
+
+      emitStructuredEvent({
+        level: "error",
+        event: "m365.turn.completed",
+        traceContext: meta.traceContext,
+        completionType: "loop_blocked",
+        stopReason: "stop",
+        endTurn: true,
+        safeDetails: {
+          completionType: "loop_blocked",
+          terminalReason: "loop_blocked",
+          terminalExplanation: guardResult.reason,
+          toolCount: 0,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        },
+      });
+
       emit({
         type: "text_delta",
         text:
@@ -231,12 +288,59 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
       emit({ type: "tool_call_end" });
     }
 
+    emitStructuredEvent({
+      level: "info",
+      event: "m365.turn.completed",
+      traceContext: meta.traceContext,
+      completionType: "tool_call",
+      stopReason: "tool_use",
+      endTurn: false,
+      safeDetails: {
+        completionType: "tool_call",
+        terminalReason: "tool_calls_emitted",
+        terminalExplanation:
+          `Đã phát ${mappedCalls.length} tool call về IDE: ` +
+          mappedCalls.map(call => call.name).join(", "),
+        toolCount: mappedCalls.length,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      },
+    });
+
     emit({
       type: "done",
       stopReason: "tool_use",
       endTurn: false,
       usage,
     });
+  }
+
+  protected override async dispatchFinalAnswer(
+    content: string,
+    meta: TurnExecutionMetaDto,
+    usage: { inputTokens: number; outputTokens: number; totalTokens: number },
+    emit: (event: AdapterEvent) => void
+  ): Promise<void> {
+    emitStructuredEvent({
+      level: "info",
+      event: "m365.turn.completed",
+      traceContext: meta.traceContext,
+      completionType: "final_answer",
+      stopReason: "stop",
+      endTurn: true,
+      safeDetails: {
+        completionType: "final_answer",
+        terminalReason: "model_final_answer",
+        terminalExplanation:
+          "M365 Copilot hoàn tất một response hợp lệ dạng Final Answer.",
+        toolCount: 0,
+        finalAnswer: content,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      },
+    });
+
+    await super.dispatchFinalAnswer(content, meta, usage, emit);
   }
 
   protected translateResponse(rawReply: string, parsed: CodexParsedRequest): ResponseTranslationResultDto {
@@ -328,6 +432,25 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
       const title = this.titleGuard.generateTitleResponse(prompt);
       const inputTokens = Math.ceil(prompt.length / 4);
       const outputTokens = Math.ceil(title.length / 4);
+
+      emitStructuredEvent({
+        level: "info",
+        event: "m365.turn.completed",
+        traceContext: _meta.traceContext,
+        completionType: "title_response",
+        stopReason: "stop",
+        endTurn: true,
+        safeDetails: {
+          completionType: "title_response",
+          terminalReason: "title_request",
+          terminalExplanation:
+            "Codex gửi yêu cầu sinh tiêu đề ngầm và adapter phản hồi bằng Title Guard.",
+          toolCount: 0,
+          inputTokens,
+          outputTokens,
+        },
+      });
+
       emit({ type: "text_delta", text: title });
       emit({
         type: "done",
@@ -342,6 +465,29 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
       return true;
     }
     return false;
+  }
+
+  protected override emitFormatRetryWarning(
+    attempt: number,
+    maxRetries: number,
+    result: ResponseTranslationResultDto,
+    meta: TurnExecutionMetaDto,
+    rawReply: string
+  ): void {
+    emitStructuredEvent({
+      level: "warning",
+      event: "m365.response.format_retry",
+      traceContext: meta.traceContext,
+      safeDetails: {
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+        code: result.errorCode || "PROTOCOL_ERROR",
+        message: result.errorMessage || "Sai định dạng response protocol",
+      },
+      diagnosticDetails: {
+        responseChars: rawReply.length,
+      },
+    });
   }
 
   protected override cleanupSessionGuard(conversationKey?: string): void {
