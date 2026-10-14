@@ -77,8 +77,14 @@ export function resolveM365CapabilityMode(
   }
 
   const lower = slug.toLowerCase();
-  if (lower.includes("5.6") || lower.includes("gpt5.6") || lower.includes("gpt-5.6")) {
+  if (lower.includes("5.6") || lower.includes("gpt5") || lower.includes("gpt-5")) {
     if (lower.includes("think") || lower.includes("reason") || lower.includes("deep")) {
+      return "gpt-5.6-think";
+    }
+    if (lower.includes("quick") || lower.includes("fast") || lower.includes("instant")) {
+      return "gpt-5.6-quick";
+    }
+    if (lower.endsWith("/gpt-5") || lower === "gpt-5") {
       return "gpt-5.6-think";
     }
     return "gpt-5.6-quick";
