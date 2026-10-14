@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import type { AdapterEvent, CodexParsedRequest, CodexUsage } from "../../types";
 import type { IncomingMeta } from "../base";
 import {
   BaseWebChatAdapter,
+  BrowserTurnOptionsDto,
   TurnExecutionMetaDto,
   ResponseTranslationResultDto,
   CodexRawPayload,
@@ -13,6 +14,8 @@ import {
   ConversationLoopGuard,
   ToolArgumentNormalizer,
   ToolCallValidator,
+  BaseToolBridge,
+  type GenericDetectedToolCall,
 } from "../base-web";
 import { parseStrictWebResponse } from "../base-web/translation";
 import {
@@ -73,11 +76,14 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
   readonly modelSelector = defaultM365CapabilityPicker;
 
   private readonly promptCompiler = new BasePromptCompiler();
-  private readonly titleGuard = new BaseTitleGuard();
+  private readonly titleGuard: BaseTitleGuard;
   private readonly loopGuard = new ConversationLoopGuard();
 
   constructor(readonly options?: { enableTitleGuard?: boolean }) {
     super();
+    this.titleGuard = new BaseTitleGuard({
+      enableTitleGuard: options?.enableTitleGuard,
+    });
   }
 
   protected resolveExecutionMeta(parsed: CodexParsedRequest, incoming: IncomingMeta): TurnExecutionMetaDto {
@@ -106,6 +112,131 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
       isNewConversation: meta.isNewConversation,
     });
     return res.finalPrompt;
+  }
+
+  /**
+   * Khôi phục handoff ảnh đúng như adapter M365 cũ:
+   * - Chỉ upload ảnh ở lần gửi đầu tiên.
+   * - Không upload lại ảnh khi Format Retry.
+   * - Bảo toàn filename, MIME type, buffer và detail.
+   *
+   * Không lưu normalized request vào field của singleton adapter để tránh
+   * trộn dữ liệu khi nhiều conversation được xử lý đồng thời.
+   */
+  protected override createBrowserTurnOptions(
+    parsed: CodexParsedRequest,
+    incoming: IncomingMeta,
+    meta: TurnExecutionMetaDto,
+    attempt: number
+  ): BrowserTurnOptionsDto {
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+    const normalized = CodexPayloadNormalizer.normalize(rawPayload);
+
+    return BrowserTurnOptionsDto.of({
+      signal: incoming.abortSignal,
+      traceId: meta.traceId,
+      conversationKey: meta.conversationKey,
+      isNewConversation: attempt === 0 ? meta.isNewConversation : false,
+      modelSlug: parsed.modelId,
+      reasoning: parsed.options.reasoning,
+      traceContext: meta.traceContext,
+      images: attempt === 0
+        ? (normalized.images || []).map(image => ({
+            filename: image.name,
+            name: image.name,
+            mimeType: image.mimeType,
+            buffer: image.buffer,
+            detail: image.detail,
+          }))
+        : [],
+    });
+  }
+
+  /**
+   * Khôi phục đầy đủ production tool pipeline của adapter M365 cũ:
+   *
+   * strict call
+   * -> normalize/validate
+   * -> map sang đúng native wire call của client
+   * -> fingerprint cả batch
+   * -> loop guard
+   * -> emit sang IDE
+   */
+  protected override async dispatchToolCalls(
+    calls: readonly GenericDetectedToolCall[],
+    parsed: CodexParsedRequest,
+    meta: TurnExecutionMetaDto,
+    usage: CodexUsage,
+    emit: (event: AdapterEvent) => void
+  ): Promise<void> {
+    const clientTools = parsed.context.tools || [];
+    const mappedCalls = calls.map(call => {
+      const mapped = BaseToolBridge.mapToolCall(
+        {
+          name: call.name,
+          arguments: call.arguments,
+        },
+        clientTools
+      );
+
+      return {
+        id: call.id || `call_${Math.random().toString(36).slice(2, 10)}`,
+        name: mapped.name,
+        arguments: mapped.arguments,
+      };
+    });
+
+    this.loopGuard.cleanExpired();
+
+    const conversationKey = meta.conversationKey
+      || `transient_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+    const batchFingerprint = mappedCalls
+      .map(call => ({
+        name: call.name,
+        arguments: call.arguments,
+      }))
+      .sort((left, right) => {
+        const leftKey = `${left.name}:${left.arguments}`;
+        const rightKey = `${right.name}:${right.arguments}`;
+        return leftKey.localeCompare(rightKey);
+      });
+    const primaryToolName = mappedCalls[0]?.name || "unknown";
+    const guardResult = this.loopGuard.recordToolCall(
+      conversationKey,
+      primaryToolName,
+      batchFingerprint
+    );
+
+    if (guardResult.isLoopDetected) {
+      this.loopGuard.delete(conversationKey);
+      emit({
+        type: "text_delta",
+        text:
+          `\n\n> [!WARNING]\n` +
+          `> **Giới hạn an toàn:** ${guardResult.reason} ` +
+          `Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
+      });
+      emit({
+        type: "done",
+        stopReason: "stop",
+        endTurn: true,
+        usage,
+      });
+      return;
+    }
+
+    for (const call of mappedCalls) {
+      emit({ type: "tool_call_start", id: call.id, name: call.name });
+      emit({ type: "tool_call_delta", arguments: call.arguments });
+      emit({ type: "tool_call_end" });
+    }
+
+    emit({
+      type: "done",
+      stopReason: "tool_use",
+      endTurn: false,
+      usage,
+    });
   }
 
   protected translateResponse(rawReply: string, parsed: CodexParsedRequest): ResponseTranslationResultDto {
@@ -193,15 +324,20 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
     _meta: TurnExecutionMetaDto,
     emit: (event: AdapterEvent) => void
   ): Promise<boolean> {
-    if (this.options?.enableTitleGuard === false) return false;
     if (this.titleGuard.isTitleRequest(parsed, prompt)) {
       const title = this.titleGuard.generateTitleResponse(prompt);
+      const inputTokens = Math.ceil(prompt.length / 4);
+      const outputTokens = Math.ceil(title.length / 4);
       emit({ type: "text_delta", text: title });
       emit({
         type: "done",
         stopReason: "stop",
         endTurn: true,
-        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        usage: {
+          inputTokens,
+          outputTokens,
+          totalTokens: inputTokens + outputTokens,
+        },
       });
       return true;
     }
@@ -210,7 +346,7 @@ export class M365CopilotAdapter extends BaseWebChatAdapter {
 
   protected override cleanupSessionGuard(conversationKey?: string): void {
     if (conversationKey) {
-      this.loopGuard.resetIteration(conversationKey);
+      this.loopGuard.delete(conversationKey);
     }
   }
 }

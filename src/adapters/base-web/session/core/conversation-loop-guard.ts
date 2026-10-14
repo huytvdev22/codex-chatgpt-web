@@ -95,11 +95,13 @@ export class ConversationLoopGuard implements IConversationLoopGuard {
     state.updatedAt = Date.now();
 
     const maxIdentical = this.getMaxIdenticalToolCalls(toolName);
-    if (state.identicalToolCount > maxIdentical) {
+    // Giữ đúng ngưỡng của adapter M365 cũ: chặn ngay khi số lần lặp
+    // chạm giới hạn, không cho phép vượt thêm một lượt.
+    if (state.identicalToolCount >= maxIdentical) {
       return {
         state,
         isLoopDetected: true,
-        reason: `Vượt quá giới hạn lặp công cụ liên tiếp (${state.identicalToolCount} > ${maxIdentical}) cho '${toolName}'.`,
+        reason: `Đã chạm giới hạn lặp công cụ liên tiếp (${state.identicalToolCount} >= ${maxIdentical}) cho '${toolName}'.`,
       };
     }
 
