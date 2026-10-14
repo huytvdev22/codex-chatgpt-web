@@ -25,6 +25,29 @@ export abstract class BaseWebChatAdapter implements ProviderAdapter {
     emit: (event: AdapterEvent) => void
   ): Promise<void> {
     const startTime = Date.now();
+    // Khôi phục tính idempotent của markTurnConsumed trong adapter M365 cũ.
+    // Một turn được phép phát nhiều delta/tool frames nhưng chỉ được phát đúng
+    // một terminal event. Các event đến sau done/error/incomplete bị bỏ qua để
+    // tránh duplicate completion khi cleanup hoặc error path chạy đồng thời.
+    let terminalEventEmitted = false;
+    const emitOnce = (event: AdapterEvent): void => {
+      if (terminalEventEmitted) {
+        console.warn(
+          `[${this.name}] Lượt này đã kết thúc. Bỏ qua event trùng lặp loại '${event.type}'.`
+        );
+        return;
+      }
+
+      emit(event);
+
+      if (
+        event.type === "done" ||
+        event.type === "error" ||
+        event.type === "incomplete"
+      ) {
+        terminalEventEmitted = true;
+      }
+    };
 
     // BƯỚC 1: Kiểm tra AbortSignal trước khi bắt đầu
     if (incoming.abortSignal?.aborted) {
@@ -39,7 +62,7 @@ export abstract class BaseWebChatAdapter implements ProviderAdapter {
     if (this.isAssistantAlreadyCompleted(parsed)) {
       console.log(`[${this.name}] Cuộc hội thoại đã kết thúc bằng phản hồi trước đó của trợ lý. Hoàn tất lượt.`);
       this.cleanupSessionGuard(meta.conversationKey);
-      this.emitAssistantAlreadyCompleted(meta, emit);
+      this.emitAssistantAlreadyCompleted(meta, emitOnce);
       return;
     }
 
@@ -47,7 +70,7 @@ export abstract class BaseWebChatAdapter implements ProviderAdapter {
     const compiledPrompt = this.buildTurnPrompt(parsed, meta);
 
     // BƯỚC 5: Đánh chặn nhanh yêu cầu tiêu đề (Title Guard Fast-path)
-    if (await this.handleTitleGuardFastPath(parsed, compiledPrompt, meta, emit)) {
+    if (await this.handleTitleGuardFastPath(parsed, compiledPrompt, meta, emitOnce)) {
       return;
     }
 
@@ -117,17 +140,23 @@ export abstract class BaseWebChatAdapter implements ProviderAdapter {
 
       // BƯỚC 7: Xử lý nếu kết quả là Tool Calls
       if (translationResult.kind === "tool_calls" && translationResult.calls.length > 0) {
-        await this.dispatchToolCalls(translationResult.calls, parsed, meta, usage, emit);
+        await this.dispatchToolCalls(
+          translationResult.calls,
+          parsed,
+          meta,
+          usage,
+          emitOnce
+        );
         return;
       }
 
       // BƯỚC 8: Xử lý nếu kết quả là Final Answer
       const finalContent = translationResult.content || "";
-      await this.dispatchFinalAnswer(finalContent, meta, usage, emit);
+      await this.dispatchFinalAnswer(finalContent, meta, usage, emitOnce);
 
     } catch (error) {
       // BƯỚC 9: Xử lý lỗi ngoại lệ an toàn
-      await this.handleTurnError(error, meta, incoming, emit);
+      await this.handleTurnError(error, meta, incoming, emitOnce);
     }
   }
 
