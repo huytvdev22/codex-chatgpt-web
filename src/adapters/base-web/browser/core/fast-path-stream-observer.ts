@@ -448,6 +448,53 @@ export class FastPathStreamObserver implements IStreamObserver {
 
       const combinedText = fastPathActive ? lastFastPathText : lastBlocks.map(b => b.text).join(" ");
       const timeSinceChange = Date.now() - lastTextChangeAt;
+
+      // Khôi phục structured liveness telemetry của browser worker cũ.
+      // Event chỉ chứa metadata trạng thái, tuyệt đối không phát nội dung
+      // browser stream ra consumer trước strict validation.
+      if (attempts % 16 === 0) {
+        const elapsedSeconds = Math.round(
+          (attempts * this.pollIntervalMs) / 1000
+        );
+        const stableSeconds = Math.round(timeSinceChange / 1000);
+        const outputChars = combinedText.length;
+        const hasUnclosedToolCall =
+          /(?:<|\b)\s*tool\\?_call\s*>/i.test(combinedText) &&
+          !/(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
+        const hasUnclosedPatch =
+          /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) &&
+          !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
+        const hasUnclosedPlan =
+          /<\s*proposed[_]*plan\s*>/i.test(combinedText) &&
+          !/<\s*\/proposed[_]*plan\s*>/i.test(combinedText);
+        const statusSummary = status.isGenerating
+          ? `${this.providerName} đang sinh văn bản (${elapsedSeconds}s, ${outputChars} ký tự)...`
+          : status.hasContent
+            ? `${this.providerName} tạm dừng sinh, đang chờ ổn định (${stableSeconds}s, ${outputChars} ký tự)...`
+            : `Đang chờ ${this.providerName} bắt đầu phản hồi (${elapsedSeconds}s)...`;
+
+        emitStructuredEvent({
+          level: "info",
+          event: "m365.provider.progress",
+          traceContext: options.traceContext,
+          safeDetails: {
+            elapsedSeconds,
+            isGenerating: status.isGenerating,
+            outputChars,
+            stableSeconds,
+            hasUnclosedToolCall,
+            hasUnclosedPatch,
+            hasUnclosedPlan,
+            statusSummary,
+            domStatus: status.isGenerating
+              ? "generating"
+              : status.hasContent
+                ? "settling"
+                : "idle",
+          },
+        });
+      }
+
       const isVeryShortInitialText = (combinedText.trim().length < 120);
       const minGraceMs = isVeryShortInitialText ? 3_000 : 1_500;
       const requiredStableCycles = isVeryShortInitialText ? 6 : 2;
