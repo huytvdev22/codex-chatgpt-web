@@ -204,7 +204,24 @@ export class FastPathStreamObserver implements IStreamObserver {
         } catch { }
 
         const win = window as any;
-        if (!win.__live_code_lines_cache) {
+
+        // Scope cache theo đúng assistant message hiện tại. Trước đây cache chỉ
+        // được key bằng blockIdx và tồn tại trên window xuyên suốt nhiều turn.
+        // Khi Format Retry tạo assistant message mới, code block mới thường lại
+        // bắt đầu từ blockIdx=0 nên các dòng của response cũ có thể bị ghép vào
+        // response mới, làm hỏng transport fence/envelope trước strict parser.
+        const messageKey = [
+          lastMsg.getAttribute("data-message-id") || "",
+          lastMsg.getAttribute("data-testid") || "",
+          lastMsg.getAttribute("id") || "",
+          String(aiList.length),
+        ].join("|");
+
+        if (
+          win.__live_code_cache_message_key !== messageKey ||
+          !(win.__live_code_lines_cache instanceof Map)
+        ) {
+          win.__live_code_cache_message_key = messageKey;
           win.__live_code_lines_cache = new Map<number, Map<number, string>>();
         }
 

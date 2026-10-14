@@ -9,8 +9,9 @@ import {
   FastPathStreamObserver,
   type BrowserAttachmentResult,
   type ChatSelectorsDto,
-  type BrowserTurnOptionsDto,
+  BrowserTurnOptionsDto,
 } from "../../base-web/browser";
+import { parseStrictWebResponse } from "../../base-web/translation";
 import { defaultM365CapabilityPicker } from "./m365-capability-specs";
 import { M365_CHAT_URL, parseM365ConversationId, waitForM365ConversationId } from "./conversation-url";
 import { emitStructuredEvent } from "../../../observability/emitter";
@@ -313,10 +314,33 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
   }
 
   protected async observeStreamingResponse(page: Page, options: BrowserTurnOptionsDto): Promise<string> {
-    return this.streamObserver.observe(page, this.selectors, options);
+    // Quarantine tuyệt đối response thô từ browser cho tới khi strict parser
+    // xác nhận toàn bộ response hợp lệ. Không cho FastPathStreamObserver emit
+    // delta ra consumer vì response có thể còn thiếu fence/envelope, bị cắt
+    // giữa tool call hoặc sẽ được thay thế bằng bản clipboard salvage.
+    //
+    // Preserve toàn bộ option điều khiển khác (abort, shouldStop, trace,
+    // conversation, model...) nhưng cố ý vô hiệu hóa onChunk trong M365 path.
+    const quarantinedOptions = BrowserTurnOptionsDto.of({
+      signal: options.signal,
+      descriptorPath: options.descriptorPath,
+      traceId: options.traceId,
+      conversationKey: options.conversationKey,
+      isNewConversation: options.isNewConversation,
+      shouldStop: options.shouldStop,
+      modelSlug: options.modelSlug,
+      reasoning: options.reasoning,
+      traceContext: options.traceContext,
+      images: options.images,
+      onChunk: undefined,
+    });
+
+    return this.streamObserver.observe(page, this.selectors, quarantinedOptions);
   }
 
   protected override async salvageOutputIfNeeded(page: Page, currentText: string, options: BrowserTurnOptionsDto): Promise<string> {
+    const initialProtocolResult = parseStrictWebResponse(currentText);
+    const strictParseFailed = initialProtocolResult.kind === "protocol_error";
     const needsEnvelopeFix = /<webResponse\b/i.test(currentText) && !/<\/webResponse\s*>/i.test(currentText);
     const hasUnclosedMarkers = /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(currentText) &&
       !(/(?:<\/custom_tool_call>|\*{3}\s*End Patch)/i.test(currentText));
@@ -325,19 +349,26 @@ export class M365BrowserWorker extends BaseChatBrowserWorker {
     ).count().catch(() => 0) > 0;
 
     let fullMarkdown = currentText;
-    if (needsEnvelopeFix || hasUnclosedMarkers || hasCodeBlockOnPage) {
+    // Khi strict parser từ chối nội dung lấy từ DOM, bắt buộc thử lại bằng
+    // clipboard salvage trước khi adapter quyết định gửi Format Retry.
+    // Điều này phân biệt lỗi do model phát sai protocol với lỗi scraper làm
+    // mất transport fence, envelope hoặc nội dung code block.
+    if (strictParseFailed || needsEnvelopeFix || hasUnclosedMarkers || hasCodeBlockOnPage) {
       const copiedCode = await this.salvager.salvage(page);
       if (copiedCode) {
+        const copiedProtocolResult = parseStrictWebResponse(copiedCode);
         const copiedHasClose = /<\/webResponse\s*>/i.test(copiedCode);
         const currentLacksClose = !/<\/webResponse\s*>/i.test(fullMarkdown);
 
-        if ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length) {
-          if (copiedCode.length > fullMarkdown.length && !options.shouldStop?.()) {
-            const extra = copiedCode.startsWith(fullMarkdown) ? copiedCode.slice(fullMarkdown.length) : copiedCode;
-            if (extra) {
-              options.onChunk?.(extra);
-            }
-          }
+        // Ưu tiên tuyệt đối bản clipboard nếu nó vượt qua strict parser.
+        // Nếu cả hai nguồn đều lỗi, chỉ thay thế khi clipboard rõ ràng đầy đủ
+        // hơn; adapter sẽ tiếp tục Format Retry với raw response tốt nhất.
+        const shouldUseCopiedCode =
+          copiedProtocolResult.kind !== "protocol_error" ||
+          (initialProtocolResult.kind === "protocol_error" &&
+            ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length));
+
+        if (shouldUseCopiedCode) {
           fullMarkdown = copiedCode;
         }
       }
