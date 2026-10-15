@@ -83,6 +83,11 @@ test("proxies official /models auth and query, then appends grouped and legacy W
     "chatgpt-web/pro",
     "m365-copilot/gpt-5.6",
     "m365-copilot",
+    "gemini-web/3.8-flash",
+    "gemini-web/3.1-pro",
+    "gemini-web/3.5-flash-lite",
+    "gemini-web/4-argon",
+    "gemini-web",
   ]);
   expect(body.models[0]!.context_window).toBe(300_000);
   expect(body.models[0]!.max_context_window).toBe(371_851);

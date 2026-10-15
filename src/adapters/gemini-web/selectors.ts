@@ -38,6 +38,16 @@ export interface GeminiDomSelectors {
   thinkingBlock?: string;
 
   /**
+   * Thẻ chứa code Markdown do Gemini Web render (code block container)
+   */
+  codeContainer?: string;
+
+  /**
+   * Header trang trí của code block (chứa text Markdown, nút copy, download)
+   */
+  codeBlockHeader?: string;
+
+  /**
    * Nút / Menu chuyển đổi Model (Model Picker Menu)
    * Nút dropdown ở góc trên (ví dụ chọn 2.0 Flash / Advanced / Pro)
    */
@@ -54,6 +64,11 @@ export interface GeminiDomSelectors {
    * Dùng để nhận diện câu trả lời đã sinh xong hoàn tất
    */
   copyButton?: string;
+
+  /**
+   * Nút Sao chép mã riêng của khối code Markdown (Code block copy button)
+   */
+  codeCopyButton?: string;
 
   /**
    * Nhãn text hiển thị model hiện tại trên nút trigger (ví dụ "Flash-Lite", "Pro")
@@ -152,6 +167,22 @@ export const GEMINI_SELECTORS: GeminiDomSelectors = {
     'details.thought-process',
   ].join(", "),
 
+  // 5.1. Thẻ chứa code Markdown do Gemini Web render
+  codeContainer: [
+    'code[data-test-id="code-content"]',
+    '.code-container.formatted',
+    'pre code',
+  ].join(", "),
+
+  // 5.2. Header trang trí của code block
+  codeBlockHeader: [
+    '.code-block-decoration',
+    '.formatted-code-block-internal-container .buttons',
+    '.download-button',
+    '.copy-button',
+    'gem-icon-button.copy-button',
+  ].join(", "),
+
   // 6. Menu chọn Model (Model Selector Button)
   modelSelectorButton: [
     '[data-test-id="bard-mode-menu-button"] button',
@@ -173,9 +204,21 @@ export const GEMINI_SELECTORS: GeminiDomSelectors = {
 
   // 8. Nút Copy (dấu hiệu đã hoàn thành)
   copyButton: [
+    'gem-icon-button[data-test-id="gem-copy-button"] button',
+    'button[aria-label*="Sao chép mã" i]',
+    '.copy-button button',
     'button[aria-label*="Copy" i]',
     'button[aria-label*="Sao chép" i]',
     '[data-test-id="copy-button"]',
+  ].join(", "),
+
+  // 8.1. Nút Sao chép mã riêng của code block
+  codeCopyButton: [
+    'gem-icon-button[data-test-id="gem-copy-button"] button',
+    'gem-icon-button[data-test-id="gem-copy-button"]',
+    'button[aria-label*="Sao chép mã" i]',
+    'button[aria-label*="Copy code" i]',
+    '.copy-button button',
   ].join(", "),
 
   // 9. Nhãn model hiện tại trên nút trigger

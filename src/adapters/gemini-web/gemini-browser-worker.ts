@@ -104,6 +104,28 @@ export class GeminiBrowserWorker {
     // Đợi 300ms để nút send chuyển sang trạng thái enabled
     await page.waitForTimeout(300);
 
+    // Cài đặt Clipboard Window Hook trước khi gửi để đón nhận nội dung khi click nút copy
+    await page.evaluate(() => {
+      const win = window as any;
+      win.__gemini_last_copied_code = null;
+      const origWriteText = navigator.clipboard ? navigator.clipboard.writeText : null;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText = async (text: string) => {
+          win.__gemini_last_copied_code = text;
+          try {
+            if (origWriteText) return await origWriteText.call(navigator.clipboard, text);
+          } catch {
+            return Promise.resolve();
+          }
+        };
+      }
+      const onCopy = (e: ClipboardEvent) => {
+        const text = e.clipboardData?.getData("text/plain") || window.getSelection()?.toString();
+        if (text) win.__gemini_last_copied_code = text;
+      };
+      document.addEventListener("copy", onCopy, { capture: true });
+    });
+
     // 4. Nhấn nút Gửi
     console.log("[gemini-worker] Đang nhấn nút gửi...");
     const sendBtn = await page.$(this.selectors.sendButton);
@@ -139,20 +161,53 @@ export class GeminiBrowserWorker {
       }
 
       // Đọc nội dung phản hồi mới nhất
-      const currentText = await page.evaluate(({ containerSel, thinkingSel }: { containerSel: string; thinkingSel?: string }) => {
-        const containers = document.querySelectorAll(containerSel);
+      const currentText = await page.evaluate(({
+        containerSel,
+        thinkingSel,
+        codeSel,
+        headerSel,
+      }: {
+        containerSel: string;
+        thinkingSel?: string;
+        codeSel?: string;
+        headerSel?: string;
+      }) => {
+        const containers = Array.from(document.querySelectorAll(containerSel));
         if (containers.length === 0) return "";
         const latest = containers[containers.length - 1] as HTMLElement;
 
-        // Clone element để loại bỏ khối suy nghĩ nếu có
-        const clone = latest.cloneNode(true) as HTMLElement;
-        if (thinkingSel) {
-          const thinkingEls = clone.querySelectorAll(thinkingSel);
-          thinkingEls.forEach(el => el.remove());
+        // 1. Ưu tiên kiểm tra xem bên trong có code block chứa response envelope không
+        if (codeSel) {
+          const codeEls = Array.from(latest.querySelectorAll(codeSel));
+          for (const codeEl of codeEls) {
+            const text = (codeEl.textContent || "").trim();
+            if (
+              text.includes("<webResponse>") ||
+              text.includes("<m365Response>") ||
+              text.includes("<tool_call>") ||
+              text.includes("<custom_tool_call")
+            ) {
+              return text;
+            }
+          }
         }
 
-        return clone.innerText || clone.textContent || "";
-      }, { containerSel: this.selectors.responseContainer, thinkingSel: this.selectors.thinkingBlock });
+        // 2. Clone element để loại bỏ khối suy nghĩ và các header/button trang trí của code block
+        const clone = latest.cloneNode(true) as HTMLElement;
+        if (thinkingSel) {
+          clone.querySelectorAll(thinkingSel).forEach((el) => el.remove());
+        }
+        if (headerSel) {
+          clone.querySelectorAll(headerSel).forEach((el) => el.remove());
+        }
+
+        return (clone.innerText || clone.textContent || "").trim();
+      }, {
+        containerSel: this.selectors.responseContainer,
+        thinkingSel: this.selectors.thinkingBlock,
+        codeSel: this.selectors.codeContainer,
+        headerSel: this.selectors.codeBlockHeader,
+      });
 
       // Phát delta nếu có chữ mới
       if (currentText.length > lastRenderedText.length) {
@@ -177,11 +232,99 @@ export class GeminiBrowserWorker {
       await page.waitForTimeout(150);
     }
 
-    console.log(`[gemini-worker] Hoàn tất nhận phản hồi (${lastRenderedText.length} ký tự).`);
+    console.log(`[gemini-worker] Quá trình sinh phản hồi kết thúc. Bắt đầu trích xuất đa tầng...`);
+
+    // TẦNG 1: Trích xuất bằng cách Click nút Copy (Copy-Salvage)
+    let extractedText: string | null = null;
+    try {
+      console.log("[gemini-worker] [copy-salvage] Đang tìm và click nút Copy (Sao chép mã)...");
+      const copyClicked = await page.evaluate(({
+        codeCopySel,
+        copySel,
+      }: {
+        codeCopySel?: string;
+        copySel?: string;
+      }) => {
+        const win = window as any;
+        win.__gemini_last_copied_code = null;
+
+        const containers = Array.from(document.querySelectorAll("model-response, message-content"));
+        const latest = containers[containers.length - 1];
+        if (!latest) return false;
+
+        // 1. Ưu tiên nút Sao chép mã của code block
+        let copyBtn = codeCopySel ? (latest.querySelector(codeCopySel) as HTMLElement | null) : null;
+        if (!copyBtn && copySel) {
+          copyBtn = latest.querySelector(copySel) as HTMLElement | null;
+        }
+
+        if (!copyBtn) return false;
+
+        copyBtn.scrollIntoView({ block: "center", inline: "center" });
+        copyBtn.focus();
+        copyBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+        copyBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        copyBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+        copyBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        copyBtn.click();
+        return true;
+      }, {
+        codeCopySel: this.selectors.codeCopyButton,
+        copySel: this.selectors.copyButton,
+      });
+
+      if (copyClicked) {
+        const readStart = Date.now();
+        while (Date.now() - readStart < 2000) {
+          await page.waitForTimeout(100);
+          const text = await page.evaluate(async () => {
+            const win = window as any;
+            if (typeof win.__gemini_last_copied_code === "string" && win.__gemini_last_copied_code.trim().length > 0) {
+              return win.__gemini_last_copied_code.trim();
+            }
+            try {
+              if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+                const sys = await navigator.clipboard.readText();
+                if (sys && sys.trim().length > 0) return sys.trim();
+              }
+            } catch {}
+            return null;
+          });
+
+          if (text) {
+            extractedText = text;
+            console.log(`[gemini-worker] [copy-salvage] THÀNH CÔNG: Đã lấy được nội dung qua nút Copy (${text.length} ký tự).`);
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[gemini-worker] [copy-salvage] Lỗi khi click nút copy:", err);
+    }
+
+    // TẦNG 2: Fallback đọc từ DOM nếu Tầng 1 không bắt được
+    if (!extractedText) {
+      console.log("[gemini-worker] [fallback] Sử dụng nội dung trích xuất từ DOM.");
+      extractedText = lastRenderedText;
+    }
+
+    const normalizedRaw = ensureMarkdownTransportFence(extractedText);
     return {
-      rawResponse: lastRenderedText,
+      rawResponse: normalizedRaw,
     };
   }
+}
+
+/**
+ * Đảm bảo bọc trọn vẹn trong transport wrapper 4-backtick markdown cho strict-parser
+ */
+export function ensureMarkdownTransportFence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (/^````markdown[ \t]*\r?\n[\s\S]*\r?\n````$/.test(trimmed)) {
+    return trimmed;
+  }
+  return `\`\`\`\`markdown\n${trimmed}\n\`\`\`\``;
 }
 
 export const geminiBrowserWorker = new GeminiBrowserWorker();

@@ -6,9 +6,17 @@ import {
   buildUnifiedToolProtocol,
   buildShortOutputFormatAnchor,
   TOOL_REMINDER_PROMPT,
+  buildM365FormatRetryPrompt,
 } from "../m365-copilot/prompts";
 import { resolveGeminiReasoningEffort } from "../../gemini-models";
-import { XmlToolCallDetector } from "../m365-copilot/translation/detectors/xml-detector";
+import {
+  parseStrictM365Response,
+  type StrictM365ResponseResult,
+} from "../m365-copilot/translation/strict-response-parser";
+import {
+  normalizeM365ToolArguments,
+  validateM365ToolCall,
+} from "../m365-copilot/tools";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +34,7 @@ export interface GeminiAdapterOptions {
   customSelectors?: Partial<GeminiDomSelectors>;
   headless?: boolean;
   descriptorPath?: string;
+  maxFormatRetries?: number;
 }
 
 function resolveDescriptorPath(customPath?: string): string | null {
@@ -43,7 +52,6 @@ function resolveDescriptorPath(customPath?: string): string | null {
 export class GeminiWebAdapter implements ProviderAdapter {
   readonly name = "gemini-web";
   private options: GeminiAdapterOptions;
-  private xmlDetector = new XmlToolCallDetector();
   private browserContext: BrowserContext | null = null;
   private activePage: Page | null = null;
 
@@ -51,6 +59,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
     this.options = {
       userDataDir: options?.userDataDir || join(homedir(), ".codex-gemini-web"),
       headless: options?.headless ?? false,
+      maxFormatRetries: options?.maxFormatRetries ?? 2,
       ...options,
     };
   }
@@ -150,41 +159,99 @@ export class GeminiWebAdapter implements ProviderAdapter {
       page = await this.ensureLocalBrowserPage();
     }
 
-    const prompt = this.compilePrompt(parsed);
+    const initialPrompt = this.compilePrompt(parsed);
     const reasoningEffort = resolveGeminiReasoningEffort(parsed.modelId, parsed.options.reasoning);
 
     console.log(`[gemini-adapter] Bắt đầu lượt gửi cho model: ${parsed.modelId}, cấp độ tư duy: ${reasoningEffort || "mặc định"}`);
 
     try {
-      const result = await geminiBrowserWorker.executeTurn(page, {
-        prompt,
-        signal: incoming.abortSignal,
-        modelSlug: parsed.modelId,
-        reasoningEffort,
-        customSelectors: this.options.customSelectors,
-        onChunk: (chunkText) => {
-          emit({
-            type: "text_delta",
-            text: chunkText,
-          });
-        },
-      });
+      const maxRetries = this.options.maxFormatRetries ?? 2;
+      let attemptPrompt = initialPrompt;
+      let protocolResult: StrictM365ResponseResult | null = null;
+      let lastRaw = "";
 
-      // Bóc tách tool call nếu có trong câu trả lời
-      const detected = this.xmlDetector.detect(result.rawResponse);
-      const toolCalls = Array.isArray(detected) ? detected : detected ? [detected] : [];
+      // Vòng lặp Quarantine và Format Retry
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (incoming.abortSignal?.aborted) {
+          throw new DOMException("Gemini turn aborted", "AbortError");
+        }
 
-      if (toolCalls.length > 0) {
-        for (const tc of toolCalls) {
-          const callId = `call_gemini_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        console.log(`[gemini-adapter] Thực thi lượt (lần thử ${attempt + 1}/${maxRetries + 1})...`);
+
+        const result = await geminiBrowserWorker.executeTurn(page, {
+          prompt: attemptPrompt,
+          signal: incoming.abortSignal,
+          modelSlug: parsed.modelId,
+          reasoningEffort,
+          customSelectors: this.options.customSelectors,
+          // Quarantine: không emit chunk trực tiếp ra Codex trong lúc stream để tránh leak protocol XML
+          onChunk: () => {},
+        });
+
+        lastRaw = result.rawResponse;
+        console.log(`[gemini-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Áp dụng strict-parser...`);
+
+        protocolResult = parseStrictM365Response(lastRaw);
+
+        if (protocolResult.kind === "tool_calls") {
+          // Validate từng tool call theo danh sách tools của client
+          const clientTools = parsed.context.tools || [];
+          for (const call of protocolResult.calls) {
+            const normalizedCall = normalizeM365ToolArguments(call.name, call.arguments);
+            const validation = validateM365ToolCall(normalizedCall.name, normalizedCall.arguments, clientTools);
+            if (!validation.ok) {
+              protocolResult = {
+                kind: "protocol_error",
+                code: "INVALID_TOOL_CALL",
+                message: `${validation.code}: ${validation.message}`,
+                rawResponse: lastRaw,
+              };
+              break;
+            }
+          }
+        }
+
+        if (protocolResult.kind !== "protocol_error") {
+          break;
+        }
+
+        console.warn(`[gemini-adapter] [Format Error] Lỗi giao thức (${protocolResult.code}): ${protocolResult.message}`);
+        if (attempt >= maxRetries) {
+          throw new Error(
+            `[Gemini Format Error] Đã thử ${maxRetries + 1} lần nhưng phản hồi vẫn sai protocol (${protocolResult.code}): ${protocolResult.message}`
+          );
+        }
+
+        // Tạo lời nhắc sửa format cho Gemini tự sửa trong lần thử tiếp theo
+        attemptPrompt = buildM365FormatRetryPrompt({
+          code: protocolResult.code,
+          message: protocolResult.message,
+        });
+      }
+
+      if (!protocolResult || protocolResult.kind === "protocol_error") {
+        throw new Error("[Gemini Format Error] Không nhận được response protocol hợp lệ.");
+      }
+
+      // Phát sự kiện ra Codex
+      if (protocolResult.kind === "final_answer") {
+        console.log(`[gemini-adapter] Trả về final answer (${protocolResult.content.length} ký tự).`);
+        emit({
+          type: "text_delta",
+          text: protocolResult.content,
+        });
+      } else if (protocolResult.kind === "tool_calls") {
+        console.log(`[gemini-adapter] Phát hiện ${protocolResult.calls.length} tool calls hợp lệ.`);
+        for (const call of protocolResult.calls) {
+          const callId = call.id || `call_gemini_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           emit({
             type: "tool_call_start",
             id: callId,
-            name: tc.name,
+            name: call.name,
           });
           emit({
             type: "tool_call_delta",
-            arguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments),
+            arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
           });
           emit({
             type: "tool_call_end",
@@ -196,7 +263,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
         type: "done",
       });
 
-      console.log(`[gemini-adapter] Kết thúc lượt. Phát hiện ${toolCalls.length} tool calls.`);
+      console.log(`[gemini-adapter] Kết thúc lượt thành công.`);
     } catch (error) {
       console.error("[gemini-adapter] Lỗi trong quá trình thực thi lượt:", error);
       emit({

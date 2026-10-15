@@ -121,4 +121,45 @@ describe("Google Gemini Web Adapter Base Architecture Tests", () => {
     expect(adapter).toBeInstanceOf(GeminiWebAdapter);
     expect(adapter.name).toBe("gemini-web");
   });
+
+  test("8. Bóc tách và phân tích strict response từ khối Markdown của Gemini Web", () => {
+    const { ensureMarkdownTransportFence } = require("../src/adapters/gemini-web/gemini-browser-worker");
+    const { parseStrictM365Response } = require("../src/adapters/m365-copilot/translation/strict-response-parser");
+
+    // Giả lập raw text trích xuất từ thẻ code của Gemini Web
+    const geminiCodeBlockContent = `<webResponse>
+Chào bạn! Mình đã sẵn sàng đồng hành cùng bạn trong dự án này. 
+
+Hiện tại mình chưa nhận được thông tin về mã nguồn hay tác vụ cụ thể cần thực hiện. Bạn muốn bắt đầu từ bước nào (khảo sát cấu trúc thư mục, kiểm tra file cấu hình, hay xử lý một tính năng/bug cụ thể)? Cứ gửi yêu cầu để chúng ta cùng bắt tay vào làm nhé!
+</webResponse>`;
+
+    const wrapped = ensureMarkdownTransportFence(geminiCodeBlockContent);
+    expect(wrapped.startsWith("````markdown")).toBe(true);
+    expect(wrapped.endsWith("````")).toBe(true);
+
+    const parsed = parseStrictM365Response(wrapped);
+    expect(parsed.kind).toBe("final_answer");
+    if (parsed.kind === "final_answer") {
+      expect(parsed.content).toContain("Chào bạn! Mình đã sẵn sàng đồng hành cùng bạn trong dự án này.");
+      // Đã bóc sạch không còn thẻ <webResponse>
+      expect(parsed.content).not.toContain("<webResponse>");
+      expect(parsed.content).not.toContain("</webResponse>");
+    }
+
+    // Giả lập tool call qua strict-parser
+    const geminiToolContent = `<webResponse>
+<tool_call>
+{"name": "read_file", "arguments": {"path": "package.json"}}
+</tool_call>
+</webResponse>`;
+
+    const toolWrapped = ensureMarkdownTransportFence(geminiToolContent);
+    const parsedTool = parseStrictM365Response(toolWrapped);
+    expect(parsedTool.kind).toBe("tool_calls");
+    if (parsedTool.kind === "tool_calls") {
+      expect(parsedTool.calls).toHaveLength(1);
+      expect(parsedTool.calls[0].name).toBe("read_file");
+      expect(parsedTool.calls[0].arguments).toEqual({ path: "package.json" });
+    }
+  });
 });
