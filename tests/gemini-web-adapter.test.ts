@@ -162,4 +162,30 @@ Hiện tại mình chưa nhận được thông tin về mã nguồn hay tác v�
       expect(parsedTool.calls[0].arguments).toEqual({ path: "package.json" });
     }
   });
+
+  test("9. Chuẩn hóa alias execute_command sang exec_command và map tool thành công", () => {
+    const { normalizeM365ToolArguments } = require("../src/adapters/m365-copilot/tools/argument-normalizer");
+    const { validateM365ToolCall } = require("../src/adapters/m365-copilot/tools/tool-validator");
+    const { M365ToolBridge } = require("../src/adapters/m365-copilot/tools/tool-bridge");
+
+    // Case người dùng báo: Gemini gọi execute_command với argument command
+    const rawCall = {
+      name: "execute_command",
+      arguments: { command: "find . -maxdepth 2 -not -path '*/.*' -not -path './node_modules*'" },
+    };
+
+    const normalized = normalizeM365ToolArguments(rawCall.name, rawCall.arguments);
+    expect(normalized.name).toBe("exec_command");
+    expect(normalized.arguments.cmd).toBe("find . -maxdepth 2 -not -path '*/.*' -not -path './node_modules*'");
+
+    const clientTools = [{ name: "exec_command", description: "Run CLI command", parameters: {} }];
+    const validation = validateM365ToolCall(normalized.name, normalized.arguments, clientTools as any);
+    expect(validation.ok).toBe(true);
+
+    const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools as any);
+    expect(mapped.name).toBe("exec_command");
+    const mappedArgs = JSON.parse(mapped.arguments);
+    expect(mappedArgs.cmd).toBe("find . -maxdepth 2 -not -path '*/.*' -not -path './node_modules*'");
+  });
 });
+

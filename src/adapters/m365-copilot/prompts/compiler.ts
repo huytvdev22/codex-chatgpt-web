@@ -6,6 +6,7 @@ import {
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
   M365_IMAGE_ATTACHMENT_HINT,
+  buildUnifiedToolProtocol,
   UNIFIED_TOOL_PROTOCOL as UNIFIED_TOOL_PROTOCOL_TEMPLATE,
   MINIMAL_TOOL_PROTOCOL as MINIMAL_TOOL_PROTOCOL_TEMPLATE,
   SHORT_OUTPUT_FORMAT_ANCHOR,
@@ -431,6 +432,7 @@ export interface PromptCompileInput {
   isPlanMode?: boolean;
   isImplementingPlan?: boolean;
   isNewConversation?: boolean;
+  assistantName?: string;
 }
 
 export interface PromptCompileResult {
@@ -553,9 +555,11 @@ export function isImplementingPlanRequest(parsed?: CodexParsedRequest): boolean 
  * Ghi nhận log: planMode, collaborationMode, finalPromptLength.
  */
 export class M365PromptCompiler {
+  constructor(readonly options?: { assistantName?: string }) {}
+
   /**
- * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
- */
+   * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
+   */
   compile(input: PromptCompileInput): PromptCompileResult {
     const { normalized, parsed } = input;
 
@@ -656,6 +660,9 @@ export class M365PromptCompiler {
         r.output.includes("Command failed:")
     );
 
+    const assistantName = input.assistantName || this.options?.assistantName || "Copilot";
+    const fullToolProtocol = buildUnifiedToolProtocol(assistantName);
+
     // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
     const scenarioResult = conversationScenarioBuilder.buildTurnPrompt({
       isNewConversation,
@@ -663,7 +670,7 @@ export class M365PromptCompiler {
       isImplementingPlan,
       hasToolResults,
       hasToolErrors,
-      fullToolProtocol: UNIFIED_TOOL_PROTOCOL_TEMPLATE,
+      fullToolProtocol,
       actionContractText,
       environmentText,
       developerRulesText,

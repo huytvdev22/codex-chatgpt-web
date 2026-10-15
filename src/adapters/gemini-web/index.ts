@@ -7,6 +7,7 @@ import {
   buildShortOutputFormatAnchor,
   TOOL_REMINDER_PROMPT,
   buildM365FormatRetryPrompt,
+  M365PromptCompiler,
 } from "../m365-copilot/prompts";
 import { resolveGeminiReasoningEffort } from "../../gemini-models";
 import {
@@ -16,7 +17,12 @@ import {
 import {
   normalizeM365ToolArguments,
   validateM365ToolCall,
+  M365ToolBridge,
 } from "../m365-copilot/tools";
+import {
+  CodexRawPayload,
+  CodexPayloadNormalizer,
+} from "../m365-copilot/normalization";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -94,30 +100,21 @@ export class GeminiWebAdapter implements ProviderAdapter {
   }
 
   /**
-   * Biên dịch prompt gửi sang Gemini Web từ request của Codex
+   * Biên dịch prompt gửi sang Gemini Web từ request của Codex, sử dụng pipeline
+   * chuẩn hóa đầy đủ: kèm Available Tools Declarations, trailing tool results,
+   * environment context và format anchor thống nhất.
    */
-  private compilePrompt(parsed: CodexParsedRequest): string {
-    const sections: string[] = [];
-    const isNew = !parsed.context.messages?.some(m => m.role === "assistant");
-
-    // 1. Thỏa thuận giao thức nếu là phiên mới (truyền tên Gemini vào, dùng webResponse chuẩn)
-    if (isNew) {
-      sections.push(buildUnifiedToolProtocol("Gemini"));
-    } else {
-      sections.push(TOOL_REMINDER_PROMPT);
-    }
-
-    // 2. Nội dung trao đổi từ người dùng
-    const userMsgs = (parsed.context.messages || [])
-      .filter(m => m.role === "user")
-      .map(m => typeof m.content === "string" ? m.content : JSON.stringify(m.content));
-
-    if (userMsgs.length > 0) {
-      sections.push(`[Yêu cầu của mình]:\n${userMsgs[userMsgs.length - 1]}`);
-    }
-
-    sections.push(buildShortOutputFormatAnchor());
-    return sections.filter(Boolean).join("\n\n");
+  private compilePrompt(parsed: CodexParsedRequest, isNewConversation: boolean): string {
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+    const normalized = CodexPayloadNormalizer.normalize(rawPayload);
+    const compiler = new M365PromptCompiler({ assistantName: "Gemini" });
+    const compileResult = compiler.compile({
+      normalized,
+      parsed,
+      isNewConversation,
+      assistantName: "Gemini",
+    });
+    return compileResult.finalPrompt;
   }
 
   /**
@@ -159,7 +156,9 @@ export class GeminiWebAdapter implements ProviderAdapter {
       page = await this.ensureLocalBrowserPage();
     }
 
-    const initialPrompt = this.compilePrompt(parsed);
+    const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
+    const isNewConversation = !hasPriorAssistantReply;
+    const initialPrompt = this.compilePrompt(parsed, isNewConversation);
     const reasoningEffort = resolveGeminiReasoningEffort(parsed.modelId, parsed.options.reasoning);
 
     console.log(`[gemini-adapter] Bắt đầu lượt gửi cho model: ${parsed.modelId}, cấp độ tư duy: ${reasoningEffort || "mặc định"}`);
@@ -242,16 +241,18 @@ export class GeminiWebAdapter implements ProviderAdapter {
         });
       } else if (protocolResult.kind === "tool_calls") {
         console.log(`[gemini-adapter] Phát hiện ${protocolResult.calls.length} tool calls hợp lệ.`);
-        for (const call of protocolResult.calls) {
-          const callId = call.id || `call_gemini_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const clientTools = parsed.context.tools || [];
+        for (const rawCall of protocolResult.calls) {
+          const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools);
+          const callId = rawCall.id || `call_gemini_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           emit({
             type: "tool_call_start",
             id: callId,
-            name: call.name,
+            name: mapped.name,
           });
           emit({
             type: "tool_call_delta",
-            arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
+            arguments: typeof mapped.arguments === "string" ? mapped.arguments : JSON.stringify(mapped.arguments),
           });
           emit({
             type: "tool_call_end",

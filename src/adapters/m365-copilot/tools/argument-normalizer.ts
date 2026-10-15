@@ -6,6 +6,15 @@ const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
   gitstatus: "git_status",
   gitdiff: "git_diff",
   execcommand: "exec_command",
+  execute_command: "exec_command",
+  executecommand: "exec_command",
+  run_command: "exec_command",
+  runcommand: "exec_command",
+  run_cmd: "exec_command",
+  runcmd: "exec_command",
+  bash: "exec_command",
+  shell: "exec_command",
+  terminal: "exec_command",
   applypatch: "apply_patch",
   writefile: "write_file",
   requestuserinput: "request_user_input",
@@ -17,8 +26,10 @@ export interface NormalizedToolArguments {
 }
 
 export function normalizeM365ToolName(name: string): string {
-  const withoutNamespace = name.startsWith("functions.") ? name.slice("functions.".length) : name;
-  return TOOL_NAME_ALIASES[withoutNamespace] || withoutNamespace;
+  const raw = name.trim();
+  const withoutNamespace = raw.startsWith("functions.") ? raw.slice("functions.".length) : raw;
+  const lower = withoutNamespace.toLowerCase();
+  return TOOL_NAME_ALIASES[lower] || TOOL_NAME_ALIASES[withoutNamespace] || withoutNamespace;
 }
 
 function parseArguments(argumentsValue: Record<string, unknown> | string): Record<string, unknown> {
