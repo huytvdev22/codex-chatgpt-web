@@ -5,6 +5,9 @@ import {
   IMPLEMENT_PLAN_CONTINUATION_PROMPT,
   TOOL_REMINDER_PROMPT,
   TOOL_ERROR_FEEDBACK_PROMPT,
+  PLAN_USER_INPUT_ANSWER_PROMPT,
+  USER_INPUT_ANSWER_PROMPT,
+  PLAN_SURVEY_CONTINUATION_PROMPT,
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   PURE_CONVERSATION_ANCHOR,
@@ -17,6 +20,9 @@ import {
 export type ConversationScenario =
   | "FIRST_HANDSHAKE"             // Turn 1: Khởi tạo phiên mới toanh, giới thiệu script cầu nối
   | "PLAN_INITIATION"            // Turn bật /plan (chưa có kết quả tool)
+  | "PLAN_SURVEY_CONTINUATION"   // Turn tiếp theo trong Plan Mode có kết quả tool khảo sát đọc file
+  | "PLAN_USER_INPUT_ANSWER"     // Turn người dùng vừa trả lời wizard request_user_input trong Plan Mode
+  | "USER_INPUT_ANSWER"          // Turn người dùng vừa trả lời wizard request_user_input trong Default Mode
   | "PLAN_KICKOFF"               // Turn 1 vừa bấm nút duyệt plan (chưa có kết quả tool)
   | "PLAN_CONTINUATION"          // Turn 2+ đang làm tiếp các bước của plan (có kết quả tool trước)
   | "TOOL_RESULT_CONTINUATION"   // Lượt nhận kết quả công cụ thông thường thành công
@@ -29,6 +35,8 @@ export interface ScenarioBuilderInput {
   isImplementingPlan: boolean;
   hasToolResults: boolean;
   hasToolErrors?: boolean;
+  hasUserInputAnswer?: boolean;
+  userInputAnswersText?: string;
 
   // Dữ liệu nội dung các khối
   fullToolProtocol?: string;
@@ -57,6 +65,7 @@ export function detectConversationScenario(input: {
   isImplementingPlan: boolean;
   hasToolResults: boolean;
   hasToolErrors?: boolean;
+  hasUserInputAnswer?: boolean;
 }): ConversationScenario {
   if (input.isNewConversation) {
     return "FIRST_HANDSHAKE";
@@ -66,8 +75,12 @@ export function detectConversationScenario(input: {
     return input.hasToolResults ? "PLAN_CONTINUATION" : "PLAN_KICKOFF";
   }
 
+  if (input.hasUserInputAnswer) {
+    return input.isPlanMode ? "PLAN_USER_INPUT_ANSWER" : "USER_INPUT_ANSWER";
+  }
+
   if (input.isPlanMode) {
-    return "PLAN_INITIATION";
+    return input.hasToolResults ? "PLAN_SURVEY_CONTINUATION" : "PLAN_INITIATION";
   }
 
   if (input.hasToolResults) {
@@ -90,6 +103,7 @@ export class ConversationScenarioBuilder {
       isImplementingPlan: input.isImplementingPlan,
       hasToolResults: input.hasToolResults,
       hasToolErrors: input.hasToolErrors,
+      hasUserInputAnswer: input.hasUserInputAnswer,
     });
 
     const sections: string[] = [];
@@ -127,6 +141,56 @@ export class ConversationScenarioBuilder {
           input.isPlanMode ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR : SHORT_OUTPUT_FORMAT_ANCHOR
         );
         sections.push(taskBlocks.join("\n\n"));
+        break;
+      }
+
+      case "PLAN_USER_INPUT_ANSWER": {
+        // Lượt người dùng vừa chọn phương án từ wizard request_user_input trong Plan Mode
+        const answers = input.userInputAnswersText ? `\n\n${input.userInputAnswersText}` : "";
+        openingSection = `${PLAN_USER_INPUT_ANSWER_PROMPT}${answers}\n\nBạn dựa trên các lựa chọn này của mình cùng kết quả khảo sát để tổng hợp và xuất bản bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt cho mình duyệt nhé!`.trim();
+        sections.push(openingSection);
+
+        if (input.environmentText) sections.push(input.environmentText);
+        sections.push(input.actionContractText);
+
+        if (input.toolResultsText) sections.push(input.toolResultsText);
+        if (input.userInstructionText) sections.push(input.userInstructionText);
+        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+
+        sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
+        break;
+      }
+
+      case "USER_INPUT_ANSWER": {
+        // Lượt người dùng vừa trả lời wizard trong Default Mode
+        const answers = input.userInputAnswersText ? `\n\n${input.userInputAnswersText}` : "";
+        openingSection = `${USER_INPUT_ANSWER_PROMPT}${answers}`.trim();
+        sections.push(openingSection);
+
+        if (input.environmentText) sections.push(input.environmentText);
+        sections.push(input.actionContractText);
+
+        if (input.toolResultsText) sections.push(input.toolResultsText);
+        if (input.userInstructionText) sections.push(input.userInstructionText);
+        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+
+        sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
+        break;
+      }
+
+      case "PLAN_SURVEY_CONTINUATION": {
+        // Turn tiếp theo trong Plan Mode (đã có kết quả đọc file khảo sát từ bước trước)
+        openingSection = PLAN_SURVEY_CONTINUATION_PROMPT;
+        sections.push(openingSection);
+
+        if (input.environmentText) sections.push(input.environmentText);
+        sections.push(input.actionContractText);
+
+        if (input.toolResultsText) sections.push(input.toolResultsText);
+        if (input.userInstructionText) sections.push(input.userInstructionText);
+        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+
+        sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
         break;
       }
 

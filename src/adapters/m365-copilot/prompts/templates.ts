@@ -205,6 +205,68 @@ export const TOOL_ERROR_FEEDBACK_PROMPT = `Bạn ơi, lệnh hoặc công cụ v
 Bạn xem lại nguyên nhân lỗi rồi xuất lệnh kiểm tra hoặc xuất khối <custom_tool_call name="apply_patch"> sửa lại giúp mình nha!`;
 
 /**
+ * Lời nhắc khi người dùng vừa trả lời wizard khảo sát trong Plan Mode
+ */
+export const PLAN_USER_INPUT_ANSWER_PROMPT = `[MÌNH ĐÃ CHỌN XONG CÁC PHƯƠNG ÁN - BẮT ĐẦU XUẤT BẢN KẾ HOẠCH]
+Cảm ơn bạn đã hỏi ý kiến! Mình vừa hoàn thành chọn các phương án trên wizard giao diện rồi nhé. Dưới đây là các lựa chọn cụ thể của mình:`;
+
+/**
+ * Lời nhắc khi người dùng trả lời câu hỏi trong Default Mode
+ */
+export const USER_INPUT_ANSWER_PROMPT = `[CÂU TRẢ LỜI CỦA MÌNH CHO CÂU HỎI CỦA BẠN]
+Mình gửi bạn các câu trả lời / phương án mình đã chọn qua hộp thoại giao diện:`;
+
+/**
+ * Lời nhắc khi đang khảo sát mã nguồn trong Plan Mode (nhận kết quả đọc file/chạy lệnh)
+ */
+export const PLAN_SURVEY_CONTINUATION_PROMPT = `[KẾT QUẢ KHẢO SÁT MÃ NGUỒN - PLAN MODE]
+Mình gửi bạn kết quả đọc file / khảo sát lệnh trên máy trong thẻ <tool_result> bên dưới nhé.
+Lưu ý là tụi mình vẫn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE) nên chưa sửa code (chưa dùng apply_patch/write_file).
+- Nếu cần khảo sát tiếp: Bạn cứ xuất khối công cụ đọc file (read_file, list_dir, grep_code) hoặc chạy lệnh kiểm tra.
+- Nếu cần mình chốt phương án thiết kế: Hãy gọi request_user_input để mở wizard cho mình chọn.
+- Nếu đã đủ thông tin: Bạn xuất bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt để mình duyệt nhé!`;
+
+/**
+ * Bóc tách và định dạng đẹp câu trả lời của người dùng từ wizard request_user_input
+ */
+export function formatUserInputAnswers(rawOutput: string): string {
+  let data: any;
+  try {
+    data = typeof rawOutput === "string" ? JSON.parse(rawOutput) : rawOutput;
+  } catch {
+    return rawOutput.trim();
+  }
+
+  if (!data || typeof data !== "object") {
+    return String(rawOutput).trim();
+  }
+
+  const answersObj = data.answers && typeof data.answers === "object" ? data.answers : data;
+
+  if (Array.isArray(answersObj)) {
+    const lines = answersObj.map((item, idx) => {
+      if (typeof item !== "object" || item === null) return `- Lựa chọn ${idx + 1}: ${item}`;
+      const label = item.header || item.question || item.id || `Câu hỏi ${idx + 1}`;
+      const val = item.answer || item.label || item.value || JSON.stringify(item);
+      return `- **${label}**: ${val}`;
+    });
+    return lines.join("\n");
+  }
+
+  const entries = Object.entries(answersObj);
+  if (entries.length === 0) {
+    return String(rawOutput).trim();
+  }
+
+  const lines = entries.map(([key, val]) => {
+    const displayVal = typeof val === "object" && val !== null ? JSON.stringify(val) : String(val);
+    return `- **${key}**: ${displayVal}`;
+  });
+
+  return lines.join("\n");
+}
+
+/**
  * Lời nhắc định dạng nhẹ nhàng cho các lượt đàm thoại / hỏi đáp bình thường hàng ngày
  */
 export function buildPureConversationAnchor(): string {

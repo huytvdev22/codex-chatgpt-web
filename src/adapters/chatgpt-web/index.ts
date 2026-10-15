@@ -31,8 +31,17 @@ import {
   readLauncherBrowserHostDescriptor,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { getConfigDir } from "../../config";
+import { getConfigDir, loadConfig } from "../../config";
 import { processRunning } from "../../process";
+import {
+  ChatGptConversationStore,
+  defaultChatGptConversationStore,
+  chatGptConversationKey,
+  parseChatGptConversationId,
+  resolveChatGptTargetUrl,
+  CHATGPT_HOME_URL,
+  CHATGPT_TEMPORARY_CHAT_URL,
+} from "./conversation-store";
 
 export function resolveChatGptEffort(
   _modelId: string,
@@ -53,6 +62,8 @@ export interface ChatGptAdapterOptions {
   headless?: boolean;
   descriptorPath?: string;
   maxFormatRetries?: number;
+  useSavedChats?: boolean;
+  conversationStore?: ChatGptConversationStore;
   [key: string]: any;
 }
 
@@ -70,13 +81,16 @@ export class ChatGptWebAdapter implements ProviderAdapter {
   readonly name = "chatgpt-web";
   private browserContext: BrowserContext | null = null;
   private activePage: Page | null = null;
+  readonly conversationStore: ChatGptConversationStore;
 
-  constructor(private options: ChatGptAdapterOptions = {}) {}
+  constructor(private options: ChatGptAdapterOptions = {}) {
+    this.conversationStore = options.conversationStore || defaultChatGptConversationStore;
+  }
 
   /**
    * Tạo Chrome context local khi Launcher không chạy
    */
-  private async ensureLocalBrowserPage(): Promise<Page> {
+  private async ensureLocalBrowserPage(useSavedChats = false): Promise<Page> {
     if (this.activePage && !this.activePage.isClosed()) {
       return this.activePage;
     }
@@ -98,7 +112,8 @@ export class ChatGptWebAdapter implements ProviderAdapter {
 
     const pages = this.browserContext.pages();
     this.activePage = pages[0] || (await this.browserContext.newPage());
-    await this.activePage.goto(this.options.customSelectors?.appUrl || CHATGPT_SELECTORS.appUrl);
+    const initialUrl = useSavedChats ? CHATGPT_HOME_URL : CHATGPT_TEMPORARY_CHAT_URL;
+    await this.activePage.goto(this.options.customSelectors?.appUrl || initialUrl);
     return this.activePage;
   }
 
@@ -156,8 +171,60 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       }
     }
 
+    // Xác định chế độ Saved Chats vs Temporary Chats
+    let useSavedChats = false;
+    try {
+      const cfg = loadConfig();
+      useSavedChats = cfg.useSavedChats === true;
+    } catch {}
+    if (this.options.useSavedChats !== undefined) {
+      useSavedChats = Boolean(this.options.useSavedChats);
+    }
+
+    const rawConversationKey =
+      incoming.headers.get("x-codex-conversation-key") ||
+      CodexRawPayload.from(parsed._rawBody || parsed).getThreadId() ||
+      undefined;
+    const conversationKey = chatGptConversationKey(parsed, rawConversationKey);
+
     if (!page) {
-      page = await this.ensureLocalBrowserPage();
+      page = await this.ensureLocalBrowserPage(useSavedChats);
+    }
+
+    // Điều hướng tới đúng URL cuộc trò chuyện (Saved Chat cũ hoặc Temporary Chat)
+    try {
+      const target = resolveChatGptTargetUrl({
+        conversationKey,
+        useSavedChats,
+        store: this.conversationStore,
+      });
+
+      const currentUrl = page.url();
+      const currentConvId = parseChatGptConversationId(currentUrl);
+
+      if (useSavedChats) {
+        if (target.conversationId) {
+          // Đoạn chat cũ đã lưu: nếu chưa ở đúng URL thì điều hướng tới
+          if (currentConvId !== target.conversationId) {
+            console.log(`[chatgpt-adapter] Mở cuộc trò chuyện cũ: ${target.url} (conversationId=${target.conversationId})`);
+            await page.goto(target.url, { waitUntil: "commit" });
+          }
+        } else {
+          // Cuộc trò chuyện mới: nếu page đang ở trong một chat cũ khác thì quay về trang chủ để mở chat mới
+          if (currentConvId || !currentUrl.includes("chatgpt.com")) {
+            console.log(`[chatgpt-adapter] Mở trang chủ để tạo đoạn chat mới: ${CHATGPT_HOME_URL}`);
+            await page.goto(CHATGPT_HOME_URL, { waitUntil: "commit" });
+          }
+        }
+      } else {
+        // Chế độ cuộc trò chuyện tạm thời
+        if (!currentUrl.includes("temporary-chat=true")) {
+          console.log(`[chatgpt-adapter] Chuyển sang chế độ cuộc trò chuyện tạm thời: ${CHATGPT_TEMPORARY_CHAT_URL}`);
+          await page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "commit" });
+        }
+      }
+    } catch (navErr) {
+      console.warn(`[chatgpt-adapter] Cảnh báo khi kiểm tra URL: ${navErr instanceof Error ? navErr.message : String(navErr)}`);
     }
 
     const hasPriorAssistantReply = (parsed.context.messages || []).some((m) => m.role === "assistant");
@@ -235,6 +302,20 @@ export class ChatGptWebAdapter implements ProviderAdapter {
 
       if (!protocolResult || protocolResult.kind === "protocol_error") {
         throw new Error("[ChatGpt Format Error] Không nhận được response protocol hợp lệ.");
+      }
+
+      // Lưu lại Conversation ID nếu đang ở chế độ Saved Chats
+      if (useSavedChats && conversationKey) {
+        try {
+          const finalUrl = page.url();
+          const newConvId = parseChatGptConversationId(finalUrl);
+          if (newConvId) {
+            this.conversationStore.bind(conversationKey, newConvId);
+            console.log(`[chatgpt-adapter] Đã lưu liên kết conversationKey (${conversationKey.slice(0, 8)}...) với ChatGPT id: ${newConvId}`);
+          }
+        } catch (bindErr) {
+          console.warn(`[chatgpt-adapter] Cảnh báo khi lưu binding: ${bindErr instanceof Error ? bindErr.message : String(bindErr)}`);
+        }
       }
 
       // Phát sự kiện ra Codex

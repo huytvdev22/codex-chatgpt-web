@@ -40,7 +40,7 @@ describe("ChatGPT Web Adapter Base Architecture Tests", () => {
     expect(routes.length).toBeGreaterThanOrEqual(3);
     const proRoute = routes.find(r => r.slug === "chatgpt-web/gpt-5.6-pro");
     expect(proRoute).toBeDefined();
-    expect(proRoute?.modelFamily).toBe("5.6");
+    expect((proRoute as any)?.modelFamily).toBe("5.6");
   });
 
   test("3. resolveChatGptEffort phân giải chính xác reasoning effort", () => {

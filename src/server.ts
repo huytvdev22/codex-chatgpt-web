@@ -8,6 +8,8 @@ import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import http from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 export interface UniversalServer {
   port: number;
@@ -915,6 +917,17 @@ async function handleChatGptResponseRequest(
   return Response.json(json);
 }
 
+function dumpRawCodexRequest(raw: unknown): void {
+  try {
+    const rawDumpDir = join(process.cwd(), "scratch", ".chatgpt");
+    if (!existsSync(rawDumpDir)) mkdirSync(rawDumpDir, { recursive: true });
+    writeFileSync(join(rawDumpDir, "codex-raw.txt"), JSON.stringify(raw, null, 2), "utf8");
+    console.log(`[codex-raw-dump] Đã ghi log request thô vào scratch/.chatgpt/codex-raw.txt`);
+  } catch (err) {
+    console.warn(`[codex-raw-dump] Không thể ghi log raw request: ${err}`);
+  }
+}
+
 export async function responseRequest(
   req: Request,
   config: AppConfig,
@@ -925,6 +938,7 @@ export async function responseRequest(
   let raw: unknown;
   try {
     raw = await readJsonRequestBody(req);
+    dumpRawCodexRequest(raw);
   } catch (error) {
     return formatErrorResponse(
       400,

@@ -369,9 +369,14 @@ async function setupCommand(args: string[]): Promise<void> {
     }
   }
 
+  if (options.useSavedChats === undefined && stdin.isTTY && stdout.isTTY) {
+    options.useSavedChats = await confirm("Bật lưu cuộc trò chuyện trong lịch sử ChatGPT (Saved Chats) để map đúng đoạn chat cũ thay vì cuộc trò chuyện tạm thời?");
+  }
+
   const result = await setup(options);
   stdout.write(`Setup complete: ${result.mode}\n`);
   stdout.write(`Config: ${result.configPath}\n`);
+  stdout.write(`Chat mode: ${options.useSavedChats ? "Saved chats (lưu lịch sử và map đúng đoạn chat cũ)" : "Temporary chats (cuộc trò chuyện tạm thời)"}\n`);
   if (result.connectorSetupRequired) {
     stdout.write("One account-level step remains: attach the tunnel to the ChatGPT connector named in config.\n");
     stdout.write("Open: https://chatgpt.com/#settings/Plugins\n");

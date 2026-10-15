@@ -220,4 +220,85 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
     const normalInstruction = "Luôn viết mã nguồn bằng TypeScript với strict typing.";
     expect(sanitizeCodexInstructions(normalInstruction)).toBe(normalInstruction);
   });
+
+  test("9. Kịch bản PLAN_USER_INPUT_ANSWER: Nhận các lựa chọn của wizard và đưa vào prompt xuất bản plan", () => {
+    const rawAnswers = JSON.stringify({
+      features: "Todo đầy đủ (Recommended)",
+      design: "Modern Minimal (Recommended)",
+      storage: "LocalStorage (Recommended)",
+    });
+
+    const res = promptCompiler.compile({
+      normalized: {
+        ...baseNormalized,
+        collaborationMode: "plan",
+        trailingToolResults: [
+          {
+            callId: "call_wizard_1",
+            toolName: "request_user_input",
+            output: rawAnswers,
+          },
+        ],
+        latestUserInstruction: "lên plan làm 1 trang web todo bằng html, js, css nhé .",
+      },
+      parsed: { ...baseParsed },
+      isNewConversation: false,
+    });
+
+    expect(res.finalPrompt).toContain("[MÌNH ĐÃ CHỌN XONG CÁC PHƯƠNG ÁN - BẮT ĐẦU XUẤT BẢN KẾ HOẠCH]");
+    expect(res.finalPrompt).toContain("- **features**: Todo đầy đủ (Recommended)");
+    expect(res.finalPrompt).toContain("- **design**: Modern Minimal (Recommended)");
+    expect(res.finalPrompt).toContain("- **storage**: LocalStorage (Recommended)");
+    expect(res.finalPrompt).toContain("<proposed_plan>");
+    expect(res.finalPrompt).toContain("lên plan làm 1 trang web todo bằng html, js, css nhé .");
+  });
+
+  test("10. Kịch bản PLAN_SURVEY_CONTINUATION: Bảo toàn kết quả đọc file khảo sát trong Plan Mode", () => {
+    const res = promptCompiler.compile({
+      normalized: {
+        ...baseNormalized,
+        collaborationMode: "plan",
+        trailingToolResults: [
+          {
+            callId: "call_read_1",
+            toolName: "read_file",
+            output: "package.json content: { name: 'todo-app' }",
+          },
+        ],
+        latestUserInstruction: "lên plan làm 1 trang web todo",
+      },
+      parsed: { ...baseParsed },
+      isNewConversation: false,
+    });
+
+    expect(res.finalPrompt).toContain("[KẾT QUẢ KHẢO SÁT MÃ NGUỒN - PLAN MODE]");
+    expect(res.finalPrompt).toContain("package.json content: { name: 'todo-app' }");
+    expect(res.finalPrompt).toContain("<proposed_plan>");
+  });
+
+  test("11. Kịch bản USER_INPUT_ANSWER: Trả lời câu hỏi wizard trong Default Mode", () => {
+    const rawAnswers = JSON.stringify({
+      confirm: "Đồng ý triển khai",
+    });
+
+    const res = promptCompiler.compile({
+      normalized: {
+        ...baseNormalized,
+        collaborationMode: "default",
+        trailingToolResults: [
+          {
+            callId: "call_user_input_2",
+            toolName: "request_user_input",
+            output: rawAnswers,
+          },
+        ],
+        latestUserInstruction: "tiếp tục",
+      },
+      parsed: { ...baseParsed },
+      isNewConversation: false,
+    });
+
+    expect(res.finalPrompt).toContain("[CÂU TRẢ LỜI CỦA MÌNH CHO CÂU HỎI CỦA BẠN]");
+    expect(res.finalPrompt).toContain("- **confirm**: Đồng ý triển khai");
+  });
 });

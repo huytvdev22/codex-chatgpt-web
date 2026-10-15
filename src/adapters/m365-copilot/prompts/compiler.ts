@@ -11,6 +11,7 @@ import {
   MINIMAL_TOOL_PROTOCOL as MINIMAL_TOOL_PROTOCOL_TEMPLATE,
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
+  formatUserInputAnswers,
 } from "./templates";
 import { conversationScenarioBuilder } from "./conversation-scenario-builder";
 
@@ -660,6 +661,32 @@ export class M365PromptCompiler {
         r.output.includes("Command failed:")
     );
 
+    // Nhận diện xem có kết quả trả lời của request_user_input hay không
+    const userInputToolResult = normalized.trailingToolResults.find(res => {
+      if (res.toolName === "request_user_input" || res.callId.toLowerCase().includes("request_user_input")) {
+        return true;
+      }
+      try {
+        const raw = typeof res.output === "string" ? res.output.trim() : "";
+        if (raw.startsWith("{") && raw.endsWith("}")) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.answers || parsed.questions || parsed.responses) return true;
+            const values = Object.values(parsed);
+            if (values.length > 0 && values.every(v => typeof v === "string" || typeof v === "number" || typeof v === "boolean")) {
+              if (raw.includes("Recommended") || raw.includes("label") || raw.includes("id")) return true;
+            }
+          }
+        }
+      } catch {}
+      return false;
+    });
+
+    const hasUserInputAnswer = Boolean(userInputToolResult);
+    const userInputAnswersText = userInputToolResult
+      ? formatUserInputAnswers(userInputToolResult.output)
+      : undefined;
+
     const assistantName = input.assistantName || this.options?.assistantName || "Copilot";
     const fullToolProtocol = buildUnifiedToolProtocol(assistantName);
 
@@ -670,6 +697,8 @@ export class M365PromptCompiler {
       isImplementingPlan,
       hasToolResults,
       hasToolErrors,
+      hasUserInputAnswer,
+      userInputAnswersText,
       fullToolProtocol,
       actionContractText,
       environmentText,
