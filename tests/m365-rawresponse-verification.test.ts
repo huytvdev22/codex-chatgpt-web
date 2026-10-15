@@ -75,8 +75,8 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
 
       expect(result.message).toContain("Phản hồi không có root response envelope hợp lệ nhưng chứa reserved control marker.");
-      expect(result.message).toContain("Các cú pháp điều khiển được phát hiện trong phản hồi: <custom_tool_call name=\"apply_patch\">, *** Begin Patch, <m365Response>.");
-      expect(result.message).toContain("Chẩn đoán lỗi: Bạn đã mở thẻ <m365Response> nhưng THIẾU thẻ đóng </m365Response> ở cuối phản hồi.");
+      expect(result.message).toContain("Các cú pháp điều khiển được phát hiện trong phản hồi: <custom_tool_call name=\"apply_patch\">, *** Begin Patch, <webResponse>.");
+      expect(result.message).toContain("Chẩn đoán lỗi: Bạn đã mở thẻ <webResponse> nhưng THIẾU thẻ đóng </webResponse> ở cuối phản hồi.");
 
       const retryPrompt = buildM365FormatRetryPrompt({
         code: result.code,
@@ -88,7 +88,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
     }
   });
 
-  test("khi phản hồi thiếu thẻ đóng </m365Response> nhưng có đủ patch: vẫn kích hoạt MISSING_RESPONSE_ENVELOPE", () => {
+  test("khi phản hồi thiếu thẻ đóng </webResponse> nhưng có đủ patch: vẫn kích hoạt MISSING_RESPONSE_ENVELOPE", () => {
     if (!rawContent) return;
     const lines = rawContent.split("\n");
     const missingClosingRoot = lines.slice(0, lines.length - 1).join("\n");
@@ -101,7 +101,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
       expect(result.message).toContain("</custom_tool_call>");
       expect(result.message).toContain("*** Begin Patch");
       expect(result.message).toContain("*** End Patch");
-      expect(result.message).toContain("<m365Response>");
+      expect(result.message).toContain("<webResponse>");
     }
   });
 });

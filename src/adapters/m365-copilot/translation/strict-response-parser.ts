@@ -37,8 +37,10 @@ export type StrictM365ResponseResult =
     rawResponse: string;
   };
 
-const ROOT_OPEN = "<m365Response>";
-const ROOT_CLOSE = "</m365Response>";
+const ROOT_OPEN = "<webResponse>";
+const ROOT_CLOSE = "</webResponse>";
+const LEGACY_ROOT_OPEN = "<m365Response>";
+const LEGACY_ROOT_CLOSE = "</m365Response>";
 const TOOL_OPEN = "<tool_call>";
 const TOOL_CLOSE = "</tool_call>";
 const PATCH_OPEN = '<custom_tool_call name="apply_patch">';
@@ -141,7 +143,7 @@ function unwrapTransportFence(rawResponse: string): string {
  * Kiểm tra transport wrapper bắt buộc trước khi bóc nội dung.
  *
  * Strict Actions, Tolerant Answers chỉ cho phép final answer bỏ
- * m365Response envelope. Quy tắc này không cho phép bỏ khối
+ * webResponse envelope. Quy tắc này không cho phép bỏ khối
  * 4-backtick markdown bao quanh toàn bộ phản hồi.
  */
 function hasCompleteTransportFence(rawResponse: string): boolean {
@@ -175,8 +177,8 @@ function detectReservedControlMarkers(content: string): ReservedControlMarker[] 
     ["INTERNAL_REASONING_CLOSE", new RegExp("<" + "\\/(?:thought|thinking)\\s*>", "i")],
     ["PATCH_BEGIN", /\*{3}\s*Begin Patch/i],
     ["PATCH_END", /\*{3}\s*End Patch/i],
-    ["ROOT_OPEN", new RegExp("<" + "m365Response\\s*>", "i")],
-    ["ROOT_CLOSE", new RegExp("<" + "\\/m365Response\\s*>", "i")],
+    ["ROOT_OPEN", new RegExp("<" + "(?:webResponse|m365Response)\\s*>", "i")],
+    ["ROOT_CLOSE", new RegExp("<" + "\\/(?:webResponse|m365Response)\\s*>", "i")],
   ];
 
   return markerPatterns
@@ -193,8 +195,8 @@ const MARKER_SYNTAX_LABELS: Record<ReservedControlMarker, string> = {
   INTERNAL_REASONING_CLOSE: "</thought>",
   PATCH_BEGIN: "*** Begin Patch",
   PATCH_END: "*** End Patch",
-  ROOT_OPEN: "<m365Response>",
-  ROOT_CLOSE: "</m365Response>",
+  ROOT_OPEN: "<webResponse>",
+  ROOT_CLOSE: "</webResponse>",
 };
 
 interface MissingEnvelopeDiagnosticContext {
@@ -217,24 +219,24 @@ function buildMissingEnvelopeMessage(
 
   // Chẩn đoán định vị chính xác vị trí sai nếu có ngữ cảnh
   if (context) {
-    const hasRootOpen = context.framed.includes(ROOT_OPEN);
-    const hasRootClose = context.framed.includes(ROOT_CLOSE);
+    const hasRootOpen = context.framed.includes(ROOT_OPEN) || context.framed.includes(LEGACY_ROOT_OPEN);
+    const hasRootClose = context.framed.includes(ROOT_CLOSE) || context.framed.includes(LEGACY_ROOT_CLOSE);
 
     if (hasRootOpen && !hasRootClose) {
       lines.push(
-        "Chẩn đoán lỗi: Bạn đã mở thẻ <m365Response> nhưng THIẾU thẻ đóng </m365Response> ở cuối phản hồi. Thẻ </m365Response> là bắt buộc để khép lại envelope."
+        "Chẩn đoán lỗi: Bạn đã mở thẻ <webResponse> nhưng THIẾU thẻ đóng </webResponse> ở cuối phản hồi. Thẻ </webResponse> là bắt buộc để khép lại envelope."
       );
     } else if (!hasRootOpen && hasRootClose) {
       lines.push(
-        "Chẩn đoán lỗi: Bạn có thẻ đóng </m365Response> nhưng THIẾU thẻ mở <m365Response> ở đầu phản hồi."
+        "Chẩn đoán lỗi: Bạn có thẻ đóng </webResponse> nhưng THIẾU thẻ mở <webResponse> ở đầu phản hồi."
       );
     } else if (hasRootOpen && hasRootClose && (!context.hasOpeningEnvelope || !context.hasClosingEnvelope)) {
       lines.push(
-        "Chẩn đoán lỗi: Phát hiện văn bản/lời dẫn nằm BÊN NGOÀI cặp thẻ <m365Response>...</m365Response>. Thẻ <m365Response> phải là nội dung đầu tiên ngay sau 4 dấu backtick và </m365Response> phải là nội dung cuối cùng trước khi đóng 4 dấu backtick; TUYỆT ĐỐI không chèn câu chào hoặc lời dẫn bên ngoài envelope."
+        "Chẩn đoán lỗi: Phát hiện văn bản/lời dẫn nằm BÊN NGOÀI cặp thẻ <webResponse>...</webResponse>. Thẻ <webResponse> phải là nội dung đầu tiên ngay sau 4 dấu backtick và </webResponse> phải là nội dung cuối cùng trước khi đóng 4 dấu backtick; TUYỆT ĐỐI không chèn câu chào hoặc lời dẫn bên ngoài envelope."
       );
     } else if (!hasRootOpen && !hasRootClose) {
       lines.push(
-        "Chẩn đoán lỗi: Bạn đang xuất cú pháp điều khiển/gọi công cụ nhưng CHƯA BỌC trong cặp thẻ <m365Response>...</m365Response>. Toàn bộ nội dung công cụ bắt buộc phải nằm bên trong đúng một root response envelope."
+        "Chẩn đoán lỗi: Bạn đang xuất cú pháp điều khiển/gọi công cụ nhưng CHƯA BỌC trong cặp thẻ <webResponse>...</webResponse>. Toàn bộ nội dung công cụ bắt buộc phải nằm bên trong đúng một root response envelope."
       );
     }
   }
@@ -257,14 +259,14 @@ function buildMissingEnvelopeMessage(
       "",
       "Mẫu chuẩn bắt buộc khi gọi apply_patch:",
       "````markdown",
-      "<m365Response>",
+      "<webResponse>",
       '<custom_tool_call name="apply_patch">',
       "*** Begin Patch",
       "*** Update File: path/to/file.ext (hoặc *** Add File: path/to/file.ext)",
       "...",
       "*** End Patch",
       "</custom_tool_call>",
-      "</m365Response>",
+      "</webResponse>",
       "````"
     );
   } else if (hasFunctionMarker) {
@@ -272,11 +274,11 @@ function buildMissingEnvelopeMessage(
       "",
       "Mẫu chuẩn bắt buộc khi gọi function tool:",
       "````markdown",
-      "<m365Response>",
+      "<webResponse>",
       "<tool_call>",
       '{"name": "tên_công_cụ", "arguments": {"tham_số": "giá_trị"}}',
       "</tool_call>",
-      "</m365Response>",
+      "</webResponse>",
       "````"
     );
   }
@@ -370,8 +372,15 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
     return protocolError(rawResponse, "EMPTY_RESPONSE", "Phản hồi M365 không được rỗng.");
   }
 
-  const hasOpeningEnvelope = framed.startsWith(ROOT_OPEN);
-  const hasClosingEnvelope = framed.endsWith(ROOT_CLOSE);
+  const matchedRootOpen = framed.startsWith(ROOT_OPEN)
+    ? ROOT_OPEN
+    : (framed.startsWith(LEGACY_ROOT_OPEN) ? LEGACY_ROOT_OPEN : null);
+  const matchedRootClose = framed.endsWith(ROOT_CLOSE)
+    ? ROOT_CLOSE
+    : (framed.endsWith(LEGACY_ROOT_CLOSE) ? LEGACY_ROOT_CLOSE : null);
+
+  const hasOpeningEnvelope = matchedRootOpen !== null;
+  const hasClosingEnvelope = matchedRootClose !== null;
 
   // Strict Actions, Tolerant Answers:
   // - Tool/action responses remain fail-closed and must use the complete root envelope.
@@ -397,8 +406,8 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
         rawResponse,
         "MISSING_TRANSPORT_FENCE",
         [
-          "Final answer của M365 không được bọc trọn trong đúng một khối 4-backtick markdown.",
-          "Final answer được phép bỏ m365Response envelope nhưng transport wrapper vẫn là bắt buộc.",
+          "Final answer của AI không được bọc trọn trong đúng một khối 4-backtick markdown.",
+          "Final answer được phép bỏ webResponse envelope nhưng transport wrapper vẫn là bắt buộc.",
           "Hãy phát lại nguyên phản hồi vừa bị từ chối theo dạng:",
           "````markdown",
           "... toàn bộ final answer Markdown ...",
@@ -415,14 +424,19 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
     };
   }
 
-  const inner = framed.slice(ROOT_OPEN.length, framed.length - ROOT_CLOSE.length);
-  if (inner.includes(ROOT_OPEN) || inner.includes(ROOT_CLOSE)) {
-    return protocolError(rawResponse, "MULTIPLE_RESPONSE_ENVELOPES", "Mỗi lượt chỉ được chứa đúng một m365Response envelope.");
+  const inner = framed.slice(matchedRootOpen.length, framed.length - matchedRootClose.length);
+  if (
+    inner.includes(ROOT_OPEN) ||
+    inner.includes(ROOT_CLOSE) ||
+    inner.includes(LEGACY_ROOT_OPEN) ||
+    inner.includes(LEGACY_ROOT_CLOSE)
+  ) {
+    return protocolError(rawResponse, "MULTIPLE_RESPONSE_ENVELOPES", "Mỗi lượt chỉ được chứa đúng một webResponse envelope.");
   }
 
   const content = inner.trim();
   if (!content) {
-    return protocolError(rawResponse, "EMPTY_RESPONSE", "m365Response không được rỗng.");
+    return protocolError(rawResponse, "EMPTY_RESPONSE", "webResponse không được rỗng.");
   }
   if (/<\/?(?:thought|thinking)\b/i.test(content)) {
     return protocolError(rawResponse, "FORBIDDEN_THOUGHT_BLOCK", "Không được xuất thought/thinking trong response protocol.");

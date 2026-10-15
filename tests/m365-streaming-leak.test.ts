@@ -16,14 +16,14 @@ interface StreamSample {
 const SAMPLES: StreamSample[] = [
   {
     name: "final answer có thought + envelope",
-    raw: "<m365Response>\n<thought>Phản hồi lời chào của người dùng.</thought>\nXin chào anh Huy! 👋 Hôm nay anh cần làm gì?\n</m365Response>",
+    raw: "<webResponse>\n<thought>Phản hồi lời chào của người dùng.</thought>\nXin chào anh Huy! 👋 Hôm nay anh cần làm gì?\n</webResponse>",
     expectedText: "💭 Phản hồi lời chào của người dùng. Xin chào anh Huy! 👋 Hôm nay anh cần làm gì?",
     expectedTool: null,
   },
   {
     name: "custom_tool_call apply_patch có thuộc tính",
     raw: [
-      "<m365Response>",
+      "<webResponse>",
       "<thought>Cần sửa liên kết CSS.</thought>",
       "Mình sẽ sửa hai thẻ liên kết tài nguyên trong `index.html`.",
       "<custom_tool_call name=\"apply_patch\">",
@@ -35,27 +35,27 @@ const SAMPLES: StreamSample[] = [
       "+<script src=\"app.js\"></script>",
       "*** End Patch",
       "</custom_tool_call>",
-      "</m365Response>",
+      "</webResponse>",
     ].join("\n"),
     expectedText: "💭 Cần sửa liên kết CSS. Mình sẽ sửa hai thẻ liên kết tài nguyên trong `index.html`.",
     expectedTool: "apply_patch",
   },
   {
     name: "tool_call JSON exec_command",
-    raw: "<m365Response>\n<thought>Đọc file trước.</thought>\nMình sẽ kiểm tra `app.js`.\n<tool_call>\n{\"name\":\"exec_command\",\"arguments\":{\"command\":\"Get-Content -LiteralPath .\\\\app.js\"}}\n</tool_call>\n</m365Response>",
+    raw: "<webResponse>\n<thought>Đọc file trước.</thought>\nMình sẽ kiểm tra `app.js`.\n<tool_call>\n{\"name\":\"exec_command\",\"arguments\":{\"command\":\"Get-Content -LiteralPath .\\\\app.js\"}}\n</tool_call>\n</webResponse>",
     expectedText: "💭 Đọc file trước. Mình sẽ kiểm tra `app.js`.",
     expectedTool: "exec_command",
   },
   {
     name: "patch trần không có thẻ bọc",
-    raw: "<m365Response>\nTạo file mới.\n*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch\n</m365Response>",
+    raw: "<webResponse>\nTạo file mới.\n*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch\n</webResponse>",
     expectedText: "Tạo file mới.",
     expectedTool: "apply_patch",
   },
 ];
 
 const FORBIDDEN_FRAGMENTS = [
-  "m365Response",
+  "webResponse",
   "<thought",
   "</thought",
   "tool_call",
@@ -114,7 +114,7 @@ describe("M365ToolCallDetector streaming leak regression", () => {
   }
 
   test("không nuốt khoảng trắng giữa các chunk văn bản thường", () => {
-    const { text } = runStream(["<m365Response>\nXin chào anh Huy!", " Hôm nay anh cần gì?\n</m365Response>"]);
+    const { text } = runStream(["<webResponse>\nXin chào anh Huy!", " Hôm nay anh cần gì?\n</webResponse>"]);
     expect(text).toContain("Xin chào anh Huy! Hôm nay anh cần gì?");
   });
 

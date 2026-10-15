@@ -15,6 +15,10 @@ export interface GeminiModelRoute {
   backendModel: string;
   capabilityMode: GeminiCapabilityMode;
   targetMenuLabel: string;
+  modeId?: string;
+  reasoningEffort?: "low" | "medium" | "high";
+  defaultReasoningLevel?: "low" | "medium" | "high";
+  supportedReasoningLevels?: readonly ("low" | "medium" | "high")[];
   contextWindow: number;
   autoCompactTokenLimit: number;
   effectiveContextWindowPercent: number;
@@ -26,10 +30,13 @@ export const GEMINI_MODEL_ROUTES: readonly GeminiModelRoute[] = [
   {
     slug: "gemini-web/3.8-flash",
     displayName: "Gemini 3.8 Flash (Web)",
-    description: "Trợ giúp toàn diện, tốc độ xử lý cao trên giao diện Gemini Web",
+    description: "Trợ giúp toàn diện, tốc độ xử lý cao, hỗ trợ 3 cấp độ tư duy: Thấp, Trung bình, Cao",
     backendModel: "gemini-3.8-flash",
     capabilityMode: "flash",
     targetMenuLabel: "3.8 Flash",
+    modeId: "56fdd199312815e2",
+    defaultReasoningLevel: "medium",
+    supportedReasoningLevels: ["low", "medium", "high"],
     contextWindow: 128_000,
     autoCompactTokenLimit: 100_000,
     effectiveContextWindowPercent: 85,
@@ -39,10 +46,13 @@ export const GEMINI_MODEL_ROUTES: readonly GeminiModelRoute[] = [
   {
     slug: "gemini-web/3.1-pro",
     displayName: "Gemini 3.1 Pro (Web)",
-    description: "Suy luận nâng cao, giải quyết tác vụ phức tạp",
+    description: "Suy luận nâng cao, hỗ trợ 3 cấp độ tư duy: Thấp, Trung bình, Cao",
     backendModel: "gemini-3.1-pro",
     capabilityMode: "pro",
     targetMenuLabel: "3.1 Pro",
+    modeId: "e6fa609c3fa255c0",
+    defaultReasoningLevel: "medium",
+    supportedReasoningLevels: ["low", "medium", "high"],
     contextWindow: 128_000,
     autoCompactTokenLimit: 100_000,
     effectiveContextWindowPercent: 85,
@@ -52,10 +62,13 @@ export const GEMINI_MODEL_ROUTES: readonly GeminiModelRoute[] = [
   {
     slug: "gemini-web/3.5-flash-lite",
     displayName: "Gemini 3.5 Flash-Lite (Web)",
-    description: "Câu trả lời nhanh nhất, tiết kiệm tài nguyên",
+    description: "Câu trả lời nhanh nhất, tiết kiệm tài nguyên, hỗ trợ 3 cấp độ tư duy: Thấp, Trung bình, Cao",
     backendModel: "gemini-3.5-flash-lite",
     capabilityMode: "flash-lite",
     targetMenuLabel: "3.5 Flash-Lite",
+    modeId: "8c46e95b1a07cecc",
+    defaultReasoningLevel: "medium",
+    supportedReasoningLevels: ["low", "medium", "high"],
     contextWindow: 128_000,
     autoCompactTokenLimit: 100_000,
     effectiveContextWindowPercent: 85,
@@ -65,23 +78,13 @@ export const GEMINI_MODEL_ROUTES: readonly GeminiModelRoute[] = [
   {
     slug: "gemini-web/4-argon",
     displayName: "Gemini 4 Argon (Web)",
-    description: "Mô hình thế hệ mới cho các nhiệm vụ phức tạp",
+    description: "Mô hình thế hệ mới cho các nhiệm vụ phức tạp, hỗ trợ 3 cấp độ tư duy: Thấp, Trung bình, Cao",
     backendModel: "gemini-4-argon",
     capabilityMode: "argon",
     targetMenuLabel: "4 Argon",
-    contextWindow: 128_000,
-    autoCompactTokenLimit: 100_000,
-    effectiveContextWindowPercent: 85,
-    composerCharLimit: 100_000,
-    inputModalities: ["text", "image"],
-  },
-  {
-    slug: "gemini-web/thinking",
-    displayName: "Gemini Thinking (Web)",
-    description: "Gemini kích hoạt chế độ suy luận sâu (Thinking)",
-    backendModel: "gemini-thinking",
-    capabilityMode: "thinking",
-    targetMenuLabel: "3.1 Pro", // Thinking hoạt động trên nền tảng Pro
+    modeId: "95a4c0abcba24364",
+    defaultReasoningLevel: "medium",
+    supportedReasoningLevels: ["low", "medium", "high"],
     contextWindow: 128_000,
     autoCompactTokenLimit: 100_000,
     effectiveContextWindowPercent: 85,
@@ -91,10 +94,13 @@ export const GEMINI_MODEL_ROUTES: readonly GeminiModelRoute[] = [
   {
     slug: "gemini-web",
     displayName: "Google Gemini Web",
-    description: "Google Gemini Web Session mặc định",
+    description: "Google Gemini Web Session mặc định (3.8 Flash), hỗ trợ 3 cấp độ tư duy: Thấp, Trung bình, Cao",
     backendModel: "gemini-web",
     capabilityMode: "auto",
     targetMenuLabel: "3.8 Flash",
+    modeId: "56fdd199312815e2",
+    defaultReasoningLevel: "medium",
+    supportedReasoningLevels: ["low", "medium", "high"],
     contextWindow: 128_000,
     autoCompactTokenLimit: 100_000,
     effectiveContextWindowPercent: 85,
@@ -144,4 +150,23 @@ export function resolveGeminiTargetMenuLabel(slug?: string): string {
     default:
       return "3.8 Flash";
   }
+}
+
+export function resolveGeminiReasoningEffort(
+  slug?: string,
+  requestedEffort?: string,
+): "low" | "medium" | "high" | undefined {
+  if (requestedEffort === "low" || requestedEffort === "medium" || requestedEffort === "high") {
+    return requestedEffort;
+  }
+  if (slug) {
+    const route = GEMINI_MODEL_ROUTES.find((r) => r.slug === slug);
+    if (route?.reasoningEffort) return route.reasoningEffort;
+    if (slug.includes("thinking-high") || slug.includes("high")) return "high";
+    if (slug.includes("thinking-low") || slug.includes("low")) return "low";
+    if (slug.includes("thinking-medium") || slug.includes("medium")) return "medium";
+    if (slug.includes("thinking")) return "high";
+    if (route?.defaultReasoningLevel) return route.defaultReasoningLevel;
+  }
+  return "medium";
 }

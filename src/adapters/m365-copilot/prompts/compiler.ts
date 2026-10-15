@@ -208,11 +208,11 @@ function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): st
 
     examples.push(`[VÍ DỤ GỌI CÔNG CỤ FUNCTION]
 \`\`\`\`markdown
-<m365Response>
+<webResponse>
 <tool_call>
 ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
 </tool_call>
-</m365Response>
+</webResponse>
 \`\`\`\``);
   }
 
@@ -221,7 +221,7 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
       applyPatchTool.identity.qualifiedName || applyPatchTool.identity.name;
     examples.push(`[VÍ DỤ SỬA FILE BẰNG APPLY_PATCH]
 \`\`\`\`markdown
-<m365Response>
+<webResponse>
 <custom_tool_call name="${wireName}">
 *** Begin Patch
 *** Update File: path/to/file.ext
@@ -230,7 +230,7 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
 +new content
 *** End Patch
 </custom_tool_call>
-</m365Response>
+</webResponse>
 \`\`\`\`
 
 File chưa tồn tại dùng *** Add File. File đã tồn tại dùng *** Update File.

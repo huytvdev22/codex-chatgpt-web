@@ -80,17 +80,17 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
 
   try {
     // Đảm bảo cửa sổ và tab có Focus để Chromium cho phép truy cập Clipboard API
-    await page.bringToFront().catch(() => {});
+    await page.bringToFront().catch(() => { });
     await page.evaluate(() => {
       try {
         window.focus();
         if (document.body) document.body.focus();
-      } catch {}
-    }).catch(() => {});
+      } catch { }
+    }).catch(() => { });
 
     // BƯỚC 1: Cấp quyền Clipboard CDP và cài đặt Hook đón nhận nội dung
     console.log("[m365-worker] [copy-salvage] [Bước 1/5] Đang cấp quyền Clipboard CDP & cài đặt Window Hook...");
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => { });
 
     await page.evaluate(() => {
       const win = window as any;
@@ -226,7 +226,7 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
           "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code']"
         ).last();
         if (await toggleLocator.count() > 0) {
-          await toggleLocator.click({ timeout: 2000, force: true }).catch(() => {});
+          await toggleLocator.click({ timeout: 2000, force: true }).catch(() => { });
           console.log("[m365-worker] [copy-salvage] [Bước 3/5] Đã click nút toggle qua Playwright locator.");
         }
       }
@@ -297,7 +297,7 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
             const p = fiber.memoizedProps;
             if (p) {
               for (const propName of ["code", "text", "content", "value", "rawCode", "fileContent"]) {
-                if (typeof p[propName] === "string" && p[propName].length > 100 && /<m365Response\b|<custom_tool_call|\*{3}\s*Begin Patch/i.test(p[propName])) {
+                if (typeof p[propName] === "string" && p[propName].length > 100 && /<(?:web|m365)Response\b|<custom_tool_call|\*{3}\s*Begin Patch/i.test(p[propName])) {
                   return { text: p[propName], source: `React Fiber Props (${propName})` };
                 }
               }
@@ -306,7 +306,7 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
             depth++;
           }
         }
-      } catch {}
+      } catch { }
       return null;
     });
 
@@ -323,12 +323,12 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
           const models = win.monaco.editor.getModels();
           for (let i = models.length - 1; i >= 0; i--) {
             const val = models[i].getValue();
-            if (val && val.length > 100 && /<m365Response\b|<custom_tool_call|\*{3}\s*Begin Patch/i.test(val)) {
+            if (val && val.length > 100 && /<(?:web|m365)Response\b|<custom_tool_call|\*{3}\s*Begin Patch/i.test(val)) {
               return { text: val, source: `Monaco Editor Model [${i}]` };
             }
           }
         }
-      } catch {}
+      } catch { }
       return null;
     });
 
@@ -382,11 +382,11 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
         "button#copy-button, button[aria-label='Copy code']"
       ).last();
       if (await lastCopyLocator.count() > 0) {
-        await lastCopyLocator.scrollIntoViewIfNeeded().catch(() => {});
-        await lastCopyLocator.click({ delay: 50, force: true }).catch(() => {});
+        await lastCopyLocator.scrollIntoViewIfNeeded().catch(() => { });
+        await lastCopyLocator.click({ delay: 50, force: true }).catch(() => { });
         console.log("[m365-worker] [copy-salvage] [Bước 4/5] Đã click nút copy qua Playwright Locator trên tin nhắn cuối cùng.");
       }
-    } catch {}
+    } catch { }
 
     // BƯỚC 5: Đón nhận mã nguồn từ Clipboard Hook / System Clipboard
     console.log("[m365-worker] [copy-salvage] [Bước 5/5] Đang đón nhận mã nguồn từ Clipboard Hook & Clipboard hệ thống...");
@@ -409,7 +409,7 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
               return { text: sys, source: "System Clipboard (readText)" };
             }
           }
-        } catch {}
+        } catch { }
         return null;
       });
 
@@ -422,13 +422,13 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
 
     if (copiedText && copiedText.length > 0) {
       const lineCount = copiedText.split(/\r?\n/).length;
-      const hasOpenEnvelope = /<m365Response\b/i.test(copiedText);
-      const hasCloseEnvelope = /<\/m365Response\s*>/i.test(copiedText);
+      const hasOpenEnvelope = /<(?:web|m365)Response\b/i.test(copiedText);
+      const hasCloseEnvelope = /<\/(?:web|m365)Response\s*>/i.test(copiedText);
       const hasPatchMarker = /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(copiedText);
 
       console.log(`[m365-worker] [copy-salvage] [Bước 5/5] THÀNH CÔNG RỰC RỠ qua nguồn: [${readSource}]!`);
       console.log(`[m365-worker] [copy-salvage] -> Thu thập được: ${copiedText.length} ký tự, ${lineCount} dòng mã nguồn.`);
-      console.log(`[m365-worker] [copy-salvage] -> Kiểm tra cú pháp: có <m365Response>: ${hasOpenEnvelope}, có </m365Response>: ${hasCloseEnvelope}, có patch marker: ${hasPatchMarker}.`);
+      console.log(`[m365-worker] [copy-salvage] -> Kiểm tra cú pháp: có envelope mở: ${hasOpenEnvelope}, có envelope đóng: ${hasCloseEnvelope}, có patch marker: ${hasPatchMarker}.`);
       console.log("[m365-worker] [copy-salvage] ========================================================\n");
       return copiedText;
     }
@@ -458,7 +458,7 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
           const joined = lineEls.map(el => el.textContent || "").join("\n");
           if (joined.length > 100) return joined;
         }
-      } catch {}
+      } catch { }
       return null;
     });
 
@@ -1314,9 +1314,8 @@ export async function executeM365Turn(
       const hasUnclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedText) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
       const toolCallFullyClosed = /(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
       const planFullyClosed = /<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
-      const patchFullyClosed = /(?:\\?\*){2,3}\s*End Patch/i.test(combinedText) || /<\s*\/\s*custom_tool_call\s*>/i.test(combinedText);
-      const hasM365ResponseOpen = /<\s*m365[\\_]*response\s*>/i.test(combinedText);
-      const m365ResponseFullyClosed = /(?:<\s*\/|\/\s*)m365[\\_]*response\s*>/i.test(combinedText);
+      const hasWebResponseOpen = /<\s*(?:web|m365)[\\_]*response\s*>/i.test(combinedText);
+      const webResponseFullyClosed = /(?:<\s*\/|\/\s*)(?:web|m365)[\\_]*response\s*>/i.test(combinedText);
       const completionGraceMs = 1_500;
 
       // Nếu M365 đã dừng sinh và văn bản không đổi:
@@ -1360,7 +1359,7 @@ export async function executeM365Turn(
       const isSettled = !status.isGenerating && generationFinished && textStable;
 
       if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [completed] attempts=${attempts} durationMs=${attempts * pollIntervalMs} hasSeenGenerating=${hasSeenGenerating} isState1Idle=${Boolean((status as any).isInputActionsIdle)} timeSinceCandidate=${completedCandidateAt ? Date.now() - completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} patchClosed=${patchFullyClosed} planClosed=${planFullyClosed} m365ResponseOpen=${hasM365ResponseOpen} m365ResponseClosed=${m365ResponseFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
+        console.log(`[m365-worker] [completed] attempts=${attempts} durationMs=${attempts * pollIntervalMs} hasSeenGenerating=${hasSeenGenerating} isState1Idle=${Boolean((status as any).isInputActionsIdle)} timeSinceCandidate=${completedCandidateAt ? Date.now() - completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} planClosed=${planFullyClosed} webResponseOpen=${hasWebResponseOpen} webResponseClosed=${webResponseFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${fastPathActive}`);
         break;
       }
 
@@ -1413,7 +1412,7 @@ export async function executeM365Turn(
     // Đối với các phản hồi dài (>70 dòng), Microsoft Copilot sử dụng cơ chế DOM Virtualization,
     // chỉ render một phần dòng và giấu phần còn lại trong spacer div. Nút copy-button kết nối
     // trực tiếp với model dữ liệu trong bộ nhớ của editor nên luôn chứa 100% nội dung nguyên bản.
-    const needsEnvelopeFix = /<m365Response\b/i.test(fullMarkdown) && !/<\/m365Response\s*>/i.test(fullMarkdown);
+    const needsEnvelopeFix = /<(?:web|m365)Response\b/i.test(fullMarkdown) && !/<\/(?:web|m365)Response\s*>/i.test(fullMarkdown);
     const hasUnclosedMarkers = /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(fullMarkdown) &&
       !(/(?:<\/custom_tool_call>|\*{3}\s*End Patch)/i.test(fullMarkdown));
     const hasCodeBlockOnPage = await page.locator(
@@ -1426,8 +1425,8 @@ export async function executeM365Turn(
       console.log("[m365-worker] [salvage-eval] -> Phát hiện response cần cứu hộ hoặc có Code Block trên trang. Kích hoạt tryExtractCodeViaCopyButton...");
       const copiedCode = await tryExtractCodeViaCopyButton(page);
       if (copiedCode) {
-        const copiedHasClose = /<\/m365Response\s*>/i.test(copiedCode);
-        const currentLacksClose = !/<\/m365Response\s*>/i.test(fullMarkdown);
+        const copiedHasClose = /<\/(?:web|m365)Response\s*>/i.test(copiedCode);
+        const currentLacksClose = !/<\/(?:web|m365)Response\s*>/i.test(fullMarkdown);
 
         if ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length) {
           console.log(`[m365-worker] [copy-salvage] ÁP DỤNG THAY THẾ: Chuỗi từ Copy Button (${copiedCode.length} chars) hoàn chỉnh hơn chuỗi cào DOM (${fullMarkdown.length} chars). Hoàn tất cứu hộ 100%!`);

@@ -40,9 +40,11 @@ export {
 } from "./compiler";
 
 export {
+  buildFormatRetryPrompt,
   buildM365FormatRetryPrompt,
+  type FormatRetryOptions,
   type M365FormatRetryOptions,
-} from "./format-retry";
+} from "./templates";
 
 export {
   truncateToolResult,

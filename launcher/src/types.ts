@@ -32,7 +32,7 @@ export interface LauncherState {
   codexRestartRequired?: boolean;
   mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
-  selectedProvider: "m365" | "chatgpt";
+  selectedProvider: "m365" | "chatgpt" | "gemini";
 }
 
 export interface BrowserState {
@@ -43,6 +43,7 @@ export interface BrowserState {
   authenticated: boolean;
   chatGptAuthenticated?: boolean;
   m365Authenticated?: boolean;
+  geminiAuthenticated?: boolean;
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -51,7 +52,7 @@ export interface BrowserState {
   zoomFactor: number;
   activeTabId: string;
   maxTabs: number;
-  provider?: "m365" | "chatgpt";
+  provider?: "m365" | "chatgpt" | "gemini";
   tabs: BrowserTabState[];
 }
 
@@ -169,6 +170,7 @@ export interface LauncherSnapshot {
   smokePassed: boolean;
   chatgptSmokePassed?: boolean;
   m365SmokePassed?: boolean;
+  geminiSmokePassed?: boolean;
   operation: OperationState | null;
   update: UpdateState;
 }
@@ -221,7 +223,7 @@ export interface LauncherApi {
     credentialsRequired: boolean;
     targetMode: BrowserInteractionMode;
   }>;
-  setProvider(provider: "m365" | "chatgpt"): Promise<LauncherState>;
+  setProvider(provider: "m365" | "chatgpt" | "gemini"): Promise<LauncherState>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,

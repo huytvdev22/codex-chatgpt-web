@@ -7,16 +7,37 @@ import {
   buildShortOutputFormatAnchor,
   TOOL_REMINDER_PROMPT,
 } from "../m365-copilot/prompts";
+import { resolveGeminiReasoningEffort } from "../../gemini-models";
 import { XmlToolCallDetector } from "../m365-copilot/translation/detectors/xml-detector";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import {
+  connectLauncherBrowserHost,
+  readLauncherBrowserHostDescriptor,
+  type LauncherBrowserConnection,
+} from "../../launcher-browser-host";
+import { getConfigDir } from "../../config";
+import { processRunning } from "../../process";
 
 export interface GeminiAdapterOptions {
   userDataDir?: string;
   customSelectors?: Partial<GeminiDomSelectors>;
   headless?: boolean;
+  descriptorPath?: string;
+}
+
+function resolveDescriptorPath(customPath?: string): string | null {
+  if (customPath && existsSync(customPath)) return customPath;
+  const envPath = process.env.CODEX_CHATGPT_WEB_HOME || getConfigDir();
+  const p1 = join(envPath, "runtime", "launcher-browser.json");
+  if (existsSync(p1)) return p1;
+  const p2 = join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
+  if (existsSync(p2)) return p2;
+  const p3 = join(homedir(), ".codex-chatgpt-web", "runtime", "launcher-browser.json");
+  if (existsSync(p3)) return p3;
+  return null;
 }
 
 export class GeminiWebAdapter implements ProviderAdapter {
@@ -35,9 +56,9 @@ export class GeminiWebAdapter implements ProviderAdapter {
   }
 
   /**
-   * Đảm bảo trình duyệt Chromium với profile lưu phiên đăng nhập của Google đã sẵn sàng
+   * Khởi chạy trình duyệt Google Chrome local nếu không có kết nối Launcher
    */
-  private async ensureBrowserPage(): Promise<Page> {
+  private async ensureLocalBrowserPage(): Promise<Page> {
     if (this.activePage && !this.activePage.isClosed()) {
       return this.activePage;
     }
@@ -47,8 +68,9 @@ export class GeminiWebAdapter implements ProviderAdapter {
       mkdirSync(profileDir, { recursive: true });
     }
 
-    console.log(`[gemini-adapter] Khởi chạy Chromium với profile: ${profileDir}`);
+    console.log(`[gemini-adapter] Khởi chạy Google Chrome local với profile: ${profileDir}`);
     this.browserContext = await chromium.launchPersistentContext(profileDir, {
+      channel: "chrome",
       headless: this.options.headless,
       viewport: { width: 1280, height: 800 },
       args: [
@@ -69,9 +91,9 @@ export class GeminiWebAdapter implements ProviderAdapter {
     const sections: string[] = [];
     const isNew = !parsed.context.messages?.some(m => m.role === "assistant");
 
-    // 1. Thỏa thuận giao thức nếu là phiên mới (truyền tên Gemini vào)
+    // 1. Thỏa thuận giao thức nếu là phiên mới (truyền tên Gemini vào, dùng webResponse chuẩn)
     if (isNew) {
-      sections.push(buildUnifiedToolProtocol("Gemini", "geminiResponse"));
+      sections.push(buildUnifiedToolProtocol("Gemini"));
     } else {
       sections.push(TOOL_REMINDER_PROMPT);
     }
@@ -85,7 +107,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
       sections.push(`[Yêu cầu của mình]:\n${userMsgs[userMsgs.length - 1]}`);
     }
 
-    sections.push(buildShortOutputFormatAnchor("geminiResponse"));
+    sections.push(buildShortOutputFormatAnchor());
     return sections.filter(Boolean).join("\n\n");
   }
 
@@ -101,16 +123,44 @@ export class GeminiWebAdapter implements ProviderAdapter {
       throw new DOMException("Gemini turn aborted before start", "AbortError");
     }
 
-    const page = await this.ensureBrowserPage();
-    const prompt = this.compilePrompt(parsed);
+    const descriptorPath = resolveDescriptorPath(this.options.descriptorPath);
+    let launcherConnection: LauncherBrowserConnection | null = null;
+    let page: Page | null = null;
 
-    console.log(`[gemini-adapter] Bắt đầu lượt gửi cho model: ${parsed.modelId}`);
+    if (descriptorPath) {
+      try {
+        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+        if (processRunning(descriptor.pid)) {
+          const targetSurfaceId = descriptor.geminiSurfaceId || descriptor.surfaceId;
+          console.log(`[gemini-adapter] Kết nối Playwright qua Launcher CDP (pid=${descriptor.pid}, surface=${targetSurfaceId})...`);
+          launcherConnection = await connectLauncherBrowserHost(
+            descriptorPath,
+            20_000,
+            targetSurfaceId,
+            incoming.abortSignal,
+          );
+          page = launcherConnection.page;
+        }
+      } catch (err) {
+        console.warn(`[gemini-adapter] Không thể kết nối Launcher qua CDP: ${err instanceof Error ? err.message : String(err)}. Sẽ thử local Chrome.`);
+      }
+    }
+
+    if (!page) {
+      page = await this.ensureLocalBrowserPage();
+    }
+
+    const prompt = this.compilePrompt(parsed);
+    const reasoningEffort = resolveGeminiReasoningEffort(parsed.modelId, parsed.options.reasoning);
+
+    console.log(`[gemini-adapter] Bắt đầu lượt gửi cho model: ${parsed.modelId}, cấp độ tư duy: ${reasoningEffort || "mặc định"}`);
 
     try {
       const result = await geminiBrowserWorker.executeTurn(page, {
         prompt,
         signal: incoming.abortSignal,
         modelSlug: parsed.modelId,
+        reasoningEffort,
         customSelectors: this.options.customSelectors,
         onChunk: (chunkText) => {
           emit({
@@ -154,6 +204,10 @@ export class GeminiWebAdapter implements ProviderAdapter {
         message: error instanceof Error ? error.message : String(error),
       });
       throw error;
+    } finally {
+      if (launcherConnection) {
+        await launcherConnection.browser.close().catch(() => {});
+      }
     }
   }
 

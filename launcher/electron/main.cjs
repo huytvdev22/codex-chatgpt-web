@@ -647,8 +647,11 @@ function registerIpc({ logger, stateStore }) {
       throw new Error("Browser smoke testing is disabled in Zero Risk mode");
     }
     const result = await browserHost.smokeTest();
+    const isGemini = browserHost.provider === "gemini";
     const isM365 = browserHost.provider === "m365";
-    if (isM365) {
+    if (isGemini) {
+      stateStore.update({ geminiSmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
+    } else if (isM365) {
       stateStore.update({ m365SmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
     } else {
       stateStore.update({ chatgptSmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
@@ -792,7 +795,7 @@ function registerIpc({ logger, stateStore }) {
       const browser = await browserHost.probeAuthentication();
       if (!browser.authenticated) {
         if (browser.status === "error") throw new Error(browser.message);
-        const providerLabel = browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT";
+        const providerLabel = browserHost.provider === "gemini" ? "Google Gemini" : (browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT");
         throw new Error(
           IS_DEV_PROFILE
             ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
@@ -803,7 +806,7 @@ function registerIpc({ logger, stateStore }) {
     if (setupState.browserInteractionMode === "automatic"
       && !setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
-      const testLabel = browserHost.provider === "m365" ? "connection verification" : "browser smoke test";
+      const testLabel = (browserHost.provider === "m365" || browserHost.provider === "gemini") ? "connection verification" : "browser smoke test";
       throw new Error(
         IS_DEV_PROFILE
           ? "Run the browser smoke test before configuring the DEV harness"
@@ -991,7 +994,7 @@ function registerIpc({ logger, stateStore }) {
     return { state, credentialsRequired: false, targetMode: mode };
   });
   handle("launcher:set-provider", async (_event, provider) => {
-    if (provider !== "m365" && provider !== "chatgpt") throw new Error("Invalid provider");
+    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini") throw new Error("Invalid provider");
     const nextState = stateStore.update({ selectedProvider: provider });
     if (browserHost) {
       await browserHost.switchProvider(provider);

@@ -49,7 +49,7 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
       isNewConversation: true,
     });
     expect(res.finalPrompt).toContain("Chào Copilot, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
-    expect(res.finalPrompt).toContain("<m365Response>");
+    expect(res.finalPrompt).toContain("<webResponse>");
   });
 
   test("2. Kịch bản PLAN_INITIATION: Khởi tạo Plan Mode không bị chèn câu tool result vô lý", () => {
@@ -207,7 +207,7 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
     expect(res.finalPrompt).not.toContain("Mình vừa chạy các công cụ");
     expect(res.finalPrompt).not.toContain(TOOL_REMINDER_PROMPT);
     // Có anchor đàm thoại tự nhiên
-    expect(res.finalPrompt).toContain("Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <m365Response>");
+    expect(res.finalPrompt).toContain("Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <webResponse>");
     expect(res.finalPrompt).toContain("Giải thích giúp mình hàm calculateTotals hoạt động ra sao?");
   });
 

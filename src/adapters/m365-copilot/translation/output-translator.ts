@@ -58,8 +58,8 @@ export function extractCognitiveBlocks(rawText: string): {
 
   let thinking: string | undefined;
 
-  // 0. Gọt bỏ thẻ bọc envelope <m365Response>...</m365Response>
-  const textWithoutEnvelope = rawText.replace(/<\s*\/?\s*m365[\\_]*response\s*>/gi, "");
+  // 0. Gọt bỏ thẻ bọc envelope <webResponse>...</webResponse> (hoặc m365Response)
+  const textWithoutEnvelope = rawText.replace(/<\s*\/?\s*(?:web|m365)[\\_]*response\s*>/gi, "");
 
   // 1. Trích xuất nội dung thẻ <thought>...</thought> hoặc <thinking>...</thinking>
   const thoughtMatch = textWithoutEnvelope.match(/<\s*(?:thought|thinking)\s*>([\s\S]*?)<\s*\/(?:thought|thinking)\s*>/i);

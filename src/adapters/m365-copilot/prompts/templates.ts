@@ -8,12 +8,11 @@
 
 /**
  * Giao thức giao tiếp thống nhất với IDE.
- * Cho phép truyền tên trợ lý (Copilot, Gemini...) và tên thẻ envelope tương ứng.
+ * Cho phép truyền tên trợ lý (Copilot, Gemini...) với thẻ envelope cố định: webResponse.
  * Đây là bootstrap prompt được gửi ở lượt đầu tiên của mỗi conversation.
  */
 export function buildUnifiedToolProtocol(
-  assistantName: string = "Copilot",
-  responseEnvelope: string = "m365Response"
+  assistantName: string = "Copilot"
 ): string {
   return `Chào ${assistantName}, mình đang làm việc trên một dự án phần mềm ở máy cá nhân và rất cần bạn đồng hành cùng mình.
 Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp vào ổ cứng hay terminal trên máy mình được. Để giải quyết việc này, mình đã viết một script cầu nối tự động nối giữa khung chat này với IDE của mình:
@@ -28,15 +27,15 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
    - Bạn giúp mình không viết thêm bất kỳ lời chào, chữ nghĩa hay thẻ nào nằm ngoài khối 4-backtick này nha (cách này cũng giúp giao diện web không làm hỏng các thẻ <script>, <meta>, <html> trong code của tụi mình).
 
 2. Khi bạn muốn chạy công cụ hoặc sửa file (Action Turn):
-   - Bạn đặt các lệnh cần chạy vào trong một cặp thẻ <${responseEnvelope}>...</${responseEnvelope}> nằm trong khối 4-backtick.
-   - Vì bộ parser của mình ở chế độ gọi công cụ chỉ đọc thuần thẻ lệnh, bạn giúp mình xuất thẳng các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> bên trong <${responseEnvelope}> nhé — đừng chèn lời dẫn (như "Để mình kiểm tra...", "Mình sẽ chạy lệnh...") hay thẻ <thought>/<thinking> vào lượt này nha. Mọi lời giải thích bạn cứ để dành tới lúc xong việc rồi nhắn cho mình ở lượt trả lời cuối cùng.
+   - Bạn đặt các lệnh cần chạy vào trong một cặp thẻ <webResponse>...</webResponse> nằm trong khối 4-backtick.
+   - Vì bộ parser của mình ở chế độ gọi công cụ chỉ đọc thuần thẻ lệnh, bạn giúp mình xuất thẳng các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> bên trong <webResponse> nhé — đừng chèn lời dẫn (như "Để mình kiểm tra...", "Mình sẽ chạy lệnh...") hay thẻ <thought>/<thinking> vào lượt này nha. Mọi lời giải thích bạn cứ để dành tới lúc xong việc rồi nhắn cho mình ở lượt trả lời cuối cùng.
    - Mẫu gọi function tool (bạn có thể gọi nhiều <tool_call> liên tiếp trong cùng một lượt nếu cần kiểm tra nhiều thứ cùng lúc):
      \`\`\`\`markdown
-     <${responseEnvelope}>
+     <webResponse>
      <tool_call>
      {"name": "<TOOL_NAME>", "arguments": {"<PARAM_NAME>": "<VALUE>"}}
      </tool_call>
-     </${responseEnvelope}>
+     </webResponse>
      \`\`\`\`
 
 3. Khi bạn tạo mới hoặc chỉnh sửa file (Sử dụng apply_patch):
@@ -44,7 +43,7 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
    - Để tránh lỗi lệch dòng (invalid hunk), mỗi lượt bạn chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT thôi nhé. Làm xong file này, script báo thành công rồi mình làm tiếp file sau.
    - Mẫu khi sửa một đoạn trong file code logic (.ts, .js, .py, .java...):
      \`\`\`\`markdown
-     <${responseEnvelope}>
+     <webResponse>
      <custom_tool_call name="apply_patch">
      *** Begin Patch
      *** Update File: path/to/file.ext
@@ -54,11 +53,11 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
      +dòng thêm
      *** End Patch
      </custom_tool_call>
-     </${responseEnvelope}>
+     </webResponse>
      \`\`\`\`
    - Mẫu khi tạo file mới hoàn toàn HOẶC khi sửa các file giao diện dễ lệch thẻ (HTML, XML, SVG, VUE, JSX) — luôn dùng *** Add File: và nhớ có dấu cộng (+) ở đầu mỗi dòng code:
      \`\`\`\`markdown
-     <${responseEnvelope}>
+     <webResponse>
      <custom_tool_call name="apply_patch">
      *** Begin Patch
      *** Add File: path/to/file.ext
@@ -66,11 +65,11 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
      +nội dung dòng 2
      *** End Patch
      </custom_tool_call>
-     </${responseEnvelope}>
+     </webResponse>
      \`\`\`\`
 
 4. Khi công việc đã hoàn tất và bạn muốn trả lời cho mình (Final Answer):
-   - Khi đã có đủ thông tin hoặc đã sửa xong hết code, bạn viết câu trả lời chi tiết bằng Markdown cho mình đọc bên trong <${responseEnvelope}>...</${responseEnvelope}> (nằm trong khối 4-backtick \`\`\`\`markdown), và nhớ không kèm theo thẻ <tool_call> nào trong lượt kết thúc này nhé.
+   - Khi đã có đủ thông tin hoặc đã sửa xong hết code, bạn viết câu trả lời chi tiết bằng Markdown cho mình đọc bên trong <webResponse>...</webResponse> (nằm trong khối 4-backtick \`\`\`\`markdown), và nhớ không kèm theo thẻ <tool_call> nào trong lượt kết thúc này nhé.
    - Khi nhắc tới file hoặc dòng code nào, bạn gắn link Markdown tương đối kiểu [index.html](index.html) hoặc [app.ts — dòng 25](src/app.ts#L25) để mình bấm vào nhảy thẳng tới chỗ đó trên IDE luôn nha.
 
 Một vài kinh nghiệm nhỏ để giữ tốc độ nhanh khi đọc file và chạy terminal trên máy mình:
@@ -79,7 +78,7 @@ Một vài kinh nghiệm nhỏ để giữ tốc độ nhanh khi đọc file và
 - Chỉ dùng các công cụ có trong danh sách AVAILABLE TOOLS bên dưới thôi nhé.`;
 }
 
-export const UNIFIED_TOOL_PROTOCOL = buildUnifiedToolProtocol("Copilot", "m365Response");
+export const UNIFIED_TOOL_PROTOCOL = buildUnifiedToolProtocol("Copilot");
 
 // Alias tương thích ngược cho các module vẫn import tên cũ.
 export const MINIMAL_TOOL_PROTOCOL = UNIFIED_TOOL_PROTOCOL;
@@ -132,13 +131,13 @@ Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệ
 4. Khi giải thích mã nguồn hoặc nhắc đến tệp tin nào, bạn nhớ dùng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc [tên_file — dòng N](đường_dẫn_tương_đối#LN) nha.`;
 
 /**
- * Lời nhắc thực thi công cụ trong quá trình trao đổi để tránh Copilot thoát vai
+ * Lời nhắc thực thi công cụ trong quá trình trao đổi để tránh AI thoát vai
  */
 export const TOOL_REMINDER_PROMPT = `Mình vừa chạy các lệnh bạn yêu cầu xong, gửi bạn kết quả trong thẻ <tool_result> bên dưới nhé.
 (Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là lệnh vừa rồi đã chạy thành công mỹ mãn rồi đó).
 
 Bạn xem kết quả rồi xử lý tiếp giúp mình nha:
-- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <m365Response> mà không cần viết lời dẫn hay thẻ <thought>.
+- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> mà không cần viết lời dẫn hay thẻ <thought>.
 - Nếu đã xong hết việc, bạn viết câu trả lời kết luận (kèm link file tương đối [tên_file](đường_dẫn)) cho mình đọc nha!`;
 
 /**
@@ -160,7 +159,7 @@ export const OUTPUT_FORMAT_HINTS = {
 };
 
 /**
- * Lời nhắc chỉ dẫn cho M365 Copilot khi có hình ảnh đính kèm trong lượt hội thoại
+ * Lời nhắc chỉ dẫn cho AI khi có hình ảnh đính kèm trong lượt hội thoại
  */
 export const M365_IMAGE_ATTACHMENT_HINT = `[HÌNH ẢNH ĐÍNH KÈM]
 Tin nhắn này có đính kèm hình ảnh thực tế trong khung chat.
@@ -169,25 +168,25 @@ Bạn quan sát trực tiếp hình ảnh đính kèm để phân tích giao di�
 /**
  * Lời nhắc định dạng đầu ra chốt hạ súc tích ở cuối prompt.
  */
-export function buildShortOutputFormatAnchor(responseEnvelope: string = "m365Response"): string {
+export function buildShortOutputFormatAnchor(): string {
   return `---
 Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:
 - Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
-- Nếu gọi công cụ: Đặt trọn trong <${responseEnvelope}>...</${responseEnvelope}>, chỉ chứa các khối <tool_call> hoặc <custom_tool_call name="apply_patch">, không chêm lời dẫn trước/sau thẻ lệnh.
+- Nếu gọi công cụ: Đặt trọn trong <webResponse>...</webResponse>, chỉ chứa các khối <tool_call> hoặc <custom_tool_call name="apply_patch">, không chêm lời dẫn trước/sau thẻ lệnh.
 - Nếu trả lời kết luận cho mình: Viết nội dung Markdown (không chứa cú pháp gọi tool) trong khối 4-backtick.`;
 }
 
-export const SHORT_OUTPUT_FORMAT_ANCHOR = buildShortOutputFormatAnchor("m365Response");
+export const SHORT_OUTPUT_FORMAT_ANCHOR = buildShortOutputFormatAnchor();
 
-export function buildShortOutputFormatPlanAnchor(responseEnvelope: string = "m365Response"): string {
+export function buildShortOutputFormatPlanAnchor(): string {
   return `---
 Nhắc nhẹ định dạng ở chế độ Lập Kế Hoạch (Plan Mode) nhé:
 - Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
 - Khi xuất bản kế hoạch: Bọc toàn bộ kế hoạch trong đúng một cặp <proposed_plan>...</proposed_plan>.
-- Khi khảo sát file: Đặt khối công cụ đọc trong đúng một cặp <${responseEnvelope}>...</${responseEnvelope}>. Đừng gọi lệnh sửa file trong Plan Mode nha.`;
+- Khi khảo sát file: Đặt khối công cụ đọc trong đúng một cặp <webResponse>...</webResponse>. Đừng gọi lệnh sửa file trong Plan Mode nha.`;
 }
 
-export const SHORT_OUTPUT_FORMAT_PLAN_ANCHOR = buildShortOutputFormatPlanAnchor("m365Response");
+export const SHORT_OUTPUT_FORMAT_PLAN_ANCHOR = buildShortOutputFormatPlanAnchor();
 
 /**
  * Lời nhắc khi đang tiếp tục các bước kế tiếp của một kế hoạch đã được duyệt (Turn 4+)
@@ -208,12 +207,38 @@ Bạn xem lại nguyên nhân lỗi rồi xuất lệnh kiểm tra hoặc xuất
 /**
  * Lời nhắc định dạng nhẹ nhàng cho các lượt đàm thoại / hỏi đáp bình thường hàng ngày
  */
-export function buildPureConversationAnchor(responseEnvelope: string = "m365Response"): string {
+export function buildPureConversationAnchor(): string {
   return `---
 Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:
 - Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
-- Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <${responseEnvelope}>...</${responseEnvelope}> cho mình đọc nha.
-- Nếu cần xem file hay chạy lệnh trên máy mình: Đặt trọn các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <${responseEnvelope}> mà không chêm lời dẫn.`;
+- Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <webResponse>...</webResponse> cho mình đọc nha.
+- Nếu cần xem file hay chạy lệnh trên máy mình: Đặt trọn các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> mà không chêm lời dẫn.`;
 }
 
-export const PURE_CONVERSATION_ANCHOR = buildPureConversationAnchor("m365Response");
+export const PURE_CONVERSATION_ANCHOR = buildPureConversationAnchor();
+
+/**
+ * Các tùy chọn và hàm tạo yêu cầu format retry khi AI gửi phản hồi lệch quy ước
+ */
+export interface FormatRetryOptions {
+  code: string;
+  message: string;
+}
+
+export type M365FormatRetryOptions = FormatRetryOptions;
+
+/** Tạo follow-up yêu cầu AI phát lại cùng nội dung theo đúng chuẩn format webResponse, tuyệt đối không tiếp tục tác vụ. */
+export function buildFormatRetryPrompt(options: FormatRetryOptions): string {
+  return `Bạn ơi, tin nhắn vừa rồi bạn gửi hơi lệch quy ước định dạng một chút nên script cầu nối trên máy mình chưa bóc tách để chạy lệnh được (chưa có công cụ nào được chạy ở lượt vừa rồi cả).
+- Điểm bị vấp: [${options.code}] ${options.message}
+
+Bạn giúp mình gửi lại đúng nội dung bạn vừa định làm ở lượt trước vào chuẩn khung này để script mình đọc lại nhé:
+
+\`\`\`\`markdown
+<webResponse>
+... chỉ đặt các khối <tool_call> / <custom_tool_call name="apply_patch"> hoàn chỉnh (không kèm lời dẫn, không kèm <thought>), HOẶC nội dung câu trả lời Markdown cuối cùng ...
+</webResponse>
+\`\`\`\``;
+}
+
+export const buildM365FormatRetryPrompt = buildFormatRetryPrompt;

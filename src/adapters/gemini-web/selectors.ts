@@ -98,12 +98,15 @@ export interface GeminiDomSelectors {
 export const GEMINI_SELECTORS: GeminiDomSelectors = {
   // 1. Ô nhập tin nhắn (Chat Input / Editor)
   editor: [
+    'rich-textarea div[contenteditable="true"]',
     'rich-textarea .ql-editor[contenteditable="true"]',
     'rich-textarea div[role="textbox"]',
     'div[data-test-id="textarea-inner"] [contenteditable="true"]',
+    'div.ql-editor[contenteditable="true"]',
     'rich-textarea p',
     '[aria-label*="Nhập câu lệnh cho Gemini" i]',
-    'div.ql-editor[contenteditable="true"]',
+    '[aria-label*="Hỏi Gemini" i]',
+    'div[contenteditable="true"]',
     'div[role="textbox"]',
   ].join(", "),
 
@@ -151,12 +154,13 @@ export const GEMINI_SELECTORS: GeminiDomSelectors = {
 
   // 6. Menu chọn Model (Model Selector Button)
   modelSelectorButton: [
-    'button[data-test-id="bard-mode-menu-button"]',
+    '[data-test-id="bard-mode-menu-button"] button',
+    '[data-test-id="bard-mode-menu-button"]',
     'button[aria-label*="Mở công cụ chọn chế độ" i]',
-    'bard-mode-switcher button.input-area-switch',
-    '.pill-ui-logo-container button',
-    'button[aria-label*="model" i]',
-    'button[data-test-id="model-switcher"]',
+    'button[aria-label*="chọn chế độ" i]',
+    '.gds-mode-switch-button button',
+    '.logo-pill-btn button',
+    'bard-mode-switcher button',
   ].join(", "),
 
   // 7. Nút New Chat

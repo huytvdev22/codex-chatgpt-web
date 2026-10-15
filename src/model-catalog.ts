@@ -227,7 +227,28 @@ export function ensureManagedModelCatalogFile(
         ];
         const hasCurrentM365Surface =
           JSON.stringify(visibleM365Slugs) === JSON.stringify(expectedVisibleM365Slugs);
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface) {
+
+        const geminiModels = Array.isArray(raw.models)
+          ? raw.models.filter((m: any) => typeof m?.slug === "string" && isGeminiModelSlug(m.slug))
+          : [];
+        const expectedVisibleGeminiSlugs = [
+          "gemini-web",
+          "gemini-web/3.1-pro",
+          "gemini-web/3.5-flash-lite",
+          "gemini-web/3.8-flash",
+          "gemini-web/4-argon",
+        ];
+        const currentVisibleGeminiSlugs = geminiModels
+          .filter((m: any) => m.visibility !== "hide")
+          .map((m: any) => m.slug)
+          .sort();
+        const hasCurrentGeminiSurface =
+          JSON.stringify(currentVisibleGeminiSlugs) === JSON.stringify(expectedVisibleGeminiSlugs);
+        const allGeminiHave3ThinkingLevels =
+          geminiModels.length >= 5 &&
+          geminiModels.every((m: any) => Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 3);
+
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels) {
           shouldWrite = true;
         }
       } catch {
@@ -295,7 +316,7 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const model = value as JsonObject;
   const modelSlug = slug(model);
-  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX)) return false;
+  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX) || isGeminiModelSlug(modelSlug)) return false;
   // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
   // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
   // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
@@ -441,6 +462,16 @@ export function buildGeminiModel(
 ): JsonObject {
   const template = object(templateValue, "native Codex model template");
   const multiAgentVersion = routedSubagentVersion(template, config);
+
+  const defaultEffort = route.defaultReasoningLevel || route.reasoningEffort || "medium";
+  const efforts = route.supportedReasoningLevels || (route.reasoningEffort ? [route.reasoningEffort] : ["low", "medium", "high"]);
+
+  const effortDescriptions: Record<string, string> = {
+    low: "Thấp (Nhanh chóng và hiệu quả)",
+    medium: "Trung bình (Độ sâu cân bằng)",
+    high: "Cao (Cực kỳ kỹ lưỡng)",
+  };
+
   const model: JsonObject = {
     ...structuredClone(template),
     slug: route.slug,
@@ -453,11 +484,10 @@ export function buildGeminiModel(
     ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
     tool_mode: null,
     upgrade: null,
-    default_reasoning_level: "low",
-    supported_reasoning_levels: [
-      reasoningLevel(template, "low", "Fast"),
-      reasoningLevel(template, "high", "Thinking"),
-    ],
+    default_reasoning_level: defaultEffort,
+    supported_reasoning_levels: efforts.map(effort =>
+      reasoningLevel(template, effort, effortDescriptions[effort] || effort)
+    ),
     context_window: route.contextWindow,
     max_context_window: route.contextWindow,
     effective_context_window_percent: route.effectiveContextWindowPercent,
@@ -487,7 +517,7 @@ export function augmentNativeModelCatalog(
   const nativeModels = structuredClone(
     catalog.models.filter(model => {
       const s = slug(model);
-      return !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s?.startsWith(M365_COPILOT_MODEL_PREFIX) && !s?.startsWith(GEMINI_WEB_MODEL_PREFIX);
+      return !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s?.startsWith(M365_COPILOT_MODEL_PREFIX) && !isGeminiModelSlug(s ?? "");
     }),
   );
   if (config.subagentProtocol === "compatibility-v1") {

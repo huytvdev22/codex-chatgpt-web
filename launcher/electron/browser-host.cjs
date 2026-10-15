@@ -35,6 +35,8 @@ const {
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const M365_ORIGIN = "https://m365.cloud.microsoft";
+const GEMINI_CHAT_URL = "https://gemini.google.com/app";
+const GEMINI_ORIGIN = "https://gemini.google.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
@@ -360,11 +362,13 @@ class BrowserHost {
       "persist:codex-web-gpt-dev-chatgpt",
       "persist:codex-web-m365",
       "persist:codex-m365-copilot",
+      "persist:codex-gemini-web",
+      "persist:codex-gemini-web-dev",
     ]);
     if (!allowedPartitions.has(partition)) {
       this.logger.warn?.("browser.unexpected_partition", { partition });
     }
-    this.provider = provider || (partition.includes("m365") ? "m365" : "chatgpt");
+    this.provider = provider || (partition.includes("gemini") ? "gemini" : (partition.includes("m365") ? "m365" : "chatgpt"));
     this.partition = partition;
     this.profile = profile;
     this.publishState = publishState;
@@ -430,9 +434,11 @@ class BrowserHost {
     };
     this.chatGptSurfaceId = randomBytes(24).toString("base64url");
     this.m365SurfaceId = randomBytes(24).toString("base64url");
-    this.surfaceId = this.provider === "m365" ? this.m365SurfaceId : this.chatGptSurfaceId;
+    this.geminiSurfaceId = randomBytes(24).toString("base64url");
+    this.surfaceId = this.provider === "gemini" ? this.geminiSurfaceId : (this.provider === "m365" ? this.m365SurfaceId : this.chatGptSurfaceId);
     this.chatGptAuthenticated = false;
     this.m365Authenticated = false;
+    this.geminiAuthenticated = false;
 
     this.chatGptView = new WebContentsView({
       webPreferences: {
@@ -454,10 +460,21 @@ class BrowserHost {
         backgroundThrottling: true,
       },
     });
+    this.geminiView = new WebContentsView({
+      webPreferences: {
+        partition: "persist:codex-gemini-web",
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: true,
+        backgroundThrottling: true,
+      },
+    });
     window.contentView.addChildView(this.chatGptView);
     window.contentView.addChildView(this.m365View);
+    window.contentView.addChildView(this.geminiView);
 
-    this.view = this.provider === "m365" ? this.m365View : this.chatGptView;
+    this.view = this.provider === "gemini" ? this.geminiView : (this.provider === "m365" ? this.m365View : this.chatGptView);
 
     this.windowVisibilityListener = () => this.syncViewVisibility();
     for (const event of WINDOW_VISIBILITY_EVENTS) {
@@ -465,9 +482,11 @@ class BrowserHost {
     }
     this.chatGptView.webContents.setZoomFactor(this.state.zoomFactor);
     this.m365View.webContents.setZoomFactor(this.state.zoomFactor);
+    this.geminiView.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(this.window.webContents);
     this.bindShellZoomShortcuts(this.chatGptView.webContents);
     this.bindShellZoomShortcuts(this.m365View.webContents);
+    this.bindShellZoomShortcuts(this.geminiView.webContents);
     this.bindChatGptBackendRecovery();
     this.bindAuthenticationChanges();
     this.bindWebContents();
@@ -481,6 +500,9 @@ class BrowserHost {
   }
 
   getHomeUrl() {
+    if (this.provider === "gemini") {
+      return GEMINI_CHAT_URL;
+    }
     if (this.provider === "m365") {
       return M365_CHAT_URL;
     }
@@ -488,15 +510,20 @@ class BrowserHost {
   }
 
   async switchProvider(provider) {
-    if (provider !== "m365" && provider !== "chatgpt") return;
+    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini") return;
     this.provider = provider;
     const isM365 = provider === "m365";
-    this.view = isM365 ? this.m365View : this.chatGptView;
-    this.surfaceId = isM365 ? this.m365SurfaceId : this.chatGptSurfaceId;
-    this.partition = isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt";
+    const isGemini = provider === "gemini";
+    this.view = isGemini ? this.geminiView : (isM365 ? this.m365View : this.chatGptView);
+    this.surfaceId = isGemini ? this.geminiSurfaceId : (isM365 ? this.m365SurfaceId : this.chatGptSurfaceId);
+    this.partition = isGemini ? "persist:codex-gemini-web" : (isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt");
 
-    const otherView = isM365 ? this.chatGptView : this.m365View;
-    otherView.setBounds(this.hiddenTurnBounds());
+    const allViews = [this.chatGptView, this.m365View, this.geminiView];
+    for (const v of allViews) {
+      if (v && v !== this.view) {
+        v.setBounds(this.hiddenTurnBounds());
+      }
+    }
     this.view.setBounds(this.boundsReady ? this.bounds : this.hiddenTurnBounds());
 
     const currentUrl = this.view.webContents.getURL() || "";
@@ -505,14 +532,21 @@ class BrowserHost {
       || currentUrl.includes("login.live.com")
       || currentUrl.includes("account.activedirectory.windowsazure.com");
     const isChatGptDomain = currentUrl.startsWith(CHATGPT_ORIGIN);
+    const isGeminiDomain = currentUrl.includes("gemini.google.com") || currentUrl.includes("accounts.google.com");
 
-    if (isM365 && !isMicrosoftDomain) {
+    if (isGemini && !isGeminiDomain) {
+      try {
+        await this.view.webContents.loadURL(GEMINI_CHAT_URL);
+      } catch (err) {
+        this.logger.error("browser.switch_provider_load_failed", { message: err instanceof Error ? err.message : String(err) });
+      }
+    } else if (isM365 && !isMicrosoftDomain) {
       try {
         await this.view.webContents.loadURL(M365_CHAT_URL);
       } catch (err) {
         this.logger.error("browser.switch_provider_load_failed", { message: err instanceof Error ? err.message : String(err) });
       }
-    } else if (!isM365 && !isChatGptDomain) {
+    } else if (!isM365 && !isGemini && !isChatGptDomain) {
       try {
         await this.view.webContents.loadURL(this.getHomeUrl());
       } catch (err) {
@@ -550,6 +584,10 @@ class BrowserHost {
       this.chatGptView.setVisible(true);
       this.m365View.setBounds(this.hiddenTurnBounds());
       this.m365View.setVisible(true);
+      if (this.geminiView) {
+        this.geminiView.setBounds(this.hiddenTurnBounds());
+        this.geminiView.setVisible(true);
+      }
 
       try {
         await loadCommittedBrowserSurface(this.chatGptView.webContents, IDLE_BROWSER_URL);
@@ -567,6 +605,17 @@ class BrowserHost {
         }
       } catch (err) {
         this.logger.warn("browser.m365_init_failed", { message: err instanceof Error ? err.message : String(err) });
+      }
+
+      if (this.geminiView) {
+        try {
+          await loadCommittedBrowserSurface(this.geminiView.webContents, GEMINI_CHAT_URL);
+          if (browserInteractionModeFor(this) === "automatic") {
+            await this.markOwnedSurfaceFor(this.geminiView.webContents, this.geminiSurfaceId);
+          }
+        } catch (err) {
+          this.logger.warn("browser.gemini_init_failed", { message: err instanceof Error ? err.message : String(err) });
+        }
       }
     } else if (this.view) {
       this.view.setBounds(this.hiddenTurnBounds());
@@ -1290,7 +1339,7 @@ class BrowserHost {
       contents.on("page-title-updated", (_event, title) => {
         if (!isTargetActive()) return;
         if (browserInteractionModeFor(this) === "manual") return;
-        const defaultTitle = providerName === "m365" ? "M365 Copilot" : "ChatGPT";
+        const defaultTitle = providerName === "gemini" ? "Google Gemini" : (providerName === "m365" ? "M365 Copilot" : "ChatGPT");
         this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : defaultTitle });
       });
       contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
@@ -1328,9 +1377,10 @@ class BrowserHost {
       });
     };
 
-    if (this.chatGptView || this.m365View) {
+    if (this.chatGptView || this.m365View || this.geminiView) {
       if (this.chatGptView) bindFor(this.chatGptView, "chatgpt");
       if (this.m365View) bindFor(this.m365View, "m365");
+      if (this.geminiView) bindFor(this.geminiView, "gemini");
     } else if (this.view) {
       bindFor(this.view, this.provider || "chatgpt");
     }
@@ -1438,7 +1488,8 @@ class BrowserHost {
       const isTargetDomain = cookie.domain.includes("chatgpt.com")
         || cookie.domain.includes("microsoft")
         || cookie.domain.includes("cloud.microsoft")
-        || cookie.domain.includes("live.com");
+        || cookie.domain.includes("live.com")
+        || cookie.domain.includes("google.com");
       if (cookie.httpOnly && isTargetDomain) {
         void this.refreshAuthenticationFromSession();
       }
@@ -1447,6 +1498,7 @@ class BrowserHost {
     if (this.view?.webContents?.session?.cookies) sessions.add(this.view.webContents.session.cookies);
     if (this.chatGptView?.webContents?.session?.cookies) sessions.add(this.chatGptView.webContents.session.cookies);
     if (this.m365View?.webContents?.session?.cookies) sessions.add(this.m365View.webContents.session.cookies);
+    if (this.geminiView?.webContents?.session?.cookies) sessions.add(this.geminiView.webContents.session.cookies);
     for (const sessionCookies of sessions) {
       sessionCookies.on("changed", this.authenticationCookieListener);
     }
@@ -1587,7 +1639,7 @@ class BrowserHost {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
     const manualInteraction = browserInteractionModeFor(this) === "manual";
-    const defaultTitle = this.provider === "m365" ? "M365 Copilot" : "ChatGPT";
+    const defaultTitle = this.provider === "gemini" ? "Google Gemini" : (this.provider === "m365" ? "M365 Copilot" : "ChatGPT");
     const homeTab = {
       id: "home",
       traceId: null,
@@ -1621,6 +1673,7 @@ class BrowserHost {
       provider: this.provider,
       chatGptAuthenticated: this.chatGptAuthenticated,
       m365Authenticated: this.m365Authenticated,
+      geminiAuthenticated: this.geminiAuthenticated,
       tabs: this.turnTabs.size > 0
         ? [
             homeTab,
@@ -1856,8 +1909,8 @@ class BrowserHost {
   presentPrimaryView(visible) {
     const automatic = browserInteractionModeFor(this) === "automatic";
     const bounds = visible ? this.bounds : this.hiddenTurnBounds();
-    const otherView = this.provider === "m365" ? this.chatGptView : this.m365View;
-    if (otherView) {
+    const otherViews = [this.chatGptView, this.m365View, this.geminiView].filter(v => v && v !== this.view);
+    for (const otherView of otherViews) {
       otherView.setBounds(this.hiddenTurnBounds());
       otherView.setVisible(true);
     }
@@ -2193,11 +2246,18 @@ class BrowserHost {
   }
 
   async reveal(inspectSession = true) {
-    if (this.provider !== "m365" && inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
+    if (this.provider !== "m365" && this.provider !== "gemini" && inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
     this.show();
     const currentUrl = this.view.webContents.getURL() || "";
     if (!this.selectedTurnTab()) {
-      if (this.provider === "m365") {
+      if (this.provider === "gemini") {
+        const isGoogleDomain = currentUrl.includes("gemini.google.com")
+          || currentUrl.includes("accounts.google.com");
+        if (!isGoogleDomain || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
+          await this.view.webContents.loadURL("https://gemini.google.com/app");
+          if (inspectSession) await this.probeAuthentication();
+        }
+      } else if (this.provider === "m365") {
         const isMicrosoftDomain = currentUrl.includes("m365.cloud.microsoft")
           || currentUrl.includes("login.microsoftonline.com")
           || currentUrl.includes("login.live.com")
@@ -2848,11 +2908,20 @@ class BrowserHost {
     }
     this.setState({
       status: this.state.authenticated ? "ready" : "signed-out",
-      message: this.state.authenticated ? "No active task" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT"),
+      message: this.state.authenticated ? "No active task" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT")),
     });
   }
 
   openLogin() {
+    if (this.provider === "gemini") {
+      this.activateHomeSurface();
+      this.show();
+      const current = this.view.webContents.getURL();
+      if (!current.includes("gemini.google.com") && !current.includes("accounts.google.com")) {
+        void this.view.webContents.loadURL(GEMINI_CHAT_URL);
+      }
+      return Promise.resolve(this.snapshot());
+    }
     if (this.provider === "m365") {
       this.activateHomeSurface();
       this.show();
@@ -3094,6 +3163,79 @@ class BrowserHost {
   }
 
   async probeAuthentication() {
+    if (this.provider === "gemini") {
+      if (this.authenticationProbe) return this.authenticationProbe;
+      const revision = this.authenticationRevision;
+      const operation = (async () => {
+        if (!this.view || this.view.webContents.isDestroyed()) return this.snapshot();
+        let url = this.view.webContents.getURL();
+        if (!url || url === IDLE_BROWSER_URL || url === "about:blank") {
+          this.setState({
+            status: this.state.authenticated ? "ready" : "signed-out",
+            message: this.state.authenticated ? "Google Gemini is ready" : "Sign in to Google Gemini",
+            url,
+            title: "Google Gemini",
+          });
+          return this.snapshot();
+        }
+        const probe = (contents) => contents.executeJavaScript(`(() => {
+          const href = location.href;
+          const isGemini = href.includes("gemini.google.com");
+          const isLogin = href.includes("accounts.google.com");
+          const composer = Boolean(document.querySelector("rich-textarea, div[contenteditable='true'], [role='textbox']"));
+          return {
+            url: href,
+            composer,
+            authenticated: isGemini && !isLogin,
+            readyState: document.readyState,
+          };
+        })()`, true).catch(() => {
+          const liveUrl = contents.getURL() || "";
+          const isGemini = liveUrl.includes("gemini.google.com");
+          const isLogin = liveUrl.includes("accounts.google.com");
+          return {
+            url: liveUrl,
+            composer: false,
+            authenticated: isGemini && !isLogin,
+            readyState: "complete",
+          };
+        });
+        const result = await probe(this.view.webContents);
+        if (revision !== this.authenticationRevision) return this.snapshot();
+        if (result.authenticated) {
+          this.reauthenticationRequired = false;
+          this.geminiAuthenticated = true;
+          if (this.authView && !this.authView.webContents.isDestroyed()) {
+            this.closeAuthView(this.authView, true, false);
+          }
+          this.setState({
+            status: this.activeTraceId ? "running" : "ready",
+            message: this.activeTraceId ? "Google Gemini is working" : "Google Gemini is ready",
+            authenticated: true,
+            url: result.url,
+            title: "Google Gemini",
+            loading: false,
+          });
+        } else {
+          this.geminiAuthenticated = false;
+          const loaded = result.readyState === "complete";
+          this.setState({
+            status: loaded ? "signed-out" : "loading",
+            message: loaded ? "Sign in to Google Gemini" : "Waiting for Google Gemini",
+            authenticated: false,
+            url: result.url || url,
+            title: "Google Gemini",
+            loading: !loaded,
+          });
+        }
+        return this.snapshot();
+      })();
+      const tracked = operation.finally(() => {
+        if (this.authenticationProbe === tracked) this.authenticationProbe = null;
+      });
+      this.authenticationProbe = tracked;
+      return tracked;
+    }
     if (this.provider === "m365") {
       if (this.authenticationProbe) return this.authenticationProbe;
       const revision = this.authenticationRevision;
@@ -3295,7 +3437,7 @@ class BrowserHost {
   }
 
   async smokeTest() {
-    if (this.provider !== "m365") {
+    if (this.provider !== "m365" && this.provider !== "gemini") {
       requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
     }
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
@@ -3309,6 +3451,132 @@ class BrowserHost {
   }
 
   async runSmokeTest() {
+    if (this.provider === "gemini") {
+      this.show();
+      this.activateHomeSurface();
+      await this.waitForSurfaceReady();
+      this.setState({ status: "testing", message: "Running Google Gemini smoke test..." });
+      const currentUrl = this.view.webContents.getURL() || "";
+      const isGemini = currentUrl.includes("gemini.google.com");
+      const isLogin = currentUrl.includes("accounts.google.com");
+      if (!isGemini || isLogin) {
+        throw new Error("Vui lòng đăng nhập vào Google Gemini trước khi chạy kiểm tra!");
+      }
+
+      const editorReady = await this.view.webContents.executeJavaScript(`(async () => {
+        const maxWait = 15000;
+        const start = Date.now();
+        while (Date.now() - start < maxWait) {
+          const editor = document.querySelector('rich-textarea div[contenteditable="true"], div.ql-editor, div[contenteditable="true"], [role="textbox"]');
+          if (editor) return true;
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+        return false;
+      })()`, true);
+
+      if (!editorReady) {
+        throw new Error("Không tìm thấy khung nhập liệu của Google Gemini!");
+      }
+
+      const promptText = "Reply with exactly: CODEX WEB GPT READY";
+      this.setState({ status: "testing", message: "Sending smoke test prompt to Google Gemini..." });
+
+      this.view.webContents.focus();
+      await this.view.webContents.executeJavaScript(`(() => {
+        const editor = document.querySelector('rich-textarea div[contenteditable="true"]') ||
+          document.querySelector('div.ql-editor') ||
+          document.querySelector('div[contenteditable="true"]') ||
+          document.querySelector('[role="textbox"]');
+        if (editor) {
+          editor.focus();
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          document.execCommand("delete", false, undefined);
+          return true;
+        }
+        return false;
+      })()`, true);
+
+      await this.view.webContents.insertText(promptText);
+
+      await this.view.webContents.executeJavaScript(`((text) => {
+        const editor = document.querySelector('rich-textarea div[contenteditable="true"]') ||
+          document.querySelector('div.ql-editor') ||
+          document.querySelector('div[contenteditable="true"]') ||
+          document.querySelector('[role="textbox"]');
+        if (editor && (!editor.textContent || !editor.textContent.includes(text))) {
+          editor.focus();
+          document.execCommand("insertText", false, text);
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          editor.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      })(${JSON.stringify(promptText)})`, true);
+
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      await this.view.webContents.executeJavaScript(`(() => {
+        const sendBtn = document.querySelector(
+          'button[aria-label*="Send" i], button[aria-label*="Gửi" i], button.send-button, [data-test-id="send-button"], div.send-button-container button'
+        );
+        if (sendBtn && !sendBtn.disabled) {
+          sendBtn.click();
+          return true;
+        }
+        return false;
+      })()`, true);
+
+      this.view.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+      this.view.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+      this.view.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+
+      this.setState({ status: "testing", message: "Waiting for Google Gemini response..." });
+      const maxWaitMs = 60000;
+      const pollIntervalMs = 500;
+      const startTime = Date.now();
+      let passed = false;
+
+      while (Date.now() - startTime < maxWaitMs) {
+        const responseText = await this.view.webContents.executeJavaScript(`(() => {
+          const selectors = [
+            'model-response',
+            'message-content',
+            '.response-container',
+            'div[class*="response" i]',
+            '[role="article"]'
+          ];
+          for (const sel of selectors) {
+            const els = Array.from(document.querySelectorAll(sel));
+            if (els.length > 0) {
+              const last = els[els.length - 1];
+              const text = last ? (last.innerText || last.textContent || "") : "";
+              if (text.includes("CODEX WEB GPT READY")) return text;
+            }
+          }
+          const allText = document.body ? (document.body.innerText || "") : "";
+          if (allText.includes("CODEX WEB GPT READY")) {
+            return "CODEX WEB GPT READY";
+          }
+          return "";
+        })()`, true).catch(() => "");
+
+        if (responseText.includes("CODEX WEB GPT READY")) {
+          passed = true;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      }
+
+      if (!passed) {
+        throw new Error("Google Gemini smoke test không nhận được phản hồi 'CODEX WEB GPT READY' kịp thời. Vui lòng thử lại!");
+      }
+
+      this.logger.info("smoke.gemini_completed");
+      this.setState({ status: "ready", message: "Smoke test passed", authenticated: true });
+      return { ok: true, effort: "fast", response: "CODEX WEB GPT READY" };
+    }
     if (this.provider === "m365") {
       this.show();
       this.activateHomeSurface();
@@ -3515,8 +3783,8 @@ class BrowserHost {
   }
 
   async runSessionInspection(detectCapabilities = false) {
-    if (this.provider === "m365") {
-      const liveUrl = this.view.webContents.getURL() || "";
+    if (this.provider === "m365" || this.provider === "gemini") {
+      const liveUrl = (this.view && !this.view.webContents.isDestroyed()) ? this.view.webContents.getURL() : "";
       return {
         authenticated: true,
         temporary: true,
@@ -3603,8 +3871,8 @@ class BrowserHost {
           this.setState({
             status: isAuth ? "ready" : "signed-out",
             message: isAuth
-              ? (this.provider === "m365" ? "M365 Copilot is ready" : "ChatGPT is ready")
-              : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT"),
+              ? (this.provider === "gemini" ? "Google Gemini is ready" : (this.provider === "m365" ? "M365 Copilot is ready" : "ChatGPT is ready"))
+              : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT")),
             loading: false,
           });
         }
@@ -3619,6 +3887,7 @@ class BrowserHost {
       const surfaces = [
         ...(this.chatGptSurfaceId && this.chatGptView ? [[this.chatGptSurfaceId, this.chatGptView?.webContents]] : []),
         ...(this.m365SurfaceId && this.m365View ? [[this.m365SurfaceId, this.m365View?.webContents]] : []),
+        ...(this.geminiSurfaceId && this.geminiView ? [[this.geminiSurfaceId, this.geminiView?.webContents]] : []),
         ...(this.surfaceId && this.view ? [[this.surfaceId, this.view?.webContents]] : []),
         ...[...this.turnTabs.values()].filter(tab => tab.interactionMode === "automatic")
           .map(tab => [tab.surfaceId, tab.view?.webContents || tab.view])
@@ -3642,6 +3911,7 @@ class BrowserHost {
       surfaceId: this.surfaceId || this.chatGptSurfaceId,
       chatGptSurfaceId: this.chatGptSurfaceId || this.surfaceId,
       m365SurfaceId: this.m365SurfaceId,
+      geminiSurfaceId: this.geminiSurfaceId,
       activeSurfaceId: this.surfaceId,
       surfaceTargets,
       provider: this.provider || "chatgpt",

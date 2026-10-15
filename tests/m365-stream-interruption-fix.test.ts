@@ -42,11 +42,11 @@ describe("M365 Stream Interruption & Cut-off Fixes", () => {
   test("Fix 2: FastPathStreamBuffer.finish adopts longer final text across virtualization gaps", () => {
     const buffer = new FastPathStreamBuffer();
     // Giả lập stream chunk 1
-    const delta1 = buffer.observe("1 <m365Response>\n2 <thought>Surveying code</thought>\n3 *** Begin Patch\n");
+    const delta1 = buffer.observe("1 <webResponse>\n2 <thought>Surveying code</thought>\n3 *** Begin Patch\n");
     expect(delta1.length).toBeGreaterThan(0);
 
     // Giả lập ở lượt cuối cùng, scraper gom được đầy đủ 438 dòng từ cache
-    const completeText = "1 <m365Response>\n2 <thought>Surveying code</thought>\n3 *** Begin Patch\n4 *** Add File: style.css\n5 color: var(--color-text);\n6 *** End Patch\n7 </m365Response>";
+    const completeText = "1 <webResponse>\n2 <thought>Surveying code</thought>\n3 *** Begin Patch\n4 *** Add File: style.css\n5 color: var(--color-text);\n6 *** End Patch\n7 </webResponse>";
     const finished = buffer.finish(completeText);
 
     expect(finished.markdown).toContain("*** End Patch");
@@ -54,15 +54,15 @@ describe("M365 Stream Interruption & Cut-off Fixes", () => {
     expect(finished.markdown.length).toBe(completeText.length);
   });
 
-  test("Fix 3: Tool detector strips <m365Response> and trailing backticks cleanly on plan mode", () => {
+  test("Fix 3: Tool detector strips <webResponse> and trailing backticks cleanly on plan mode", () => {
     const detector = new M365ToolCallDetector({ renderThinkingInText: true });
-    const planResponse = `<m365Response>
+    const planResponse = `<webResponse>
 <thought>Plan survey complete.</thought>
 <proposed_plan>
 ## 1. Goal
 Build todo app with Vanilla JS.
 </proposed_plan>
-</m365Response>`;
+</webResponse>`;
 
     const emitted = detector.feed(planResponse);
     const finish = detector.finish();
@@ -71,7 +71,7 @@ Build todo app with Vanilla JS.
     expect(combined).toContain("💭 Plan survey complete.");
     expect(combined).toContain("<proposed_plan>");
     expect(combined).toContain("</proposed_plan>");
-    expect(combined).not.toContain("<m365Response>");
-    expect(combined).not.toContain("</m365Response>");
+    expect(combined).not.toContain("<webResponse>");
+    expect(combined).not.toContain("</webResponse>");
   });
 });

@@ -530,7 +530,13 @@ function LauncherShell({
             <div className="sidebar-brand-row">
               <div className="sidebar-brand-identity">
                 <BrandMark small />
-                <strong>{(browser?.provider || snapshot.state.selectedProvider || "m365") === "m365" ? "Codex M365 Copilot" : copy.product}</strong>
+                <strong>{
+                  (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini"
+                    ? "Codex Gemini Web"
+                    : (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"
+                      ? "Codex M365 Copilot"
+                      : copy.product
+                }</strong>
                 {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
               </div>
               <div className="sidebar-brand-actions">
@@ -550,14 +556,14 @@ function LauncherShell({
             <nav className="sidebar-nav" aria-label={copy.workspace}>
               <SidebarGroup label={copy.workspace}>
                 <SidebarItem
-                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "chatgpt"}
-                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "chatgpt"
+                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini"}
+                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "gemini"
                     ? <ActionDot pulse tone="required" />
                     : null}
-                  icon="globe"
-                  label="ChatGPT"
+                  icon="spark"
+                  label="Google Gemini"
                   onClick={async () => {
-                    await api!.setProvider("chatgpt");
+                    await api!.setProvider("gemini");
                     updateState((await api!.snapshot()).state);
                     navigateSurface("browser");
                     await api!.setBrowserSurfaceActive(true);
@@ -572,6 +578,20 @@ function LauncherShell({
                   label="M365 Copilot"
                   onClick={async () => {
                     await api!.setProvider("m365");
+                    updateState((await api!.snapshot()).state);
+                    navigateSurface("browser");
+                    await api!.setBrowserSurfaceActive(true);
+                  }}
+                />
+                <SidebarItem
+                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "chatgpt"}
+                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "chatgpt"
+                    ? <ActionDot pulse tone="required" />
+                    : null}
+                  icon="globe"
+                  label="ChatGPT"
+                  onClick={async () => {
+                    await api!.setProvider("chatgpt");
                     updateState((await api!.snapshot()).state);
                     navigateSurface("browser");
                     await api!.setBrowserSurfaceActive(true);
@@ -995,8 +1015,8 @@ function BrowserSurface({
         ) : null}
         <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
           {visible
-            ? (browser?.provider === "m365" ? "Hide M365 Copilot" : copy.hideBrowser)
-            : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)}
+            ? (browser?.provider === "gemini" ? "Hide Google Gemini" : (browser?.provider === "m365" ? "Hide M365 Copilot" : copy.hideBrowser))
+            : (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt))}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
@@ -1018,20 +1038,24 @@ function BrowserSurface({
               ? copy.browserReady
               : browser?.authenticated
                 ? copy.noActiveTask
-                : browser?.provider === "m365"
-                  ? "Sign in to Microsoft 365 Copilot"
-                  : copy.stepAccount}</h1>
+                : browser?.provider === "gemini"
+                  ? "Sign in to Google Gemini"
+                  : browser?.provider === "m365"
+                    ? "Sign in to Microsoft 365 Copilot"
+                    : copy.stepAccount}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
               : browser?.authenticated
-              ? (browser?.provider === "m365"
-                ? "M365 Copilot will appear here when Codex starts a Web model turn."
-                : copy.noActiveTaskBody)
+              ? (browser?.provider === "gemini"
+                ? "Google Gemini will appear here when Codex starts a Web model turn."
+                : browser?.provider === "m365"
+                  ? "M365 Copilot will appear here when Codex starts a Web model turn."
+                  : copy.noActiveTaskBody)
               : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
               <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
                 {manualInteraction || browser?.authenticated
-                  ? (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)
+                  ? (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt))
                   : copy.signIn}
               </PrimaryButton>
               {passkeyAvailable ? (
@@ -1129,11 +1153,14 @@ function SetupSurface({
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
 
   const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
+  const isGemini = (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini";
   const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
-  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365));
+  const geminiAuthed = Boolean(browser?.geminiAuthenticated || (browser?.authenticated && isGemini));
+  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365 && !isGemini));
 
   const isM365Testing = browser?.status === "testing" && isM365;
-  const isChatGptTesting = browser?.status === "testing" && !isM365;
+  const isGeminiTesting = browser?.status === "testing" && isGemini;
+  const isChatGptTesting = browser?.status === "testing" && !isM365 && !isGemini;
   const isRunningTurn = browser?.status === "running";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
@@ -1174,7 +1201,7 @@ function SetupSurface({
         ? copy.devSetupSubtitle
         : manualInteraction
           ? copy.manualInteractionBody
-          : "Configure both Microsoft 365 Copilot and ChatGPT Web to work with Codex."}
+          : "Configure Microsoft 365 Copilot, Google Gemini and ChatGPT Web to work with Codex."}
       title={devProfile ? copy.devSetupTitle : "Set up Codex Copilot"}
     >
       {/* ── M365 Copilot Setup Section ── */}
@@ -1211,6 +1238,42 @@ function SetupSurface({
             })}
             repeatable={true}
             title="Run browser smoke test (M365)"
+          />
+        </div>
+
+        {/* ── Google Gemini Setup Section ── */}
+        <SectionHeading label="Google Gemini Setup" spaced />
+        <div className="setup-list">
+          <SetupRow
+            action={geminiAuthed
+              ? copy.signedIn
+              : browser?.status === "loading" && isGemini ? copy.checkingSignIn : copy.signIn}
+            complete={geminiAuthed}
+            description="Sign in directly in the embedded Google Gemini browser. Login stays in this launcher's private profile."
+            disabled={globalActionDisabled}
+            index={1}
+            onAction={() => run(async () => {
+              await api!.setProvider("gemini");
+              await activateBrowser();
+              await api!.openLogin();
+            })}
+            title="Sign in to Google Gemini"
+          />
+          <SetupRow
+            action={snapshot.geminiSmokePassed ? "Verify again" : "Run verify"}
+            complete={Boolean(snapshot.geminiSmokePassed)}
+            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to Google Gemini and verify response."
+            disabled={globalActionDisabled || isGeminiTesting || !geminiAuthed}
+            index={2}
+            onAction={() => run(async () => {
+              await api!.setProvider("gemini");
+              updateState((await api!.snapshot()).state);
+              await activateBrowser();
+              await api!.smokeTest();
+              updateState((await api!.snapshot()).state);
+            })}
+            repeatable={true}
+            title="Run browser smoke test (Gemini)"
           />
         </div>
 
@@ -1805,6 +1868,16 @@ function SettingsSurface({
       <div className="settings-list">
         <SettingRow body="Choose active AI provider and embedded browser view" label="AI Provider">
           <div style={{ display: "flex", gap: "8px" }}>
+            <SecondaryButton
+              disabled={busy}
+              style={{
+                borderColor: snapshot.state.selectedProvider === "gemini" ? "var(--color-accent, #1a73e8)" : undefined,
+                fontWeight: snapshot.state.selectedProvider === "gemini" ? 600 : 400,
+              }}
+              onClick={() => void api!.setProvider("gemini").then(updateState).catch((cause) => setError(messageOf(cause)))}
+            >
+              Google Gemini
+            </SecondaryButton>
             <SecondaryButton
               disabled={busy}
               style={{

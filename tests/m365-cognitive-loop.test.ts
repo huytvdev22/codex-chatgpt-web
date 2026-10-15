@@ -37,7 +37,7 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
           throw new Error("Request timeout: gateway timed out");
         }
         // Lần thứ 3 thành công
-        return "<m365Response>Tác vụ đã được hoàn thành sau khi thử lại thành công.</m365Response>";
+        return "<webResponse>Tác vụ đã được hoàn thành sau khi thử lại thành công.</webResponse>";
       },
     };
 
@@ -125,10 +125,10 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
       async call(prompt: string, context?: { turnIndex: number }) {
         if (context?.turnIndex === 1) {
           // Trả về tool call đọc file không tồn tại
-          return `<m365Response><tool_call>\n{"name": "read_file", "arguments": {"path": "non-existent-file.xyz"}}\n</tool_call></m365Response>`;
+          return `<webResponse><tool_call>\n{"name": "read_file", "arguments": {"path": "non-existent-file.xyz"}}\n</tool_call></webResponse>`;
         }
         promptReceivedAtTurn2 = prompt;
-        return "<m365Response>Tôi hiểu file không tồn tại, tôi sẽ tạo file mới.</m365Response>";
+        return "<webResponse>Tôi hiểu file không tồn tại, tôi sẽ tạo file mới.</webResponse>";
       },
     };
 
@@ -169,9 +169,9 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
           return `<tool_call>{"name":"read_file","arguments":{"path":"package.json"}}</tool_call>`;
         }
         if (modelCalls === 2) {
-          return `<m365Response><tool_call>{"name":"read_file","arguments":{"path":"package.json"}}</tool_call></m365Response>`;
+          return `<webResponse><tool_call>{"name":"read_file","arguments":{"path":"package.json"}}</tool_call></webResponse>`;
         }
-        return `<m365Response>Hoàn tất sau khi đọc file.</m365Response>`;
+        return `<webResponse>Hoàn tất sau khi đọc file.</webResponse>`;
       },
     };
     const executor: IToolExecutor = {
@@ -201,12 +201,12 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
       async call() {
         modelCalls++;
         if (modelCalls === 1) {
-          return `<m365Response>
+          return `<webResponse>
 <tool_call>{"name":"read_file","arguments":{"path":"a.ts"}}</tool_call>
 <tool_call>{"name":"grep_code","arguments":{"query":"needle"}}
-</m365Response>`;
+</webResponse>`;
         }
-        return `<m365Response>Batch trước đã được hủy.</m365Response>`;
+        return `<webResponse>Batch trước đã được hủy.</webResponse>`;
       },
     };
     const executor: IToolExecutor = {
@@ -232,7 +232,7 @@ describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
     const endlessModelClient: IM365ModelClient = {
       async call() {
         turnsRun++;
-        return `<m365Response><tool_call>\n{"name": "read_file", "arguments": {"path": "step_${turnsRun}.txt"}}\n</tool_call></m365Response>`;
+        return `<webResponse><tool_call>\n{"name": "read_file", "arguments": {"path": "step_${turnsRun}.txt"}}\n</tool_call></webResponse>`;
       },
     };
 
@@ -411,13 +411,13 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
   test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ m365Response, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
     const detector = new M365ToolCallDetector({ renderThinkingInText: true });
     const rawStream = [
-      "<m365Response>\n<thought>\n",
+      "<webResponse>\n<thought>\n",
       "Liên kết `app.js` trong `index.html` hiện đã đúng, ",
       "khả năng cao lỗi nằm trong cú pháp `app.js`.\n</thought>\n",
       "Tôi sẽ kiểm tra `app.js` bằng Node.js và hiển thị toàn bộ nội dung:\n",
       "<tool_call>\n",
       '{"name": "read_file", "arguments": {"path": "app.js"}}\n',
-      "</tool_call>\n</m365Response>",
+      "</tool_call>\n</webResponse>",
     ];
 
     let fullEmittedText = "";
@@ -427,9 +427,9 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
     const { remainingText, toolCall } = detector.finish();
     fullEmittedText += remainingText;
 
-    // 1. Không hiển thị thẻ <m365Response> hay </m365Response>
-    expect(fullEmittedText).not.toContain("<m365Response>");
-    expect(fullEmittedText).not.toContain("</m365Response>");
+    // 1. Không hiển thị thẻ <webResponse> hay </webResponse>
+    expect(fullEmittedText).not.toContain("<webResponse>");
+    expect(fullEmittedText).not.toContain("</webResponse>");
 
     // 2. Không hiển thị thẻ thô <thought> hay </thought>
     expect(fullEmittedText).not.toContain("<thought>");
@@ -451,13 +451,13 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
 
   test("M365OutputTranslator dịch thành công lệnh shell phức tạp chứa escape dấu ngoặc đơn \\( \\) mà không bị rơi vào fallback", () => {
     const translator = new M365OutputTranslator();
-    const rawWithShellEscape = `<m365Response>
+    const rawWithShellEscape = `<webResponse>
 <thought>
 Cần khảo sát cấu trúc repository, công nghệ sử dụng, trạng thái Git và các tệp cấu hình chính.
 </thought>
 Tôi sẽ kiểm tra cấu trúc dự án trước:
 <tool_call> {"name":"exec_command","arguments":{"command":"printf '%s\\n' '=== PROJECT MANIFESTS ==='; find . -maxdepth 3 -type f \\( -name 'package.json' -o -name 'pom.xml' \\) -not -path '*/node_modules/*' -print | sort"}} </tool_call>
-</m365Response>`;
+</webResponse>`;
 
     const result = translator.translate(rawWithShellEscape);
     expect(result.type).toBe("tool_call");
@@ -474,20 +474,20 @@ Tôi sẽ kiểm tra cấu trúc dự án trước:
 
   test("M365OutputTranslator làm sạch hoàn toàn envelope m365Response trong Final Answer", () => {
     const translator = new M365OutputTranslator();
-    const raw = `<m365Response>
+    const raw = `<webResponse>
 <thought>
 Đã kiểm tra file app.js và sửa lỗi thành công. Giờ thông báo kết quả.
 </thought>
 Tôi đã sửa xong lỗi cú pháp trong file \`app.js\`. Mọi test đều đã vượt qua!
-</m365Response>`;
+</webResponse>`;
 
     const result = translator.translate(raw);
     expect(result.type).toBe("final_answer");
     if (result.type === "final_answer") {
       expect(result.thinking).toBe("Đã kiểm tra file app.js và sửa lỗi thành công. Giờ thông báo kết quả.");
       expect(result.content).toBe("Tôi đã sửa xong lỗi cú pháp trong file `app.js`. Mọi test đều đã vượt qua!");
-      expect(result.content).not.toContain("<m365Response>");
-      expect(result.content).not.toContain("</m365Response>");
+      expect(result.content).not.toContain("<webResponse>");
+      expect(result.content).not.toContain("</webResponse>");
       expect(result.content).not.toContain("<thought>");
     }
   });

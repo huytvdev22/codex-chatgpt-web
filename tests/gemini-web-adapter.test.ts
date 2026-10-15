@@ -60,12 +60,35 @@ describe("Google Gemini Web Adapter Base Architecture Tests", () => {
       ],
     };
     const augmented = augmentNativeModelCatalog(dummyCatalog, {} as any);
-    const slugs = (augmented.models as any[]).map(m => m.slug);
+    const models = augmented.models as any[];
+    const slugs = models.map(m => m.slug);
     expect(slugs).toContain("gemini-web/3.8-flash");
     expect(slugs).toContain("gemini-web/3.1-pro");
     expect(slugs).toContain("gemini-web/3.5-flash-lite");
     expect(slugs).toContain("gemini-web/4-argon");
     expect(slugs).toContain("gemini-web");
+
+    // Kiểm tra cấu hình 3 cấp độ thinking trên TẤT CẢ các model của Gemini
+    const geminiSlugs = [
+      "gemini-web/3.8-flash",
+      "gemini-web/3.1-pro",
+      "gemini-web/3.5-flash-lite",
+      "gemini-web/4-argon",
+      "gemini-web",
+    ];
+
+    for (const slug of geminiSlugs) {
+      const model = models.find(m => m.slug === slug);
+      expect(model).toBeDefined();
+      expect(model.default_reasoning_level).toBe("medium");
+      expect(model.supported_reasoning_levels).toHaveLength(3);
+      const effortNames = model.supported_reasoning_levels.map((l: any) => l.effort);
+      expect(effortNames).toEqual(["low", "medium", "high"]);
+      const descriptions = model.supported_reasoning_levels.map((l: any) => l.description);
+      expect(descriptions[0]).toContain("Thấp");
+      expect(descriptions[1]).toContain("Trung bình");
+      expect(descriptions[2]).toContain("Cao");
+    }
   });
 
   test("5. GEMINI_SELECTORS khai báo đầy đủ các element giao diện cốt lõi", () => {
@@ -73,21 +96,24 @@ describe("Google Gemini Web Adapter Base Architecture Tests", () => {
     expect(GEMINI_SELECTORS.sendButton).toBeDefined();
     expect(GEMINI_SELECTORS.stopButton).toBeDefined();
     expect(GEMINI_SELECTORS.responseContainer).toBeDefined();
+    expect(GEMINI_SELECTORS.modelSelectorButton).toBeDefined();
+    expect(GEMINI_SELECTORS.modelMenuContainer).toBeDefined();
+    expect(GEMINI_SELECTORS.thinkingSubmenuTrigger).toBeDefined();
   });
 
-  test("6. buildUnifiedToolProtocol hỗ trợ truyền biến linh hoạt cho Gemini và Copilot", () => {
-    const geminiPrompt = buildUnifiedToolProtocol("Gemini", "geminiResponse");
+  test("6. buildUnifiedToolProtocol hỗ trợ truyền tên trợ lý linh hoạt với webResponse cố định", () => {
+    const geminiPrompt = buildUnifiedToolProtocol("Gemini");
     expect(geminiPrompt).toContain("Chào Gemini, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
-    expect(geminiPrompt).toContain("<geminiResponse>");
+    expect(geminiPrompt).toContain("<webResponse>");
     expect(geminiPrompt).toContain("apply_patch");
 
-    const copilotPrompt = buildUnifiedToolProtocol("Copilot", "m365Response");
+    const copilotPrompt = buildUnifiedToolProtocol("Copilot");
     expect(copilotPrompt).toContain("Chào Copilot, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
-    expect(copilotPrompt).toContain("<m365Response>");
+    expect(copilotPrompt).toContain("<webResponse>");
 
-    const geminiAnchor = buildShortOutputFormatAnchor("geminiResponse");
-    expect(geminiAnchor).toContain("<geminiResponse>");
-    expect(geminiAnchor).toContain("4-backtick");
+    const anchor = buildShortOutputFormatAnchor();
+    expect(anchor).toContain("<webResponse>");
+    expect(anchor).toContain("4-backtick");
   });
 
   test("7. GeminiWebAdapter khởi tạo chuẩn ProviderAdapter interface", () => {
