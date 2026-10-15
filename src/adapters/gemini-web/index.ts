@@ -3,12 +3,10 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { geminiBrowserWorker, GeminiBrowserWorker } from "./gemini-browser-worker";
 import { GEMINI_SELECTORS, type GeminiDomSelectors } from "./selectors";
 import {
-  GEMINI_TOOL_PROTOCOL,
-  GEMINI_PLAN_MODE_PROMPT,
-  GEMINI_IMPLEMENT_PLAN_PROMPT,
-  GEMINI_TOOL_REMINDER_PROMPT,
-  GEMINI_SHORT_OUTPUT_FORMAT_ANCHOR,
-} from "./prompts/templates";
+  buildUnifiedToolProtocol,
+  buildShortOutputFormatAnchor,
+  TOOL_REMINDER_PROMPT,
+} from "../m365-copilot/prompts";
 import { XmlToolCallDetector } from "../m365-copilot/translation/detectors/xml-detector";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
@@ -71,11 +69,11 @@ export class GeminiWebAdapter implements ProviderAdapter {
     const sections: string[] = [];
     const isNew = !parsed.context.messages?.some(m => m.role === "assistant");
 
-    // 1. Thỏa thuận giao thức nếu là phiên mới
+    // 1. Thỏa thuận giao thức nếu là phiên mới (truyền tên Gemini vào)
     if (isNew) {
-      sections.push(GEMINI_TOOL_PROTOCOL);
+      sections.push(buildUnifiedToolProtocol("Gemini", "geminiResponse"));
     } else {
-      sections.push(GEMINI_TOOL_REMINDER_PROMPT);
+      sections.push(TOOL_REMINDER_PROMPT);
     }
 
     // 2. Nội dung trao đổi từ người dùng
@@ -87,7 +85,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
       sections.push(`[Yêu cầu của mình]:\n${userMsgs[userMsgs.length - 1]}`);
     }
 
-    sections.push(GEMINI_SHORT_OUTPUT_FORMAT_ANCHOR);
+    sections.push(buildShortOutputFormatAnchor("geminiResponse"));
     return sections.filter(Boolean).join("\n\n");
   }
 

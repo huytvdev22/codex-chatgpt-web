@@ -7,10 +7,9 @@ import {
 } from "../src/gemini-models";
 import { GEMINI_SELECTORS } from "../src/adapters/gemini-web/selectors";
 import {
-  GEMINI_TOOL_PROTOCOL,
-  GEMINI_PLAN_MODE_PROMPT,
-  GEMINI_SHORT_OUTPUT_FORMAT_ANCHOR,
-} from "../src/adapters/gemini-web/prompts/templates";
+  buildUnifiedToolProtocol,
+  buildShortOutputFormatAnchor,
+} from "../src/adapters/m365-copilot/prompts";
 import { GeminiWebAdapter, createGeminiWebAdapter } from "../src/adapters/gemini-web";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 
@@ -76,12 +75,19 @@ describe("Google Gemini Web Adapter Base Architecture Tests", () => {
     expect(GEMINI_SELECTORS.responseContainer).toBeDefined();
   });
 
-  test("6. GEMINI_TOOL_PROTOCOL tuân thủ vỏ bọc thẻ <geminiResponse> và văn phong bạn đồng hành", () => {
-    expect(GEMINI_TOOL_PROTOCOL).toContain("Chào Gemini, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
-    expect(GEMINI_TOOL_PROTOCOL).toContain("<geminiResponse>");
-    expect(GEMINI_TOOL_PROTOCOL).toContain("apply_patch");
-    expect(GEMINI_SHORT_OUTPUT_FORMAT_ANCHOR).toContain("<geminiResponse>");
-    expect(GEMINI_SHORT_OUTPUT_FORMAT_ANCHOR).toContain("4-backtick");
+  test("6. buildUnifiedToolProtocol hỗ trợ truyền biến linh hoạt cho Gemini và Copilot", () => {
+    const geminiPrompt = buildUnifiedToolProtocol("Gemini", "geminiResponse");
+    expect(geminiPrompt).toContain("Chào Gemini, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
+    expect(geminiPrompt).toContain("<geminiResponse>");
+    expect(geminiPrompt).toContain("apply_patch");
+
+    const copilotPrompt = buildUnifiedToolProtocol("Copilot", "m365Response");
+    expect(copilotPrompt).toContain("Chào Copilot, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
+    expect(copilotPrompt).toContain("<m365Response>");
+
+    const geminiAnchor = buildShortOutputFormatAnchor("geminiResponse");
+    expect(geminiAnchor).toContain("<geminiResponse>");
+    expect(geminiAnchor).toContain("4-backtick");
   });
 
   test("7. GeminiWebAdapter khởi tạo chuẩn ProviderAdapter interface", () => {
