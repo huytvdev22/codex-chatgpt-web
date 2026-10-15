@@ -454,14 +454,14 @@ const routesBySlug = new Map(
 );
 
 export function isChatGptWebModelSlug(modelId: string): boolean {
-  return modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
+  return modelId === "chatgpt-web" || modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
 }
 
 export function availableChatGptWebModelRoutes(
-  capabilities: ChatGptWebAccountCapabilities,
+  capabilities: Partial<ChatGptWebAccountCapabilities> = {},
   includeLegacy = false,
 ): readonly ChatGptWebModelRoute[] {
-  if (capabilities.browserInteractionMode === "manual") {
+  if (capabilities?.browserInteractionMode === "manual") {
     if (capabilities.experimentalBiggerContext) {
       throw new Error("Zero Risk does not support Bigger Context");
     }
