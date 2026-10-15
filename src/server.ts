@@ -98,6 +98,8 @@ import {
 } from "./chatgpt-web-models";
 import { isM365ModelSlug } from "./m365-models";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
+import { isGeminiModelSlug } from "./gemini-models";
+import { createGeminiWebAdapter } from "./adapters/gemini-web";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
 import {
@@ -786,6 +788,77 @@ async function handleM365ResponseRequest(
   });
 }
 
+async function handleGeminiResponseRequest(
+  req: Request,
+  raw: unknown,
+  requestedModel: string,
+  options: ResponseRequestOptions = {},
+): Promise<Response> {
+  const expanded = expandPreviousResponseInput(raw);
+  let parsed: CodexParsedRequest;
+  try {
+    parsed = parseRequest(expanded);
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
+
+  const adapter = createGeminiWebAdapter();
+  const queue = new AsyncEventQueue<AdapterEvent>();
+  const abort = new AbortController();
+  if (req.signal.aborted) abort.abort();
+  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+
+  const run = async () => {
+    try {
+      await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
+        options.onAdapterEvent?.(event);
+        queue.push(event);
+      });
+    } catch (error) {
+      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      options.onAdapterEvent?.(event);
+      queue.push(event);
+    } finally {
+      queue.close();
+    }
+  };
+
+  const maps = toolBridgeMaps(parsed);
+  const responseModel = requestedModel;
+
+  if (parsed.stream) {
+    void run();
+    const stream = bridgeToResponsesSSE(
+      queue,
+      responseModel,
+      maps.toolNsMap,
+      maps.freeformToolNames,
+      maps.toolSearchToolNames,
+      () => abort.abort(),
+      2_000,
+      {
+        hideThinkingSummary: parsed.options.hideThinkingSummary,
+      },
+    );
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
+
+  await run();
+  const events = await queue.collect();
+  const json = buildResponseJSON(events, responseModel, {
+    hideThinkingSummary: parsed.options.hideThinkingSummary,
+    toolNsMap: maps.toolNsMap,
+  });
+  return Response.json(json);
+}
+
 export async function responseRequest(
   req: Request,
   config: AppConfig,
@@ -816,6 +889,9 @@ export async function responseRequest(
   }
   if (typeof requestedModel === "string" && isM365ModelSlug(requestedModel)) {
     return await handleM365ResponseRequest(req, raw, requestedModel, options);
+  }
+  if (typeof requestedModel === "string" && isGeminiModelSlug(requestedModel)) {
+    return await handleGeminiResponseRequest(req, raw, requestedModel, options);
   }
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
     try {
@@ -1049,7 +1125,7 @@ export async function compactRequest(
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
-  if (isM365ModelSlug(raw.model)) {
+  if (isM365ModelSlug(raw.model) || isGeminiModelSlug(raw.model)) {
     const input = Array.isArray(raw.input) ? raw.input : [];
     const headers = new Headers(req.headers);
     headers.set("content-type", "application/json");

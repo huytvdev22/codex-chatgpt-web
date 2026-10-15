@@ -17,6 +17,12 @@ import {
   M365_COPILOT_MODEL_PREFIX,
   type M365ModelRoute,
 } from "./m365-models";
+import {
+  availableGeminiModelRoutes,
+  isGeminiModelSlug,
+  GEMINI_WEB_MODEL_PREFIX,
+  type GeminiModelRoute,
+} from "./gemini-models";
 
 type JsonObject = Record<string, unknown>;
 
@@ -428,6 +434,44 @@ export function buildM365Model(
   return model;
 }
 
+export function buildGeminiModel(
+  templateValue: unknown,
+  route: GeminiModelRoute,
+  config: AppConfig,
+): JsonObject {
+  const template = object(templateValue, "native Codex model template");
+  const multiAgentVersion = routedSubagentVersion(template, config);
+  const model: JsonObject = {
+    ...structuredClone(template),
+    slug: route.slug,
+    display_name: route.displayName,
+    description: route.description,
+    input_modalities: route.inputModalities ? [...route.inputModalities] : ["text", "image"],
+    visibility: "list",
+    supported_in_api: true,
+    priority: 90,
+    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
+    tool_mode: null,
+    upgrade: null,
+    default_reasoning_level: "low",
+    supported_reasoning_levels: [
+      reasoningLevel(template, "low", "Fast"),
+      reasoningLevel(template, "high", "Thinking"),
+    ],
+    context_window: route.contextWindow,
+    max_context_window: route.contextWindow,
+    effective_context_window_percent: route.effectiveContextWindowPercent,
+    auto_compact_token_limit: route.autoCompactTokenLimit,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    default_service_tier: null,
+    support_verbosity: true,
+  };
+  delete model.comp_hash;
+  delete model.availability_nux;
+  return model;
+}
+
 export function augmentNativeModelCatalog(
   value: unknown,
   config: AppConfig,
@@ -443,7 +487,7 @@ export function augmentNativeModelCatalog(
   const nativeModels = structuredClone(
     catalog.models.filter(model => {
       const s = slug(model);
-      return !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s?.startsWith(M365_COPILOT_MODEL_PREFIX);
+      return !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s?.startsWith(M365_COPILOT_MODEL_PREFIX) && !s?.startsWith(GEMINI_WEB_MODEL_PREFIX);
     }),
   );
   if (config.subagentProtocol === "compatibility-v1") {
@@ -479,6 +523,8 @@ export function augmentNativeModelCatalog(
     .map(route => buildChatGptWebModel(template, route, config));
   const m365Models = availableM365ModelRoutes()
     .map(route => buildM365Model(template, route, config));
+  const geminiModels = availableGeminiModelRoutes()
+    .map(route => buildGeminiModel(template, route, config));
 
   const seen = new Set<string>();
   const deduplicatedModels: JsonObject[] = [];
@@ -497,6 +543,13 @@ export function augmentNativeModelCatalog(
     }
   }
   for (const model of m365Models) {
+    const s = slug(model);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      deduplicatedModels.push(model);
+    }
+  }
+  for (const model of geminiModels) {
     const s = slug(model);
     if (s && !seen.has(s)) {
       seen.add(s);
