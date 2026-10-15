@@ -1193,6 +1193,9 @@ function SetupSurface({
   const setZeroRiskPro = (enabled: boolean) => run(async () => {
     updateState(await api!.setZeroRiskPro(enabled));
   });
+  const setUseSavedChats = (enabled: boolean) => run(async () => {
+    updateState(await api!.setUseSavedChats(enabled));
+  });
 
   return (
     <ContentSurface
@@ -1313,6 +1316,20 @@ function SetupSurface({
             repeatable={true}
             title="Run browser smoke test (ChatGPT)"
           />
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <SettingRow
+            body={snapshot.state.useSavedChats
+              ? "Bật: Các đoạn chat cũ từ Codex sẽ map đúng với đoạn chat cũ trên ChatGPT (tương tự M365 Copilot)."
+              : "Tắt: Chế độ cuộc trò chuyện tạm thời (Temporary Chat), không lưu lịch sử trên ChatGPT."}
+            label="Lưu cuộc trò chuyện ChatGPT (Tắt cuộc trò chuyện tạm thời)"
+          >
+            <Switch
+              checked={snapshot.state.useSavedChats}
+              disabled={globalActionDisabled}
+              onChange={(checked) => void setUseSavedChats(checked)}
+            />
+          </SettingRow>
         </div>
       </> : null}
 
@@ -1986,7 +2003,12 @@ function SettingsSurface({
             onChange={(checked) => void setFreshConversationPerTurn(checked)}
           />
         </SettingRow>
-        <SettingRow body={copy.savedChatsBody} label={copy.savedChats}>
+        <SettingRow
+          body={snapshot.state.useSavedChats
+            ? "Bật: Các đoạn chat cũ từ Codex sẽ map đúng với đoạn chat cũ trên ChatGPT (tương tự M365 Copilot)."
+            : "Tắt: Chế độ cuộc trò chuyện tạm thời (Temporary Chat), không lưu lịch sử trên ChatGPT."}
+          label="Lưu cuộc trò chuyện ChatGPT (Tắt cuộc trò chuyện tạm thời)"
+        >
           <Switch
             checked={snapshot.state.useSavedChats}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
