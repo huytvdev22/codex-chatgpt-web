@@ -98,6 +98,11 @@ export class ChatGptBrowserWorker {
     await page.keyboard.insertText(prompt);
     await page.waitForTimeout(200);
 
+    // Ghi nhận số lượng turn và nút copy ban đầu trước khi gửi
+    const initialTurnCount = await page.locator(this.selectors.responseContainer).count();
+    const initialCodeCopyCount = await page.locator(this.selectors.codeCopyButton).count();
+    console.log(`[chatgpt-worker] Số lượng turn trước khi gửi: ${initialTurnCount}, code copy: ${initialCodeCopyCount}`);
+
     // 5. Nhấn nút Gửi
     console.log("[chatgpt-worker] Đang nhấn nút gửi...");
     const sendBtn = page.locator(this.selectors.sendButton).filter({ visible: true }).first();
@@ -114,7 +119,7 @@ export class ChatGptBrowserWorker {
     let streamStarted = false;
     let lastRenderedText = "";
 
-    // Chờ tối đa 30s để nút stop xuất hiện hoặc câu trả lời bắt đầu sinh
+    // Chờ tối đa 30s để nút stop xuất hiện hoặc lượt mới thực sự xuất hiện
     const startDeadline = Date.now() + 30_000;
     while (Date.now() < startDeadline) {
       if (signal?.aborted) throw new DOMException("ChatGpt turn aborted", "AbortError");
@@ -126,8 +131,8 @@ export class ChatGptBrowserWorker {
         break;
       }
 
-      const assistantTurns = page.locator(this.selectors.responseContainer);
-      if ((await assistantTurns.count()) > 0) {
+      const currentTurnCount = await page.locator(this.selectors.responseContainer).count();
+      if (currentTurnCount > initialTurnCount) {
         streamStarted = true;
         break;
       }
@@ -144,36 +149,49 @@ export class ChatGptBrowserWorker {
     while (Date.now() < maxDeadline) {
       if (signal?.aborted) throw new DOMException("ChatGpt turn aborted", "AbortError");
 
-      // Đọc tạm nội dung từ DOM để theo dõi tiến độ
-      try {
-        const lastTurn = page.locator(this.selectors.responseContainer).last();
-        if (await lastTurn.isVisible().catch(() => false)) {
-          const currentText = await lastTurn.innerText();
-          if (currentText && currentText.length > 0) {
-            if (currentText === lastRenderedText) {
-              consecutiveIdleCount++;
-            } else {
-              consecutiveIdleCount = 0;
-              lastRenderedText = currentText;
+      const currentTurnCount = await page.locator(this.selectors.responseContainer).count();
+
+      // Đọc nội dung từ lượt MỚI để theo dõi tiến độ
+      if (currentTurnCount > initialTurnCount) {
+        try {
+          const newTurn = page.locator(this.selectors.responseContainer).nth(currentTurnCount - 1);
+          if (await newTurn.isVisible().catch(() => false)) {
+            const currentText = await newTurn.innerText();
+            if (currentText && currentText.length > 0) {
+              if (currentText === lastRenderedText) {
+                consecutiveIdleCount++;
+              } else {
+                consecutiveIdleCount = 0;
+                lastRenderedText = currentText;
+              }
             }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       // Kiểm tra nút Stop còn hiển thị không
       const stopBtn = page.locator(this.selectors.stopButton).filter({ visible: true }).first();
       const isGenerating = await stopBtn.isVisible().catch(() => false);
 
-      // Kiểm tra nút hoàn tất (Copy turn action hoặc Voice speech)
-      const completeAction = page.locator(this.selectors.completionAction).filter({ visible: true }).first();
+      // Kiểm tra nút hoàn tất của lượt mới
+      const completeAction = page.locator(this.selectors.completionAction).filter({ visible: true }).last();
       const hasCompleteAction = await completeAction.isVisible().catch(() => false);
 
       // Điều kiện hoàn thành:
-      // 1. Không còn nút Stop AND (có nút hoàn thành HOẶC nội dung không thay đổi liên tục 5 lần)
+      // 1. Phải có turn mới (currentTurnCount > initialTurnCount) hoặc streamStarted
+      // 2. Không còn nút Stop
+      // 3. Có nút hoàn thành HOẶC nội dung lượt mới không thay đổi liên tục
       if (!isGenerating && streamStarted) {
-        if (hasCompleteAction || consecutiveIdleCount >= 4) {
-          console.log("[chatgpt-worker] Phản hồi đã hoàn tất!");
-          break;
+        if (currentTurnCount > initialTurnCount) {
+          if (hasCompleteAction || consecutiveIdleCount >= 4) {
+            console.log("[chatgpt-worker] Phản hồi đã hoàn tất!");
+            break;
+          }
+        } else {
+          // Chưa kịp tăng turn count nhưng stop button đã biến mất
+          if (consecutiveIdleCount >= 8) {
+            break;
+          }
         }
       }
 
@@ -186,15 +204,15 @@ export class ChatGptBrowserWorker {
     // 7. BÓC TÁCH NỘI DUNG ĐA TẦNG (COPY BUTTON SALVAGE)
     let extractedText: string | null = null;
 
-    // TẦNG 1 (ƯU TIÊN SỐ 1 - 100% NGUYÊN BẢN): Click nút "Copy code" của khối Markdown transport fence
+    // TẦNG 1 (ƯU TIÊN SỐ 1 - 100% NGUYÊN BẢN): Click nút "Copy code" của khối Markdown trong lượt MỚI
     try {
       console.log("[chatgpt-worker] [copy-salvage] Tìm kiếm nút Sao chép mã của khối Markdown...");
       const copyBtns = page.locator(this.selectors.codeCopyButton);
       const copyCount = await copyBtns.count();
 
-      if (copyCount > 0) {
-        // Ưu tiên click nút copy cuối cùng (thuộc turn hiện tại)
-        for (let i = copyCount - 1; i >= 0; i--) {
+      if (copyCount > initialCodeCopyCount) {
+        // Chỉ click nút copy mới thuộc lượt này (từ initialCodeCopyCount trở đi)
+        for (let i = copyCount - 1; i >= initialCodeCopyCount; i--) {
           const btn = copyBtns.nth(i);
           if (!(await btn.isVisible().catch(() => false))) continue;
 
@@ -226,19 +244,20 @@ export class ChatGptBrowserWorker {
       console.warn("[chatgpt-worker] [copy-salvage] Lỗi khi click nút copy:", err);
     }
 
-    // TẦNG 2: Fallback đọc từ DOM nếu Tầng 1 không bắt được
+    // TẦNG 2: Fallback đọc từ DOM của lượt mới nếu Tầng 1 không bắt được
     if (!extractedText) {
       console.log("[chatgpt-worker] [fallback] Sử dụng nội dung trích xuất từ DOM.");
       try {
-        const lastTurn = page.locator(this.selectors.responseContainer).last();
-        if (await lastTurn.isVisible().catch(() => false)) {
-          // Bóc tách text, loại bỏ các header code block trang trí
-          extractedText = await lastTurn.evaluate((el: HTMLElement) => {
-            const clone = el.cloneNode(true) as HTMLElement;
-            // Xóa header nút copy trang trí
-            clone.querySelectorAll('.code-block__wrapper > div:first-child, button, nav').forEach(n => n.remove());
-            return clone.innerText.trim();
-          });
+        const currentTurnCount = await page.locator(this.selectors.responseContainer).count();
+        if (currentTurnCount > initialTurnCount) {
+          const newTurn = page.locator(this.selectors.responseContainer).nth(currentTurnCount - 1);
+          if (await newTurn.isVisible().catch(() => false)) {
+            extractedText = await newTurn.evaluate((el: HTMLElement) => {
+              const clone = el.cloneNode(true) as HTMLElement;
+              clone.querySelectorAll('.code-block__wrapper > div:first-child, button, nav').forEach(n => n.remove());
+              return clone.innerText.trim();
+            });
+          }
         }
       } catch (domErr) {
         console.warn("[chatgpt-worker] Lỗi đọc DOM fallback:", domErr);

@@ -187,6 +187,9 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       undefined;
     const conversationKey = chatGptConversationKey(parsed, rawConversationKey);
 
+    const hasPriorAssistantReply = (parsed.context.messages || []).some((m) => m.role === "assistant");
+    const isNewConversation = !hasPriorAssistantReply;
+
     if (!page) {
       page = await this.ensureLocalBrowserPage(useSavedChats);
     }
@@ -201,6 +204,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
 
       const currentUrl = page.url();
       const currentConvId = parseChatGptConversationId(currentUrl);
+      const existingTurns = await page.locator(CHATGPT_SELECTORS.responseContainer).count().catch(() => 0);
 
       if (useSavedChats) {
         if (target.conversationId) {
@@ -208,27 +212,28 @@ export class ChatGptWebAdapter implements ProviderAdapter {
           if (currentConvId !== target.conversationId) {
             console.log(`[chatgpt-adapter] Mở cuộc trò chuyện cũ: ${target.url} (conversationId=${target.conversationId})`);
             await page.goto(target.url, { waitUntil: "commit" });
+            await page.waitForTimeout(500);
           }
         } else {
-          // Cuộc trò chuyện mới: nếu page đang ở trong một chat cũ khác thì quay về trang chủ để mở chat mới
-          if (currentConvId || !currentUrl.includes("chatgpt.com")) {
-            console.log(`[chatgpt-adapter] Mở trang chủ để tạo đoạn chat mới: ${CHATGPT_HOME_URL}`);
-            await page.goto(CHATGPT_HOME_URL, { waitUntil: "commit" });
+          // Cuộc trò chuyện mới: nếu page đang ở trong một chat cũ hoặc đang có tin nhắn thì quay về trang chủ sạch
+          if (currentConvId || existingTurns > 0 || !currentUrl.startsWith("https://chatgpt.com")) {
+            console.log(`[chatgpt-adapter] Mở trang chủ sạch để tạo đoạn chat mới: ${CHATGPT_HOME_URL}`);
+            await page.goto(CHATGPT_HOME_URL, { waitUntil: "domcontentloaded" });
+            await page.waitForTimeout(500);
           }
         }
       } else {
         // Chế độ cuộc trò chuyện tạm thời
-        if (!currentUrl.includes("temporary-chat=true")) {
+        const needsFreshTemp = !currentUrl.includes("temporary-chat=true") || (isNewConversation && existingTurns > 0);
+        if (needsFreshTemp) {
           console.log(`[chatgpt-adapter] Chuyển sang chế độ cuộc trò chuyện tạm thời: ${CHATGPT_TEMPORARY_CHAT_URL}`);
-          await page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "commit" });
+          await page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded" });
+          await page.waitForTimeout(500);
         }
       }
     } catch (navErr) {
       console.warn(`[chatgpt-adapter] Cảnh báo khi kiểm tra URL: ${navErr instanceof Error ? navErr.message : String(navErr)}`);
     }
-
-    const hasPriorAssistantReply = (parsed.context.messages || []).some((m) => m.role === "assistant");
-    const isNewConversation = !hasPriorAssistantReply;
     const initialPrompt = this.compilePrompt(parsed, isNewConversation);
     const reasoningEffort = resolveChatGptEffort(parsed.modelId, parsed.options.reasoning);
 
