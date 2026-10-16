@@ -301,4 +301,32 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
     expect(res.finalPrompt).toContain("[CÂU TRẢ LỜI CỦA MÌNH CHO CÂU HỎI CỦA BẠN]");
     expect(res.finalPrompt).toContain("- **confirm**: Đồng ý triển khai");
   });
+
+  test("12. Lượt nhận tool result (TOOL_RESULT_CONTINUATION & PLAN_CONTINUATION) tuyệt đối không lặp lại user instruction cũ", () => {
+    const res = promptCompiler.compile({
+      normalized: {
+        ...baseNormalized,
+        collaborationMode: "default",
+        trailingToolResults: [
+          {
+            callId: "call_patch_readme",
+            toolName: "apply_patch",
+            output: "Exit code: 0\nSuccess. Updated the following files:\nM README.md",
+          },
+        ],
+        latestUserInstruction: "làm ngắn gọi lại filereadme đi",
+      },
+      parsed: { ...baseParsed },
+      isNewConversation: false,
+    });
+
+    // BẮT BUỘC có lời nhắc báo kết quả công cụ
+    expect(res.finalPrompt).toContain("Mình vừa chạy các lệnh bạn yêu cầu xong, gửi bạn kết quả trong thẻ <tool_result> bên dưới nhé");
+    // BẮT BUỘC có kết quả công cụ
+    expect(res.finalPrompt).toContain("<tool_result id=\"call_patch_readme\">");
+    expect(res.finalPrompt).toContain("Success. Updated the following files:\nM README.md");
+    // TUYỆT ĐỐI KHÔNG duplicate lại câu lệnh cũ như một yêu cầu mới
+    expect(res.finalPrompt).not.toContain("làm ngắn gọi lại filereadme đi");
+    expect(res.finalPrompt).not.toContain("[Yêu cầu hiện tại của mình]");
+  });
 });

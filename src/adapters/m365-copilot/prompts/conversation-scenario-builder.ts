@@ -187,7 +187,6 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
         if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
@@ -227,7 +226,7 @@ export class ConversationScenarioBuilder {
 
       case "PLAN_CONTINUATION": {
         // Lượt tiếp theo của Plan (đã có tool result của bước trước)
-        // Không lặp lại câu duyệt plan, mà báo kết quả bước trước và nhờ làm bước sau
+        // Không lặp lại câu duyệt plan và không lặp lại yêu cầu cũ của người dùng
         openingSection = IMPLEMENT_PLAN_CONTINUATION_PROMPT;
         sections.push(openingSection);
 
@@ -235,7 +234,6 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
         if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
@@ -251,7 +249,6 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
         if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
@@ -260,6 +257,7 @@ export class ConversationScenarioBuilder {
 
       case "TOOL_RESULT_CONTINUATION": {
         // Lượt nhận kết quả công cụ thông thường ngoài Plan Mode
+        // Tập trung báo kết quả công cụ, không duplicate lại yêu cầu cũ của người dùng
         openingSection = TOOL_REMINDER_PROMPT;
         sections.push(openingSection);
 
@@ -267,7 +265,6 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
         if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
