@@ -1,6 +1,7 @@
 
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
+import { hasActualPriorAssistantReply } from "../base";
 import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
 import { promptCompiler, buildM365FormatRetryPrompt } from "./prompts/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
@@ -84,7 +85,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
       || undefined;
     const conversationKey = m365ConversationKey(parsed, rawConversationKey);
 
-    const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
+    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
     const isNewConversation = !hasPriorAssistantReply;
 
     // Kiểm tra an toàn: Nếu tin nhắn cuối cùng trong context đã là assistant final answer (không có pending tool calls, không có input mới)

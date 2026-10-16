@@ -14,6 +14,7 @@ import {
   formatUserInputAnswers,
 } from "./templates";
 import { conversationScenarioBuilder } from "./conversation-scenario-builder";
+import { hasActualPriorAssistantReply } from "../../base";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
 const MAX_TOOL_RESULT_CHARS = 8_000;
@@ -574,7 +575,18 @@ export class M365PromptCompiler {
       : (normalized.collaborationMode || "default");
 
     const isPlanMode = !isImplementingPlan && collaborationMode === "plan";
-    const isNewConversation = input.isNewConversation ?? true;
+
+    const hasToolResults = normalized.trailingToolResults.length > 0;
+
+    // Xác định isNewConversation:
+    // 1. Nếu caller truyền tường minh giá trị boolean (true/false), tôn trọng quyết định từ adapter.
+    // 2. Nếu undefined, tự động suy luận an toàn: nếu chưa có tin nhắn trợ lý thực tế và chưa có tool results -> true.
+    let isNewConversation = input.isNewConversation;
+    if (isNewConversation === undefined) {
+      const hasPriorAssistant = hasActualPriorAssistantReply(parsed?.context?.messages) ||
+        normalized.priorHistory.some(h => h.role === "assistant" && typeof h.content === "string" && h.content.trim().length > 0);
+      isNewConversation = !hasPriorAssistant && !hasToolResults;
+    }
 
     // 2. Chuẩn bị các thành phần nội dung ngữ cảnh đã được làm sạch
     const actionContractText = isNewConversation
@@ -650,7 +662,6 @@ export class M365PromptCompiler {
       userInstructionText = `[Yêu cầu hiện tại của mình]:\n${normalized.latestUserInstruction}`;
     }
 
-    const hasToolResults = normalized.trailingToolResults.length > 0;
     const hasToolErrors = normalized.trailingToolResults.some(
       r =>
         r.output.includes("Process exited with code 1") ||

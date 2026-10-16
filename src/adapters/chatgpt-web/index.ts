@@ -1,4 +1,5 @@
 import type { ProviderAdapter, IncomingMeta } from "../base";
+import { hasActualPriorAssistantReply } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { chatGptBrowserWorker, ChatGptBrowserWorker } from "./chatgpt-browser-worker";
 import { CHATGPT_SELECTORS, type ChatGptDomSelectors } from "./selectors";
@@ -187,7 +188,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       undefined;
     const conversationKey = chatGptConversationKey(parsed, rawConversationKey);
 
-    const hasPriorAssistantReply = (parsed.context.messages || []).some((m) => m.role === "assistant");
+    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
     const isNewConversation = !hasPriorAssistantReply;
 
     if (!page) {

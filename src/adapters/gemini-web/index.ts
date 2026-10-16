@@ -1,4 +1,5 @@
 import type { ProviderAdapter, IncomingMeta } from "../base";
+import { hasActualPriorAssistantReply } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { geminiBrowserWorker, GeminiBrowserWorker } from "./gemini-browser-worker";
 import { GEMINI_SELECTORS, type GeminiDomSelectors } from "./selectors";
@@ -156,7 +157,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
       page = await this.ensureLocalBrowserPage();
     }
 
-    const hasPriorAssistantReply = (parsed.context.messages || []).some(m => m.role === "assistant");
+    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
     const isNewConversation = !hasPriorAssistantReply;
     const initialPrompt = this.compilePrompt(parsed, isNewConversation);
     const reasoningEffort = resolveGeminiReasoningEffort(parsed.modelId, parsed.options.reasoning);
