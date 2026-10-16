@@ -57,6 +57,16 @@ export interface ChatGptDomSelectors {
    * Các nút hoàn tất lượt (dấu hiệu model đã trả lời xong và sẵn sàng lượt mới)
    */
   completionAction: string;
+
+  /**
+   * Nút "Show more" (Xem thêm) thu gọn khối code dài
+   */
+  expandCodeButton: string;
+
+  /**
+   * Nút sao chép toàn bộ lượt trả lời (Copy turn)
+   */
+  turnCopyButton: string;
 }
 
 export const CHATGPT_SELECTORS: ChatGptDomSelectors = {
@@ -66,6 +76,8 @@ export const CHATGPT_SELECTORS: ChatGptDomSelectors = {
   composerInput: [
     '#prompt-textarea',
     '[data-testid="prompt-textarea"]',
+    'div.ProseMirror[role="textbox"]',
+    'div.ProseMirror',
     'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
     'div#prompt-textarea[contenteditable="true"]',
     '[contenteditable="true"][data-lexical-editor="true"]',
@@ -92,10 +104,11 @@ export const CHATGPT_SELECTORS: ChatGptDomSelectors = {
 
   // 4. Vùng chứa câu trả lời của trợ lý
   responseContainer: [
+    '[data-turn-key]',
+    '[data-virtualized-turn-content]',
     'article[data-testid^="conversation-turn-"] [data-message-author-role="assistant"]',
     'div[data-message-author-role="assistant"]',
     '[data-message-author-role="assistant"] .markdown',
-    '[data-turn-key]:has([data-conversation-role="assistant"])',
   ].join(", "),
 
   // 5. Khối code Markdown do ChatGPT render
@@ -114,10 +127,10 @@ export const CHATGPT_SELECTORS: ChatGptDomSelectors = {
 
   // 7. Nút Sao chép mã của code block (Tầng 1 Copy Button Salvage)
   codeCopyButton: [
+    'button[aria-label*="Copy code" i]',
+    'button[aria-label*="Sao chép mã" i]',
     'button:has-text("Copy code")',
     'button:has-text("Sao chép mã")',
-    'button[aria-label*="Copy code" i]',
-    'button[aria-label*="Sao chép" i]',
     'div.code-block__wrapper button',
     '.dark.bg-gray-950 button',
   ].join(", "),
@@ -142,6 +155,22 @@ export const CHATGPT_SELECTORS: ChatGptDomSelectors = {
     'button[data-testid="composer-speech-button"]',
     'button[data-testid="copy-turn-action-button"]',
     '[data-turn-key] .turn-action-controls button',
+    'button[aria-label="Copy"]',
     'button[aria-label*="Copy" i]',
+  ].join(", "),
+
+  // 11. Nút mở rộng khối code dài bị thu gọn (Show more)
+  expandCodeButton: [
+    'button:has-text("Show more")',
+    'button:has-text("Xem thêm")',
+    'button[aria-label*="Show more" i]',
+    'button[aria-label*="Xem thêm" i]',
+  ].join(", "),
+
+  // 12. Nút sao chép toàn bộ lượt trả lời của Assistant
+  turnCopyButton: [
+    'button[aria-label="Copy"]',
+    'button[data-testid="copy-turn-action-button"]',
+    '[data-turn-key] .turn-action-controls button[aria-label*="Copy" i]',
   ].join(", "),
 };

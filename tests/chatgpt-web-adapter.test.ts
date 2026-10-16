@@ -242,5 +242,66 @@ Bạn muốn bắt đầu kiểm tra phần nào trước?
     // BẮT BUỘC có mỏ neo định dạng chốt hạ
     expect(res.finalPrompt).toContain("Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:");
   });
+
+  test("12. CHATGPT_SELECTORS hỗ trợ đầy đủ các selector hiện đại của ChatGPT Web (data-turn-key, ProseMirror, Show more)", () => {
+    // Kiểm tra các selector cho DOM cấu trúc mới
+    expect(CHATGPT_SELECTORS.responseContainer).toContain("[data-turn-key]");
+    expect(CHATGPT_SELECTORS.responseContainer).toContain("[data-virtualized-turn-content]");
+    expect(CHATGPT_SELECTORS.composerInput).toContain("div.ProseMirror[role=\"textbox\"]");
+    expect(CHATGPT_SELECTORS.codeCopyButton).toContain("button[aria-label*=\"Copy code\" i]");
+    expect(CHATGPT_SELECTORS.expandCodeButton).toBeDefined();
+    expect(CHATGPT_SELECTORS.expandCodeButton).toContain("button:has-text(\"Show more\")");
+    expect(CHATGPT_SELECTORS.turnCopyButton).toBeDefined();
+    expect(CHATGPT_SELECTORS.turnCopyButton).toContain("button[aria-label=\"Copy\"]");
+  });
+
+  test("13. ChatGptWebAdapter emit sự kiện done với đúng stopReason và endTurn tương ứng", async () => {
+    let mockResponse = `\`\`\`\`markdown\n<webResponse>\n<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** Add File: test.css\n+ body { color: red; }\n*** End Patch\n</custom_tool_call>\n</webResponse>\n\`\`\`\``;
+
+    const mockPage: any = {
+      url: () => "https://chatgpt.com",
+    };
+
+    const adapter = createChatGptWebAdapter({
+      descriptorPath: "/dev/null/no-launcher.json",
+      browserWorker: {
+        executeTurn: async () => ({
+          rawResponse: mockResponse,
+          isCompleted: true,
+        }),
+      },
+    });
+    (adapter as any).activePage = mockPage;
+    (adapter as any).ensureLocalBrowserPage = async () => mockPage;
+
+    const events: any[] = [];
+
+    const parsedToolCall: any = {
+      modelId: "chatgpt-web/gpt-5.6-sol-instant",
+      options: {},
+      context: {
+        messages: [{ role: "user", content: "tạo file test.css" }],
+        tools: [{ name: "apply_patch", description: "Apply a patch" }],
+      },
+    };
+
+    const incoming: any = { headers: new Headers() };
+    await adapter.runTurn(parsedToolCall, incoming, (evt) => events.push(evt));
+
+    const doneEvent = events.find((e) => e.type === "done");
+    expect(doneEvent).toBeDefined();
+    expect(doneEvent.stopReason).toBe("tool_use");
+    expect(doneEvent.endTurn).toBe(false);
+
+    // Test final_answer
+    events.length = 0;
+    mockResponse = `\`\`\`\`markdown\n<webResponse>\nĐã hoàn thành công việc.\n</webResponse>\n\`\`\`\``;
+
+    await adapter.runTurn(parsedToolCall, incoming, (evt) => events.push(evt));
+    const finalDoneEvent = events.find((e) => e.type === "done");
+    expect(finalDoneEvent).toBeDefined();
+    expect(finalDoneEvent.stopReason).toBe("stop");
+    expect(finalDoneEvent.endTurn).toBe(true);
+  });
 });
 

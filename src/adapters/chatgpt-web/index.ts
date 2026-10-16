@@ -65,11 +65,16 @@ export interface ChatGptAdapterOptions {
   maxFormatRetries?: number;
   useSavedChats?: boolean;
   conversationStore?: ChatGptConversationStore;
+  browserWorker?: {
+    executeTurn: (page: any, options: any) => Promise<any>;
+  };
   [key: string]: any;
 }
 
 function resolveDescriptorPath(customPath?: string): string | null {
-  if (customPath && existsSync(customPath)) return customPath;
+  if (customPath !== undefined) {
+    return existsSync(customPath) ? customPath : null;
+  }
   const standardPath = join(getConfigDir(), "runtime", "launcher-browser.json");
   return existsSync(standardPath) ? standardPath : null;
 }
@@ -183,7 +188,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     }
 
     const rawConversationKey =
-      incoming.headers.get("x-codex-conversation-key") ||
+      incoming.headers?.get?.("x-codex-conversation-key") ||
       CodexRawPayload.from(parsed._rawBody || parsed).getThreadId() ||
       undefined;
     const conversationKey = chatGptConversationKey(parsed, rawConversationKey);
@@ -254,7 +259,8 @@ export class ChatGptWebAdapter implements ProviderAdapter {
 
         console.log(`[chatgpt-adapter] Thực thi lượt (lần thử ${attempt + 1}/${maxRetries + 1})...`);
 
-        const result = await chatGptBrowserWorker.executeTurn(page, {
+        const worker = this.options.browserWorker || chatGptBrowserWorker;
+        const result = await worker.executeTurn(page, {
           prompt: attemptPrompt,
           signal: incoming.abortSignal,
           modelSlug: parsed.modelId,
@@ -331,6 +337,11 @@ export class ChatGptWebAdapter implements ProviderAdapter {
           type: "text_delta",
           text: protocolResult.content,
         });
+        emit({
+          type: "done",
+          stopReason: "stop",
+          endTurn: true,
+        });
       } else if (protocolResult.kind === "tool_calls") {
         console.log(`[chatgpt-adapter] Phát hiện ${protocolResult.calls.length} tool calls hợp lệ.`);
         const clientTools = parsed.context.tools || [];
@@ -350,11 +361,12 @@ export class ChatGptWebAdapter implements ProviderAdapter {
             type: "tool_call_end",
           });
         }
+        emit({
+          type: "done",
+          stopReason: "tool_use",
+          endTurn: false,
+        });
       }
-
-      emit({
-        type: "done",
-      });
 
       console.log(`[chatgpt-adapter] Kết thúc lượt thành công.`);
     } catch (error) {
