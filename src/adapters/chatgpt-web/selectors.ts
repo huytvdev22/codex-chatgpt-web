@@ -40,9 +40,8 @@ export const CHATGPT_SELECTORS = {
    * Trạng thái nhận diện qua aria-pressed="true" (bật) / "false" (tắt)
    */
   thinkButton: [
-    'button[type="button"]:has(span:text-is("Think"))',
-    'button:has(span:text-is("Think"))',
-    'button:has-text("Think")',
+    'button[aria-label*="Think" i]',
+    'button[data-testid*="think" i]',
   ].join(", "),
 
   /**

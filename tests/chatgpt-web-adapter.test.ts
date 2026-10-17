@@ -75,7 +75,7 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
     expect(CHATGPT_SELECTORS.sendButton).toContain('button[type="submit"][aria-label="Send"]');
     expect(CHATGPT_SELECTORS.stopButton).toContain('button[type="button"][aria-label="Stop"]');
     expect(CHATGPT_SELECTORS.startVoiceButton).toContain('button[type="button"][aria-label="Start Voice"]');
-    expect(CHATGPT_SELECTORS.thinkButton).toContain('button[type="button"]:has(span:text-is("Think"))');
+    expect(CHATGPT_SELECTORS.thinkButton).toContain('button[aria-label*="Think" i]');
     expect(CHATGPT_SELECTORS.copyCodeButton).toContain('button[aria-label="Copy code"]');
   });
 

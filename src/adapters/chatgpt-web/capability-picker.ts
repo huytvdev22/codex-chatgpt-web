@@ -10,7 +10,7 @@ export interface EnsureChatGptThinkingOptions {
  * Đảm bảo trạng thái chế độ Suy nghĩ (Think) trên ChatGPT Web khớp với cấu hình từ Codex
  *
  * Nút Think trên ChatGPT Web có dạng:
- * <button type="button" aria-pressed="false" ...><span>Think</span></button>
+ * <button type="button" aria-pressed="false" class="..."><span>Think</span></button>
  * Khi được bật, aria-pressed chuyển thành "true".
  */
 export async function ensureChatGptThinkingMode(
@@ -29,17 +29,29 @@ export async function ensureChatGptThinkingMode(
   while (Date.now() - startTime < timeoutMs) {
     const result = await page.evaluate(
       ({ shouldThink, selector }) => {
-        // Tìm nút Think theo selector hoặc theo text content
-        let btn = document.querySelector(selector) as HTMLButtonElement | null;
-        if (!btn) {
+        // Hàm tìm nút Think an toàn 100% không bị SyntaxError trong querySelector
+        function findThinkBtn(): HTMLButtonElement | null {
+          // 1. Thử qua CSS selector nếu hợp lệ
+          if (selector) {
+            try {
+              const matched = document.querySelector(selector) as HTMLButtonElement | null;
+              if (matched) return matched;
+            } catch {}
+          }
+
+          // 2. Duyệt tất cả các button tìm nút Think theo text hoặc span
           const allButtons = Array.from(document.querySelectorAll("button"));
-          btn =
+          return (
             allButtons.find((b) => {
               const text = (b.textContent || "").trim();
-              return text === "Think" || b.querySelector('span:is(:text-is("Think"))') !== null;
-            }) || null;
+              if (text === "Think") return true;
+              const spans = Array.from(b.querySelectorAll("span"));
+              return spans.some((s) => (s.textContent || "").trim() === "Think");
+            }) || null
+          );
         }
 
+        const btn = findThinkBtn();
         if (!btn) {
           return { found: false, changed: false, currentPressed: null };
         }
@@ -73,15 +85,31 @@ export async function ensureChatGptThinkingMode(
     // Đã click, chờ 400ms để DOM cập nhật và kiểm tra lại
     await page.waitForTimeout(400);
 
-    const verified = await page.evaluate(({ selector, shouldThink }) => {
-      let btn = document.querySelector(selector) as HTMLButtonElement | null;
-      if (!btn) {
-        const allButtons = Array.from(document.querySelectorAll("button"));
-        btn = allButtons.find((b) => (b.textContent || "").trim() === "Think") || null;
-      }
-      if (!btn) return false;
-      return (btn.getAttribute("aria-pressed") === "true") === shouldThink;
-    }, { selector: CHATGPT_SELECTORS.thinkButton, shouldThink });
+    const verified = await page.evaluate(
+      ({ shouldThink, selector }) => {
+        function findThinkBtn(): HTMLButtonElement | null {
+          if (selector) {
+            try {
+              const matched = document.querySelector(selector) as HTMLButtonElement | null;
+              if (matched) return matched;
+            } catch {}
+          }
+          const allButtons = Array.from(document.querySelectorAll("button"));
+          return (
+            allButtons.find((b) => {
+              const text = (b.textContent || "").trim();
+              if (text === "Think") return true;
+              const spans = Array.from(b.querySelectorAll("span"));
+              return spans.some((s) => (s.textContent || "").trim() === "Think");
+            }) || null
+          );
+        }
+        const btn = findThinkBtn();
+        if (!btn) return false;
+        return (btn.getAttribute("aria-pressed") === "true") === shouldThink;
+      },
+      { shouldThink, selector: CHATGPT_SELECTORS.thinkButton }
+    );
 
     if (verified) {
       console.log(`[chatgpt-capability] Đã chuyển đổi chế độ Think thành công: ${shouldThink ? "BẬT" : "TẮT"}.`);
