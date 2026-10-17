@@ -186,6 +186,9 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     }
 
     if (!page) {
+      if (descriptorPath) {
+        throw new Error("[chatgpt-adapter] Không thể kết nối với Launcher browser tab.");
+      }
       page = await this.ensureLocalBrowserPage();
     }
 

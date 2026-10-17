@@ -703,8 +703,9 @@ export async function notifyLauncherTurn(
       }
       if (body.conversationId !== undefined
         && (typeof body.conversationId !== "string"
-          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId))) {
-        throw new Error("Launcher browser control channel returned an invalid M365 conversation id");
+          || (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId)
+              && !/^[a-zA-Z0-9_-]{8,128}$/.test(body.conversationId)))) {
+        throw new Error("Launcher browser control channel returned an invalid conversation id");
       }
       return {
         surfaceId: body.surfaceId,
