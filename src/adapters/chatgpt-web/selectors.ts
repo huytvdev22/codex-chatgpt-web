@@ -1,176 +1,87 @@
 /**
- * Các Selector DOM tiêu chuẩn cho ChatGPT Web (https://chatgpt.com)
+ * Các bộ chọn DOM (Selectors) cho giao diện ChatGPT Web
+ * Được xây dựng dựa trên cấu trúc DOM thực tế được cung cấp bởi người dùng.
  */
 
-export interface ChatGptDomSelectors {
-  /**
-   * Đường dẫn trang web của ChatGPT
-   */
-  appUrl: string;
-
-  /**
-   * Khung soạn thảo tin nhắn (Composer textarea / contenteditable)
-   */
-  composerInput: string;
-
-  /**
-   * Nút gửi tin nhắn (Send Button)
-   */
-  sendButton: string;
-
-  /**
-   * Nút dừng sinh câu trả lời (Stop Button)
-   */
-  stopButton: string;
-
-  /**
-   * Vùng chứa câu trả lời của Trợ lý (Assistant Response Container)
-   */
-  responseContainer: string;
-
-  /**
-   * Thẻ chứa code Markdown do ChatGPT Web render (Code block)
-   */
-  codeContainer: string;
-
-  /**
-   * Header trang trí của code block (chứa nhãn ngôn ngữ và nút sao chép)
-   */
-  codeBlockHeader: string;
-
-  /**
-   * Nút "Copy code" của khối code Markdown (Code block copy button)
-   */
-  codeCopyButton: string;
-
-  /**
-   * Nút mở menu chuyển đổi Model / Intelligence control
-   */
-  modelSelectorButton: string;
-
-  /**
-   * Menu chứa các options model
-   */
-  modelMenu: string;
-
-  /**
-   * Các nút hoàn tất lượt (dấu hiệu model đã trả lời xong và sẵn sàng lượt mới)
-   */
-  completionAction: string;
-
-  /**
-   * Nút "Show more" (Xem thêm) thu gọn khối code dài
-   */
-  expandCodeButton: string;
-
-  /**
-   * Nút sao chép toàn bộ lượt trả lời (Copy turn)
-   */
-  turnCopyButton: string;
-}
-
-export const CHATGPT_SELECTORS: ChatGptDomSelectors = {
-  appUrl: "https://chatgpt.com/?temporary-chat=true",
-
-  // 1. Khung nhập prompt
-  composerInput: [
+export const CHATGPT_SELECTORS = {
+  /** Khung nhập tin nhắn chính của ChatGPT (ProseMirror rich-text / markdown) */
+  composer: [
+    'div.ProseMirror[data-composer-markdown][role="textbox"]',
     '#prompt-textarea',
-    '[data-testid="prompt-textarea"]',
-    'div.ProseMirror[role="textbox"]',
+    'div[contenteditable="true"][role="textbox"]',
     'div.ProseMirror',
-    'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
-    'div#prompt-textarea[contenteditable="true"]',
-    '[contenteditable="true"][data-lexical-editor="true"]',
-    'textarea[data-id="root"]',
   ].join(", "),
 
-  // 2. Nút gửi prompt
+  /** Nút gửi tin nhắn (Send button) */
   sendButton: [
-    '[data-testid="send-button"]',
+    'button[type="submit"][aria-label="Send"]',
     'button[data-testid="send-button"]',
-    'form[data-chatgpt-composer] button[type="submit"]',
-    'button[aria-label*="Send" i]',
-    'button[aria-label*="Gửi" i]',
+    'button[aria-label="Send prompt"]',
   ].join(", "),
 
-  // 3. Nút dừng khi đang sinh văn bản
+  /** Nút dừng sinh câu trả lời (hiển thị trong quá trình model đang stream/suy nghĩ) */
   stopButton: [
-    '[data-testid="stop-button"]',
+    'button[type="button"][aria-label="Stop"]',
+    'button[aria-label="Stop generating"]',
     'button[data-testid="stop-button"]',
-    'form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]',
-    'button[aria-label*="Stop" i]',
-    'button[aria-label*="Dừng" i]',
   ].join(", "),
 
-  // 4. Vùng chứa câu trả lời của trợ lý
-  responseContainer: [
-    '[data-turn-key]',
-    '[data-virtualized-turn-content]',
-    'article[data-testid^="conversation-turn-"] [data-message-author-role="assistant"]',
-    'div[data-message-author-role="assistant"]',
-    '[data-message-author-role="assistant"] .markdown',
+  /**
+   * Nút Start Voice (xuất hiện sau khi câu trả lời hoàn tất và nút Stop biến mất)
+   * Đây là tín hiệu nhận diện chính xác nhất việc ChatGPT đã sinh xong nội dung.
+   */
+  startVoiceButton: [
+    'button[type="button"][aria-label="Start Voice"]',
+    'button[aria-label="Start Voice"]',
   ].join(", "),
 
-  // 5. Khối code Markdown do ChatGPT render
-  codeContainer: [
-    'pre code',
-    'div.code-block__wrapper',
-    '.dark.bg-gray-950 code',
-    'pre',
+  /**
+   * Nút bật/tắt chế độ Think (Suy nghĩ)
+   * Trạng thái nhận diện qua aria-pressed="true" (bật) / "false" (tắt)
+   */
+  thinkButton: [
+    'button[type="button"]:has(span:text-is("Think"))',
+    'button:has(span:text-is("Think"))',
+    'button:has-text("Think")',
   ].join(", "),
 
-  // 6. Header của code block
-  codeBlockHeader: [
-    '.code-block__wrapper > div:first-child',
-    '.dark.bg-gray-950 > div:first-child',
+  /**
+   * Khối tin nhắn của Assistant (ChatGPT)
+   */
+  assistantMessage: [
+    'div[data-chatgpt-selection-message-id]',
+    '[data-markdown-text-style="assistant-message"]',
+    'article[data-testid^="conversation-turn-"]',
   ].join(", "),
 
-  // 7. Nút Sao chép mã của code block (Tầng 1 Copy Button Salvage)
-  codeCopyButton: [
-    'button[aria-label*="Copy code" i]',
-    'button[aria-label*="Sao chép mã" i]',
-    'button:has-text("Copy code")',
-    'button:has-text("Sao chép mã")',
-    'div.code-block__wrapper button',
-    '.dark.bg-gray-950 button',
+  /**
+   * Khối code block chứa phản hồi 4-backtick <webResponse>
+   */
+  codeBlock: [
+    'div[data-code-block="true"]',
+    '.CodeBlock-zu1QM3',
   ].join(", "),
 
-  // 8. Nút mở Menu chọn Model / Effort Control
-  modelSelectorButton: [
-    'button[data-testid="model-switcher-dropdown-button"]',
-    'button[aria-haspopup="menu"][data-tone="neutral"]',
-    'button[data-codex-intelligence-trigger="true"]',
-    '[data-testid="model-switcher"]',
+  /**
+   * Nút copy code nằm ngay trên header của code block
+   */
+  copyCodeButton: [
+    'button[aria-label="Copy code"]',
+    'div[data-code-block="true"] button[aria-label="Copy code"]',
+    'button:has(svg use[href*="copy"])',
   ].join(", "),
 
-  // 9. Menu Model
-  modelMenu: [
-    '[data-testid="composer-intelligence-picker-content"]',
-    '[role="menu"]:has([role="menuitemradio"])',
-    '[role="menu"]',
-  ].join(", "),
-
-  // 10. Dấu hiệu hoàn tất lượt
-  completionAction: [
-    'button[data-testid="composer-speech-button"]',
-    'button[data-testid="copy-turn-action-button"]',
-    '[data-turn-key] .turn-action-controls button',
-    'button[aria-label="Copy"]',
-    'button[aria-label*="Copy" i]',
-  ].join(", "),
-
-  // 11. Nút mở rộng khối code dài bị thu gọn (Show more)
-  expandCodeButton: [
-    'button:has-text("Show more")',
-    'button:has-text("Xem thêm")',
-    'button[aria-label*="Show more" i]',
-    'button[aria-label*="Xem thêm" i]',
-  ].join(", "),
-
-  // 12. Nút sao chép toàn bộ lượt trả lời của Assistant
-  turnCopyButton: [
+  /**
+   * Nút copy toàn bộ tin nhắn dưới chân message
+   */
+  copyMessageButton: [
     'button[aria-label="Copy"]',
     'button[data-testid="copy-turn-action-button"]',
-    '[data-turn-key] .turn-action-controls button[aria-label*="Copy" i]',
   ].join(", "),
-};
+
+  /** Các thông báo lỗi nếu có */
+  errorBanner: [
+    '.text-token-text-error',
+    '[data-testid="temporary-chat-banner"]',
+  ].join(", "),
+} as const;

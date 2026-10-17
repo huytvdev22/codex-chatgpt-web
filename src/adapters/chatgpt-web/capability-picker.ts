@@ -1,121 +1,94 @@
-import type { Page, Locator } from "playwright-core";
-import { CHATGPT_SELECTORS, type ChatGptDomSelectors } from "./selectors";
-import {
-  activateChatGptEffortMenu,
-  readChatGptEffortSnapshot,
-  parseChatGptEffortSliderState,
-  CHATGPT_EFFORT_CONTROL_SELECTOR,
-} from "../../chatgpt-session";
-import { selectChatGptModelFamily } from "./model-selection";
-import type { ChatGptWebModelFamily } from "../../chatgpt-web-models";
+import type { Page } from "playwright-core";
+import { CHATGPT_SELECTORS } from "./selectors";
 
-export interface ChatGptSelectionOptions {
-  modelSlug?: string;
-  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
-  customSelectors?: Partial<ChatGptDomSelectors>;
+export interface EnsureChatGptThinkingOptions {
+  reasoningEffort?: string; // "low" = Off, "high" = Think
+  timeoutMs?: number;
 }
 
 /**
- * Điều phối việc chọn Model và Cấp độ tư duy trên giao diện ChatGPT Web.
- * Kế thừa toàn bộ cơ chế chọn model family (5.6 / Latest / Sol / Astra) và effort slider của adapter cũ,
- * đồng thời hỗ trợ linh hoạt các model slug hiện đại (gpt-4o, o3-mini, o1, 4.5...).
+ * Đảm bảo trạng thái chế độ Suy nghĩ (Think) trên ChatGPT Web khớp với cấu hình từ Codex
+ *
+ * Nút Think trên ChatGPT Web có dạng:
+ * <button type="button" aria-pressed="false" ...><span>Think</span></button>
+ * Khi được bật, aria-pressed chuyển thành "true".
  */
-export async function ensureChatGptModelAndEffort(
+export async function ensureChatGptThinkingMode(
   page: Page,
-  options: ChatGptSelectionOptions = {}
-): Promise<void> {
-  const { modelSlug, reasoningEffort = "medium" } = options;
-  console.log(`[chatgpt-picker] Đang kiểm tra cấu hình model: ${modelSlug || "mặc định"}, reasoning: ${reasoningEffort}`);
+  options: EnsureChatGptThinkingOptions
+): Promise<boolean> {
+  const { reasoningEffort, timeoutMs = 5_000 } = options;
+  if (!reasoningEffort) return true;
 
-  try {
-    // 1. Tìm nút điều khiển model/effort
-    const control = page.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true }).first();
-    const hasControl = await control.isVisible({ timeout: 4_000 }).catch(() => false);
-    if (!hasControl) {
-      console.log("[chatgpt-picker] Không tìm thấy nút chọn model/effort. Sử dụng cấu hình hiện tại của trang.");
-      return;
-    }
+  // "high", "medium", "max", "xhigh" được coi là bật Think; "low" hoặc "off" là tắt Think
+  const shouldThink = reasoningEffort === "high" || reasoningEffort === "max" || reasoningEffort === "xhigh";
 
-    // 2. Mở menu effort/model
-    const activation = await activateChatGptEffortMenu(page, control, { settleMs: 2_000 });
+  console.log(`[chatgpt-capability] Kiểm tra chế độ Think: target=${shouldThink ? "BẬT (Think)" : "TẮT (Off)"}`);
 
-    // 3. Nếu yêu cầu chọn model family (Sol 5.6 hoặc Latest/Astra 6)
-    const normalized = (modelSlug || "").toLowerCase();
-    let family: ChatGptWebModelFamily | null = null;
-    if (normalized.includes("5.6") || normalized.includes("sol")) {
-      family = "5.6";
-    } else if (normalized.includes("6") || normalized.includes("astra") || normalized.includes("latest") || normalized.includes("pro")) {
-      family = "6";
-    }
-
-    let currentActivation = activation;
-    if (family) {
-      try {
-        console.log(`[chatgpt-picker] Đang chọn model family: ${family}...`);
-        currentActivation = await selectChatGptModelFamily(
-          currentActivation,
-          family,
-          () => activateChatGptEffortMenu(page, control, { settleMs: 2_000 })
-        );
-      } catch (err) {
-        console.warn(`[chatgpt-picker] Không thể chọn family ${family} qua radio menu:`, err);
-      }
-    } else if (normalized.includes("o3-mini") || normalized.includes("o1") || normalized.includes("4o") || normalized.includes("4.5")) {
-      // Hỗ trợ chọn qua menuitem text trực tiếp nếu menu có các option hiện đại
-      const targetText = normalized.includes("o3-mini")
-        ? /o3-mini/i
-        : normalized.includes("o1")
-          ? /o1/i
-          : normalized.includes("4.5")
-            ? /4\.5/i
-            : /4o/i;
-
-      const item = currentActivation.menu.locator('[role="menuitem"], [role="menuitemradio"]').filter({ hasText: targetText }).first();
-      if (await item.isVisible().catch(() => false)) {
-        console.log(`[chatgpt-picker] Click chọn model item: ${normalized}`);
-        await item.click({ timeout: 3_000 });
-      }
-    }
-
-    // 4. Điều chỉnh Slider cấp độ tư duy (Effort Slider) nếu có slider
-    const sliderContainer = currentActivation.sliderContainer;
-    const hasSlider = await sliderContainer.isVisible({ timeout: 2_000 }).catch(() => false);
-
-    if (hasSlider) {
-      const effortIndexMap: Record<string, number> = {
-        low: 0,
-        medium: 1,
-        high: 2,
-        xhigh: 3,
-        max: 4,
-      };
-      const targetIndex = effortIndexMap[reasoningEffort] ?? 1;
-
-      try {
-        const state = await readChatGptEffortSnapshot(sliderContainer, 2_000);
-        console.log(`[chatgpt-picker] Slider state hiện tại: min=${state.min}, max=${state.max}, value=${state.value}, target=${targetIndex}`);
-
-        if (targetIndex >= 0 && targetIndex <= state.max - state.min) {
-          const targetValue = state.min + targetIndex;
-          if (state.value !== targetValue && state.available[targetIndex]) {
-            // Click vào tick hoặc kéo slider
-            const ticks = sliderContainer.locator('[data-selected]');
-            if (await ticks.count() > targetIndex) {
-              await ticks.nth(targetIndex).click({ timeout: 2_000 });
-              console.log(`[chatgpt-picker] Đã click chọn nấc reasoning effort: ${targetValue}`);
-            }
-          }
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const result = await page.evaluate(
+      ({ shouldThink, selector }) => {
+        // Tìm nút Think theo selector hoặc theo text content
+        let btn = document.querySelector(selector) as HTMLButtonElement | null;
+        if (!btn) {
+          const allButtons = Array.from(document.querySelectorAll("button"));
+          btn =
+            allButtons.find((b) => {
+              const text = (b.textContent || "").trim();
+              return text === "Think" || b.querySelector('span:is(:text-is("Think"))') !== null;
+            }) || null;
         }
-      } catch (sliderErr) {
-        console.warn("[chatgpt-picker] Bỏ qua điều chỉnh slider:", sliderErr);
-      }
+
+        if (!btn) {
+          return { found: false, changed: false, currentPressed: null };
+        }
+
+        const ariaPressed = btn.getAttribute("aria-pressed");
+        const isCurrentlyPressed = ariaPressed === "true";
+
+        if (isCurrentlyPressed === shouldThink) {
+          // Trạng thái đã khớp
+          return { found: true, changed: false, currentPressed: isCurrentlyPressed };
+        }
+
+        // Cần click để chuyển đổi trạng thái
+        btn.click();
+        return { found: true, changed: true, currentPressed: isCurrentlyPressed };
+      },
+      { shouldThink, selector: CHATGPT_SELECTORS.thinkButton }
+    );
+
+    if (!result.found) {
+      // Có thể trang đang tải hoặc giao diện chưa sẵn sàng, chờ 300ms rồi thử lại
+      await page.waitForTimeout(300);
+      continue;
     }
 
-    // 5. Đóng menu an toàn để không che khuất composer
-    await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(150);
-  } catch (error) {
-    console.warn("[chatgpt-picker] Lỗi trong quá trình cấu hình model/effort:", error);
-    await page.keyboard.press("Escape").catch(() => {});
+    if (!result.changed) {
+      console.log(`[chatgpt-capability] Chế độ Think đã ở trạng thái mong muốn (${shouldThink ? "BẬT" : "TẮT"}).`);
+      return true;
+    }
+
+    // Đã click, chờ 400ms để DOM cập nhật và kiểm tra lại
+    await page.waitForTimeout(400);
+
+    const verified = await page.evaluate(({ selector, shouldThink }) => {
+      let btn = document.querySelector(selector) as HTMLButtonElement | null;
+      if (!btn) {
+        const allButtons = Array.from(document.querySelectorAll("button"));
+        btn = allButtons.find((b) => (b.textContent || "").trim() === "Think") || null;
+      }
+      if (!btn) return false;
+      return (btn.getAttribute("aria-pressed") === "true") === shouldThink;
+    }, { selector: CHATGPT_SELECTORS.thinkButton, shouldThink });
+
+    if (verified) {
+      console.log(`[chatgpt-capability] Đã chuyển đổi chế độ Think thành công: ${shouldThink ? "BẬT" : "TẮT"}.`);
+      return true;
+    }
   }
+
+  console.warn(`[chatgpt-capability] Không tìm thấy hoặc không thể đổi nút Think sau ${timeoutMs}ms.`);
+  return false;
 }

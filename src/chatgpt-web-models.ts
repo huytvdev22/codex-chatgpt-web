@@ -440,8 +440,21 @@ export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] 
   },
 ];
 
+export const CHATGPT_WEB_DEFAULT_ROUTE: ChatGptWebAutomaticModelRoute = {
+  slug: "chatgpt-web",
+  displayName: "ChatGPT (Web)",
+  description: "ChatGPT Web với tùy chọn bật/tắt chế độ Suy nghĩ (Think).",
+  interactionMode: "automatic",
+  backendModel: CHATGPT_WEB_BACKEND_MODEL,
+  codexEffort: "low",
+  adapterEffort: "low",
+  supportedCodexEfforts: ["low", "high"],
+  requiresPro: false,
+};
+
 const routesBySlug = new Map(
   [
+    CHATGPT_WEB_DEFAULT_ROUTE,
     CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
     CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE,
     ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
@@ -469,15 +482,7 @@ export function availableChatGptWebModelRoutes(
       ? [CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE, CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE]
       : [CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE];
   }
-  if (!capabilities.solAvailable) return includeLegacy
-    ? [...CHATGPT_WEB_LUNA_MODEL_ROUTES, CHATGPT_WEB_LEGACY_LUNA_MODEL_ROUTE, CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE]
-    : CHATGPT_WEB_LUNA_MODEL_ROUTES;
-  const candidates = includeLegacy
-    ? [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LEGACY_MODEL_ROUTES]
-    : CHATGPT_WEB_MODEL_ROUTES;
-  return candidates.filter(route =>
-    (!route.requiresPro || capabilities.proAvailable)
-    && (!route.requiresExtraHigh || capabilities.extraHighAvailable));
+  return [CHATGPT_WEB_DEFAULT_ROUTE];
 }
 
 export function chatGptWebRouteEfforts(

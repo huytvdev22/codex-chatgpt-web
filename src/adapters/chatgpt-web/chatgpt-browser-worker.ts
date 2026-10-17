@@ -1,384 +1,431 @@
 import type { Page } from "playwright-core";
-import { CHATGPT_SELECTORS, type ChatGptDomSelectors } from "./selectors";
-import { ensureChatGptModelAndEffort } from "./capability-picker";
+import { CHATGPT_SELECTORS } from "./selectors";
+import { ensureChatGptThinkingMode } from "./capability-picker";
 
-export interface ChatGptTurnExecutionOptions {
+export interface ChatGptBrowserRunOptions {
   prompt: string;
+  onChunk?: (text: string) => void;
   signal?: AbortSignal;
-  modelSlug?: string;
-  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
-  customSelectors?: Partial<ChatGptDomSelectors>;
-  onChunk?: (chunk: string) => void;
+  reasoningEffort?: string;
+  conversationId?: string;
   timeoutMs?: number;
 }
 
 export interface ChatGptTurnResult {
   rawResponse: string;
-  isCompleted: boolean;
+  conversationId?: string;
 }
 
 /**
- * Đảm bảo câu trả lời thô được bọc trọn vẹn trong khối ````markdown ... ````
- * để tương thích hoàn toàn với bộ phân tích nghiêm ngặt parseStrictM365Response.
+ * Trích xuất conversation ID từ URL ChatGPT (dạng https://chatgpt.com/c/<uuid>)
  */
-export function ensureMarkdownTransportFence(content: string): string {
-  const trimmed = content.trim();
-  if (trimmed.startsWith("````markdown") && trimmed.endsWith("````")) {
-    return trimmed;
-  }
-  if (trimmed.startsWith("```markdown") && trimmed.endsWith("```")) {
-    const inner = trimmed.slice("```markdown".length, -3).trim();
-    return `\`\`\`\`markdown\n${inner}\n\`\`\`\``;
-  }
-  return `\`\`\`\`markdown\n${trimmed}\n\`\`\`\``;
+export function extractConversationIdFromUrl(url: string): string | undefined {
+  const match = url.match(/\/c\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : undefined;
 }
 
+/**
+ * Worker điều khiển trình duyệt Playwright tương tác với ChatGPT Web
+ */
 export class ChatGptBrowserWorker {
-  private selectors: ChatGptDomSelectors;
-
-  constructor(selectors: ChatGptDomSelectors = CHATGPT_SELECTORS) {
-    this.selectors = selectors;
-  }
-
   /**
-   * Thực thi một lượt trao đổi hoàn chỉnh trên ChatGPT Web
+   * Cài đặt Clipboard Hook trên trang để đón lấy payload copy code trực tiếp
    */
-  async executeTurn(page: Page, options: ChatGptTurnExecutionOptions): Promise<ChatGptTurnResult> {
-    const { prompt, signal, modelSlug, reasoningEffort, timeoutMs = 180_000 } = options;
-
-    if (signal?.aborted) {
-      throw new DOMException("ChatGpt turn aborted before start", "AbortError");
-    }
-
-    // 1. Chờ khung nhập prompt sẵn sàng
-    console.log("[chatgpt-worker] Đang chờ khung soạn thảo prompt...");
-    const composerLocator = page.locator(this.selectors.composerInput).filter({ visible: true }).first();
-    await composerLocator.waitFor({ state: "visible", timeout: 30_000 });
-
-    // 2. Cấu hình Model & Cấp độ tư duy (Kế thừa từ adapter cũ)
-    await ensureChatGptModelAndEffort(page, {
-      modelSlug,
-      reasoningEffort,
-      customSelectors: options.customSelectors,
-    });
-
-    // 3. Cài đặt Clipboard Hook đón nhận payload từ nút "Copy code" (Tầng 1 Copy Button Salvage)
+  private async setupClipboardHook(page: Page): Promise<void> {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
     await page.evaluate(() => {
       const win = window as any;
       win.__chatgpt_last_copied_code = null;
-
+      const origWriteText = navigator.clipboard ? navigator.clipboard.writeText : null;
       if (navigator.clipboard) {
-        const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
-        navigator.clipboard.writeText = (text: string) => {
+        navigator.clipboard.writeText = async (text: string) => {
           win.__chatgpt_last_copied_code = text;
           try {
-            return originalWriteText(text);
+            if (origWriteText) return await origWriteText.call(navigator.clipboard, text);
           } catch {
             return Promise.resolve();
           }
         };
       }
-
       const onCopy = (e: ClipboardEvent) => {
         const text = e.clipboardData?.getData("text/plain") || window.getSelection()?.toString();
         if (text) win.__chatgpt_last_copied_code = text;
       };
       document.addEventListener("copy", onCopy, { capture: true });
     });
+  }
 
-    // 4. Nhập prompt vào khung soạn thảo
-    console.log(`[chatgpt-worker] Đang nhập prompt (${prompt.length} ký tự)...`);
+  /**
+   * Nhập nội dung prompt vào ProseMirror editor an toàn bằng Plain-text Injection
+   * để không bị kích hoạt Markdown parser tự động làm vỡ định dạng và ghi đè chữ
+   */
+  private async insertPromptSafely(page: Page, promptText: string): Promise<void> {
+    console.log(`[chatgpt-worker] Đang nhập prompt an toàn (${promptText.length} ký tự)...`);
+
+    await page.waitForSelector(CHATGPT_SELECTORS.composer, { timeout: 15_000, state: "visible" });
+
+    // Focus vào composer
+    const composerLocator = page.locator(CHATGPT_SELECTORS.composer).first();
     await composerLocator.click();
 
-    // Dọn dẹp văn bản cũ nếu có
-    await page.keyboard.press("Meta+A").catch(() => page.keyboard.press("Control+A"));
-    await page.keyboard.press("Backspace");
+    // Plain-text injection qua document.execCommand("insertText") kết hợp DataTransfer paste
+    const injected = await page.evaluate(
+      ({ selector, text }) => {
+        const editor = document.querySelector(selector) as HTMLElement | null;
+        if (!editor) return false;
 
-    // Điền prompt qua insertText để kích hoạt các event Lexical/React tự nhiên
-    await page.keyboard.insertText(prompt);
-    await page.waitForTimeout(200);
+        editor.focus();
 
-    // Ghi nhận số lượng turn và nút copy ban đầu trước khi gửi
-    const initialTurnCount = await page.locator(this.selectors.responseContainer).count();
-    const initialCodeCopyCount = await page.locator(this.selectors.codeCopyButton).count();
-    console.log(`[chatgpt-worker] Số lượng turn trước khi gửi: ${initialTurnCount}, code copy: ${initialCodeCopyCount}`);
+        // 1. Xóa nội dung cũ trong editor nếu có
+        try {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          document.execCommand("delete", false, undefined);
+        } catch {
+          editor.innerHTML = "";
+        }
 
-    // 5. Nhấn nút Gửi
+        // 2. Chèn text bằng execCommand("insertText")
+        let inserted = false;
+        try {
+          inserted = document.execCommand("insertText", false, text);
+        } catch {
+          inserted = false;
+        }
+
+        // 3. Fallback paste event với DataTransfer nếu execCommand không thành công
+        if (!inserted || (editor.textContent || "").trim().length === 0) {
+          try {
+            const dt = new DataTransfer();
+            dt.setData("text/plain", text);
+            editor.dispatchEvent(
+              new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })
+            );
+          } catch {}
+        }
+
+        // 4. Dispatch sự kiện input và change để ProseMirror cập nhật state
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+        editor.dispatchEvent(new Event("change", { bubbles: true }));
+
+        return (editor.textContent || "").length > 0;
+      },
+      { selector: CHATGPT_SELECTORS.composer, text: promptText }
+    );
+
+    if (!injected) {
+      console.warn("[chatgpt-worker] Plain-text injection chưa nhận diện được text, thử fallback fill...");
+      await composerLocator.fill(promptText);
+    }
+
+    // Đợi 300ms để ProseMirror và React cập nhật DOM
+    await page.waitForTimeout(300);
+  }
+
+  /**
+   * Thực hiện gửi tin nhắn và xác nhận chắc chắn tin nhắn đã được gửi đi
+   */
+  private async submitPrompt(page: Page, signal?: AbortSignal): Promise<void> {
     console.log("[chatgpt-worker] Đang nhấn nút gửi...");
-    const sendBtn = page.locator(this.selectors.sendButton).filter({ visible: true }).first();
-    if (await sendBtn.isVisible().catch(() => false)) {
-      await sendBtn.click();
+
+    // Chờ nút Send sẵn sàng
+    const sendBtn = page.locator(CHATGPT_SELECTORS.sendButton).first();
+    const canClickSend = await sendBtn.isVisible({ timeout: 2000 }).catch(() => false);
+
+    if (canClickSend) {
+      await sendBtn.click().catch(() => {});
     } else {
-      console.log("[chatgpt-worker] Không tìm thấy nút gửi, dùng phím Enter...");
+      console.log("[chatgpt-worker] Nút gửi chưa xuất hiện hoặc bị ẩn, nhấn Enter...");
       await page.keyboard.press("Enter");
     }
 
-    // 6. Theo dõi Streaming & Completion
-    console.log("[chatgpt-worker] Đang chờ ChatGPT bắt đầu trả lời...");
-    let streamStarted = false;
-    let lastRenderedText = "";
-    let stableTextCycles = 0;
+    // Vòng lặp xác nhận chắc chắn tin nhắn đã được gửi đi
+    const submitDeadline = Date.now() + 10_000;
+    while (Date.now() < submitDeadline) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-    // Chờ tối đa 30s để nút stop xuất hiện hoặc lượt mới thực sự xuất hiện
-    const startDeadline = Date.now() + 30_000;
-    while (Date.now() < startDeadline) {
-      if (signal?.aborted) throw new DOMException("ChatGpt turn aborted", "AbortError");
+      const isSubmitted = await page.evaluate(
+        ({ stopSelector, composerSelector }) => {
+          const stopBtn = document.querySelector(stopSelector);
+          if (stopBtn) return true; // Đang sinh câu trả lời => đã gửi thành công
 
-      const stopBtn = page.locator(this.selectors.stopButton).filter({ visible: true }).first();
-      const hasStop = await stopBtn.isVisible().catch(() => false);
-      if (hasStop) {
-        streamStarted = true;
-        break;
+          const editor = document.querySelector(composerSelector);
+          const text = (editor?.textContent || "").trim();
+          // Nếu editor đã trống hoặc placeholder xuất hiện trở lại
+          return text.length === 0;
+        },
+        { stopSelector: CHATGPT_SELECTORS.stopButton, composerSelector: CHATGPT_SELECTORS.composer }
+      );
+
+      if (isSubmitted) {
+        console.log("[chatgpt-worker] Tin nhắn đã được gửi thành công!");
+        return;
       }
 
-      const currentTurnCount = await page.locator(this.selectors.responseContainer).count();
-      if (currentTurnCount > initialTurnCount) {
-        streamStarted = true;
-        break;
-      }
-
-      // Kiểm tra có văn bản đang được tạo trong DOM
-      const hasNewDomContent = await page.evaluate(() => {
-        const turns = document.querySelectorAll('[data-turn-key], [data-virtualized-turn-content], article');
-        return turns.length > 0;
-      }).catch(() => false);
-
-      if (hasNewDomContent) {
-        streamStarted = true;
-        break;
-      }
-
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(200);
     }
 
-    console.log("[chatgpt-worker] Phản hồi đang được sinh. Bắt đầu theo dõi hoàn tất...");
+    console.warn("[chatgpt-worker] Hết thời gian chờ xác nhận gửi, tiếp tục theo dõi phản hồi...");
+  }
 
-    // Polling cho tới khi streaming kết thúc
-    const maxDeadline = Date.now() + timeoutMs;
+  /**
+   * Đọc nội dung phản hồi stream hiện tại từ DOM
+   */
+  private async readLatestAssistantStreamText(page: Page): Promise<string> {
+    return await page.evaluate(
+      ({ assistantSelector, codeBlockSelector }) => {
+        const messages = Array.from(document.querySelectorAll(assistantSelector));
+        if (messages.length === 0) return "";
+        const latestMsg = messages[messages.length - 1] as HTMLElement;
 
-    while (Date.now() < maxDeadline) {
-      if (signal?.aborted) throw new DOMException("ChatGpt turn aborted", "AbortError");
-
-      // Đọc trạng thái trực tiếp từ trang qua evaluate nhanh
-      const pageState = await page.evaluate(() => {
-        // 1. Kiểm tra nút stop
-        const stopBtn = document.querySelector('[data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]');
-        const isStopVisible = stopBtn !== null && stopBtn.offsetParent !== null;
-
-        // 2. Lấy turn mới nhất
-        const turns = Array.from(document.querySelectorAll('[data-turn-key], [data-virtualized-turn-content], article[data-testid^="conversation-turn-"]'));
-        const lastTurn = turns[turns.length - 1];
-        
-        let turnText = "";
-        let hasClosedEnvelope = false;
-        let hasCompleteButtons = false;
-
-        if (lastTurn) {
-          turnText = lastTurn.textContent || "";
-          hasClosedEnvelope = turnText.includes("</webResponse>") || turnText.includes("</custom_tool_call>") || turnText.includes("</proposed_plan>");
-          
-          // Kiểm tra nút hoàn tất trong turn này
-          const completeBtn = lastTurn.querySelector('button[aria-label="Copy"], button[aria-label="Regenerate response"], button[aria-label*="Share" i]');
-          hasCompleteButtons = completeBtn !== null;
+        // Ưu tiên đọc từ code block nếu đã xuất hiện
+        const codeBlock = latestMsg.querySelector(codeBlockSelector);
+        if (codeBlock) {
+          const text = (codeBlock.textContent || "").trim();
+          if (text.includes("<webResponse>") || text.includes("<tool_call>")) {
+            return text;
+          }
         }
 
-        return {
-          totalTurns: turns.length,
-          isStopVisible,
-          textLength: turnText.length,
-          hasClosedEnvelope,
-          hasCompleteButtons,
-          turnTextSample: turnText.slice(-300),
-        };
-      }).catch(() => null);
-
-      const isGenerating = pageState?.isStopVisible ?? false;
-      const currentTextSample = pageState?.turnTextSample || "";
-
-      // Theo dõi độ ổn định của text
-      if (currentTextSample && currentTextSample === lastRenderedText) {
-        stableTextCycles++;
-      } else {
-        stableTextCycles = 0;
-        lastRenderedText = currentTextSample;
+        // Lấy text hiển thị sạch
+        const markdownRoot = latestMsg.querySelector('[data-markdown-text-style="assistant-message"]') || latestMsg;
+        return (markdownRoot.textContent || "").trim();
+      },
+      {
+        assistantSelector: CHATGPT_SELECTORS.assistantMessage,
+        codeBlockSelector: CHATGPT_SELECTORS.codeBlock,
       }
+    );
+  }
 
-      // ĐIỀU KIỆN HOÀN THÀNH THÔNG MINH:
-      // Khi nút Stop không còn hiển thị:
-      if (!isGenerating && streamStarted) {
-        // Trường hợp 1: Đã thấy thẻ đóng giao thức (Bằng chứng chắc chắn 100% ChatGPT đã kết thúc)
-        if (pageState?.hasClosedEnvelope) {
-          console.log("[chatgpt-worker] Đã phát hiện thẻ đóng giao thức </webResponse> và nút Stop đã ẩn. Hoàn tất lượt!");
-          break;
+  /**
+   * Trích xuất kết quả hoàn chỉnh qua cơ chế Copy-Salvage (Clipboard Hook)
+   */
+  private async extractCompletedResponse(page: Page): Promise<string> {
+    console.log("[chatgpt-worker] [copy-salvage] Đang tìm và click nút Copy code...");
+
+    // Cố gắng click nút "Copy code" của code block trong tin nhắn cuối
+    const clicked = await page.evaluate(
+      ({ assistantSelector, copyCodeSelector, copyMessageSelector }) => {
+        const win = window as any;
+        win.__chatgpt_last_copied_code = null;
+
+        const messages = Array.from(document.querySelectorAll(assistantSelector));
+        const latestMsg = messages[messages.length - 1] as HTMLElement | null;
+        if (!latestMsg) return false;
+
+        // 1. Ưu tiên nút "Copy code"
+        let copyBtn = latestMsg.querySelector(copyCodeSelector) as HTMLElement | null;
+        if (!copyBtn) {
+          // 2. Fallback: nút "Copy" toàn bộ tin nhắn
+          copyBtn = latestMsg.querySelector(copyMessageSelector) as HTMLElement | null;
         }
 
-        // Trường hợp 2: Có nút hoàn tất của turn (Copy turn / Regenerate) và text đã ổn định >= 1 chu kỳ (400ms)
-        if (pageState?.hasCompleteButtons && stableTextCycles >= 1) {
-          console.log("[chatgpt-worker] Phát hiện các nút điều khiển hoàn tất lượt và văn bản ổn định. Hoàn tất lượt!");
-          break;
-        }
+        if (!copyBtn) return false;
 
-        // Trường hợp 3: Nút Stop đã ẩn và văn bản ổn định liên tục >= 3 chu kỳ (1.200ms)
-        if (stableTextCycles >= 3) {
-          console.log("[chatgpt-worker] Nút Stop đã ẩn và văn bản hoàn toàn ổn định (>= 1.2s). Hoàn tất lượt!");
-          break;
-        }
+        copyBtn.scrollIntoView({ block: "center", inline: "center" });
+        copyBtn.focus();
+        copyBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+        copyBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        copyBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+        copyBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        copyBtn.click();
+        return true;
+      },
+      {
+        assistantSelector: CHATGPT_SELECTORS.assistantMessage,
+        copyCodeSelector: CHATGPT_SELECTORS.copyCodeButton,
+        copyMessageSelector: CHATGPT_SELECTORS.copyMessageButton,
       }
+    );
 
-      await page.waitForTimeout(400);
-    }
-
-    // Nghỉ 400ms để DOM ổn định hoàn toàn
-    await page.waitForTimeout(400);
-
-    // 7. TỰ ĐỘNG BẤM TẤT CẢ NÚT "SHOW MORE" (XEM THÊM) ĐỂ MỞ RỘNG TRỌN VẸN FILE DÀI
-    try {
-      console.log("[chatgpt-worker] [show-more] Kiểm tra và tự động mở rộng các khối code dài bị thu gọn...");
-      const expandedCount = await page.evaluate(() => {
-        const turns = Array.from(document.querySelectorAll('[data-turn-key], [data-virtualized-turn-content], article'));
-        const lastTurn = turns[turns.length - 1] || document.body;
-        
-        const showMoreBtns = Array.from(lastTurn.querySelectorAll('button')).filter(b => {
-          const txt = (b.textContent || '').trim().toLowerCase();
-          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-          return txt.includes('show more') || txt.includes('xem thêm') || aria.includes('show more') || aria.includes('xem thêm');
-        });
-
-        for (const btn of showMoreBtns) {
-          btn.click();
-        }
-        return showMoreBtns.length;
-      });
-
-      if (expandedCount > 0) {
-        console.log(`[chatgpt-worker] [show-more] Đã kích hoạt ${expandedCount} nút Show more để bung toàn bộ nội dung file dài.`);
-        await page.waitForTimeout(300);
-      }
-    } catch (expandErr) {
-      console.warn("[chatgpt-worker] [show-more] Cảnh báo khi kích hoạt Show more:", expandErr);
-    }
-
-    // 8. BÓC TÁCH NỘI DUNG ĐA TẦNG (MULTI-TIER EXTRACTION)
-    let extractedText: string | null = null;
-
-    // TẦNG 1 (ƯU TIÊN SỐ 1 - 100% NGUYÊN BẢN): Click nút "Copy code" của khối Markdown trong lượt mới
-    try {
-      console.log("[chatgpt-worker] [copy-salvage] [Tầng 1] Tìm kiếm nút Sao chép mã của khối Markdown...");
-      const copyBtns = page.locator(this.selectors.codeCopyButton);
-      const copyCount = await copyBtns.count();
-
-      if (copyCount > 0) {
-        // Duyệt từ nút copy mới nhất ở cuối trang
-        const targetBtn = copyBtns.last();
-        if (await targetBtn.isVisible().catch(() => false)) {
-          await targetBtn.click({ timeout: 2_000 });
-          await page.waitForTimeout(200);
-
-          const text = await page.evaluate(async () => {
-            const win = window as any;
-            if (win.__chatgpt_last_copied_code && typeof win.__chatgpt_last_copied_code === "string") {
-              return win.__chatgpt_last_copied_code.trim();
-            }
+    if (clicked) {
+      // Chờ clipboard hook nhận được nội dung (tối đa 2.5s)
+      const readDeadline = Date.now() + 2_500;
+      while (Date.now() < readDeadline) {
+        await page.waitForTimeout(100);
+        const copied = await page.evaluate(async () => {
+          const win = window as any;
+          if (win.__chatgpt_last_copied_code) {
+            return win.__chatgpt_last_copied_code as string;
+          }
+          if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
             try {
-              if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
-                const sys = await navigator.clipboard.readText();
-                if (sys && sys.trim().length > 0) return sys.trim();
-              }
+              const text = await navigator.clipboard.readText();
+              if (text && text.trim().length > 0) return text;
             } catch {}
-            return null;
-          });
-
-          if (text && text.length > 0) {
-            extractedText = text;
-            console.log(`[chatgpt-worker] [copy-salvage] [Tầng 1] THÀNH CÔNG: Đã lấy được payload qua nút Copy Code (${text.length} ký tự).`);
           }
-        }
-      }
-    } catch (err) {
-      console.warn("[chatgpt-worker] [copy-salvage] [Tầng 1] Lỗi khi click nút copy code:", err);
-    }
-
-    // TẦNG 2: Click nút "Copy" của toàn bộ lượt Assistant (Turn Copy Button)
-    if (!extractedText) {
-      try {
-        console.log("[chatgpt-worker] [copy-salvage] [Tầng 2] Tìm kiếm nút Sao chép toàn bộ lượt trả lời (Copy Turn)...");
-        const turnCopyBtns = page.locator(this.selectors.turnCopyButton);
-        const turnCopyCount = await turnCopyBtns.count();
-
-        if (turnCopyCount > 0) {
-          const targetTurnCopyBtn = turnCopyBtns.last();
-          if (await targetTurnCopyBtn.isVisible().catch(() => false)) {
-            await targetTurnCopyBtn.click({ timeout: 2_000 });
-            await page.waitForTimeout(200);
-
-            const text = await page.evaluate(async () => {
-              const win = window as any;
-              if (win.__chatgpt_last_copied_code && typeof win.__chatgpt_last_copied_code === "string") {
-                return win.__chatgpt_last_copied_code.trim();
-              }
-              try {
-                if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
-                  const sys = await navigator.clipboard.readText();
-                  if (sys && sys.trim().length > 0) return sys.trim();
-                }
-              } catch {}
-              return null;
-            });
-
-            if (text && text.length > 0) {
-              extractedText = text;
-              console.log(`[chatgpt-worker] [copy-salvage] [Tầng 2] THÀNH CÔNG: Đã lấy được payload qua nút Copy Turn (${text.length} ký tự).`);
-            }
-          }
-        }
-      } catch (turnCopyErr) {
-        console.warn("[chatgpt-worker] [copy-salvage] [Tầng 2] Lỗi khi click nút copy turn:", turnCopyErr);
-      }
-    }
-
-    // TẦNG 3: Bóc tách trực tiếp từ DOM của turn mới nhất
-    if (!extractedText) {
-      console.log("[chatgpt-worker] [fallback] [Tầng 3] Trích xuất nội dung trực tiếp từ DOM của lượt mới.");
-      try {
-        extractedText = await page.evaluate(() => {
-          const turns = Array.from(document.querySelectorAll('[data-turn-key], [data-virtualized-turn-content], article'));
-          const lastTurn = turns[turns.length - 1];
-          if (!lastTurn) return null;
-
-          // 1. Nếu trong lastTurn có phần tử trợ lý riêng biệt (ví dụ .block-BQZwFn:nth-child(2) hoặc .markdown)
-          const assistantBlock = lastTurn.querySelector('.block-BQZwFn:nth-child(2), [data-message-author-role="assistant"], .markdown');
-          if (assistantBlock) {
-            const clone = assistantBlock.cloneNode(true) as HTMLElement;
-            clone.querySelectorAll('.code-block__wrapper > div:first-child, button, nav, [aria-label*="Copy" i]').forEach(n => n.remove());
-            const text = clone.innerText?.trim() || clone.textContent?.trim();
-            if (text && text.length > 0) return text;
-          }
-
-          // 2. Fallback bóc tách từ lastTurn
-          const clone = lastTurn.cloneNode(true) as HTMLElement;
-          // Loại bỏ phần tin nhắn của user nếu cùng nằm trong turn
-          const userBlock = clone.querySelector('.block-BQZwFn:first-child');
-          if (userBlock && clone.querySelectorAll('.block-BQZwFn').length > 1) {
-            userBlock.remove();
-          }
-          clone.querySelectorAll('.code-block__wrapper > div:first-child, button, nav, [aria-label*="Copy" i]').forEach(n => n.remove());
-          return clone.innerText?.trim() || clone.textContent?.trim() || null;
+          return null;
         });
-      } catch (domErr) {
-        console.warn("[chatgpt-worker] Lỗi đọc DOM fallback:", domErr);
+
+        if (copied && copied.trim().length > 0) {
+          console.log(`[chatgpt-worker] [copy-salvage] Đã lấy thành công payload sạch từ Clipboard (${copied.length} ký tự)!`);
+          return copied.trim();
+        }
       }
     }
 
-    if (!extractedText) {
-      extractedText = lastRenderedText;
+    console.warn("[chatgpt-worker] [copy-salvage] Không bắt được từ Clipboard, fallback trích xuất DOM text...");
+    return await this.readLatestAssistantStreamText(page);
+  }
+
+  /**
+   * Thực thi một lượt gửi câu hỏi và nhận câu trả lời từ ChatGPT Web
+   */
+  public async executeTurn(
+    page: Page,
+    options: ChatGptBrowserRunOptions
+  ): Promise<ChatGptTurnResult> {
+    const { prompt, onChunk, signal, reasoningEffort, conversationId, timeoutMs = 180_000 } = options;
+
+    if (signal?.aborted) {
+      throw new DOMException("ChatGpt turn aborted before start", "AbortError");
     }
 
-    const normalizedRaw = ensureMarkdownTransportFence(extractedText);
+    // 1. Quản lý URL & Điều hướng
+    const currentUrl = page.url();
+    if (conversationId) {
+      // Cùng thread: đảm bảo đang ở trang chat của thread đó
+      if (!currentUrl.includes(`/c/${conversationId}`)) {
+        console.log(`[chatgpt-worker] Điều hướng đến cuộc trò chuyện hiện có: https://chatgpt.com/c/${conversationId}`);
+        await page.goto(`https://chatgpt.com/c/${conversationId}`, {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+      }
+    } else {
+      // Lượt đầu tiên: đảm bảo vào trang chủ sạch https://chatgpt.com/
+      if (currentUrl.includes("/c/")) {
+        console.log("[chatgpt-worker] Bắt đầu phiên chat mới, điều hướng về https://chatgpt.com/");
+        await page.goto("https://chatgpt.com/", {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+      } else if (!currentUrl.includes("chatgpt.com")) {
+        console.log("[chatgpt-worker] Điều hướng đến https://chatgpt.com/");
+        await page.goto("https://chatgpt.com/", {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+      }
+    }
+
+    // Chờ ô soạn thảo xuất hiện
+    await page.waitForSelector(CHATGPT_SELECTORS.composer, { timeout: 20_000, state: "visible" });
+
+    // 2. Thiết lập chế độ Thinking theo cấu hình
+    if (reasoningEffort) {
+      await ensureChatGptThinkingMode(page, { reasoningEffort });
+    }
+
+    // 3. Cài đặt Clipboard Hook
+    await this.setupClipboardHook(page);
+
+    // 4. Nhập prompt an toàn
+    await this.insertPromptSafely(page, prompt);
+
+    // 5. Gửi prompt
+    await this.submitPrompt(page, signal);
+
+    // 6. Theo dõi sinh phản hồi (Streaming & Polling)
+    console.log("[chatgpt-worker] Đang theo dõi ChatGPT trả lời...");
+    const startTime = Date.now();
+    let lastRenderedText = "";
+    let isStreaming = true;
+
+    // Đợi tối đa 10s để xem nút Stop có xuất hiện không
+    await page.waitForSelector(CHATGPT_SELECTORS.stopButton, { timeout: 10_000 }).catch(() => {});
+
+    while (isStreaming) {
+      if (signal?.aborted) {
+        const stopBtn = await page.$(CHATGPT_SELECTORS.stopButton);
+        if (stopBtn) await stopBtn.click().catch(() => {});
+        throw new DOMException("ChatGpt turn aborted during execution", "AbortError");
+      }
+
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error(`[chatgpt-worker] Quá thời gian chờ phản hồi (${timeoutMs}ms).`);
+      }
+
+      // Đọc stream text
+      const currentText = await this.readLatestAssistantStreamText(page);
+      if (currentText.length > lastRenderedText.length) {
+        const delta = currentText.slice(lastRenderedText.length);
+        if (onChunk) {
+          onChunk(delta);
+        }
+        lastRenderedText = currentText;
+      }
+
+      // Kiểm tra trạng thái hoàn tất:
+      // Tín hiệu 1: Nút "Stop" biến mất VÀ Nút "Start Voice" xuất hiện (theo HTML thực tế)
+      // Tín hiệu 2: Nút "Stop" biến mất VÀ Nút "Copy code" xuất hiện
+      const completionCheck = await page.evaluate(
+        ({ stopSel, startVoiceSel, copyCodeSel }) => {
+          const stopBtn = document.querySelector(stopSel);
+          if (stopBtn) return { done: false, hasStop: true };
+
+          const startVoiceBtn = document.querySelector(startVoiceSel);
+          const copyCodeBtn = document.querySelector(copyCodeSel);
+
+          if (startVoiceBtn || copyCodeBtn) {
+            return { done: true, hasStop: false };
+          }
+
+          return { done: false, hasStop: false };
+        },
+        {
+          stopSel: CHATGPT_SELECTORS.stopButton,
+          startVoiceSel: CHATGPT_SELECTORS.startVoiceButton,
+          copyCodeSel: CHATGPT_SELECTORS.copyCodeButton,
+        }
+      );
+
+      if (completionCheck.done && lastRenderedText.length > 0) {
+        console.log("[chatgpt-worker] Phát hiện tín hiệu hoàn tất (nút Stop biến mất, Start Voice/Copy xuất hiện).");
+        // Chờ thêm 500ms để DOM ổn định hoàn toàn
+        await page.waitForTimeout(500);
+        isStreaming = false;
+        break;
+      }
+
+      // Nếu không có nút Stop và đã có text nhưng chưa thấy Start Voice, chờ thêm chút
+      if (!completionCheck.hasStop && lastRenderedText.length > 0) {
+        const idleDeadline = Date.now() + 2000;
+        let isStillIdle = true;
+        while (Date.now() < idleDeadline) {
+          await page.waitForTimeout(300);
+          const checkText = await this.readLatestAssistantStreamText(page);
+          if (checkText !== lastRenderedText) {
+            isStillIdle = false;
+            break;
+          }
+        }
+        if (isStillIdle) {
+          console.log("[chatgpt-worker] Phản hồi đã dừng stream ổn định.");
+          isStreaming = false;
+          break;
+        }
+      }
+
+      await page.waitForTimeout(250);
+    }
+
+    // 7. Trích xuất phản hồi hoàn chỉnh bằng Copy-Salvage
+    const rawResponse = await this.extractCompletedResponse(page);
+
+    // 8. Trích xuất conversation ID từ URL sau khi hoàn thành lượt đầu
+    const finalUrl = page.url();
+    const newConversationId = extractConversationIdFromUrl(finalUrl);
+
+    console.log(`[chatgpt-worker] Lượt hoàn tất thành công. URL: ${finalUrl}, Conversation ID: ${newConversationId || "chưa xác định"}`);
+
     return {
-      rawResponse: normalizedRaw,
-      isCompleted: true,
+      rawResponse,
+      conversationId: newConversationId,
     };
   }
 }
-
-export const chatGptBrowserWorker = new ChatGptBrowserWorker();

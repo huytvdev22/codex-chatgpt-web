@@ -813,6 +813,14 @@ async function handleGeminiResponseRequest(
   const maps = toolBridgeMaps(parsed);
   const responseModel = requestedModel;
 
+  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+    if (options.rememberState !== false) {
+      rememberResponseState(parsed._rawBody, response, {
+        force: true,
+      });
+    }
+  };
+
   if (parsed.stream) {
     void run();
     const stream = bridgeToResponsesSSE(
@@ -825,6 +833,7 @@ async function handleGeminiResponseRequest(
       2_000,
       {
         hideThinkingSummary: parsed.options.hideThinkingSummary,
+        onCompletedResponse: rememberCompletedResponse,
       },
     );
     return new Response(stream, {
@@ -843,6 +852,7 @@ async function handleGeminiResponseRequest(
     hideThinkingSummary: parsed.options.hideThinkingSummary,
     toolNsMap: maps.toolNsMap,
   });
+  rememberCompletedResponse(json);
   return Response.json(json);
 }
 
@@ -884,6 +894,14 @@ async function handleChatGptResponseRequest(
   const maps = toolBridgeMaps(parsed);
   const responseModel = requestedModel;
 
+  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+    if (options.rememberState !== false) {
+      rememberResponseState(parsed._rawBody, response, {
+        force: true,
+      });
+    }
+  };
+
   if (parsed.stream) {
     void run();
     const stream = bridgeToResponsesSSE(
@@ -896,6 +914,7 @@ async function handleChatGptResponseRequest(
       2_000,
       {
         hideThinkingSummary: parsed.options.hideThinkingSummary,
+        onCompletedResponse: rememberCompletedResponse,
       },
     );
     return new Response(stream, {
@@ -914,6 +933,7 @@ async function handleChatGptResponseRequest(
     hideThinkingSummary: parsed.options.hideThinkingSummary,
     toolNsMap: maps.toolNsMap,
   });
+  rememberCompletedResponse(json);
   return Response.json(json);
 }
 

@@ -248,7 +248,12 @@ export function ensureManagedModelCatalogFile(
           geminiModels.length >= 5 &&
           geminiModels.every((m: any) => Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 3);
 
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels) {
+        const chatGptModels = Array.isArray(raw.models)
+          ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
+          : [];
+        const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
+
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault) {
           shouldWrite = true;
         }
       } catch {
@@ -359,9 +364,12 @@ export function buildChatGptWebModel(
   if (!templateSlug || templateSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) {
     throw new Error("ChatGPT Web model template must be a native Codex model");
   }
-  const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
+  const limits = route.slug === "chatgpt-web"
+    ? resolveChatGptWebContextLimits(route.backendModel, "high", config)
+    : resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
   const efforts = chatGptWebRouteEfforts(route, config);
   for (const effort of efforts) {
+    if (route.slug === "chatgpt-web") continue;
     const adapterEffort = route.supportedCodexEfforts ? effort : route.adapterEffort;
     if (adapterEffort === "ultra") throw new Error("Ultra is not a browser effort");
     const candidate = resolveChatGptWebContextLimits(route.backendModel, adapterEffort, config);
@@ -396,10 +404,17 @@ export function buildChatGptWebModel(
     tool_mode: null,
     upgrade: null,
     default_reasoning_level: route.codexEffort,
-    supported_reasoning_levels: efforts.map(effort => reasoningLevel(template, effort,
-      efforts.length === 1 ? route.displayName
-        : route.backendModel === "gpt-5.6-luna" ? effort === "low" ? "Ordinary Luna" : "Think"
-          : `${route.displayName} — ${effort === "xhigh" ? "Extra High" : effort}`)),
+    supported_reasoning_levels: efforts.map(effort => {
+      let desc = efforts.length === 1 ? route.displayName : `${route.displayName} — ${effort}`;
+      if (route.slug === "chatgpt-web") {
+        desc = effort === "low" ? "Off" : "Think";
+      } else if (route.backendModel === "gpt-5.6-luna") {
+        desc = effort === "low" ? "Ordinary Luna" : "Think";
+      } else if (effort === "xhigh") {
+        desc = `${route.displayName} — Extra High`;
+      }
+      return reasoningLevel(template, effort, desc);
+    }),
     context_window: limits.contextWindow,
     max_context_window: limits.contextWindow,
     effective_context_window_percent: limits.effectiveContextWindowPercent,

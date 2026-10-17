@@ -2,35 +2,24 @@ import { describe, expect, test } from "bun:test";
 import {
   isChatGptWebModelSlug,
   availableChatGptWebModelRoutes,
-  CHATGPT_WEB_MODEL_ROUTES,
+  CHATGPT_WEB_DEFAULT_ROUTE,
 } from "../src/chatgpt-web-models";
-import { CHATGPT_SELECTORS } from "../src/adapters/chatgpt-web/selectors";
-import {
-  buildUnifiedToolProtocol,
-  buildShortOutputFormatAnchor,
-} from "../src/adapters/m365-copilot/prompts";
 import {
   ChatGptWebAdapter,
   createChatGptWebAdapter,
-  resolveChatGptEffort,
-  chatGptWebTraceId,
+  CHATGPT_SELECTORS,
+  extractConversationIdFromUrl,
+  ChatGptConversationStore,
 } from "../src/adapters/chatgpt-web";
-import { ensureMarkdownTransportFence } from "../src/adapters/chatgpt-web/chatgpt-browser-worker";
-import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation/strict-response-parser";
-import { normalizeM365ToolArguments } from "../src/adapters/m365-copilot/tools/argument-normalizer";
-import { validateM365ToolCall } from "../src/adapters/m365-copilot/tools/tool-validator";
-import { M365ToolBridge } from "../src/adapters/m365-copilot/tools/tool-bridge";
-import { hasActualPriorAssistantReply } from "../src/adapters/base";
-import { M365PromptCompiler } from "../src/adapters/m365-copilot/prompts";
-import { CodexPayloadNormalizer, CodexRawPayload } from "../src/adapters/m365-copilot/normalization";
+import { augmentNativeModelCatalog } from "../src/model-catalog";
+import { join } from "node:path";
+import { unlinkSync, existsSync } from "node:fs";
 
-describe("ChatGPT Web Adapter Base Architecture Tests", () => {
+describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
   test("1. isChatGptWebModelSlug nhận diện chính xác các model của ChatGPT Web", () => {
     expect(isChatGptWebModelSlug("chatgpt-web")).toBe(true);
     expect(isChatGptWebModelSlug("chatgpt-web/pro")).toBe(true);
     expect(isChatGptWebModelSlug("chatgpt-web/gpt-5.6-sol")).toBe(true);
-    expect(isChatGptWebModelSlug("chatgpt-web/gpt-5-luna")).toBe(true);
-    expect(isChatGptWebModelSlug("chatgpt-web/auto")).toBe(true);
 
     // Không nhận nhầm các adapter khác
     expect(isChatGptWebModelSlug("m365-copilot")).toBe(false);
@@ -38,270 +27,89 @@ describe("ChatGPT Web Adapter Base Architecture Tests", () => {
     expect(isChatGptWebModelSlug("gpt-5")).toBe(false);
   });
 
-  test("2. availableChatGptWebModelRoutes cung cấp đầy đủ danh sách model routes", () => {
+  test("2. availableChatGptWebModelRoutes trả về route mặc định với 2 nấc suy nghĩ (Off / Think)", () => {
     const routes = availableChatGptWebModelRoutes({ solAvailable: true, proAvailable: true });
-    expect(routes.length).toBeGreaterThanOrEqual(3);
-    const proRoute = routes.find(r => r.slug === "chatgpt-web/gpt-5.6-pro");
-    expect(proRoute).toBeDefined();
-    expect((proRoute as any)?.modelFamily).toBe("5.6");
+    expect(routes.length).toBeGreaterThanOrEqual(1);
+
+    const defaultRoute = routes.find(r => r.slug === "chatgpt-web");
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute?.displayName).toBe("ChatGPT (Web)");
+    expect(defaultRoute?.supportedCodexEfforts).toEqual(["low", "high"]);
   });
 
-  test("3. resolveChatGptEffort phân giải chính xác reasoning effort", () => {
-    expect(resolveChatGptEffort("chatgpt-web/pro", "low")).toBe("low");
-    expect(resolveChatGptEffort("chatgpt-web/pro", "medium")).toBe("medium");
-    expect(resolveChatGptEffort("chatgpt-web/pro", "high")).toBe("high");
-    expect(resolveChatGptEffort("chatgpt-web/pro", "xhigh")).toBe("xhigh");
-    expect(resolveChatGptEffort("chatgpt-web/pro", "max")).toBe("max");
-    // Fallback mặc định
-    expect(resolveChatGptEffort("chatgpt-web/pro", undefined)).toBe("medium");
-    expect(resolveChatGptEffort("chatgpt-web/pro", "invalid")).toBe("medium");
-  });
-
-  test("4. CHATGPT_SELECTORS khai báo đầy đủ các element DOM cốt lõi của chatgpt.com", () => {
-    expect(CHATGPT_SELECTORS.appUrl).toBe("https://chatgpt.com/?temporary-chat=true");
-    expect(CHATGPT_SELECTORS.composerInput).toBeDefined();
-    expect(CHATGPT_SELECTORS.sendButton).toBeDefined();
-    expect(CHATGPT_SELECTORS.stopButton).toBeDefined();
-    expect(CHATGPT_SELECTORS.responseContainer).toBeDefined();
-    expect(CHATGPT_SELECTORS.modelSelectorButton).toBeDefined();
-    expect(CHATGPT_SELECTORS.codeCopyButton).toBeDefined();
-    expect(CHATGPT_SELECTORS.completionAction).toBeDefined();
-  });
-
-  test("5. buildUnifiedToolProtocol hỗ trợ sinh prompt chuẩn hóa cho ChatGPT với thẻ webResponse", () => {
-    const chatGptPrompt = buildUnifiedToolProtocol("ChatGPT");
-    expect(chatGptPrompt).toContain("Chào ChatGPT, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
-    expect(chatGptPrompt).toContain("<webResponse>");
-    expect(chatGptPrompt).toContain("apply_patch");
-
-    const anchor = buildShortOutputFormatAnchor();
-    expect(anchor).toContain("<webResponse>");
-    expect(anchor).toContain("4-backtick");
-  });
-
-  test("6. ChatGptWebAdapter khởi tạo chuẩn ProviderAdapter interface", () => {
-    const adapter = createChatGptWebAdapter({ headless: true });
-    expect(adapter).toBeInstanceOf(ChatGptWebAdapter);
-    expect(adapter.name).toBe("chatgpt-web");
-  });
-
-  test("7. chatGptWebTraceId tạo traceId hợp lệ", () => {
-    const headers = new Headers();
-    headers.set("x-codex-trace-id", "trace-test-123");
-    expect(chatGptWebTraceId(headers)).toBe("trace-test-123");
-
-    const generated = chatGptWebTraceId();
-    expect(generated.startsWith("chatgpt_trace_")).toBe(true);
-  });
-
-  test("8. Bóc tách và parse strict response từ khối Markdown của ChatGPT Web", () => {
-    // Giả lập raw text trích xuất từ nút 'Copy code' hoặc DOM của ChatGPT Web
-    const chatGptCodeBlockContent = `<webResponse>
-Chào bạn! Mình là ChatGPT, đã sẵn sàng hỗ trợ bạn phát triển dự án.
-
-Bạn muốn bắt đầu kiểm tra phần nào trước?
-</webResponse>`;
-
-    const wrapped = ensureMarkdownTransportFence(chatGptCodeBlockContent);
-    expect(wrapped.startsWith("````markdown")).toBe(true);
-    expect(wrapped.endsWith("````")).toBe(true);
-
-    const parsed = parseStrictM365Response(wrapped);
-    expect(parsed.kind).toBe("final_answer");
-    if (parsed.kind === "final_answer") {
-      expect(parsed.content).toContain("Chào bạn! Mình là ChatGPT, đã sẵn sàng hỗ trợ bạn phát triển dự án.");
-      expect(parsed.content).not.toContain("<webResponse>");
-      expect(parsed.content).not.toContain("</webResponse>");
-    }
-
-    // Giả lập tool call qua strict-parser
-    const chatGptToolContent = `<webResponse>
-<tool_call>
-{"name": "read_file", "arguments": {"path": "package.json"}}
-</tool_call>
-</webResponse>`;
-
-    const toolWrapped = ensureMarkdownTransportFence(chatGptToolContent);
-    const parsedTool = parseStrictM365Response(toolWrapped);
-    expect(parsedTool.kind).toBe("tool_calls");
-    if (parsedTool.kind === "tool_calls") {
-      expect(parsedTool.calls).toHaveLength(1);
-      expect(parsedTool.calls[0].name).toBe("read_file");
-      expect(parsedTool.calls[0].arguments).toEqual({ path: "package.json" });
-    }
-  });
-
-  test("9. Chuẩn hóa alias execute_command sang exec_command và map tool thành công", () => {
-    const rawCall = {
-      name: "execute_command",
-      arguments: { command: "git status" },
-    };
-
-    const normalized = normalizeM365ToolArguments(rawCall.name, rawCall.arguments);
-    expect(normalized.name).toBe("exec_command");
-    expect(normalized.arguments.cmd).toBe("git status");
-
-    const clientTools = [{ name: "exec_command", description: "Run CLI command", parameters: {} }];
-    const validation = validateM365ToolCall(normalized.name, normalized.arguments, clientTools as any);
-    expect(validation.ok).toBe(true);
-
-    const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools as any);
-    expect(mapped.name).toBe("exec_command");
-    const mappedArgs = JSON.parse(mapped.arguments);
-    expect(mappedArgs.cmd).toBe("git status");
-  });
-
-  test("10. hasActualPriorAssistantReply phân biệt chính xác placeholder rỗng với phản hồi trợ lý thực tế", () => {
-    // Không có assistant
-    expect(hasActualPriorAssistantReply([])).toBe(false);
-    expect(hasActualPriorAssistantReply([{ role: "user", content: "xin chào" }])).toBe(false);
-
-    // Placeholder rỗng do parser tạo hoặc context Codex gửi
-    expect(hasActualPriorAssistantReply([
-      { role: "assistant", content: [] },
-      { role: "user", content: "xin chào" },
-    ])).toBe(false);
-
-    expect(hasActualPriorAssistantReply([
-      { role: "assistant", content: "" },
-      { role: "user", content: "xin chào" },
-    ])).toBe(false);
-
-    expect(hasActualPriorAssistantReply([
-      { role: "assistant", content: [{ type: "text", text: "   " }] },
-      { role: "user", content: "xin chào" },
-    ])).toBe(false);
-
-    // Trợ lý đã thực sự trả lời có nội dung
-    expect(hasActualPriorAssistantReply([
-      { role: "assistant", content: "Chào bạn, mình có thể giúp gì?" },
-      { role: "user", content: "xin chào" },
-    ])).toBe(true);
-
-    expect(hasActualPriorAssistantReply([
-      { role: "assistant", content: [{ type: "text", text: "Chào bạn" }] },
-      { role: "user", content: "xin chào" },
-    ])).toBe(true);
-
-    expect(hasActualPriorAssistantReply([
-      { role: "assistant", content: [{ type: "toolCall", name: "exec_command", id: "call_1" }] },
-      { role: "user", content: "xin chào" },
-    ])).toBe(true);
-  });
-
-  test("11. Lượt mở đầu (New Chat) luôn gửi trọn vẹn bootstrap handshake buildUnifiedToolProtocol dù context có placeholder rỗng", () => {
-    const rawCodexInput = {
-      model: "chatgpt-web/pro",
-      input: [
+  test("3. Model Catalog tạo model chatgpt-web với thanh trượt Off / Think", () => {
+    const dummyCatalog = {
+      models: [
         {
-          type: "message",
-          role: "developer",
-          content: [{ type: "input_text", text: "You are Codex..." }],
-        },
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "xin chào" }],
+          slug: "gpt-5.6-sol",
+          display_name: "5.6 Sol",
+          description: "native",
+          visibility: "list",
+          tool_mode: "responses",
+          supported_reasoning_levels: [
+            { effort: "low", description: "Low" },
+            { effort: "high", description: "High" },
+          ],
         },
       ],
     };
+    const augmented = augmentNativeModelCatalog(dummyCatalog, { mode: "full" } as any);
+    const models = augmented.models as any[];
+    const chatGptModel = models.find(m => m.slug === "chatgpt-web");
+    expect(chatGptModel).toBeDefined();
+    expect(chatGptModel?.display_name).toBe("ChatGPT (Web)");
 
-    const rawPayload = CodexRawPayload.from(rawCodexInput);
-    const normalized = CodexPayloadNormalizer.normalize(rawPayload);
+    const reasoningLevels = chatGptModel?.supported_reasoning_levels;
+    expect(Array.isArray(reasoningLevels)).toBe(true);
+    expect(reasoningLevels?.length).toBe(2);
 
-    // Giả lập messages chứa placeholder trợ lý rỗng
-    const parsed = {
-      modelId: "chatgpt-web/pro",
-      options: {},
-      context: {
-        messages: [
-          { role: "developer", content: "You are Codex..." },
-          { role: "assistant", content: [] }, // placeholder rỗng
-          { role: "user", content: "xin chào" },
-        ],
-      },
-    };
+    const lowLevel = reasoningLevels?.find((l: any) => l.effort === "low");
+    const highLevel = reasoningLevels?.find((l: any) => l.effort === "high");
 
-    const isNew = !hasActualPriorAssistantReply(parsed.context.messages);
-    expect(isNew).toBe(true);
-
-    const compiler = new M365PromptCompiler({ assistantName: "ChatGPT" });
-    const res = compiler.compile({
-      normalized,
-      parsed: parsed as any,
-      isNewConversation: isNew,
-      assistantName: "ChatGPT",
-    });
-
-    // BẮT BUỘC có câu mở đầu thỏa thuận bắt tay
-    expect(res.finalPrompt).toContain("Chào ChatGPT, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
-    // BẮT BUỘC có danh sách công cụ
-    expect(res.finalPrompt).toContain("[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]");
-    // BẮT BUỘC có nội dung người dùng
-    expect(res.finalPrompt).toContain("xin chào");
-    // BẮT BUỘC có mỏ neo định dạng chốt hạ
-    expect(res.finalPrompt).toContain("Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:");
+    expect(lowLevel?.description).toBe("Off");
+    expect(highLevel?.description).toBe("Think");
   });
 
-  test("12. CHATGPT_SELECTORS hỗ trợ đầy đủ các selector hiện đại của ChatGPT Web (data-turn-key, ProseMirror, Show more)", () => {
-    // Kiểm tra các selector cho DOM cấu trúc mới
-    expect(CHATGPT_SELECTORS.responseContainer).toContain("[data-turn-key]");
-    expect(CHATGPT_SELECTORS.responseContainer).toContain("[data-virtualized-turn-content]");
-    expect(CHATGPT_SELECTORS.composerInput).toContain("div.ProseMirror[role=\"textbox\"]");
-    expect(CHATGPT_SELECTORS.codeCopyButton).toContain("button[aria-label*=\"Copy code\" i]");
-    expect(CHATGPT_SELECTORS.expandCodeButton).toBeDefined();
-    expect(CHATGPT_SELECTORS.expandCodeButton).toContain("button:has-text(\"Show more\")");
-    expect(CHATGPT_SELECTORS.turnCopyButton).toBeDefined();
-    expect(CHATGPT_SELECTORS.turnCopyButton).toContain("button[aria-label=\"Copy\"]");
+  test("4. CHATGPT_SELECTORS chứa đầy đủ các bộ chọn DOM thực tế", () => {
+    expect(CHATGPT_SELECTORS.composer).toContain("div.ProseMirror");
+    expect(CHATGPT_SELECTORS.sendButton).toContain('button[type="submit"][aria-label="Send"]');
+    expect(CHATGPT_SELECTORS.stopButton).toContain('button[type="button"][aria-label="Stop"]');
+    expect(CHATGPT_SELECTORS.startVoiceButton).toContain('button[type="button"][aria-label="Start Voice"]');
+    expect(CHATGPT_SELECTORS.thinkButton).toContain('button[type="button"]:has(span:text-is("Think"))');
+    expect(CHATGPT_SELECTORS.copyCodeButton).toContain('button[aria-label="Copy code"]');
   });
 
-  test("13. ChatGptWebAdapter emit sự kiện done với đúng stopReason và endTurn tương ứng", async () => {
-    let mockResponse = `\`\`\`\`markdown\n<webResponse>\n<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** Add File: test.css\n+ body { color: red; }\n*** End Patch\n</custom_tool_call>\n</webResponse>\n\`\`\`\``;
+  test("5. extractConversationIdFromUrl trích xuất đúng ID cuộc trò chuyện từ URL ChatGPT", () => {
+    const url1 = "https://chatgpt.com/c/6ad38605-689c-83ec-9d93-2f0228aa2a0a";
+    expect(extractConversationIdFromUrl(url1)).toBe("6ad38605-689c-83ec-9d93-2f0228aa2a0a");
 
-    const mockPage: any = {
-      url: () => "https://chatgpt.com",
-    };
+    const url2 = "https://chatgpt.com/";
+    expect(extractConversationIdFromUrl(url2)).toBeUndefined();
+  });
 
-    const adapter = createChatGptWebAdapter({
-      descriptorPath: "/dev/null/no-launcher.json",
-      browserWorker: {
-        executeTurn: async () => ({
-          rawResponse: mockResponse,
-          isCompleted: true,
-        }),
-      },
-    });
-    (adapter as any).activePage = mockPage;
-    (adapter as any).ensureLocalBrowserPage = async () => mockPage;
+  test("6. ChatGptConversationStore lưu và tải ánh xạ threadId <-> conversationId", () => {
+    const testFile = join(process.cwd(), "scratch", ".chatgpt", "test-conversations.json");
+    if (existsSync(testFile)) unlinkSync(testFile);
 
-    const events: any[] = [];
+    const store = new ChatGptConversationStore(testFile);
+    expect(store.getConversationId("thread-123")).toBeUndefined();
 
-    const parsedToolCall: any = {
-      modelId: "chatgpt-web/gpt-5.6-sol-instant",
-      options: {},
-      context: {
-        messages: [{ role: "user", content: "tạo file test.css" }],
-        tools: [{ name: "apply_patch", description: "Apply a patch" }],
-      },
-    };
+    store.setConversationId("thread-123", "conv-abc-456");
+    expect(store.getConversationId("thread-123")).toBe("conv-abc-456");
 
-    const incoming: any = { headers: new Headers() };
-    await adapter.runTurn(parsedToolCall, incoming, (evt) => events.push(evt));
+    // Khởi tạo store mới trỏ vào cùng file để kiểm tra persistence
+    const store2 = new ChatGptConversationStore(testFile);
+    expect(store2.getConversationId("thread-123")).toBe("conv-abc-456");
 
-    const doneEvent = events.find((e) => e.type === "done");
-    expect(doneEvent).toBeDefined();
-    expect(doneEvent.stopReason).toBe("tool_use");
-    expect(doneEvent.endTurn).toBe(false);
+    store2.deleteConversation("thread-123");
+    expect(store2.getConversationId("thread-123")).toBeUndefined();
 
-    // Test final_answer
-    events.length = 0;
-    mockResponse = `\`\`\`\`markdown\n<webResponse>\nĐã hoàn thành công việc.\n</webResponse>\n\`\`\`\``;
+    if (existsSync(testFile)) unlinkSync(testFile);
+  });
 
-    await adapter.runTurn(parsedToolCall, incoming, (evt) => events.push(evt));
-    const finalDoneEvent = events.find((e) => e.type === "done");
-    expect(finalDoneEvent).toBeDefined();
-    expect(finalDoneEvent.stopReason).toBe("stop");
-    expect(finalDoneEvent.endTurn).toBe(true);
+  test("7. ChatGptWebAdapter khởi tạo chuẩn ProviderAdapter interface", () => {
+    const adapter = createChatGptWebAdapter();
+    expect(adapter).toBeInstanceOf(ChatGptWebAdapter);
+    expect(adapter.name).toBe("chatgpt-web");
   });
 });
-
