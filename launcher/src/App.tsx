@@ -1193,9 +1193,6 @@ function SetupSurface({
   const setZeroRiskPro = (enabled: boolean) => run(async () => {
     updateState(await api!.setZeroRiskPro(enabled));
   });
-  const setUseSavedChats = (enabled: boolean) => run(async () => {
-    updateState(await api!.setUseSavedChats(enabled));
-  });
 
   return (
     <ContentSurface
@@ -1286,9 +1283,9 @@ function SetupSurface({
           <SetupRow
             action={chatGptAuthed
               ? copy.signedIn
-              : browser?.status === "loading" && !isM365 ? copy.checkingSignIn : copy.signIn}
+              : browser?.status === "loading" && !isM365 && !isGemini ? copy.checkingSignIn : copy.signIn}
             complete={chatGptAuthed}
-            description={copy.stepAccountBody}
+            description="Sign in directly in the embedded ChatGPT browser. Login stays in this launcher's private profile."
             disabled={globalActionDisabled}
             index={1}
             onAction={() => run(async () => {
@@ -1296,19 +1293,17 @@ function SetupSurface({
               await activateBrowser();
               await api!.openLogin();
             })}
-            title={copy.stepAccount}
+            title="Sign in to ChatGPT"
           />
           <SetupRow
-            action={snapshot.chatgptSmokePassed ? copy.smokePassed : copy.runSmoke}
+            action={snapshot.chatgptSmokePassed ? "Verify again" : "Run verify"}
             complete={Boolean(snapshot.chatgptSmokePassed)}
-            description={copy.stepSmokeBody}
+            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to ChatGPT and verify response."
             disabled={globalActionDisabled || isChatGptTesting || !chatGptAuthed}
             index={2}
             onAction={() => run(async () => {
-              if (isM365) {
-                await api!.setProvider("chatgpt");
-                updateState((await api!.snapshot()).state);
-              }
+              await api!.setProvider("chatgpt");
+              updateState((await api!.snapshot()).state);
               await activateBrowser();
               await api!.smokeTest();
               updateState((await api!.snapshot()).state);
@@ -1316,20 +1311,6 @@ function SetupSurface({
             repeatable={true}
             title="Run browser smoke test (ChatGPT)"
           />
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <SettingRow
-            body={snapshot.state.useSavedChats
-              ? "Bật: Các đoạn chat cũ từ Codex sẽ map đúng với đoạn chat cũ trên ChatGPT (tương tự M365 Copilot)."
-              : "Tắt: Chế độ cuộc trò chuyện tạm thời (Temporary Chat), không lưu lịch sử trên ChatGPT."}
-            label="Lưu cuộc trò chuyện ChatGPT (Tắt cuộc trò chuyện tạm thời)"
-          >
-            <Switch
-              checked={snapshot.state.useSavedChats}
-              disabled={globalActionDisabled}
-              onChange={(checked) => void setUseSavedChats(checked)}
-            />
-          </SettingRow>
         </div>
       </> : null}
 
@@ -2001,18 +1982,6 @@ function SettingsSurface({
             checked={snapshot.state.experimentalFreshConversationPerTurn}
             disabled={busy || snapshot.state.browserInteractionMode === "manual" || snapshot.state.coreSetupComplete !== true}
             onChange={(checked) => void setFreshConversationPerTurn(checked)}
-          />
-        </SettingRow>
-        <SettingRow
-          body={snapshot.state.useSavedChats
-            ? "Bật: Các đoạn chat cũ từ Codex sẽ map đúng với đoạn chat cũ trên ChatGPT (tương tự M365 Copilot)."
-            : "Tắt: Chế độ cuộc trò chuyện tạm thời (Temporary Chat), không lưu lịch sử trên ChatGPT."}
-          label="Lưu cuộc trò chuyện ChatGPT (Tắt cuộc trò chuyện tạm thời)"
-        >
-          <Switch
-            checked={snapshot.state.useSavedChats}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
-            onChange={(checked) => void setUseSavedChats(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

@@ -168,7 +168,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
             incoming.abortSignal,
           );
 
-          surfaceId = lease.surfaceId || descriptor.chatgptSurfaceId || descriptor.surfaceId;
+          surfaceId = lease.surfaceId || descriptor.chatGptSurfaceId || descriptor.surfaceId;
           leaseConversationId = lease.conversationId;
           console.log(`[chatgpt-adapter] Launcher cấp surface: ${surfaceId} (reused=${lease.reused}, convId=${lease.conversationId || 'mới'})`);
 
@@ -240,10 +240,11 @@ export class ChatGptWebAdapter implements ProviderAdapter {
             const normalizedCall = normalizeM365ToolArguments(call.name, call.arguments);
             const validation = validateM365ToolCall(normalizedCall.name, normalizedCall.arguments, clientTools);
             if (!validation.ok) {
+              const failure = validation as { ok: false; code: string; message: string };
               protocolResult = {
                 kind: "protocol_error",
                 code: "INVALID_TOOL_CALL",
-                message: `${validation.code}: ${validation.message}`,
+                message: `${failure.code}: ${failure.message}`,
                 rawResponse: lastRaw,
               };
               break;

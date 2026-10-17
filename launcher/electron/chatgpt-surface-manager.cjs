@@ -88,11 +88,10 @@ class ChatGptConversationStore {
  * Điều phối mapping conversationKey (từ Codex thread) sang ChatGPT conversation URL (/c/<id>).
  */
 class ChatGptSurfaceManager {
-  constructor({ descriptorPath, getUseSavedChats }) {
+  constructor({ descriptorPath }) {
     this.store = new ChatGptConversationStore(
       path.join(path.dirname(descriptorPath), "chatgpt-conversations.json"),
     );
-    this.getUseSavedChats = typeof getUseSavedChats === "function" ? getUseSavedChats : () => false;
   }
 
   conversationId(conversationKey) {
@@ -100,9 +99,6 @@ class ChatGptSurfaceManager {
   }
 
   initialUrl(conversationKey) {
-    if (!this.getUseSavedChats()) {
-      return CHATGPT_TEMPORARY_CHAT_URL;
-    }
     const conversationId = this.conversationId(conversationKey);
     return conversationId ? chatGptConversationUrl(conversationId) : CHATGPT_HOME_URL;
   }

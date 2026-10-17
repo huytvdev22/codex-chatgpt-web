@@ -5,7 +5,6 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   CHATGPT_HOME_URL,
-  CHATGPT_TEMPORARY_CHAT_URL,
   ChatGptConversationStore,
   ChatGptSurfaceManager,
   chatGptConversationUrl,
@@ -22,28 +21,11 @@ test("ChatGPT conversation URLs accept only valid chatgpt.com /c/<id> paths", ()
   assert.equal(parseChatGptConversationId("https://chatgpt.com/c/short"), null);
 });
 
-test("ChatGPT Surface Manager generates Temporary Chat URL when useSavedChats is disabled", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-surface-temp-"));
-  try {
-    const manager = new ChatGptSurfaceManager({
-      descriptorPath: path.join(root, "launcher-browser.json"),
-      getUseSavedChats: () => false,
-    });
-    const key = "a".repeat(64);
-    manager.bind(key, CONVERSATION_ID);
-    assert.equal(manager.initialUrl(key), CHATGPT_TEMPORARY_CHAT_URL);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("ChatGPT Surface Manager routes to existing chat URL when useSavedChats is enabled", () => {
+test("ChatGPT Surface Manager routes to existing chat URL or home page", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-surface-saved-"));
   try {
-    let useSaved = true;
     const manager = new ChatGptSurfaceManager({
       descriptorPath: path.join(root, "launcher-browser.json"),
-      getUseSavedChats: () => useSaved,
     });
     const key = "b".repeat(64);
     // Khi chưa có binding, vào trang chủ ChatGPT
@@ -76,7 +58,6 @@ test("ChatGPT supports up to three independent conversation surfaces by default"
   try {
     const manager = new ChatGptSurfaceManager({
       descriptorPath: path.join(root, "launcher-browser.json"),
-      getUseSavedChats: () => true,
     });
     const tabs = new Map([
       ["one", { id: "one", provider: "chatgpt", status: "running", conversationKey: "1".repeat(64) }],

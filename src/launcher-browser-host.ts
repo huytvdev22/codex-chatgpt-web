@@ -394,7 +394,7 @@ export type LauncherTurnActivity =
       helperPid: number;
       conversationKey?: string;
       connectorIdentity?: string;
-      provider?: "m365" | "chatgpt";
+      provider?: "m365" | "chatgpt" | "gemini";
       requireRetainedConversation?: boolean;
     }
   | {
@@ -413,6 +413,7 @@ export type LauncherTurnActivity =
       retain?: boolean;
       connectorBound?: boolean;
       conversationId?: string;
+      provider?: "m365" | "chatgpt" | "gemini";
     };
 
 // Startup must outlast the launcher's ten-second idle bootstrap. This is not a model-turn budget.
