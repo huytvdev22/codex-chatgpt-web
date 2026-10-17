@@ -38,7 +38,6 @@ const {
   shellZoomActionForInput,
 } = require("./browser-state.cjs");
 
-const CHATGPT_HOME_URL = "https://chatgpt.com/";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 
 function resolveChatGptHomeUrl(host) {
