@@ -3,7 +3,7 @@ import { hasActualPriorAssistantReply } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptBrowserWorker } from "./chatgpt-browser-worker";
 import { CHATGPT_SELECTORS } from "./selectors";
-import { defaultChatGptConversationStore } from "./conversation-store";
+import { defaultChatGptConversationStore, chatGptConversationKey } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "./environment";
 import {
   M365PromptCompiler,
@@ -26,9 +26,11 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import {
   connectLauncherBrowserHost,
   readLauncherBrowserHostDescriptor,
+  notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 import { getConfigDir } from "../../config";
@@ -127,20 +129,53 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       throw new DOMException("ChatGpt turn aborted before start", "AbortError");
     }
 
+    // 1. Trích xuất threadId chuẩn xác 100% như M365 Copilot
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+    const threadId =
+      rawPayload.getThreadId() ||
+      incoming.headers.get("x-codex-conversation-key") ||
+      extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
+
+    const conversationKey = chatGptConversationKey(parsed, threadId);
+    const turnTraceId = incoming.headers.get("x-codex-trace-id") || randomBytes(12).toString("base64url");
+
     const descriptorPath = resolveDescriptorPath(this.options.descriptorPath);
     let launcherConnection: LauncherBrowserConnection | null = null;
     let page: Page | null = null;
+    let surfaceId: string | undefined;
+    let leaseConversationId: string | undefined;
+    let finalStatus: "completed" | "failed" | "aborted" = "failed";
+    let activeConversationId: string | undefined;
 
+    // 2. Kết nối Launcher Surface qua notifyLauncherTurn (chuẩn M365/Launcher lifecycle)
     if (descriptorPath) {
       try {
         const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
         if (processRunning(descriptor.pid)) {
-          const targetSurfaceId = descriptor.chatgptSurfaceId || descriptor.surfaceId;
-          console.log(`[chatgpt-adapter] Kết nối Playwright qua Launcher CDP (pid=${descriptor.pid}, surface=${targetSurfaceId})...`);
+          console.log(`[chatgpt-adapter] Đăng ký turn với Launcher (phase=start, conversationKey=${conversationKey || 'none'})...`);
+          const lease = await notifyLauncherTurn(
+            descriptorPath,
+            {
+              phase: "start",
+              traceId: turnTraceId,
+              helperPid: process.pid,
+              conversationKey,
+              connectorIdentity: "chatgpt-web",
+              provider: "chatgpt",
+              requireRetainedConversation: false,
+            },
+            undefined,
+            incoming.abortSignal,
+          );
+
+          surfaceId = lease.surfaceId || descriptor.chatgptSurfaceId || descriptor.surfaceId;
+          leaseConversationId = lease.conversationId;
+          console.log(`[chatgpt-adapter] Launcher cấp surface: ${surfaceId} (reused=${lease.reused}, convId=${lease.conversationId || 'mới'})`);
+
           launcherConnection = await connectLauncherBrowserHost(
             descriptorPath,
             20_000,
-            targetSurfaceId,
+            surfaceId,
             incoming.abortSignal,
           );
           page = launcherConnection.page;
@@ -154,20 +189,15 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       page = await this.ensureLocalBrowserPage();
     }
 
-    // Xác định định danh lượt và kiểm tra xem đã có conversation trên ChatGPT chưa
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const threadId = rawPayload.getThreadId()
-      || incoming.headers.get("x-codex-conversation-key")
-      || extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
-    const existingConversationId = defaultChatGptConversationStore.getConversationId(threadId);
+    // 3. Xác định trạng thái hội thoại và kịch bản prompt
+    const existingConversationId = leaseConversationId || defaultChatGptConversationStore.getConversationId(threadId);
+    activeConversationId = existingConversationId;
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
     const isNewConversation = !hasPriorAssistantReply && !existingConversationId;
     const initialPrompt = this.compilePrompt(parsed, isNewConversation);
 
-    // Xác định mức suy nghĩ (reasoning effort)
     const reasoningEffort = parsed.options.reasoning || "low";
-
     console.log(`[chatgpt-adapter] Bắt đầu lượt gửi (thread=${threadId || "n/a"}, conv=${existingConversationId || "mới"}, isNew=${isNewConversation}, think=${reasoningEffort})`);
 
     try {
@@ -189,14 +219,13 @@ export class ChatGptWebAdapter implements ProviderAdapter {
           reasoningEffort,
           conversationId: existingConversationId,
           isNewConversation,
-          // Quarantine: không emit chunk trực tiếp ra Codex trong lúc stream để tránh leak protocol XML
           onChunk: () => {},
         });
 
-        // Nếu phát hiện conversation ID mới từ URL sau lượt đầu, lưu vào store
         if (result.conversationId) {
+          activeConversationId = result.conversationId;
           defaultChatGptConversationStore.setConversationId(threadId, result.conversationId);
-          console.log(`[chatgpt-adapter] Đã lưu liên kết: threadId="${threadId || 'active'}" -> conversationId="${result.conversationId}"`);
+          console.log(`[chatgpt-adapter] Đã ghi nhận conversationId: "${result.conversationId}" (threadId="${threadId || 'active'}")`);
         }
 
         lastRaw = result.rawResponse;
@@ -232,7 +261,6 @@ export class ChatGptWebAdapter implements ProviderAdapter {
           );
         }
 
-        // Tạo lời nhắc sửa format
         attemptPrompt = buildM365FormatRetryPrompt({
           code: protocolResult.code,
           message: protocolResult.message,
@@ -243,7 +271,9 @@ export class ChatGptWebAdapter implements ProviderAdapter {
         throw new Error("[ChatGPT Format Error] Không nhận được response protocol hợp lệ.");
       }
 
-      // Phát sự kiện ra Codex
+      finalStatus = "completed";
+
+      // 4. Phát sự kiện ra Codex
       if (protocolResult.kind === "final_answer") {
         console.log(`[chatgpt-adapter] Trả về final answer (${protocolResult.content.length} ký tự).`);
         emit({
@@ -277,6 +307,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
 
       console.log(`[chatgpt-adapter] Kết thúc lượt thành công.`);
     } catch (error) {
+      finalStatus = incoming.abortSignal?.aborted ? "aborted" : "failed";
       console.error("[chatgpt-adapter] Lỗi trong quá trình thực thi lượt:", error);
       emit({
         type: "error",
@@ -284,6 +315,24 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       });
       throw error;
     } finally {
+      // 5. Giải phóng lượt và YÊU CẦU LAUNCHER GIỮ LẠI (RETAIN) TAB HỘI THOẠI
+      if (descriptorPath) {
+        try {
+          console.log(`[chatgpt-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${activeConversationId || 'none'})...`);
+          await notifyLauncherTurn(descriptorPath, {
+            phase: "end",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            status: finalStatus,
+            retain: true,
+            connectorBound: finalStatus === "completed" && Boolean(activeConversationId),
+            ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+          });
+        } catch (releaseErr) {
+          console.warn("[chatgpt-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
+        }
+      }
+
       if (launcherConnection) {
         await launcherConnection.browser.close().catch(() => {});
       }

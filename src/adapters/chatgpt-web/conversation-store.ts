@@ -1,5 +1,25 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { CodexParsedRequest } from "../../types";
+
+/**
+ * Tạo khóa định danh ổn định (conversationKey) từ threadId của Codex
+ * Tương thích hoàn toàn với cơ chế của Launcher và M365 Copilot
+ */
+export function chatGptConversationKey(
+  parsed: CodexParsedRequest,
+  rawConversationKey?: string,
+): string | undefined {
+  const source = rawConversationKey?.trim();
+  if (!source) return undefined;
+
+  return createHash("sha256").update(JSON.stringify({
+    provider: "chatgpt-web",
+    source,
+    modelId: "chatgpt-web",
+  })).digest("hex");
+}
 
 export interface ChatGptConversationRecord {
   conversationId: string;
@@ -45,7 +65,6 @@ export class ChatGptConversationStore {
         }
       }
     } catch {
-      // Bỏ qua lỗi đọc file, khởi tạo cache rỗng
       this.cache.clear();
     }
   }
