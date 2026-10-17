@@ -1,7 +1,7 @@
 import type { ProviderAdapter, IncomingMeta } from "../base";
 import { hasActualPriorAssistantReply } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
-import { ChatGptBrowserWorker } from "./chatgpt-browser-worker";
+import { ChatGptBrowserWorker, isValidChatGptConversationId } from "./chatgpt-browser-worker";
 import { CHATGPT_SELECTORS } from "./selectors";
 import { defaultChatGptConversationStore, chatGptConversationKey } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "./environment";
@@ -190,7 +190,8 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     }
 
     // 3. Xác định trạng thái hội thoại và kịch bản prompt
-    const existingConversationId = leaseConversationId || defaultChatGptConversationStore.getConversationId(threadId);
+    const rawExistingConvId = leaseConversationId || defaultChatGptConversationStore.getConversationId(threadId);
+    const existingConversationId = isValidChatGptConversationId(rawExistingConvId) ? rawExistingConvId : undefined;
     activeConversationId = existingConversationId;
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
@@ -222,7 +223,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
           onChunk: () => {},
         });
 
-        if (result.conversationId) {
+        if (isValidChatGptConversationId(result.conversationId)) {
           activeConversationId = result.conversationId;
           defaultChatGptConversationStore.setConversationId(threadId, result.conversationId);
           console.log(`[chatgpt-adapter] Đã ghi nhận conversationId: "${result.conversationId}" (threadId="${threadId || 'active'}")`);
@@ -318,15 +319,17 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       // 5. Giải phóng lượt và YÊU CẦU LAUNCHER GIỮ LẠI (RETAIN) TAB HỘI THOẠI
       if (descriptorPath) {
         try {
-          console.log(`[chatgpt-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${activeConversationId || 'none'})...`);
+          const isConvValid = isValidChatGptConversationId(activeConversationId);
+          console.log(`[chatgpt-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${isConvValid ? activeConversationId : 'none'})...`);
           await notifyLauncherTurn(descriptorPath, {
             phase: "end",
             traceId: turnTraceId,
             helperPid: process.pid,
+            provider: "chatgpt",
             status: finalStatus,
             retain: true,
-            connectorBound: finalStatus === "completed" && Boolean(activeConversationId),
-            ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+            connectorBound: finalStatus === "completed" && isConvValid,
+            ...(isConvValid ? { conversationId: activeConversationId } : {}),
           });
         } catch (releaseErr) {
           console.warn("[chatgpt-adapter] Không thể gửi phase=end tới launcher:", releaseErr);

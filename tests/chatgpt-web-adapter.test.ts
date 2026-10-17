@@ -101,6 +101,10 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
     const store2 = new ChatGptConversationStore(testFile);
     expect(store2.getConversationId("thread-123")).toBe("conv-abc-456");
 
+    // Từ chối lưu và bỏ qua chuỗi rác local-chatgpt
+    store2.setConversationId("thread-fake", "local-chatgpt");
+    expect(store2.getConversationId("thread-fake")).toBeUndefined();
+
     store2.deleteConversation("thread-123");
     expect(store2.getConversationId("thread-123")).toBeUndefined();
 
@@ -111,5 +115,16 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
     const adapter = createChatGptWebAdapter();
     expect(adapter).toBeInstanceOf(ChatGptWebAdapter);
     expect(adapter.name).toBe("chatgpt-web");
+  });
+
+  test("8. Validation và trích xuất đúng định dạng conversationId của ChatGPT Web", () => {
+    // Trích xuất UUID thực tế từ URL ChatGPT (nhóm 3 bắt đầu bằng số 8)
+    const realUrl = "https://chatgpt.com/c/6ad39c41-63b8-83ec-bb3c-16c223c4d914";
+    const convId = extractConversationIdFromUrl(realUrl);
+    expect(convId).toBe("6ad39c41-63b8-83ec-bb3c-16c223c4d914");
+
+    // Loại trừ URL rác hoặc local-chatgpt
+    expect(extractConversationIdFromUrl("https://chatgpt.com/c/local-chatgpt")).toBeUndefined();
+    expect(extractConversationIdFromUrl("https://chatgpt.com/")).toBeUndefined();
   });
 });

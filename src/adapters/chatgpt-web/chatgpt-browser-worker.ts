@@ -17,12 +17,21 @@ export interface ChatGptTurnResult {
   conversationId?: string;
 }
 
+export const CHATGPT_CONVERSATION_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
+
+export function isValidChatGptConversationId(id: unknown): id is string {
+  if (typeof id !== "string") return false;
+  const trimmed = id.trim();
+  return CHATGPT_CONVERSATION_ID_PATTERN.test(trimmed) && trimmed !== "local-chatgpt";
+}
+
 /**
  * Trích xuất conversation ID từ URL ChatGPT (dạng https://chatgpt.com/c/<uuid>)
  */
 export function extractConversationIdFromUrl(url: string): string | undefined {
   const match = url.match(/\/c\/([a-zA-Z0-9_-]+)/);
-  return match ? match[1] : undefined;
+  const candidate = match ? match[1] : undefined;
+  return isValidChatGptConversationId(candidate) ? candidate : undefined;
 }
 
 /**
@@ -281,7 +290,7 @@ export class ChatGptBrowserWorker {
     options: ChatGptBrowserRunOptions
   ): Promise<ChatGptTurnResult> {
     const { prompt, onChunk, signal, reasoningEffort, conversationId, isNewConversation, timeoutMs = 180_000 } = options;
-    let currentConversationId = conversationId;
+    let currentConversationId = isValidChatGptConversationId(conversationId) ? conversationId : undefined;
 
     if (signal?.aborted) {
       throw new DOMException("ChatGpt turn aborted before start", "AbortError");
@@ -433,17 +442,21 @@ export class ChatGptBrowserWorker {
     // 7. Trích xuất phản hồi hoàn chỉnh bằng Copy-Salvage
     const rawResponse = await this.extractCompletedResponse(page);
 
-    // 8. Trích xuất conversation ID từ URL sau khi hoàn thành lượt đầu
-    if (!currentConversationId) {
-      currentConversationId = extractConversationIdFromUrl(page.url());
+    // 8. Trích xuất conversation ID từ URL sau khi hoàn thành lượt
+    const immediateUrlId = extractConversationIdFromUrl(page.url());
+    if (immediateUrlId) {
+      currentConversationId = immediateUrlId;
     }
 
     if (!currentConversationId) {
       const waitStart = Date.now();
       while (Date.now() - waitStart < 3000) {
         await page.waitForTimeout(300);
-        currentConversationId = extractConversationIdFromUrl(page.url());
-        if (currentConversationId) break;
+        const pollId = extractConversationIdFromUrl(page.url());
+        if (pollId) {
+          currentConversationId = pollId;
+          break;
+        }
       }
     }
 
@@ -454,12 +467,14 @@ export class ChatGptBrowserWorker {
         const m = href.match(/\/c\/([a-zA-Z0-9_-]+)/);
         return m ? m[1] : null;
       }).catch(() => null);
-      if (sidebarId) {
+      if (sidebarId && isValidChatGptConversationId(sidebarId)) {
         currentConversationId = sidebarId;
       }
     }
 
-    const finalConversationId = currentConversationId || conversationId;
+    const finalConversationId = isValidChatGptConversationId(currentConversationId)
+      ? currentConversationId
+      : (isValidChatGptConversationId(conversationId) ? conversationId : undefined);
     console.log(`[chatgpt-worker] Lượt hoàn tất thành công. URL: ${page.url()}, Conversation ID: ${finalConversationId || "chưa xác định"}`);
 
     return {

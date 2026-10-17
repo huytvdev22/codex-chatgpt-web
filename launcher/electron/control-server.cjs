@@ -187,7 +187,9 @@ class BrowserControlServer {
       if (body.conversationId !== undefined
         && (request.url !== "/v1/turn/end"
           || typeof body.conversationId !== "string"
-          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId))) {
+          || body.conversationId === "local-chatgpt"
+          || (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId)
+              && !/^[a-zA-Z0-9_-]{8,128}$/.test(body.conversationId)))) {
         throw new Error("conversationId is invalid");
       }
       if (body.retain !== undefined && typeof body.retain !== "boolean") {

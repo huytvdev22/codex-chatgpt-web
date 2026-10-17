@@ -21,6 +21,8 @@ export function chatGptConversationKey(
   })).digest("hex");
 }
 
+import { isValidChatGptConversationId } from "./chatgpt-browser-worker";
+
 export interface ChatGptConversationRecord {
   conversationId: string;
   createdAt: number;
@@ -49,17 +51,18 @@ export class ChatGptConversationStore {
         const data = JSON.parse(raw);
         if (data && typeof data === "object") {
           for (const [key, value] of Object.entries(data)) {
+            let id: string | null = null;
+            let rec: ChatGptConversationRecord | null = null;
             if (typeof value === "string") {
-              this.cache.set(key, {
-                conversationId: value,
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-              });
-              this.lastActiveConversationId = value;
+              id = value;
+              rec = { conversationId: value, createdAt: Date.now(), updatedAt: Date.now() };
             } else if (value && typeof value === "object" && "conversationId" in value) {
-              const rec = value as ChatGptConversationRecord;
+              rec = value as ChatGptConversationRecord;
+              id = rec.conversationId;
+            }
+            if (id && isValidChatGptConversationId(id) && rec) {
               this.cache.set(key, rec);
-              this.lastActiveConversationId = rec.conversationId;
+              this.lastActiveConversationId = id;
             }
           }
         }
@@ -77,7 +80,9 @@ export class ChatGptConversationStore {
       }
       const data: Record<string, ChatGptConversationRecord> = {};
       for (const [key, record] of this.cache.entries()) {
-        data[key] = record;
+        if (isValidChatGptConversationId(record.conversationId)) {
+          data[key] = record;
+        }
       }
       writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
     } catch (err) {
@@ -89,13 +94,15 @@ export class ChatGptConversationStore {
     this.load();
     if (threadId) {
       const record = this.cache.get(threadId);
-      return record?.conversationId;
+      return record && isValidChatGptConversationId(record.conversationId) ? record.conversationId : undefined;
     }
-    return this.lastActiveConversationId || undefined;
+    return (this.lastActiveConversationId && isValidChatGptConversationId(this.lastActiveConversationId))
+      ? this.lastActiveConversationId
+      : undefined;
   }
 
   public setConversationId(threadId: string | undefined, conversationId: string): void {
-    if (!conversationId) return;
+    if (!isValidChatGptConversationId(conversationId)) return;
     this.load();
     this.lastActiveConversationId = conversationId;
     if (threadId) {
