@@ -10,6 +10,7 @@ export interface ChatGptConversationRecord {
 export class ChatGptConversationStore {
   private filePath: string;
   private cache: Map<string, ChatGptConversationRecord> = new Map();
+  private lastActiveConversationId: string | null = null;
   private loaded = false;
 
   constructor(filePath?: string) {
@@ -34,8 +35,11 @@ export class ChatGptConversationStore {
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
               });
+              this.lastActiveConversationId = value;
             } else if (value && typeof value === "object" && "conversationId" in value) {
-              this.cache.set(key, value as ChatGptConversationRecord);
+              const rec = value as ChatGptConversationRecord;
+              this.cache.set(key, rec);
+              this.lastActiveConversationId = rec.conversationId;
             }
           }
         }
@@ -63,29 +67,37 @@ export class ChatGptConversationStore {
   }
 
   public getConversationId(threadId: string | undefined): string | undefined {
-    if (!threadId) return undefined;
     this.load();
-    const record = this.cache.get(threadId);
-    return record?.conversationId;
+    if (threadId) {
+      const record = this.cache.get(threadId);
+      return record?.conversationId;
+    }
+    return this.lastActiveConversationId || undefined;
   }
 
   public setConversationId(threadId: string | undefined, conversationId: string): void {
-    if (!threadId || !conversationId) return;
+    if (!conversationId) return;
     this.load();
-    const now = Date.now();
-    const existing = this.cache.get(threadId);
-    this.cache.set(threadId, {
-      conversationId,
-      createdAt: existing ? existing.createdAt : now,
-      updatedAt: now,
-    });
-    this.save();
+    this.lastActiveConversationId = conversationId;
+    if (threadId) {
+      const now = Date.now();
+      const existing = this.cache.get(threadId);
+      this.cache.set(threadId, {
+        conversationId,
+        createdAt: existing ? existing.createdAt : now,
+        updatedAt: now,
+      });
+      this.save();
+    }
   }
 
   public deleteConversation(threadId: string | undefined): void {
     if (!threadId) return;
     this.load();
     if (this.cache.delete(threadId)) {
+      if (this.lastActiveConversationId === threadId) {
+        this.lastActiveConversationId = null;
+      }
       this.save();
     }
   }
@@ -93,6 +105,7 @@ export class ChatGptConversationStore {
   public clearAll(): void {
     this.load();
     this.cache.clear();
+    this.lastActiveConversationId = null;
     this.save();
   }
 }

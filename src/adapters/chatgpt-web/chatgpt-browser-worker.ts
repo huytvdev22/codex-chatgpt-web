@@ -8,6 +8,7 @@ export interface ChatGptBrowserRunOptions {
   signal?: AbortSignal;
   reasoningEffort?: string;
   conversationId?: string;
+  isNewConversation?: boolean;
   timeoutMs?: number;
 }
 
@@ -279,27 +280,19 @@ export class ChatGptBrowserWorker {
     page: Page,
     options: ChatGptBrowserRunOptions
   ): Promise<ChatGptTurnResult> {
-    const { prompt, onChunk, signal, reasoningEffort, conversationId, timeoutMs = 180_000 } = options;
+    const { prompt, onChunk, signal, reasoningEffort, conversationId, isNewConversation, timeoutMs = 180_000 } = options;
+    let currentConversationId = conversationId;
 
     if (signal?.aborted) {
       throw new DOMException("ChatGpt turn aborted before start", "AbortError");
     }
 
-    // 1. Quản lý URL & Điều hướng
+    // 1. Quản lý URL & Điều hướng chuẩn xác như M365 Copilot
     const currentUrl = page.url();
-    if (conversationId) {
-      // Cùng thread: đảm bảo đang ở trang chat của thread đó
-      if (!currentUrl.includes(`/c/${conversationId}`)) {
-        console.log(`[chatgpt-worker] Điều hướng đến cuộc trò chuyện hiện có: https://chatgpt.com/c/${conversationId}`);
-        await page.goto(`https://chatgpt.com/c/${conversationId}`, {
-          waitUntil: "domcontentloaded",
-          timeout: 30_000,
-        });
-      }
-    } else {
-      // Lượt đầu tiên: đảm bảo vào trang chủ sạch https://chatgpt.com/
+    if (isNewConversation) {
+      // CHỈ KHI LÀ LƯỢT ĐẦU TIÊN CỦA PHIÊN MỚI: Điều hướng về https://chatgpt.com/ để mở thread mới
       if (currentUrl.includes("/c/")) {
-        console.log("[chatgpt-worker] Bắt đầu phiên chat mới, điều hướng về https://chatgpt.com/");
+        console.log("[chatgpt-worker] Phiên chat mới hoàn toàn, điều hướng về https://chatgpt.com/");
         await page.goto("https://chatgpt.com/", {
           waitUntil: "domcontentloaded",
           timeout: 30_000,
@@ -310,6 +303,24 @@ export class ChatGptBrowserWorker {
           waitUntil: "domcontentloaded",
           timeout: 30_000,
         });
+      }
+    } else {
+      // CÁC LƯỢT TIẾP THEO CỦA CÙNG CUỘC TRÒ CHUYỆN:
+      if (conversationId) {
+        if (!currentUrl.includes(`/c/${conversationId}`)) {
+          console.log(`[chatgpt-worker] Điều hướng đến cuộc trò chuyện hiện có: https://chatgpt.com/c/${conversationId}`);
+          await page.goto(`https://chatgpt.com/c/${conversationId}`, {
+            waitUntil: "domcontentloaded",
+            timeout: 30_000,
+          });
+        } else {
+          console.log(`[chatgpt-worker] Tab đã ở sẵn cuộc trò chuyện https://chatgpt.com/c/${conversationId}, tiếp tục gửi tin nhắn.`);
+        }
+      } else {
+        // Nếu chưa lưu conversationId nhưng tab đang ở sẵn /c/<id>, TUYỆT ĐỐI GIỮ NGUYÊN!
+        if (currentUrl.includes("/c/")) {
+          console.log(`[chatgpt-worker] Giữ nguyên tab cuộc hội thoại hiện tại (${currentUrl}), không mở chat mới.`);
+        }
       }
     }
 
@@ -411,6 +422,11 @@ export class ChatGptBrowserWorker {
         }
       }
 
+      // Theo dõi xem ChatGPT đã đổi URL sang /c/<id> chưa
+      if (!currentConversationId) {
+        currentConversationId = extractConversationIdFromUrl(page.url());
+      }
+
       await page.waitForTimeout(250);
     }
 
@@ -418,14 +434,37 @@ export class ChatGptBrowserWorker {
     const rawResponse = await this.extractCompletedResponse(page);
 
     // 8. Trích xuất conversation ID từ URL sau khi hoàn thành lượt đầu
-    const finalUrl = page.url();
-    const newConversationId = extractConversationIdFromUrl(finalUrl);
+    if (!currentConversationId) {
+      currentConversationId = extractConversationIdFromUrl(page.url());
+    }
 
-    console.log(`[chatgpt-worker] Lượt hoàn tất thành công. URL: ${finalUrl}, Conversation ID: ${newConversationId || "chưa xác định"}`);
+    if (!currentConversationId) {
+      const waitStart = Date.now();
+      while (Date.now() - waitStart < 3000) {
+        await page.waitForTimeout(300);
+        currentConversationId = extractConversationIdFromUrl(page.url());
+        if (currentConversationId) break;
+      }
+    }
+
+    if (!currentConversationId) {
+      const sidebarId = await page.evaluate(() => {
+        const activeLink = document.querySelector('nav a[href*="/c/"]');
+        const href = activeLink?.getAttribute("href") || "";
+        const m = href.match(/\/c\/([a-zA-Z0-9_-]+)/);
+        return m ? m[1] : null;
+      }).catch(() => null);
+      if (sidebarId) {
+        currentConversationId = sidebarId;
+      }
+    }
+
+    const finalConversationId = currentConversationId || conversationId;
+    console.log(`[chatgpt-worker] Lượt hoàn tất thành công. URL: ${page.url()}, Conversation ID: ${finalConversationId || "chưa xác định"}`);
 
     return {
       rawResponse,
-      conversationId: newConversationId,
+      conversationId: finalConversationId,
     };
   }
 }

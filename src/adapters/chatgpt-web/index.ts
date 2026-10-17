@@ -155,8 +155,10 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     }
 
     // Xác định định danh lượt và kiểm tra xem đã có conversation trên ChatGPT chưa
-    const identity = extractCodexTurnIdentityFromBody(parsed._rawBody || parsed);
-    const threadId = identity.threadId;
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+    const threadId = rawPayload.getThreadId()
+      || incoming.headers.get("x-codex-conversation-key")
+      || extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
     const existingConversationId = defaultChatGptConversationStore.getConversationId(threadId);
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
@@ -166,7 +168,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     // Xác định mức suy nghĩ (reasoning effort)
     const reasoningEffort = parsed.options.reasoning || "low";
 
-    console.log(`[chatgpt-adapter] Bắt đầu lượt gửi (thread=${threadId || "n/a"}, conv=${existingConversationId || "mới"}, think=${reasoningEffort})`);
+    console.log(`[chatgpt-adapter] Bắt đầu lượt gửi (thread=${threadId || "n/a"}, conv=${existingConversationId || "mới"}, isNew=${isNewConversation}, think=${reasoningEffort})`);
 
     try {
       const maxRetries = this.options.maxFormatRetries ?? 2;
@@ -186,13 +188,15 @@ export class ChatGptWebAdapter implements ProviderAdapter {
           signal: incoming.abortSignal,
           reasoningEffort,
           conversationId: existingConversationId,
+          isNewConversation,
           // Quarantine: không emit chunk trực tiếp ra Codex trong lúc stream để tránh leak protocol XML
           onChunk: () => {},
         });
 
         // Nếu phát hiện conversation ID mới từ URL sau lượt đầu, lưu vào store
-        if (result.conversationId && threadId) {
+        if (result.conversationId) {
           defaultChatGptConversationStore.setConversationId(threadId, result.conversationId);
+          console.log(`[chatgpt-adapter] Đã lưu liên kết: threadId="${threadId || 'active'}" -> conversationId="${result.conversationId}"`);
         }
 
         lastRaw = result.rawResponse;
