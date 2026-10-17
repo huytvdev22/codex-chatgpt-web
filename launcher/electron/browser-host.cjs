@@ -39,6 +39,7 @@ const {
 } = require("./browser-state.cjs");
 
 const CHATGPT_ORIGIN = "https://chatgpt.com";
+const TEMPORARY_CHAT_URL = CHATGPT_HOME_URL;
 
 function resolveChatGptHomeUrl(host) {
   return CHATGPT_HOME_URL;
@@ -3406,15 +3407,7 @@ class BrowserHost {
           result = await probe(this.view.webContents);
         }
       }
-      if (this.manualOperation === "ChatGPT login"
-        && result.sessionAuthenticated
-        && !useSaved
-        && !result.temporary
-        && !this.view.webContents.isDestroyed()) {
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
-        url = this.view.webContents.getURL();
-        result = await probe(this.view.webContents);
-      }
+
       // A newer session change owns authentication. Do not publish an old in-flight
       // page probe after a sign-out/sign-in notification.
       if (revision !== this.authenticationRevision) return this.snapshot();
