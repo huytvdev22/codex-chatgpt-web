@@ -137,25 +137,25 @@ export const TOOL_REMINDER_PROMPT = `Mình vừa chạy các lệnh bạn yêu c
 (Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là lệnh vừa rồi đã chạy thành công mỹ mãn rồi đó).
 
 Bạn xem kết quả rồi xử lý tiếp giúp mình nha:
-- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> mà không cần viết lời dẫn hay thẻ <thought>.
+- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> .
 - Nếu đã xong hết việc, bạn viết câu trả lời kết luận (kèm link file tương đối [tên_file](đường_dẫn)) cho mình đọc nha!`;
 
 /**
  * Các lời nhắc kèm theo kết quả tool_result
  */
 export const TOOL_RESULT_HINTS = {
-   planMode: `Sau khi nhận được kết quả công cụ trên, bạn phân tích kỹ giúp mình nhé. Lưu ý là tụi mình đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE) nên chưa sửa code (chưa dùng apply_patch/write_file). Nếu cần hỏi ý kiến mình về các phương án thiết kế, hãy gọi request_user_input. Nếu đã đủ thông tin, bạn xuất bản kế hoạch bọc trong thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt để mình duyệt nhé.`,
-   implementPlan: `Sau khi nhận được kết quả công cụ trên, bạn xem kỹ nhé (mã thoát 0 hoặc output trống nghĩa là bước vừa rồi đã thành công). Kế hoạch đã duyệt rồi, bạn tiếp tục bước kế tiếp bằng <custom_tool_call name="apply_patch"> (mỗi lượt 1 file) hoặc exec_command để chạy test nha.`,
-   default: `Sau khi nhận được kết quả công cụ trên, bạn xem kỹ nhé (mã thoát 0 hoặc output trống nghĩa là bước vừa rồi đã thành công). Nếu cần làm tiếp bước khác, bạn cứ xuất khối công cụ mới (nhớ dùng apply_patch khi tạo/sửa file hoặc exec_command để chạy lệnh). Nếu đã xong toàn bộ nhiệm vụ, bạn trả lời kết luận cho mình nhé.`,
+  planMode: `Sau khi nhận được kết quả công cụ trên, bạn phân tích kỹ giúp mình nhé. Lưu ý là tụi mình đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE) nên chưa sửa code (chưa dùng apply_patch/write_file). Nếu cần hỏi ý kiến mình về các phương án thiết kế, hãy gọi request_user_input. Nếu đã đủ thông tin, bạn xuất bản kế hoạch bọc trong thẻ <webResponse><proposed_plan>...</proposed_plan></webResponse> bằng tiếng Việt để mình duyệt nhé.`,
+  implementPlan: `Sau khi nhận được kết quả công cụ trên, bạn xem kỹ nhé (mã thoát 0 hoặc output trống nghĩa là bước vừa rồi đã thành công). Kế hoạch đã duyệt rồi, bạn tiếp tục bước kế tiếp bằng <custom_tool_call name="apply_patch"> (mỗi lượt 1 file) hoặc exec_command để chạy test nha.`,
+  default: `Sau khi nhận được kết quả công cụ trên, bạn xem kỹ nhé (mã thoát 0 hoặc output trống nghĩa là bước vừa rồi đã thành công). Nếu cần làm tiếp bước khác, bạn cứ xuất khối công cụ mới (nhớ dùng apply_patch khi tạo/sửa file hoặc exec_command để chạy lệnh). Nếu đã xong toàn bộ nhiệm vụ, bạn trả lời kết luận cho mình nhé.`,
 };
 
 /**
  * Các chỉ dẫn định dạng đầu ra ở cuối lượt yêu cầu của người dùng
  */
 export const OUTPUT_FORMAT_HINTS = {
-   planMode: `[Yêu cầu đầu ra - Plan Mode]: Đang ở chế độ Plan Mode. Nếu cần mình chốt phương án kỹ thuật, hãy gọi request_user_input. Nếu cần khảo sát thêm, hãy gọi tool đọc (read_file, list_dir). Nếu đã đủ thông tin, bạn xuất bản kế hoạch hoàn chỉnh bọc trong thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt giúp mình nha.`,
-   implementPlan: `[Yêu cầu đầu ra]: Kế hoạch đã duyệt rồi. Bạn xuất ngay khối công cụ tạo hoặc sửa file (dùng apply_patch) tương ứng với bước đầu tiên để triển khai code trực tiếp nhé.`,
-   default: `[Yêu cầu đầu ra]: Bạn xuất ngay khối công cụ tương ứng để script trên máy mình thực thi trực tiếp trên dự án thay vì chỉ viết hướng dẫn văn bản nhé.`,
+  planMode: `[Yêu cầu đầu ra - Plan Mode]: Đang ở chế độ Plan Mode. Nếu cần mình chốt phương án kỹ thuật, hãy gọi request_user_input. Nếu cần khảo sát thêm, hãy gọi tool đọc (read_file, list_dir). Nếu đã đủ thông tin, bạn xuất bản kế hoạch hoàn chỉnh bọc trong thẻ <webResponse><proposed_plan>...</proposed_plan></webResponse> bằng tiếng Việt giúp mình nha.`,
+  implementPlan: `[Yêu cầu đầu ra]: Kế hoạch đã duyệt rồi. Bạn xuất ngay khối công cụ tạo hoặc sửa file (dùng apply_patch) tương ứng với bước đầu tiên để triển khai code trực tiếp nhé.`,
+  default: `[Yêu cầu đầu ra]: Bạn xuất ngay khối công cụ tương ứng để script trên máy mình thực thi trực tiếp trên dự án thay vì chỉ viết hướng dẫn văn bản nhé.`,
 };
 
 /**
@@ -173,7 +173,7 @@ export function buildShortOutputFormatAnchor(): string {
 Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:
 - Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
 - Nếu gọi công cụ: Đặt trọn trong <webResponse>...</webResponse>, chỉ chứa các khối <tool_call> hoặc <custom_tool_call name="apply_patch">, không chêm lời dẫn trước/sau thẻ lệnh.
-- Nếu trả lời kết luận cho mình: Viết nội dung Markdown (không chứa cú pháp gọi tool) trong khối 4-backtick.`;
+- Nếu trả lời kết luận cho mình: Viết nội dung Markdown Đặt trọn trong <webResponse>...</webResponse> (không chứa cú pháp gọi tool) trong khối 4-backtick.`;
 }
 
 export const SHORT_OUTPUT_FORMAT_ANCHOR = buildShortOutputFormatAnchor();
@@ -182,7 +182,7 @@ export function buildShortOutputFormatPlanAnchor(): string {
   return `---
 Nhắc nhẹ định dạng ở chế độ Lập Kế Hoạch (Plan Mode) nhé:
 - Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
-- Khi xuất bản kế hoạch: Bọc toàn bộ kế hoạch trong đúng một cặp <proposed_plan>...</proposed_plan>.
+- Khi xuất bản kế hoạch: Bọc toàn bộ kế hoạch trong đúng một cặp <proposed_plan>...</proposed_plan> và Đặt trọn trong <webResponse>...</webResponse>,.
 - Khi khảo sát file: Đặt khối công cụ đọc trong đúng một cặp <webResponse>...</webResponse>. Đừng gọi lệnh sửa file trong Plan Mode nha.`;
 }
 
@@ -224,7 +224,7 @@ Mình gửi bạn kết quả đọc file / khảo sát lệnh trên máy trong 
 Lưu ý là tụi mình vẫn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE) nên chưa sửa code (chưa dùng apply_patch/write_file).
 - Nếu cần khảo sát tiếp: Bạn cứ xuất khối công cụ đọc file (read_file, list_dir, grep_code) hoặc chạy lệnh kiểm tra.
 - Nếu cần mình chốt phương án thiết kế: Hãy gọi request_user_input để mở wizard cho mình chọn.
-- Nếu đã đủ thông tin: Bạn xuất bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt để mình duyệt nhé!`;
+- Nếu đã đủ thông tin: Bạn xuất bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> và Đặt trọn trong <webResponse>...</webResponse> bằng tiếng Việt để mình duyệt nhé!`;
 
 /**
  * Bóc tách và định dạng đẹp câu trả lời của người dùng từ wizard request_user_input
