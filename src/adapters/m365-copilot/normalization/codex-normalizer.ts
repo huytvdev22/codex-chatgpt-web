@@ -80,6 +80,7 @@ export class CodexPayloadNormalizer {
       "permissions.instructions",
       "collaboration_mode.instructions",
       "model.base_instructions",
+      "agents_md.instructions",
     ];
 
     if (kinds.some(k => systemKinds.includes(k))) {
@@ -95,7 +96,9 @@ export class CodexPayloadNormalizer {
       trimmed.startsWith("<recommended_plugins>") ||
       trimmed.startsWith("<skills_instructions>") ||
       trimmed.startsWith("<permissions") ||
-      trimmed.startsWith("<collaboration_mode>")
+      trimmed.startsWith("<collaboration_mode>") ||
+      trimmed.startsWith("# AGENTS.md instructions") ||
+      trimmed.includes("<INSTRUCTIONS>")
     ) {
       return true;
     }
@@ -123,7 +126,7 @@ export class CodexPayloadNormalizer {
       .replace(/<apps_instructions>[\s\S]*?<\/apps_instructions>/gi, "")
       .replace(/<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi, "")
       .replace(/<tools>[\s\S]*?<\/tools>/gi, "")
-      .replace(/<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools)>/gi, "")
+      .replace(/<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools|instructions)>/gi, "")
       .replace(/`?\s*change it;\s*user requests or tool descriptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
       .replace(/##\s*request_user_input availability[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
       .replace(/In Default mode, strongly prefer making reasonable assumptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
@@ -458,10 +461,31 @@ export class CodexPayloadNormalizer {
         environmentContext = (environmentContext ? `${environmentContext}\n` : "") + this.parseEnvironmentContext(envMatch[1]);
       }
 
+      // Trích xuất chỉ dẫn AGENTS.md / Project Instructions từ bất kỳ message nào (kể cả user, developer hay preamble)
+      const instructionRegex = /<INSTRUCTIONS>([\s\S]*?)<\/INSTRUCTIONS>/gi;
+      let instMatch: RegExpExecArray | null;
+      let foundInstructions = false;
+      while ((instMatch = instructionRegex.exec(text)) !== null) {
+        const instruction = instMatch[1].trim();
+        if (instruction && !developerInstructions.includes(instruction)) {
+          developerInstructions.push(instruction);
+          foundInstructions = true;
+        }
+      }
+      if (!foundInstructions && text.includes("# AGENTS.md instructions")) {
+        const cleaned = text
+          .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
+          .replace(/# AGENTS\.md instructions[^\n]*/gi, "")
+          .trim();
+        if (cleaned && !developerInstructions.includes(cleaned)) {
+          developerInstructions.push(cleaned);
+        }
+      }
+
       const isDev = item.role === "developer" || (item.type === "message" && item.role === "developer");
       if (isDev) {
         const cleaned = this.cleanDeveloperInstructions(text);
-        if (cleaned && cleaned.length > 5 && !cleaned.includes("You are Codex")) {
+        if (cleaned && cleaned.length > 5 && !cleaned.includes("You are Codex") && !developerInstructions.includes(cleaned)) {
           developerInstructions.push(cleaned);
         }
         continue;

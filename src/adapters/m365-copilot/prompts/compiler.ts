@@ -94,7 +94,7 @@ export function sanitizeCodexInstructions(text: string): string {
     .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
     .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
     .replace(
-      /<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools|skills_instructions)>/gi,
+      /<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools|skills_instructions|instructions)>/gi,
       ""
     )
     .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/gi, "")
@@ -625,7 +625,9 @@ export class M365PromptCompiler {
         .map(r => sanitizeCodexInstructions(r))
         .filter(r => r.length > 0);
       if (cleanedRules.length > 0) {
-        const devRules = cleanedRules.map(r => `- ${r}`).join("\n");
+        const devRules = cleanedRules
+          .map(r => (r.startsWith("-") || r.startsWith("*") || r.startsWith("#") || r.includes("\n")) ? r : `- ${r}`)
+          .join("\n\n");
         developerRulesText = `[Một số quy ước làm việc trong dự án của mình]:\n${devRules}`;
         devInstructionsContent = devInstructionsContent
           ? `${devInstructionsContent}\n\n${developerRulesText}`

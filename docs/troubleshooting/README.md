@@ -9,3 +9,4 @@
 | **002** | HTTP 400: provider is invalid khi kết nối Launcher | `qwen-web` | ✅ Đã Confirm | [002-launcher-invalid-provider.md](./002-launcher-invalid-provider.md) |
 | **003** | Launcher browser partition không hợp lệ cho Qwen | `qwen-web` | ✅ Đã Confirm | [003-launcher-browser-partition.md](./003-launcher-browser-partition.md) |
 | **004** | Release verify gate thất bại do check-version và test suite cũ | `core`, `ci/cd` | ✅ Đã Confirm | [004-release-verify-gate-failure.md](./004-release-verify-gate-failure.md) |
+| **005** | Rơi rụng chỉ dẫn AGENTS.md khi gửi sang ChatGPT Web và M365 Copilot | `core`, `prompt` | ✅ Đã Confirm | [005-agents-md-instructions-dropped.md](./005-agents-md-instructions-dropped.md) |
