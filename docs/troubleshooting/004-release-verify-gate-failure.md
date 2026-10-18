@@ -17,4 +17,4 @@
   - `scripts/verify.ts`: Tích hợp các suite test mới (`tests/*-adapter.test.ts`, `tests/*-conversation-store.test.ts`).
   - `src/model-catalog.ts`: Thêm import `isChatGptWebModelSlug` và `hasChatGptDefault`.
   - `src/adapters/qwen-web/index.ts`: Import `QWEN_SELECTORS`.
-- **Trạng thái**: ⏳ Chờ User Test & Confirm
+- **Trạng thái**: ✅ Đã Confirm
