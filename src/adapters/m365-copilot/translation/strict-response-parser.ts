@@ -131,12 +131,32 @@ function protocolError(
 
 /**
  * Bóc duy nhất transport wrapper 4-backtick khi DOM scraper chưa bóc wrapper này.
- * Không đụng tới bất kỳ code fence Markdown nào nằm bên trong response envelope.
+ * Đồng thời tự động dọn sạch các dấu backtick đóng/mở (ví dụ: ``` hoặc ````) còn sót lại
+ * ở hai đầu do quá trình copy từ code block trên giao diện web.
  */
 function unwrapTransportFence(rawResponse: string): string {
-  const trimmed = rawResponse.trim();
+  let trimmed = rawResponse.trim();
+
+  // 1. Trường hợp chuẩn: bọc trọn vẹn trong cặp 4-backtick markdown
   const match = trimmed.match(/^````markdown[ \t]*\r?\n([\s\S]*)\r?\n````$/);
-  return match ? match[1].trim() : trimmed;
+  if (match) {
+    return match[1].trim();
+  }
+
+  // 2. Tự động làm sạch trailing backticks còn sót lại ở cuối sau </webResponse> hoặc </m365Response>
+  // Thường xảy ra khi copy từ giao diện web / code block bị dính các dấu backtick đóng (ví dụ: </webResponse>```)
+  const trailingFenceMatch = trimmed.match(/^([\s\S]*<\/(?:webResponse|m365Response)>)[ \t\r\n]*`{1,4}[ \t\r\n]*$/);
+  if (trailingFenceMatch) {
+    trimmed = trailingFenceMatch[1].trim();
+  }
+
+  // 3. Tự động làm sạch leading backticks còn sót lại ở đầu trước <webResponse> hoặc <m365Response>
+  const leadingFenceMatch = trimmed.match(/^`{1,4}(?:markdown)?[ \t\r\n]+(<(?:webResponse|m365Response)>[\s\S]*)$/);
+  if (leadingFenceMatch) {
+    trimmed = leadingFenceMatch[1].trim();
+  }
+
+  return trimmed;
 }
 
 /**

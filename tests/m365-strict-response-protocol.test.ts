@@ -349,4 +349,61 @@ Lời dẫn trước envelope:
       expect(result.message).toContain("BÊN NGOÀI cặp thẻ <webResponse>...</webResponse>");
     }
   });
+
+  test("parses real-world copied apply_patch response without error", () => {
+    const raw = `<webResponse>
+<custom_tool_call name="apply_patch">
+*** Begin Patch
+*** Update File: styles.css
+@@
+-.json-tree-row\\.is-selected {
+-  border-left-color: var(--primary);
+-  background: rgb(59 130 246 / 11%);
+-}
+-
+-/* Correct selected-row styling in both themes. */
+-.json-tree-row.is-selected {
++.json-tree-row.is-selected {
+   border-left-color: var(--primary);
+   background: rgb(59 130 246 / 11%);
+ }
+ 
+-html[data-theme="light"] .json-tree-row\\.is-selected {
+-  background: rgb(37 99 235 / 10%);
+-}
+-
+-html[data-theme="light"] .json-tree-row\\.is-selected {
++html[data-theme="light"] .json-tree-row.is-selected {
+   background: rgb(37 99 235 / 10%);
+ }
+*** End Patch
+</custom_tool_call>
+</webResponse>`;
+
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("tool_calls");
+    if (result.kind === "tool_calls") {
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0]?.name).toBe("apply_patch");
+      expect(result.calls[0]?.arguments?.input).toContain("*** Update File: styles.css");
+    }
+  });
+
+  test("handles response with trailing backticks after closing webResponse", () => {
+    const raw = `<webResponse>
+<tool_call>
+{"name":"exec_command","arguments":{"cmd":"printf '%s\\\\n' '===== THEME TOGGLE HTML ====='; grep -n -B 5 -A 8 'theme-toggle\\\\|theme-color' index.html; printf '%s\\\\n' '===== SELECTED ROW CSS ====='; sed -n '835,865p' styles.css; printf '%s\\\\n' '===== DARK-SPECIFIC COLOR RULES THAT MAY LEAK INTO LIGHT MODE ====='; sed -n '250,360p' styles.css; sed -n '420,455p' styles.css; sed -n '520,570p' styles.css; sed -n '870,990p' styles.css; sed -n '1160,1200p' styles.css; printf '%s\\\\n' '===== HTML STRUCTURE / STYLESHEET REFERENCES ====='; grep -nE 'stylesheet|app.js|data-theme|theme-toggle|theme-color' index.html; printf '%s\\\\n' '===== DIFF CHECK ====='; git diff --check; printf '%s\\\\n' '===== TESTS ====='; node --test json-core.test.mjs json-explorer.test.mjs developer-toolkit.test.mjs | tail -n 12","workdir":"/Users/huytv/IdeaProjects/1.m365-codex/1.json-formater","yield_time_ms":10000,"max_output_tokens":6500}}
+</tool_call>
+</webResponse>\`\`\``;
+
+    const result = parseStrictM365Response(raw);
+    expect(result.kind).toBe("tool_calls");
+    if (result.kind === "tool_calls") {
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0]?.name).toBe("exec_command");
+      expect(result.calls[0]?.arguments?.workdir).toBe("/Users/huytv/IdeaProjects/1.m365-codex/1.json-formater");
+      expect(result.calls[0]?.arguments?.cmd).toContain("===== THEME TOGGLE HTML =====");
+    }
+  });
 });
+
