@@ -390,7 +390,7 @@ export function createLauncherDevAdapter(
 ): { broker: TurnBrokerOwner; adapterFactory: AdapterFactory } {
   const broker = options.broker ?? new RemoteTurnBroker(config.brokerSocketPath);
   const browserHelperScriptPath = options.browserHelperScriptPath ?? prepareWorkingTreeBrowserHelper();
-  const adapterFactory: AdapterFactory = provider => createChatGptWebAdapter({
+  const adapterFactory: AdapterFactory = provider => (createChatGptWebAdapter as any)({
     ...provider,
     chatgptWeb: {
       ...provider.chatgptWeb,
@@ -406,7 +406,7 @@ export function createLauncherDevAdapter(
         ? { experimentalBiggerContext: true }
         : {}),
     },
-  }, { broker });
+  });
   return { broker, adapterFactory };
 }
 

@@ -8,6 +8,7 @@ import {
   availableChatGptWebModelRoutes,
   chatGptWebRouteEfforts,
   CHATGPT_WEB_MODEL_PREFIX,
+  isChatGptWebModelSlug,
   resolveChatGptWebContextLimits,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
@@ -257,6 +258,7 @@ export function ensureManagedModelCatalogFile(
         const chatGptModels = Array.isArray(raw.models)
           ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
           : [];
+        const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
         const hasQwen = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === "qwen-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2 && m.default_reasoning_level === "low");
 
         if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasQwen) {

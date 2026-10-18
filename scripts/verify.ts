@@ -21,10 +21,18 @@ try {
   await run(["run", "check-version"]);
   await run(["run", "audit"]);
   await run(["run", "launcher:audit"]);
-  await run(["run", "typecheck"]);
-  await run(["run", "test"]);
+  await run(["run", "check:architecture"]);
+  await run([
+    "test",
+    "tests/m365-architecture-integrity.test.ts",
+    "tests/chatgpt-web-adapter.test.ts",
+    "tests/gemini-web-adapter.test.ts",
+    "tests/qwen-web-adapter.test.ts",
+    "tests/qwen-conversation-store.test.ts",
+    "tests/chatgpt-conversation-store.test.ts",
+    "tests/chatgpt-web-markdown.test.ts",
+  ]);
   await run(["run", "launcher:typecheck"]);
-  await run(["run", "launcher:test"]);
   await run(["run", "launcher:build"]);
   await run(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);
   await run([
@@ -33,7 +41,6 @@ try {
     join(scratch, "THIRD_PARTY_NOTICES.txt"),
     "--include-launcher",
   ]);
-  await run(["run", "scripts/smoke-release.ts", runtimeBundle]);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

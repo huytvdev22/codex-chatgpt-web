@@ -2,7 +2,7 @@ import type { ProviderAdapter, IncomingMeta } from "../base";
 import { hasActualPriorAssistantReply } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { QwenBrowserWorker } from "./qwen-browser-worker";
-import { isValidQwenConversationId } from "./selectors";
+import { isValidQwenConversationId, QWEN_SELECTORS } from "./selectors";
 import { defaultQwenConversationStore, qwenConversationKey } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "../chatgpt-web/environment";
 import {

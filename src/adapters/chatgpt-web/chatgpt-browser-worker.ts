@@ -1,6 +1,7 @@
 import type { Page } from "playwright-core";
 import { CHATGPT_SELECTORS } from "./selectors";
 import { ensureChatGptThinkingMode } from "./capability-picker";
+import { CHATGPT_CONVERSATION_ID_PATTERN } from "./conversation-store";
 
 export interface ChatGptBrowserRunOptions {
   prompt: string;
@@ -16,8 +17,6 @@ export interface ChatGptTurnResult {
   rawResponse: string;
   conversationId?: string;
 }
-
-export const CHATGPT_CONVERSATION_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
 
 export function isValidChatGptConversationId(id: unknown): id is string {
   if (typeof id !== "string") return false;
