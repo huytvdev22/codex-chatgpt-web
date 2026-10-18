@@ -92,13 +92,9 @@ export class ChatGptConversationStore {
 
   public getConversationId(threadId: string | undefined): string | undefined {
     this.load();
-    if (threadId) {
-      const record = this.cache.get(threadId);
-      return record && isValidChatGptConversationId(record.conversationId) ? record.conversationId : undefined;
-    }
-    return (this.lastActiveConversationId && isValidChatGptConversationId(this.lastActiveConversationId))
-      ? this.lastActiveConversationId
-      : undefined;
+    if (!threadId) return undefined;
+    const record = this.cache.get(threadId);
+    return record && isValidChatGptConversationId(record.conversationId) ? record.conversationId : undefined;
   }
 
   public setConversationId(threadId: string | undefined, conversationId: string): void {

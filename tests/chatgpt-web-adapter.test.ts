@@ -127,4 +127,22 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
     expect(extractConversationIdFromUrl("https://chatgpt.com/c/local-chatgpt")).toBeUndefined();
     expect(extractConversationIdFromUrl("https://chatgpt.com/")).toBeUndefined();
   });
+
+  test("9. Phiên hội thoại mới (isNewConversation=true) luôn biên dịch đầy đủ Bootstrap Protocol Chào ChatGPT", () => {
+    const adapter = createChatGptWebAdapter();
+    const parsedRequest = {
+      model: "chatgpt-web",
+      context: {
+        messages: [{ role: "user", content: "xin chào" }],
+      },
+      options: {},
+    };
+
+    const compiled = (adapter as any).compilePrompt(parsedRequest, true);
+    expect(compiled).toContain("Chào ChatGPT, mình đang làm việc trên một dự án phần mềm");
+    expect(compiled).toContain("<webResponse>");
+    expect(compiled).toContain("apply_patch");
+    expect(compiled).toContain("xin chào");
+  });
 });
+

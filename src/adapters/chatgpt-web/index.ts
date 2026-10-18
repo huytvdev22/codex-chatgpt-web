@@ -192,13 +192,17 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       page = await this.ensureLocalBrowserPage();
     }
 
-    // 3. Xác định trạng thái hội thoại và kịch bản prompt
-    const rawExistingConvId = leaseConversationId || defaultChatGptConversationStore.getConversationId(threadId);
+    // 3. Xác định trạng thái hội thoại và kịch bản prompt (chuẩn M365 Copilot)
+    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
+    const isNewConversation = !hasPriorAssistantReply;
+
+    // Nếu là phiên hội thoại mới từ Codex, không được gán conversationId cũ
+    const rawExistingConvId = isNewConversation
+      ? undefined
+      : (leaseConversationId || defaultChatGptConversationStore.getConversationId(threadId));
     const existingConversationId = isValidChatGptConversationId(rawExistingConvId) ? rawExistingConvId : undefined;
     activeConversationId = existingConversationId;
 
-    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
-    const isNewConversation = !hasPriorAssistantReply && !existingConversationId;
     const initialPrompt = this.compilePrompt(parsed, isNewConversation);
 
     const reasoningEffort = parsed.options.reasoning || "low";
