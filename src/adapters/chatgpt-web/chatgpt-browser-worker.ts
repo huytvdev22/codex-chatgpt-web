@@ -70,7 +70,7 @@ export class ChatGptBrowserWorker {
    * để không bị kích hoạt Markdown parser tự động làm vỡ định dạng và ghi đè chữ
    */
   private async insertPromptSafely(page: Page, promptText: string): Promise<void> {
-    console.log(`[chatgpt-worker] Đang nhập prompt an toàn (${promptText.length} ký tự)...`);
+    console.log(`[chatgpt-worker] Đang nhập prompt an toàn qua Native Clipboard Paste (${promptText.length} ký tự)...`);
 
     await page.waitForSelector(CHATGPT_SELECTORS.composer, { timeout: 15_000, state: "visible" });
 
@@ -78,51 +78,51 @@ export class ChatGptBrowserWorker {
     const composerLocator = page.locator(CHATGPT_SELECTORS.composer).first();
     await composerLocator.click();
 
-    // Plain-text injection qua DataTransfer paste kết hợp execCommand và fallback locator.fill
-    await page.evaluate(
-      ({ selector, text }) => {
-        const editor = document.querySelector(selector) as HTMLElement | null;
-        if (!editor) return false;
+    // 1. Xóa sạch nội dung cũ bằng phím tắt chuẩn OS (Meta+a / Control+a -> Backspace)
+    const isMac = process.platform === "darwin";
+    const selectAllKey = isMac ? "Meta+a" : "Control+a";
+    await page.keyboard.press(selectAllKey);
+    await page.keyboard.press("Backspace");
 
-        editor.focus();
-
-        // 1. Xóa nội dung cũ trong editor nếu có
-        try {
-          const sel = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(editor);
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-          document.execCommand("delete", false, undefined);
-        } catch {
-          editor.innerHTML = "";
+    // 2. Ghi prompt vào Clipboard của browser
+    let clipboardSuccess = false;
+    try {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+      await page.evaluate((text) => {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          return navigator.clipboard.writeText(text);
         }
+        return Promise.reject(new Error("Clipboard API không khả dụng"));
+      }, promptText);
+      clipboardSuccess = true;
+    } catch {
+      clipboardSuccess = false;
+    }
 
-        // 2. Chèn qua DataTransfer paste event (ProseMirror handlePaste chính thức của ChatGPT)
-        try {
-          const dt = new DataTransfer();
-          dt.setData("text/plain", text);
-          editor.dispatchEvent(
-            new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })
-          );
-        } catch {}
+    if (clipboardSuccess) {
+      // 3. Kích hoạt phím tắt Dán Native của OS (Meta+v / Control+v)
+      // Điều này kích hoạt trực tiếp hàm handlePaste chính thức của ChatGPT Web,
+      // giúp ProseMirror tự động phân tích và đồng bộ 100% document state mà không bị desync con trỏ
+      const pasteKey = isMac ? "Meta+v" : "Control+v";
+      await page.keyboard.press(pasteKey);
+    } else {
+      // Fallback an toàn nếu môi trường không cho phép truy cập Clipboard API
+      console.warn("[chatgpt-worker] Không thể ghi vào Clipboard API, kích hoạt DOM text injection fallback...");
+      await page.evaluate(
+        ({ selector, text }) => {
+          const editor = document.querySelector(selector) as HTMLElement | null;
+          if (!editor) return;
+          editor.focus();
+          document.execCommand("insertText", false, text);
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          editor.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+        { selector: CHATGPT_SELECTORS.composer, text: promptText }
+      );
+    }
 
-        // 3. Nếu DataTransfer paste chưa đưa đủ text vào DOM, thử execCommand
-        const currentLen = (editor.textContent || "").trim().length;
-        if (currentLen < text.trim().length * 0.8) {
-          try {
-            document.execCommand("insertText", false, text);
-          } catch {}
-        }
-
-        // 4. Dispatch sự kiện input và change để ProseMirror và React đồng bộ state
-        editor.dispatchEvent(new Event("input", { bubbles: true }));
-        editor.dispatchEvent(new Event("change", { bubbles: true }));
-
-        return true;
-      },
-      { selector: CHATGPT_SELECTORS.composer, text: promptText }
-    );
+    // Đợi 500ms để ProseMirror và React hoàn tất đồng bộ state và render nút Send
+    await page.waitForTimeout(500);
 
     // Kiểm tra độ dài nội dung thực tế trong editor
     const actualLength = await page.evaluate(
@@ -130,14 +130,23 @@ export class ChatGptBrowserWorker {
       CHATGPT_SELECTORS.composer
     );
 
-    // Nếu editor nhận thiếu ký tự (bị cắt xén), dùng fallback fill của Playwright để đảm bảo đủ 100%
     if (actualLength < promptText.trim().length * 0.8) {
-      console.warn(`[chatgpt-worker] Editor chỉ nhận ${actualLength}/${promptText.trim().length} ký tự, kích hoạt Playwright fill để chèn đầy đủ 100%...`);
-      await composerLocator.fill(promptText);
+      console.warn(`[chatgpt-worker] Cảnh báo: Editor đang có ${actualLength}/${promptText.trim().length} ký tự. Thử bổ sung lại qua insertText fallback...`);
+      await page.evaluate(
+        ({ selector, text }) => {
+          const editor = document.querySelector(selector) as HTMLElement | null;
+          if (!editor) return;
+          editor.focus();
+          document.execCommand("insertText", false, text);
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          editor.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+        { selector: CHATGPT_SELECTORS.composer, text: promptText }
+      );
+      await page.waitForTimeout(300);
+    } else {
+      console.log(`[chatgpt-worker] Đã nhập thành công toàn bộ prompt (${actualLength} ký tự) vào ô chat.`);
     }
-
-    // Đợi 400ms để ProseMirror và React hoàn tất render và cập nhật trạng thái nút Send
-    await page.waitForTimeout(400);
   }
 
   /**
@@ -159,6 +168,7 @@ export class ChatGptBrowserWorker {
     }
 
     if (canClickSend) {
+      console.log("[chatgpt-worker] Nút gửi đã sẵn sàng, thực hiện click Send...");
       await sendBtn.click().catch(() => {});
     } else {
       console.log("[chatgpt-worker] Nút gửi chưa enabled, nhấn Enter trên composer...");

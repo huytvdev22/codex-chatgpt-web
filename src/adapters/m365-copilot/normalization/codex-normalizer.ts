@@ -415,13 +415,20 @@ export class CodexPayloadNormalizer {
     // Ghép call_id cho trailing tool results nếu input đến từ context.messages
     const trailingToolResults = this.extractTrailingToolResults({ ...rawPayload, input } as any);
 
-    // Xác định latest user message
+    // Xác định latest user message và làm sạch các tiêu đề Markdown thô của Codex IDE
     const latestUserIdx = this.findLatestUserItemIndex(input);
     let latestUserInstruction: string | undefined;
     if (latestUserIdx !== -1) {
       const text = this.extractTextFromContent((input[latestUserIdx] as any).content);
       if (text.trim()) {
-        latestUserInstruction = text.trim();
+        // Chuẩn hóa các template heading thô của Codex IDE thành văn bản tự nhiên
+        // để tránh kích hoạt ProseMirror Heading Parser trên ChatGPT Web làm vỡ con trỏ
+        latestUserInstruction = text
+          .replace(/# Context from my IDE setup:/gi, "[Ngữ cảnh từ IDE]:")
+          .replace(/## Active file:/gi, "- File đang mở:")
+          .replace(/## Open tabs:/gi, "- Các tab đang mở:")
+          .replace(/## My request:/gi, "[Yêu cầu cụ thể của mình]:")
+          .trim();
       }
     }
 
