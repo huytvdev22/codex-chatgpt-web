@@ -167,13 +167,17 @@ export function cleanToolDescription(name: string, rawDesc?: string): string {
  * Không quảng bá tool không tồn tại và không duy trì bộ ví dụ hard-code.
  */
 function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): string {
-  const functionTool = tools.find(tool => tool.kind === "function");
+  const preferredFunctionNames = ["exec_command", "read_file", "view_file"];
+  const functionTool =
+    tools.find(tool => tool.kind === "function" && preferredFunctionNames.includes(tool.identity.name)) ||
+    tools.find(tool => tool.kind === "function");
+
   const applyPatchTool = tools.find(
     tool => tool.kind === "custom" && tool.identity.name === "apply_patch"
   );
   const examples: string[] = [];
 
-  if (!compact && functionTool?.kind === "function") {
+  if (functionTool?.kind === "function") {
     const wireName =
       functionTool.identity.qualifiedName || functionTool.identity.name;
     const required = Array.isArray(functionTool.rawParameters.required)
@@ -209,7 +213,7 @@ function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): st
       })
     );
 
-    examples.push(`[VÍ DỤ GỌI CÔNG CỤ FUNCTION]
+    examples.push(`- Mẫu 1: Gọi công cụ function (đặt JSON arguments vào thẻ <tool_call>):
 \`\`\`\`markdown
 <webResponse>
 <tool_call>
@@ -222,7 +226,7 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
   if (applyPatchTool) {
     const wireName =
       applyPatchTool.identity.qualifiedName || applyPatchTool.identity.name;
-    examples.push(`[VÍ DỤ SỬA FILE BẰNG APPLY_PATCH]
+    examples.push(`- Mẫu 2: Sửa file bằng apply_patch (đặt nội dung diff vào thẻ <custom_tool_call>):
 \`\`\`\`markdown
 <webResponse>
 <custom_tool_call name="${wireName}">
@@ -241,7 +245,7 @@ Không dùng *** Add File để giả định ghi đè file đã tồn tại.`);
   }
 
   return examples.length > 0
-    ? `[VÍ DỤ MINH HỌA GỌI LỆNH QUA SCRIPT CẦU NỐI]\n\n${examples.join("\n\n")}`
+    ? `[VÍ DỤ CÚ PHÁP GỌI CÔNG CỤ TRÊN MÁY MÌNH]\n(Khi cần thực thi, hãy đặt lệnh trong thẻ tương ứng bên dưới):\n\n${examples.join("\n\n")}`
     : "";
 }
 
