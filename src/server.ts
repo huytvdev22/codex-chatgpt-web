@@ -87,6 +87,8 @@ import { isM365ModelSlug } from "./m365-models";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
 import { isGeminiModelSlug } from "./gemini-models";
 import { createGeminiWebAdapter } from "./adapters/gemini-web";
+import { isQwenModelSlug } from "./qwen-web-models";
+import { createQwenWebAdapter } from "./adapters/qwen-web";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
 import {
@@ -937,6 +939,87 @@ async function handleChatGptResponseRequest(
   return Response.json(json);
 }
 
+async function handleQwenResponseRequest(
+  req: Request,
+  raw: unknown,
+  requestedModel: string,
+  options: ResponseRequestOptions = {},
+): Promise<Response> {
+  const expanded = expandPreviousResponseInput(raw);
+  let parsed: CodexParsedRequest;
+  try {
+    parsed = parseRequest(expanded);
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
+
+  const adapter = createQwenWebAdapter();
+  const queue = new AsyncEventQueue<AdapterEvent>();
+  const abort = new AbortController();
+  if (req.signal.aborted) abort.abort();
+  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+
+  const run = async () => {
+    try {
+      await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
+        options.onAdapterEvent?.(event);
+        queue.push(event);
+      });
+    } catch (error) {
+      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      options.onAdapterEvent?.(event);
+      queue.push(event);
+    } finally {
+      queue.close();
+    }
+  };
+
+  const maps = toolBridgeMaps(parsed);
+  const responseModel = requestedModel;
+
+  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+    if (options.rememberState !== false) {
+      rememberResponseState(parsed._rawBody, response, {
+        force: true,
+      });
+    }
+  };
+
+  if (parsed.stream) {
+    void run();
+    const stream = bridgeToResponsesSSE(
+      queue,
+      responseModel,
+      maps.toolNsMap,
+      maps.freeformToolNames,
+      maps.toolSearchToolNames,
+      () => abort.abort(),
+      2_000,
+      {
+        hideThinkingSummary: parsed.options.hideThinkingSummary,
+        onCompletedResponse: rememberCompletedResponse,
+      },
+    );
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
+
+  await run();
+  const events = await queue.collect();
+  const json = buildResponseJSON(events, responseModel, {
+    hideThinkingSummary: parsed.options.hideThinkingSummary,
+    toolNsMap: maps.toolNsMap,
+  });
+  rememberCompletedResponse(json);
+  return Response.json(json);
+}
+
 export function getRawDumpBaseDir(adapterDir: string): string {
   // Ưu tiên 1: Biến môi trường CODEX_RAW_DUMP_DIR nếu được thiết lập thủ công
   if (process.env.CODEX_RAW_DUMP_DIR?.trim()) {
@@ -963,13 +1046,15 @@ export function dumpRawCodexRequest(raw: unknown): void {
 
     const requestedModel = typeof rawRecord?.model === "string" ? rawRecord.model : undefined;
 
-    // 1. Phân loại adapter directory: .chatgpt, .m365, .gemini
+    // 1. Phân loại adapter directory: .chatgpt, .m365, .gemini, .qwen
     let adapterDir = ".chatgpt";
     if (requestedModel) {
       if (isM365ModelSlug(requestedModel)) {
         adapterDir = ".m365";
       } else if (isGeminiModelSlug(requestedModel)) {
         adapterDir = ".gemini";
+      } else if (isQwenModelSlug(requestedModel)) {
+        adapterDir = ".qwen";
       }
     }
 
@@ -1054,6 +1139,9 @@ export async function responseRequest(
   }
   if (typeof requestedModel === "string" && (isChatGptWebModelSlug(requestedModel) || requestedModel.startsWith("chatgpt-web"))) {
     return await handleChatGptResponseRequest(req, raw, requestedModel, options);
+  }
+  if (typeof requestedModel === "string" && (isQwenModelSlug(requestedModel) || requestedModel.startsWith("qwen-web"))) {
+    return await handleQwenResponseRequest(req, raw, requestedModel, options);
   }
   if (typeof requestedModel === "string") {
     try {

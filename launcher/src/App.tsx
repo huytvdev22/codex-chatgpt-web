@@ -531,11 +531,13 @@ function LauncherShell({
               <div className="sidebar-brand-identity">
                 <BrandMark small />
                 <strong>{
-                  (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini"
-                    ? "Codex Gemini Web"
-                    : (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"
-                      ? "Codex M365 Copilot"
-                      : copy.product
+                  (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen"
+                    ? "Codex Qwen Web"
+                    : (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini"
+                      ? "Codex Gemini Web"
+                      : (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"
+                        ? "Codex M365 Copilot"
+                        : copy.product
                 }</strong>
                 {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
               </div>
@@ -578,6 +580,20 @@ function LauncherShell({
                   label="M365 Copilot"
                   onClick={async () => {
                     await api!.setProvider("m365");
+                    updateState((await api!.snapshot()).state);
+                    navigateSurface("browser");
+                    await api!.setBrowserSurfaceActive(true);
+                  }}
+                />
+                <SidebarItem
+                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen"}
+                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "qwen"
+                    ? <ActionDot pulse tone="required" />
+                    : null}
+                  icon="activity"
+                  label="Qwen"
+                  onClick={async () => {
+                    await api!.setProvider("qwen");
                     updateState((await api!.snapshot()).state);
                     navigateSurface("browser");
                     await api!.setBrowserSurfaceActive(true);
@@ -1015,8 +1031,8 @@ function BrowserSurface({
         ) : null}
         <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
           {visible
-            ? (browser?.provider === "gemini" ? "Hide Google Gemini" : (browser?.provider === "m365" ? "Hide M365 Copilot" : copy.hideBrowser))
-            : (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt))}
+            ? (browser?.provider === "qwen" ? "Hide Qwen" : (browser?.provider === "gemini" ? "Hide Google Gemini" : (browser?.provider === "m365" ? "Hide M365 Copilot" : copy.hideBrowser)))
+            : (browser?.provider === "qwen" ? "Open Qwen" : (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)))}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
@@ -1038,24 +1054,28 @@ function BrowserSurface({
               ? copy.browserReady
               : browser?.authenticated
                 ? copy.noActiveTask
-                : browser?.provider === "gemini"
-                  ? "Sign in to Google Gemini"
-                  : browser?.provider === "m365"
-                    ? "Sign in to Microsoft 365 Copilot"
-                    : copy.stepAccount}</h1>
+                : browser?.provider === "qwen"
+                  ? "Sign in to Qwen"
+                  : browser?.provider === "gemini"
+                    ? "Sign in to Google Gemini"
+                    : browser?.provider === "m365"
+                      ? "Sign in to Microsoft 365 Copilot"
+                      : copy.stepAccount}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
               : browser?.authenticated
-              ? (browser?.provider === "gemini"
-                ? "Google Gemini will appear here when Codex starts a Web model turn."
-                : browser?.provider === "m365"
-                  ? "M365 Copilot will appear here when Codex starts a Web model turn."
-                  : copy.noActiveTaskBody)
+              ? (browser?.provider === "qwen"
+                ? "Qwen will appear here when Codex starts a Web model turn."
+                : browser?.provider === "gemini"
+                  ? "Google Gemini will appear here when Codex starts a Web model turn."
+                  : browser?.provider === "m365"
+                    ? "M365 Copilot will appear here when Codex starts a Web model turn."
+                    : copy.noActiveTaskBody)
               : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
               <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
                 {manualInteraction || browser?.authenticated
-                  ? (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt))
+                  ? (browser?.provider === "qwen" ? "Open Qwen" : (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)))
                   : copy.signIn}
               </PrimaryButton>
               {passkeyAvailable ? (
@@ -1154,13 +1174,16 @@ function SetupSurface({
 
   const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
   const isGemini = (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini";
+  const isQwen = (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen";
   const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
   const geminiAuthed = Boolean(browser?.geminiAuthenticated || (browser?.authenticated && isGemini));
-  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365 && !isGemini));
+  const qwenAuthed = Boolean(browser?.qwenAuthenticated || (browser?.authenticated && isQwen));
+  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365 && !isGemini && !isQwen));
 
   const isM365Testing = browser?.status === "testing" && isM365;
   const isGeminiTesting = browser?.status === "testing" && isGemini;
-  const isChatGptTesting = browser?.status === "testing" && !isM365 && !isGemini;
+  const isQwenTesting = browser?.status === "testing" && isQwen;
+  const isChatGptTesting = browser?.status === "testing" && !isM365 && !isGemini && !isQwen;
   const isRunningTurn = browser?.status === "running";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
@@ -1277,13 +1300,49 @@ function SetupSurface({
           />
         </div>
 
+        {/* ── Qwen Setup Section ── */}
+        <SectionHeading label="Qwen Setup" spaced />
+        <div className="setup-list">
+          <SetupRow
+            action={qwenAuthed
+              ? copy.signedIn
+              : browser?.status === "loading" && isQwen ? copy.checkingSignIn : copy.signIn}
+            complete={qwenAuthed}
+            description="Sign in directly in the embedded Qwen browser (chat.qwen.ai). Login stays in this launcher's private profile."
+            disabled={globalActionDisabled}
+            index={1}
+            onAction={() => run(async () => {
+              await api!.setProvider("qwen");
+              await activateBrowser();
+              await api!.openLogin();
+            })}
+            title="Sign in to Qwen"
+          />
+          <SetupRow
+            action={snapshot.qwenSmokePassed ? "Verify again" : "Run verify"}
+            complete={Boolean(snapshot.qwenSmokePassed)}
+            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to Qwen and verify response."
+            disabled={globalActionDisabled || isQwenTesting || !qwenAuthed}
+            index={2}
+            onAction={() => run(async () => {
+              await api!.setProvider("qwen");
+              updateState((await api!.snapshot()).state);
+              await activateBrowser();
+              await api!.smokeTest();
+              updateState((await api!.snapshot()).state);
+            })}
+            repeatable={true}
+            title="Run browser smoke test (Qwen)"
+          />
+        </div>
+
         {/* ── ChatGPT Setup Section ── */}
         <SectionHeading label="ChatGPT Setup" spaced />
         <div className="setup-list">
           <SetupRow
             action={chatGptAuthed
               ? copy.signedIn
-              : browser?.status === "loading" && !isM365 && !isGemini ? copy.checkingSignIn : copy.signIn}
+              : browser?.status === "loading" && !isM365 && !isGemini && !isQwen ? copy.checkingSignIn : copy.signIn}
             complete={chatGptAuthed}
             description="Sign in directly in the embedded ChatGPT browser. Login stays in this launcher's private profile."
             disabled={globalActionDisabled}
@@ -1885,6 +1944,16 @@ function SettingsSurface({
               onClick={() => void api!.setProvider("m365").then(updateState).catch((cause) => setError(messageOf(cause)))}
             >
               M365 Copilot
+            </SecondaryButton>
+            <SecondaryButton
+              disabled={busy}
+              style={{
+                borderColor: snapshot.state.selectedProvider === "qwen" ? "var(--color-accent, #6366f1)" : undefined,
+                fontWeight: snapshot.state.selectedProvider === "qwen" ? 600 : 400,
+              }}
+              onClick={() => void api!.setProvider("qwen").then(updateState).catch((cause) => setError(messageOf(cause)))}
+            >
+              Qwen
             </SecondaryButton>
             <SecondaryButton
               disabled={busy}

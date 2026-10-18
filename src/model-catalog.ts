@@ -23,6 +23,12 @@ import {
   GEMINI_WEB_MODEL_PREFIX,
   type GeminiModelRoute,
 } from "./gemini-models";
+import {
+  availableQwenWebModelRoutes,
+  isQwenModelSlug,
+  QWEN_WEB_MODEL_PREFIX,
+  type QwenWebModelRoute,
+} from "./qwen-web-models";
 
 type JsonObject = Record<string, unknown>;
 
@@ -251,9 +257,9 @@ export function ensureManagedModelCatalogFile(
         const chatGptModels = Array.isArray(raw.models)
           ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
           : [];
-        const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
+        const hasQwen = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === "qwen-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2 && m.default_reasoning_level === "low");
 
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault) {
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasQwen) {
           shouldWrite = true;
         }
       } catch {
@@ -517,6 +523,45 @@ export function buildGeminiModel(
   return model;
 }
 
+export function buildQwenModel(
+  templateValue: unknown,
+  route: QwenWebModelRoute,
+  config: AppConfig,
+): JsonObject {
+  const template = object(templateValue, "native Codex model template");
+  const multiAgentVersion = routedSubagentVersion(template, config);
+  const efforts = route.supportedCodexEfforts || ["low", "high"];
+
+  const model: JsonObject = {
+    ...structuredClone(template),
+    slug: route.slug,
+    display_name: route.displayName,
+    description: route.description,
+    input_modalities: ["text", "image"],
+    visibility: "list",
+    supported_in_api: true,
+    priority: 85,
+    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
+    tool_mode: null,
+    upgrade: null,
+    default_reasoning_level: route.defaultEffort || "low",
+    supported_reasoning_levels: efforts.map(effort => {
+      const desc = effort === "high" || effort === "think" ? "Think" : "Off";
+      return reasoningLevel(template, effort, desc);
+    }),
+    context_window: route.contextWindow,
+    max_context_window: route.contextWindow,
+    effective_context_window_percent: 95,
+    auto_compact_token_limit: route.autoCompactTokenLimit,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    default_service_tier: null,
+  };
+  delete model.comp_hash;
+  delete model.availability_nux;
+  return model;
+}
+
 export function augmentNativeModelCatalog(
   value: unknown,
   config: AppConfig,
@@ -532,7 +577,12 @@ export function augmentNativeModelCatalog(
   const nativeModels = structuredClone(
     catalog.models.filter(model => {
       const s = slug(model);
-      return !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s?.startsWith(M365_COPILOT_MODEL_PREFIX) && !isGeminiModelSlug(s ?? "");
+      return (
+        !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) &&
+        !s?.startsWith(M365_COPILOT_MODEL_PREFIX) &&
+        !isGeminiModelSlug(s ?? "") &&
+        !isQwenModelSlug(s ?? "")
+      );
     }),
   );
   if (config.subagentProtocol === "compatibility-v1") {
@@ -570,6 +620,8 @@ export function augmentNativeModelCatalog(
     .map(route => buildM365Model(template, route, config));
   const geminiModels = availableGeminiModelRoutes()
     .map(route => buildGeminiModel(template, route, config));
+  const qwenModels = availableQwenWebModelRoutes()
+    .map(route => buildQwenModel(template, route, config));
 
   const seen = new Set<string>();
   const deduplicatedModels: JsonObject[] = [];
@@ -595,6 +647,13 @@ export function augmentNativeModelCatalog(
     }
   }
   for (const model of geminiModels) {
+    const s = slug(model);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      deduplicatedModels.push(model);
+    }
+  }
+  for (const model of qwenModels) {
     const s = slug(model);
     if (s && !seen.has(s)) {
       seen.add(s);
