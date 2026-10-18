@@ -56,8 +56,9 @@ export interface LauncherBrowserHostDescriptor {
   chatGptSurfaceId?: string;
   m365SurfaceId?: string;
   geminiSurfaceId?: string;
+  qwenSurfaceId?: string;
   activeSurfaceId?: string;
-  provider?: "m365" | "chatgpt" | "gemini";
+  provider?: "m365" | "chatgpt" | "gemini" | "qwen";
   surfaceTargets: Record<string, string>;
   createdAt: string;
 }
@@ -120,6 +121,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     ? [
         "persist:codex-web-gpt-dev-chatgpt",
         "persist:codex-gemini-web-dev",
+        "persist:codex-web-gpt-qwen-dev",
       ]
     : [
         "persist:codex-web-gpt-chatgpt",
@@ -127,6 +129,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
         "persist:codex-m365-copilot",
         "persist:codex-web-gpt-m365",
         "persist:codex-gemini-web",
+        "persist:codex-web-gpt-qwen",
       ];
   if (typeof descriptor.partition !== "string" || !allowedPartitions.includes(descriptor.partition)) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
@@ -161,6 +164,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     chatGptSurfaceId: descriptor.chatGptSurfaceId,
     m365SurfaceId: descriptor.m365SurfaceId,
     geminiSurfaceId: descriptor.geminiSurfaceId,
+    qwenSurfaceId: descriptor.qwenSurfaceId,
     activeSurfaceId: descriptor.activeSurfaceId,
     provider: descriptor.provider,
     surfaceTargets: targets,
@@ -394,7 +398,7 @@ export type LauncherTurnActivity =
       helperPid: number;
       conversationKey?: string;
       connectorIdentity?: string;
-      provider?: "m365" | "chatgpt" | "gemini";
+      provider?: "m365" | "chatgpt" | "gemini" | "qwen";
       requireRetainedConversation?: boolean;
     }
   | {
@@ -413,7 +417,7 @@ export type LauncherTurnActivity =
       retain?: boolean;
       connectorBound?: boolean;
       conversationId?: string;
-      provider?: "m365" | "chatgpt" | "gemini";
+      provider?: "m365" | "chatgpt" | "gemini" | "qwen";
     };
 
 // Startup must outlast the launcher's ten-second idle bootstrap. This is not a model-turn budget.

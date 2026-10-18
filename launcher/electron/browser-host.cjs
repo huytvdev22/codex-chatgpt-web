@@ -383,6 +383,7 @@ class BrowserHost {
       "persist:codex-gemini-web",
       "persist:codex-gemini-web-dev",
       "persist:codex-web-gpt-qwen",
+      "persist:codex-web-gpt-qwen-dev",
     ]);
     if (!allowedPartitions.has(partition)) {
       this.logger.warn?.("browser.unexpected_partition", { partition });
