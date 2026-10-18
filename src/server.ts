@@ -3,7 +3,7 @@ import { httpStatusFromTerminalError } from "./lib/errors";
 import { extractCodexTurnIdentityFromBody } from "./adapters/chatgpt-web/environment";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
-import { providerConfig } from "./config";
+import { getConfigDir, providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import http from "node:http";
@@ -937,6 +937,24 @@ async function handleChatGptResponseRequest(
   return Response.json(json);
 }
 
+export function getRawDumpBaseDir(adapterDir: string): string {
+  // Ưu tiên 1: Biến môi trường CODEX_RAW_DUMP_DIR nếu được thiết lập thủ công
+  if (process.env.CODEX_RAW_DUMP_DIR?.trim()) {
+    return join(process.env.CODEX_RAW_DUMP_DIR.trim(), adapterDir);
+  }
+
+  // Ưu tiên 2: Nếu đang ở môi trường dev/workspace (thư mục scratch/ tồn tại trong thư mục dự án)
+  const localScratch = join(process.cwd(), "scratch");
+  if (existsSync(localScratch)) {
+    return join(localScratch, adapterDir);
+  }
+
+  // Ưu tiên 3: Môi trường build production / app đóng gói -> lưu bền vững vào thư mục user home của app
+  // (~/.codex-m365-copilot/scratch/... trên macOS/Linux hoặc C:\Users\<User>\.codex-m365-copilot\scratch\... trên Windows)
+  const configDir = getConfigDir();
+  return join(configDir, "scratch", adapterDir);
+}
+
 export function dumpRawCodexRequest(raw: unknown): void {
   try {
     const rawRecord = raw && typeof raw === "object" && !Array.isArray(raw)
@@ -961,12 +979,13 @@ export function dumpRawCodexRequest(raw: unknown): void {
     // Sanitize ký tự để đảm bảo đường dẫn thư mục an toàn trên macOS, Windows và Linux
     const safeThreadId = rawThreadId.replace(/[/\\?%*:|"<>]/g, "_");
 
-    // 3. Chuẩn bị đường dẫn thư mục
-    const baseDir = join(process.cwd(), "scratch", adapterDir);
+    // 3. Chuẩn bị đường dẫn thư mục linh hoạt (dev vs production app)
+    const baseDir = getRawDumpBaseDir(adapterDir);
 
     // Xử lý an toàn nếu baseDir trước đây bị tạo nhầm thành 1 file thường (như scratch/.m365)
     if (existsSync(baseDir) && !statSync(baseDir).isDirectory()) {
-      const backupPath = join(process.cwd(), "scratch", `${adapterDir.replace(/^\./, "")}-prompt-backup.txt`);
+      const parentDir = join(baseDir, "..");
+      const backupPath = join(parentDir, `${adapterDir.replace(/^\./, "")}-prompt-backup.txt`);
       renameSync(baseDir, backupPath);
     }
 
@@ -981,7 +1000,7 @@ export function dumpRawCodexRequest(raw: unknown): void {
     // 4. Lưu snapshot lượt mới nhất (để bạn luôn mở nhanh file này trong IDE)
     writeFileSync(join(baseDir, "codex-raw.txt"), payloadJson, "utf8");
     if (adapterDir !== ".chatgpt") {
-      const chatgptBaseDir = join(process.cwd(), "scratch", ".chatgpt");
+      const chatgptBaseDir = getRawDumpBaseDir(".chatgpt");
       if (!existsSync(chatgptBaseDir)) mkdirSync(chatgptBaseDir, { recursive: true });
       writeFileSync(join(chatgptBaseDir, "codex-raw.txt"), payloadJson, "utf8");
     }
@@ -992,7 +1011,7 @@ export function dumpRawCodexRequest(raw: unknown): void {
     const historyFilePath = join(historyDir, historyFilename);
 
     writeFileSync(historyFilePath, payloadJson, "utf8");
-    console.log(`[codex-raw-dump] Đã lưu raw message vào scratch/${adapterDir}/history/${safeThreadId}/${historyFilename}`);
+    console.log(`[codex-raw-dump] Đã lưu raw message vào ${baseDir}/history/${safeThreadId}/${historyFilename}`);
   } catch (err) {
     console.warn(`[codex-raw-dump] Không thể ghi log raw request: ${err}`);
   }

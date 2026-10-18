@@ -74,4 +74,18 @@ describe("Tự động lưu Raw Message theo Thread ID và Adapter", () => {
     const snapshotPath = join(process.cwd(), "scratch", ".m365", "codex-raw.txt");
     expect(existsSync(snapshotPath)).toBe(true);
   });
+
+  test("3. getRawDumpBaseDir trả về thư mục workspace khi dev và thư mục home khi build production", () => {
+    const { getRawDumpBaseDir } = require("../src/server");
+    const devPath = getRawDumpBaseDir(".chatgpt");
+    expect(devPath).toContain("scratch");
+    expect(devPath).toContain(".chatgpt");
+
+    // Thử nghiệm khi có biến môi trường chỉ định
+    process.env.CODEX_RAW_DUMP_DIR = "/custom/dump/path";
+    const customPath = getRawDumpBaseDir(".m365");
+    expect(customPath).toBe("/custom/dump/path/.m365");
+    delete process.env.CODEX_RAW_DUMP_DIR;
+  });
 });
+
