@@ -147,6 +147,8 @@ export class QwenWebAdapter implements ProviderAdapter {
     let finalStatus: "completed" | "failed" | "aborted" = "failed";
     let activeConversationId: string | undefined;
 
+    let launcherError: Error | null = null;
+
     // 2. Kết nối Launcher Surface nếu có
     if (descriptorPath) {
       try {
@@ -181,13 +183,14 @@ export class QwenWebAdapter implements ProviderAdapter {
           page = launcherConnection.page;
         }
       } catch (err) {
-        console.warn(`[qwen-adapter] Không thể kết nối Launcher qua CDP: ${err instanceof Error ? err.message : String(err)}. Sẽ thử local Chrome.`);
+        launcherError = err instanceof Error ? err : new Error(String(err));
+        console.error(`[qwen-adapter] Không thể kết nối Launcher qua CDP:`, err);
       }
     }
 
     if (!page) {
       if (descriptorPath) {
-        throw new Error("[qwen-adapter] Không thể kết nối với Launcher browser tab.");
+        throw new Error(`[qwen-adapter] Không thể kết nối với Launcher browser tab: ${launcherError?.message || "không tìm thấy tab"}`);
       }
       page = await this.ensureLocalBrowserPage();
     }
@@ -308,24 +311,25 @@ export class QwenWebAdapter implements ProviderAdapter {
       // 5. Thông báo kết thúc turn với Launcher
       if (descriptorPath && launcherConnection) {
         try {
-          await notifyLauncherTurn(
-            descriptorPath,
-            {
-              phase: "finish",
-              traceId: turnTraceId,
-              helperPid: process.pid,
-              conversationKey,
-              connectorIdentity: "qwen-web",
-              provider: "qwen" as any,
-              status: finalStatus,
-              conversationId: activeConversationId,
-              surfaceId,
-            },
-            undefined,
-            undefined,
-          );
-        } catch {}
-        await launcherConnection.disconnect().catch(() => {});
+          const isConvValid = isValidQwenConversationId(activeConversationId || "");
+          console.log(`[qwen-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${isConvValid ? activeConversationId : 'none'})...`);
+          await notifyLauncherTurn(descriptorPath, {
+            phase: "end",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            provider: "qwen" as any,
+            status: finalStatus,
+            retain: true,
+            connectorBound: finalStatus === "completed" && isConvValid,
+            ...(isConvValid ? { conversationId: activeConversationId } : {}),
+          });
+        } catch (releaseErr) {
+          console.warn("[qwen-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
+        }
+      }
+
+      if (launcherConnection) {
+        await launcherConnection.browser.close().catch(() => {});
       }
     }
   }

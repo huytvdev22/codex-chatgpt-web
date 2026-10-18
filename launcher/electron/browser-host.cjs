@@ -30,6 +30,7 @@ const {
   parseQwenConversationId,
 } = require("./qwen-surface-manager.cjs");
 const { bindM365TurnContents, markM365TurnSurface } = require("./m365-turn-surface.cjs");
+const { bindQwenTurnContents, markQwenTurnSurface } = require("./qwen-turn-surface.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -842,7 +843,7 @@ class BrowserHost {
       view,
       status: "running",
       ordinal,
-      label: `${isM365 ? "M365" : "ChatGPT"} ${ordinal}`,
+      label: `${isM365 ? "M365" : (isQwen ? "Qwen" : "ChatGPT")} ${ordinal}`,
       pageTitle: isM365 ? "M365 Copilot" : "ChatGPT",
       url: bootstrapUrl,
       loading: true,
@@ -863,6 +864,7 @@ class BrowserHost {
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(view.webContents);
     if (isM365) bindM365TurnContents(this, tab);
+    else if (isQwen) bindQwenTurnContents(this, tab);
     else this.bindTurnContents(tab);
     await this.initializeTurnTab(tab, signal);
     return tab;
@@ -880,6 +882,7 @@ class BrowserHost {
         await loadCommittedBrowserSurface(tab.view.webContents, tab.url || IDLE_BROWSER_URL);
         signal?.throwIfAborted();
         if (tab.provider === "m365") await markM365TurnSurface(tab);
+        else if (tab.provider === "qwen") await markQwenTurnSurface(tab);
         else await this.markTurnTabSurface(tab);
       })(), aborted]);
       signal?.throwIfAborted();
@@ -2808,7 +2811,7 @@ class BrowserHost {
     const provider = typeof providerOrSignal === "string" ? providerOrSignal : "chatgpt";
     const signal = typeof providerOrSignal === "string" ? acquisitionSignal : providerOrSignal;
     signal?.throwIfAborted();
-    if (provider !== "chatgpt" && provider !== "m365") {
+    if (provider !== "chatgpt" && provider !== "m365" && provider !== "gemini" && provider !== "qwen") {
       throw new Error("Browser turn provider is invalid");
     }
     if (this.manualOperation) {
@@ -2860,7 +2863,7 @@ class BrowserHost {
       existing.traceId = traceId;
       existing.status = "running";
       existing.loading = true;
-      existing.message = `${provider === "m365" ? "M365 Copilot" : "ChatGPT"} is working`;
+      existing.message = `${provider === "m365" ? "M365 Copilot" : (provider === "qwen" ? "Qwen" : (provider === "gemini" ? "Google Gemini" : "ChatGPT"))} is working`;
       if (!reused) {
         existing.bootstrapReady = false;
         existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
@@ -3623,7 +3626,7 @@ class BrowserHost {
   }
 
   async smokeTest() {
-    if (this.provider !== "m365" && this.provider !== "gemini") {
+    if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen") {
       requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
     }
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
