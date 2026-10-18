@@ -8,7 +8,7 @@ import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import http from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
 export interface UniversalServer {
@@ -937,12 +937,62 @@ async function handleChatGptResponseRequest(
   return Response.json(json);
 }
 
-function dumpRawCodexRequest(raw: unknown): void {
+export function dumpRawCodexRequest(raw: unknown): void {
   try {
-    const rawDumpDir = join(process.cwd(), "scratch", ".chatgpt");
-    if (!existsSync(rawDumpDir)) mkdirSync(rawDumpDir, { recursive: true });
-    writeFileSync(join(rawDumpDir, "codex-raw.txt"), JSON.stringify(raw, null, 2), "utf8");
-    console.log(`[codex-raw-dump] Đã ghi log request thô vào scratch/.chatgpt/codex-raw.txt`);
+    const rawRecord = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : undefined;
+
+    const requestedModel = typeof rawRecord?.model === "string" ? rawRecord.model : undefined;
+
+    // 1. Phân loại adapter directory: .chatgpt, .m365, .gemini
+    let adapterDir = ".chatgpt";
+    if (requestedModel) {
+      if (isM365ModelSlug(requestedModel)) {
+        adapterDir = ".m365";
+      } else if (isGeminiModelSlug(requestedModel)) {
+        adapterDir = ".gemini";
+      }
+    }
+
+    // 2. Trích xuất threadId của cuộc hội thoại
+    const identity = extractCodexTurnIdentityFromBody(raw);
+    const rawThreadId = identity.threadId?.trim() || "default-thread";
+    // Sanitize ký tự để đảm bảo đường dẫn thư mục an toàn trên macOS, Windows và Linux
+    const safeThreadId = rawThreadId.replace(/[/\\?%*:|"<>]/g, "_");
+
+    // 3. Chuẩn bị đường dẫn thư mục
+    const baseDir = join(process.cwd(), "scratch", adapterDir);
+
+    // Xử lý an toàn nếu baseDir trước đây bị tạo nhầm thành 1 file thường (như scratch/.m365)
+    if (existsSync(baseDir) && !statSync(baseDir).isDirectory()) {
+      const backupPath = join(process.cwd(), "scratch", `${adapterDir.replace(/^\./, "")}-prompt-backup.txt`);
+      renameSync(baseDir, backupPath);
+    }
+
+    const historyDir = join(baseDir, "history", safeThreadId);
+
+    if (!existsSync(historyDir)) {
+      mkdirSync(historyDir, { recursive: true });
+    }
+
+    const payloadJson = JSON.stringify(raw, null, 2);
+
+    // 4. Lưu snapshot lượt mới nhất (để bạn luôn mở nhanh file này trong IDE)
+    writeFileSync(join(baseDir, "codex-raw.txt"), payloadJson, "utf8");
+    if (adapterDir !== ".chatgpt") {
+      const chatgptBaseDir = join(process.cwd(), "scratch", ".chatgpt");
+      if (!existsSync(chatgptBaseDir)) mkdirSync(chatgptBaseDir, { recursive: true });
+      writeFileSync(join(chatgptBaseDir, "codex-raw.txt"), payloadJson, "utf8");
+    }
+
+    // 5. Lưu tự động từng lượt vào file lịch sử riêng biệt theo thread id: turn-<timestamp>.json
+    const timestamp = Date.now();
+    const historyFilename = `turn-${timestamp}.json`;
+    const historyFilePath = join(historyDir, historyFilename);
+
+    writeFileSync(historyFilePath, payloadJson, "utf8");
+    console.log(`[codex-raw-dump] Đã lưu raw message vào scratch/${adapterDir}/history/${safeThreadId}/${historyFilename}`);
   } catch (err) {
     console.warn(`[codex-raw-dump] Không thể ghi log raw request: ${err}`);
   }
