@@ -14,9 +14,17 @@ export const CHATGPT_SELECTORS = {
 
   /** Nút gửi tin nhắn (Send button) */
   sendButton: [
-    'button[type="submit"][aria-label="Send"]',
     'button[data-testid="send-button"]',
+    'button[type="submit"][aria-label="Send"]',
+    'button[type="submit"][aria-label="Send prompt"]',
     'button[aria-label="Send prompt"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label="Send"]',
+    'button[aria-label="Gửi"]',
+    'button[aria-label*="Send" i]',
+    'button[aria-label*="Gửi" i]',
+    'button[type="submit"]',
+    'form button[type="submit"]',
   ].join(", "),
 
   /** Nút dừng sinh câu trả lời (hiển thị trong quá trình model đang stream/suy nghĩ) */

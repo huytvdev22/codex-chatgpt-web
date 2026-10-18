@@ -21,6 +21,69 @@ export function chatGptConversationKey(
   })).digest("hex");
 }
 
+export const CHATGPT_HOME_URL = "https://chatgpt.com/";
+export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+export const CHATGPT_CONVERSATION_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
+
+export function normalizeChatGptConversationId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return CHATGPT_CONVERSATION_ID_PATTERN.test(trimmed) && trimmed !== "local-chatgpt" ? trimmed : null;
+}
+
+export function chatGptConversationUrl(conversationId: string): string {
+  const normalized = normalizeChatGptConversationId(conversationId);
+  if (!normalized) throw new Error("ChatGPT conversation id is invalid");
+  return `https://chatgpt.com/c/${normalized}`;
+}
+
+export function parseChatGptConversationId(rawUrl: string): string | null {
+  let url: URL;
+  try { url = new URL(rawUrl); }
+  catch { return null; }
+  if (!url.hostname.includes("chatgpt.com") || url.username || url.password) return null;
+  const match = url.pathname.match(/^\/c\/([a-zA-Z0-9_-]+)\/?$/i);
+  return normalizeChatGptConversationId(match?.[1]);
+}
+
+export function resolveChatGptTargetUrl(
+  targetOrOptions?: string | {
+    conversationKey?: string | null;
+    useSavedChats?: boolean;
+    store?: ChatGptConversationStore | null;
+  } | null
+): any {
+  if (typeof targetOrOptions === "object" && targetOrOptions !== null) {
+    const { conversationKey, useSavedChats = false, store } = targetOrOptions;
+    if (!useSavedChats) {
+      return {
+        url: CHATGPT_TEMPORARY_CHAT_URL,
+        isSavedChat: false,
+        conversationId: null,
+      };
+    }
+    const convId = conversationKey && store ? store.get(conversationKey)?.conversationId || null : null;
+    if (convId) {
+      return {
+        url: chatGptConversationUrl(convId),
+        isSavedChat: true,
+        conversationId: convId,
+      };
+    }
+    return {
+      url: CHATGPT_HOME_URL,
+      isSavedChat: true,
+      conversationId: null,
+    };
+  }
+
+  if (typeof targetOrOptions === "string") {
+    const normalized = normalizeChatGptConversationId(targetOrOptions);
+    if (normalized) return chatGptConversationUrl(normalized);
+  }
+  return CHATGPT_HOME_URL;
+}
+
 import { isValidChatGptConversationId } from "./chatgpt-browser-worker";
 
 export interface ChatGptConversationRecord {
@@ -88,6 +151,23 @@ export class ChatGptConversationStore {
     } catch (err) {
       console.error(`[ChatGPT ConversationStore] Không thể lưu file ${this.filePath}:`, err);
     }
+  }
+
+  public get(conversationKey: string): { conversationId: string; lastUsedAt: number } | null {
+    this.load();
+    const record = this.cache.get(conversationKey);
+    if (!record || !isValidChatGptConversationId(record.conversationId)) return null;
+    return {
+      conversationId: record.conversationId,
+      lastUsedAt: record.updatedAt || record.createdAt || Date.now(),
+    };
+  }
+
+  public bind(conversationKey: string, conversationId: string): string {
+    const normalized = normalizeChatGptConversationId(conversationId);
+    if (!normalized) throw new Error("ChatGPT conversation id is invalid");
+    this.setConversationId(conversationKey, normalized);
+    return normalized;
   }
 
   public getConversationId(threadId: string | undefined): string | undefined {
