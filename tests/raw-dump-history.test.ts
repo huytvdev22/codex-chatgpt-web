@@ -87,5 +87,35 @@ describe("Tự động lưu Raw Message theo Thread ID và Adapter", () => {
     expect(customPath).toBe("/custom/dump/path/.m365");
     delete process.env.CODEX_RAW_DUMP_DIR;
   });
+
+  test("4. Lưu raw message của Qwen Web vào scratch/.qwen/history/<threadId>/", () => {
+    const testQwenThread = "test_thread_qwen_789";
+    const payload = {
+      model: "qwen-web",
+      metadata: {
+        thread_id: testQwenThread,
+        turn_id: "turn_qwen_001",
+      },
+      input: [
+        { role: "user", content: "Qwen ơi giúp tôi phân tích dự án" },
+      ],
+    };
+
+    dumpRawCodexRequest(payload);
+
+    const historyDir = join(process.cwd(), "scratch", ".qwen", "history", testQwenThread);
+    expect(existsSync(historyDir)).toBe(true);
+
+    const files = readdirSync(historyDir).filter(f => f.startsWith("turn-") && f.endsWith(".json"));
+    expect(files.length).toBeGreaterThan(0);
+
+    const content = JSON.parse(readFileSync(join(historyDir, files[0]), "utf-8"));
+    expect(content.model).toBe("qwen-web");
+    expect(content.metadata.thread_id).toBe(testQwenThread);
+    expect(content.input[0].content).toBe("Qwen ơi giúp tôi phân tích dự án");
+
+    // Dọn dẹp
+    if (existsSync(historyDir)) rmSync(historyDir, { recursive: true, force: true });
+  });
 });
 

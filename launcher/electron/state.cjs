@@ -43,7 +43,7 @@ function readState(filePath) {
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
     }
-    if (state.selectedProvider !== "m365" && state.selectedProvider !== "chatgpt") {
+    if (state.selectedProvider !== "m365" && state.selectedProvider !== "chatgpt" && state.selectedProvider !== "gemini" && state.selectedProvider !== "qwen") {
       state.selectedProvider = DEFAULT_STATE.selectedProvider;
     }
     for (const key of [

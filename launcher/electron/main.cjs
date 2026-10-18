@@ -994,7 +994,7 @@ function registerIpc({ logger, stateStore }) {
     return { state, credentialsRequired: false, targetMode: mode };
   });
   handle("launcher:set-provider", async (_event, provider) => {
-    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini") throw new Error("Invalid provider");
+    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen") throw new Error("Invalid provider");
     const nextState = stateStore.update({ selectedProvider: provider });
     if (browserHost) {
       await browserHost.switchProvider(provider);
