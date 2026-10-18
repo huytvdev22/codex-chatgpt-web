@@ -257,8 +257,7 @@ export function ensureManagedModelCatalogFile(
         const chatGptModels = Array.isArray(raw.models)
           ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
           : [];
-        const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
-        const hasQwen = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === "qwen-web");
+        const hasQwen = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === "qwen-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2 && m.default_reasoning_level === "low");
 
         if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasQwen) {
           shouldWrite = true;
@@ -531,7 +530,7 @@ export function buildQwenModel(
 ): JsonObject {
   const template = object(templateValue, "native Codex model template");
   const multiAgentVersion = routedSubagentVersion(template, config);
-  const efforts = route.supportedCodexEfforts || ["none", "think"];
+  const efforts = route.supportedCodexEfforts || ["low", "high"];
 
   const model: JsonObject = {
     ...structuredClone(template),
@@ -545,9 +544,9 @@ export function buildQwenModel(
     ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
     tool_mode: null,
     upgrade: null,
-    default_reasoning_level: route.defaultEffort || "none",
+    default_reasoning_level: route.defaultEffort || "low",
     supported_reasoning_levels: efforts.map(effort => {
-      const desc = effort === "think" ? "Think" : "Off";
+      const desc = effort === "high" || effort === "think" ? "Think" : "Off";
       return reasoningLevel(template, effort, desc);
     }),
     context_window: route.contextWindow,

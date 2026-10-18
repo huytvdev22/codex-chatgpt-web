@@ -25,7 +25,7 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     expect(routes[0].contextWindow).toBe(128_000);
   });
 
-  test("3. Model Catalog tạo model qwen-web chuẩn chỉnh", () => {
+  test("3. Model Catalog tạo model qwen-web chuẩn chỉnh giống ChatGPT Web", () => {
     const mockTemplate: any = {
       slug: "native-template",
       display_name: "Template",
@@ -38,8 +38,13 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     expect(model.slug).toBe("qwen-web");
     expect(model.display_name).toBe("Qwen (Web)");
     expect(model.context_window).toBe(128_000);
-    expect(model.default_reasoning_level).toBe("none");
+    expect(model.default_reasoning_level).toBe("low");
     expect(Array.isArray(model.supported_reasoning_levels)).toBe(true);
+    expect(model.supported_reasoning_levels.length).toBe(2);
+    expect(model.supported_reasoning_levels[0].effort).toBe("low");
+    expect(model.supported_reasoning_levels[0].description).toBe("Off");
+    expect(model.supported_reasoning_levels[1].effort).toBe("high");
+    expect(model.supported_reasoning_levels[1].description).toBe("Think");
   });
 
   test("4. QWEN_SELECTORS chứa đầy đủ các bộ chọn DOM thực tế từ giao diện", () => {
@@ -49,6 +54,10 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     expect(QWEN_SELECTORS.assistantMessage).toBe(".chat-response-message");
     expect(QWEN_SELECTORS.codeBlock).toBe("pre.qwen-markdown-code");
     expect(QWEN_SELECTORS.codeCopyButton).toContain('[aria-label="Copy"]');
+    expect(QWEN_SELECTORS.thinkingSelector).toBe(".qwen-thinking-selector");
+    expect(QWEN_SELECTORS.thinkingTrigger).toContain(".qwen-chat-v2-dropdown-menu-trigger");
+    expect(QWEN_SELECTORS.thinkingPopup).toContain(".qwen-chat-v2-dropdown-menu-popup");
+    expect(QWEN_SELECTORS.thinkingMenuItem).toBe(".qwen-chat-v2-dropdown-menu-item");
   });
 
   test("5. Trích xuất đúng Conversation ID từ URL Qwen Web", () => {

@@ -21,6 +21,111 @@ export interface QwenTurnResult {
  */
 export class QwenBrowserWorker {
   /**
+   * Thiết lập chế độ Thinking Mode trên giao diện Qwen Web dựa theo tùy chọn
+   * - wantThinking = true: Chọn "Thinking"
+   * - wantThinking = false: Chọn "Fast" (hoặc "Auto" - không suy nghĩ)
+   */
+  public async setThinkingMode(page: Page, wantThinking: boolean): Promise<void> {
+    try {
+      const thinkingEl = await page.$(QWEN_SELECTORS.thinkingSelector);
+      if (!thinkingEl) {
+        // Có thể trang chưa load xong hoặc đang ở giao diện không hỗ trợ selector
+        return;
+      }
+
+      // Đọc nhãn trạng thái hiện tại
+      const currentLabel = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return (el?.textContent || "").trim();
+      }, QWEN_SELECTORS.thinkingLabel);
+
+      const isCurrentThinking = currentLabel.toLowerCase().includes("thinking") || currentLabel.toLowerCase().includes("think");
+
+      if (wantThinking === isCurrentThinking) {
+        console.log(`[qwen-worker] Chế độ Thinking đã sẵn sàng ở trạng thái mong muốn: "${currentLabel}" (thinking=${isCurrentThinking})`);
+        return;
+      }
+
+      console.log(`[qwen-worker] Đang chuyển đổi Thinking mode: hiện tại="${currentLabel}", mong muốn=${wantThinking ? "Thinking" : "Fast (Không thinking)"}...`);
+
+      // 1. Click vào trigger để mở dropdown menu
+      const trigger = page.locator(QWEN_SELECTORS.thinkingTrigger).first();
+      await trigger.click({ timeout: 2000 }).catch(async () => {
+        await page.locator(QWEN_SELECTORS.thinkingSelectButton).first().click().catch(() => {});
+      });
+
+      // 2. Chờ popup menu xuất hiện
+      await page.waitForSelector(QWEN_SELECTORS.thinkingPopup, { state: "visible", timeout: 2000 }).catch(() => {});
+
+      // 3. Tìm và click vào item mong muốn trong popup
+      const targetName = wantThinking ? "Thinking" : "Fast";
+      const clicked = await page.evaluate(
+        ({ popupSel, itemSel, labelSel, wantThink }) => {
+          const popups = Array.from(document.querySelectorAll(popupSel));
+          const visiblePopup = popups.find(p => (p as HTMLElement).offsetParent !== null) || popups[popups.length - 1];
+          if (!visiblePopup) return false;
+
+          const items = Array.from(visiblePopup.querySelectorAll(itemSel));
+          let matchedItem: HTMLElement | null = null;
+
+          for (const item of items) {
+            const labelEl = item.querySelector(labelSel);
+            const text = (labelEl?.textContent || item.textContent || "").trim().toLowerCase();
+            if (wantThink) {
+              if (text.includes("thinking") || text.includes("think")) {
+                matchedItem = item as HTMLElement;
+                break;
+              }
+            } else {
+              if (text.includes("fast")) {
+                matchedItem = item as HTMLElement;
+                break;
+              }
+            }
+          }
+
+          // Fallback cho chế độ không thinking nếu không tìm thấy "Fast"
+          if (!matchedItem && !wantThink) {
+            for (const item of items) {
+              const labelEl = item.querySelector(labelSel);
+              const text = (labelEl?.textContent || item.textContent || "").trim().toLowerCase();
+              if (text.includes("auto") || (!text.includes("thinking") && !text.includes("think"))) {
+                matchedItem = item as HTMLElement;
+                break;
+              }
+            }
+          }
+
+          if (matchedItem) {
+            matchedItem.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+            matchedItem.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+            matchedItem.click();
+            return true;
+          }
+          return false;
+        },
+        {
+          popupSel: QWEN_SELECTORS.thinkingPopup,
+          itemSel: QWEN_SELECTORS.thinkingMenuItem,
+          labelSel: QWEN_SELECTORS.thinkingMenuItemLabel,
+          wantThink: wantThinking,
+        }
+      );
+
+      await page.waitForTimeout(300);
+
+      const finalLabel = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return (el?.textContent || "").trim();
+      }, QWEN_SELECTORS.thinkingLabel);
+
+      console.log(`[qwen-worker] Đã chuyển đổi Thinking mode thành: "${finalLabel}" (thành công=${clicked})`);
+    } catch (err) {
+      console.warn(`[qwen-worker] Không thể chuyển đổi Thinking mode (sẽ tiếp tục thực hiện):`, err);
+    }
+  }
+
+  /**
    * Cài đặt Clipboard Hook trên trang để đón lấy payload copy code trực tiếp từ Qwen
    */
   private async setupClipboardHook(page: Page): Promise<void> {
@@ -330,10 +435,14 @@ export class QwenBrowserWorker {
     // 2. Thiết lập Clipboard Hook để bắt payload code sạch
     await this.setupClipboardHook(page);
 
-    // 3. Nhập prompt an toàn
+    // 3. Thiết lập chế độ Thinking Mode (mặc định tắt giống chatgpt-web, chỉ bật khi effort là "high" hoặc "think")
+    const wantThinking = options.reasoningEffort === "high" || options.reasoningEffort === "think";
+    await this.setThinkingMode(page, wantThinking);
+
+    // 4. Nhập prompt an toàn
     await this.insertPromptSafely(page, prompt);
 
-    // 4. Nhấn nút gửi
+    // 5. Nhấn nút gửi
     await this.submitPrompt(page, signal);
 
     // 5. Theo dõi quá trình Qwen trả lời và bắt nội dung hoàn chỉnh

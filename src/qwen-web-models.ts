@@ -19,12 +19,12 @@ export const QWEN_WEB_DEFAULT_ROUTE: QwenWebModelRoute = {
   slug: QWEN_WEB_DEFAULT_SLUG,
   backendModel: "qwen-max",
   displayName: "Qwen (Web)",
-  description: "Giao diện Qwen Chat Web (chat.qwen.ai) hỗ trợ thực thi công cụ và tư duy suy luận",
+  description: "Qwen Web với tùy chọn bật/tắt chế độ Suy nghĩ (Think).",
   contextWindow: 128_000,
   autoCompactTokenLimit: 96_000,
   composerCharLimit: 200_000,
-  supportedCodexEfforts: ["none", "think"],
-  defaultEffort: "none",
+  supportedCodexEfforts: ["low", "high"],
+  defaultEffort: "low",
 };
 
 export const QWEN_WEB_THINK_ROUTE: QwenWebModelRoute = {

@@ -32,6 +32,13 @@ export const QWEN_SELECTORS = {
 
   // Bộ chọn chế độ suy nghĩ (Thinking Mode)
   thinkingSelector: '.qwen-thinking-selector',
+  thinkingTrigger: '.qwen-thinking-selector .qwen-chat-v2-dropdown-menu-trigger, .qwen-thinking-selector .qwen-chat-v2-dropdown-menu-select',
+  thinkingSelectButton: '.qwen-thinking-selector .qwen-chat-v2-dropdown-menu-select',
+  thinkingLabel: '.qwen-thinking-selector .qwen-chat-v2-dropdown-menu-select-label',
+  thinkingPopup: '.qwen-chat-v2-dropdown-menu-popup[aria-label="Thinking"], .qwen-chat-v2-dropdown-menu-popup',
+  thinkingMenuItem: '.qwen-chat-v2-dropdown-menu-item',
+  thinkingMenuItemLabel: '.qwen-chat-v2-dropdown-menu-item-label',
+  thinkingMenuItemSelected: '.qwen-chat-v2-dropdown-menu-item-selected',
 } as const;
 
 /**
