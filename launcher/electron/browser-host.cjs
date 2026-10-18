@@ -2978,7 +2978,7 @@ class BrowserHost {
       }
     } else if (tab.provider === "qwen" && status === "completed") {
       const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
-      const rawId = conversationId || parseQwenConversationId(liveUrl);
+      const rawId = conversationId || parseQwenConversationId(liveUrl) || tab.conversationId;
       const normalizedConversationId = normalizeQwenConversationId(rawId);
       if (normalizedConversationId && tab.conversationKey && this.qwenSurfaceManager) {
         tab.conversationId = this.qwenSurfaceManager.bind(tab.conversationKey, normalizedConversationId);
@@ -2986,7 +2986,7 @@ class BrowserHost {
       }
     } else if ((tab.provider || "chatgpt") === "chatgpt" && status === "completed") {
       const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
-      const rawId = conversationId || parseChatGptConversationId(liveUrl);
+      const rawId = conversationId || parseChatGptConversationId(liveUrl) || tab.conversationId;
       const normalizedConversationId = normalizeChatGptConversationId(rawId);
       if (normalizedConversationId && tab.conversationKey && this.chatGptSurfaceManager) {
         tab.conversationId = this.chatGptSurfaceManager.bind(tab.conversationKey, normalizedConversationId);

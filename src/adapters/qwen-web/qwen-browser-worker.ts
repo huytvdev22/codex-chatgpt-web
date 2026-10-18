@@ -429,6 +429,11 @@ export class QwenBrowserWorker {
         } else {
           console.log(`[qwen-worker] Tab đã ở sẵn cuộc trò chuyện https://chat.qwen.ai/c/${conversationId}, tiếp tục gửi tin nhắn.`);
         }
+      } else {
+        // Nếu chưa lưu conversationId nhưng tab đang ở sẵn /c/<id>, TUYỆT ĐỐI GIỮ NGUYÊN!
+        if (currentUrl.includes("/c/")) {
+          console.log(`[qwen-worker] Giữ nguyên tab cuộc hội thoại hiện tại (${currentUrl}), không mở chat mới.`);
+        }
       }
     }
 
@@ -509,22 +514,55 @@ export class QwenBrowserWorker {
         break;
       }
 
+      // Theo dõi xem Qwen đã đổi URL sang /c/<id> chưa trong quá trình stream
+      if (!currentConversationId) {
+        currentConversationId = extractConversationIdFromUrl(page.url()) || undefined;
+      }
+
       await page.waitForTimeout(300);
     }
 
-    // 6. Cập nhật conversation ID mới từ URL sau khi Qwen điều hướng
-    const newConversationId = extractConversationIdFromUrl(page.url());
-    if (newConversationId && isValidQwenConversationId(newConversationId)) {
-      currentConversationId = newConversationId;
-      console.log(`[qwen-worker] Đã ghi nhận Conversation ID của Qwen: ${currentConversationId}`);
+    // 6. Trích xuất phản hồi hoàn chỉnh
+    const rawResponse = await this.extractCompletedResponse(page);
+
+    // 7. Cập nhật conversation ID mới từ URL sau khi hoàn thành lượt (với polling chờ URL đổi nếu là SPA routing)
+    if (!currentConversationId) {
+      currentConversationId = extractConversationIdFromUrl(page.url()) || undefined;
     }
 
-    // 7. Trích xuất phản hồi hoàn chỉnh
-    const rawResponse = await this.extractCompletedResponse(page);
+    if (!currentConversationId) {
+      const waitStart = Date.now();
+      while (Date.now() - waitStart < 3000) {
+        await page.waitForTimeout(300);
+        const pollId = extractConversationIdFromUrl(page.url());
+        if (pollId) {
+          currentConversationId = pollId;
+          break;
+        }
+      }
+    }
+
+    if (!currentConversationId) {
+      const sidebarId = await page.evaluate(() => {
+        const activeLink = document.querySelector('nav a[href*="/c/"], .sidebar a[href*="/c/"], a[href*="/c/"]');
+        const href = activeLink?.getAttribute("href") || "";
+        const m = href.match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        return m ? m[1] : null;
+      }).catch(() => null);
+      if (sidebarId && isValidQwenConversationId(sidebarId)) {
+        currentConversationId = sidebarId;
+      }
+    }
+
+    const finalConversationId = isValidQwenConversationId(currentConversationId || "")
+      ? currentConversationId
+      : (isValidQwenConversationId(conversationId || "") ? conversationId : undefined);
+
+    console.log(`[qwen-worker] Lượt hoàn tất thành công. URL: ${page.url()}, Conversation ID: ${finalConversationId || "chưa xác định"}`);
 
     return {
       rawResponse: rawResponse || lastChunkText,
-      conversationId: currentConversationId,
+      conversationId: finalConversationId,
     };
   }
 }

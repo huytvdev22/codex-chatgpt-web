@@ -59,7 +59,7 @@ export function isQwenConversationUrl(url: string): boolean {
 }
 
 /**
- * Trích xuất conversation ID (UUID) từ URL của Qwen Web
+ * Trích xuất conversation ID từ URL của Qwen Web
  */
 export function extractConversationIdFromUrl(url: string): string | null {
   if (typeof url !== "string") return null;

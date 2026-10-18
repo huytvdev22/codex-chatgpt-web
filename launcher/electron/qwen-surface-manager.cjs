@@ -26,7 +26,7 @@ function parseQwenConversationId(rawUrl) {
   try { url = new URL(rawUrl); }
   catch { return null; }
   if (!url.hostname.includes("chat.qwen.ai") || url.username || url.password) return null;
-  const match = url.pathname.match(/^\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i);
+  const match = url.pathname.match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
   return normalizeQwenConversationId(match?.[1]);
 }
 

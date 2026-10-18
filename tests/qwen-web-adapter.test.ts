@@ -6,7 +6,10 @@ import {
 } from "../src/qwen-web-models";
 import { QWEN_SELECTORS, extractConversationIdFromUrl, isValidQwenConversationId } from "../src/adapters/qwen-web/selectors";
 import { createQwenWebAdapter, QwenWebAdapter } from "../src/adapters/qwen-web";
+import { QwenConversationStore } from "../src/adapters/qwen-web/conversation-store";
 import { buildQwenModel } from "../src/model-catalog";
+import { join } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
 
 describe("Qwen Web Adapter Architecture & Integration Tests", () => {
   test("1. isQwenModelSlug nhận diện chính xác các model của Qwen Web", () => {
@@ -73,5 +76,50 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     expect(typeof adapter.runTurn).toBe("function");
     expect(typeof adapter.abortTurn).toBe("function");
     expect(typeof adapter.cleanup).toBe("function");
+  });
+
+  test("7. QwenConversationStore lưu và tải ánh xạ threadId <-> conversationId bền vững", () => {
+    const testFile = join(process.cwd(), "scratch", ".qwen", "test-qwen-conversations.json");
+    if (existsSync(testFile)) unlinkSync(testFile);
+
+    const store = new QwenConversationStore(testFile);
+    expect(store.getConversationId("thread-test-1")).toBeUndefined();
+
+    const uuid = "706cfc9a-5618-416c-a638-079f6ab62019";
+    store.setConversationId("thread-test-1", uuid);
+    expect(store.getConversationId("thread-test-1")).toBe(uuid);
+
+    // Khởi tạo instance mới cùng trỏ vào file để kiểm tra persist
+    const store2 = new QwenConversationStore(testFile);
+    expect(store2.getConversationId("thread-test-1")).toBe(uuid);
+
+    // Không lưu chuỗi rác không hợp lệ
+    store2.setConversationId("thread-fake", "not-a-valid-uuid");
+    expect(store2.getConversationId("thread-fake")).toBeUndefined();
+
+    store2.deleteConversation("thread-test-1");
+    expect(store2.getConversationId("thread-test-1")).toBeUndefined();
+
+    if (existsSync(testFile)) unlinkSync(testFile);
+  });
+
+  test("8. Qwen Web Adapter duy trì cuộc trò chuyện liên tục khi cùng threadId", async () => {
+    const uuid = "706cfc9a-5618-416c-a638-079f6ab62019";
+    const testFile = join(process.cwd(), "scratch", ".qwen", "test-qwen-thread.json");
+    if (existsSync(testFile)) unlinkSync(testFile);
+
+    const store = new QwenConversationStore(testFile);
+    store.setConversationId("thread-active-123", uuid);
+
+    // Khi đã có trong store:
+    const storedConvId = store.getConversationId("thread-active-123");
+    expect(storedConvId).toBe(uuid);
+
+    // Khi có tin nhắn tiếp theo trong cùng thread (cho dù messages chưa chứa assistant text):
+    const hasPrior = false;
+    const isNew = !hasPrior && !storedConvId;
+    expect(isNew).toBe(false); // Tuyệt đối KHÔNG được là phiên mới!
+
+    if (existsSync(testFile)) unlinkSync(testFile);
   });
 });

@@ -195,14 +195,14 @@ export class QwenWebAdapter implements ProviderAdapter {
       page = await this.ensureLocalBrowserPage();
     }
 
-    // 3. Xác định trạng thái hội thoại
-    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
-    const isNewConversation = !hasPriorAssistantReply;
-
-    const rawExistingConvId = isNewConversation
-      ? undefined
-      : (leaseConversationId || defaultQwenConversationStore.getConversationId(threadId));
+    // 3. Xác định trạng thái hội thoại và kịch bản prompt
+    const storedConvId = defaultQwenConversationStore.getConversationId(threadId);
+    const rawExistingConvId = leaseConversationId || storedConvId;
     const existingConversationId = isValidQwenConversationId(rawExistingConvId || "") ? rawExistingConvId : undefined;
+
+    const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
+    // Chỉ là phiên mới nếu thực sự chưa có phản hồi trợ lý VÀ thread này chưa có cuộc trò chuyện nào được lưu
+    const isNewConversation = !hasPriorAssistantReply && !existingConversationId;
     activeConversationId = existingConversationId;
 
     const initialPrompt = this.compilePrompt(parsed, isNewConversation);
@@ -282,28 +282,41 @@ export class QwenWebAdapter implements ProviderAdapter {
         throw new Error("[Qwen Format Error] Không nhận được response protocol hợp lệ.");
       }
 
-      // 4. Phát các sự kiện cho Codex Server & Bridge
-      if (protocolResult.kind === "tool_calls") {
-        console.log(`[qwen-adapter] Qwen yêu cầu gọi ${protocolResult.calls.length} công cụ.`);
-        for (const call of protocolResult.calls) {
-          const normalized = normalizeM365ToolArguments(call.name, call.arguments);
+      finalStatus = "completed";
+
+      // 4. Phát sự kiện ra Codex
+      if (protocolResult.kind === "final_answer") {
+        console.log(`[qwen-adapter] Trả về final answer (${protocolResult.content.length} ký tự).`);
+        emit({
+          type: "text_delta",
+          text: protocolResult.content,
+        });
+      } else if (protocolResult.kind === "tool_calls") {
+        console.log(`[qwen-adapter] Phát hiện ${protocolResult.calls.length} tool calls hợp lệ.`);
+        const clientTools = parsed.context.tools || [];
+        for (const rawCall of protocolResult.calls) {
+          const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools);
+          const callId = rawCall.id || `call_qwen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           emit({
-            type: "tool_call",
-            callId: call.callId,
-            toolName: normalized.name,
-            arguments: JSON.stringify(normalized.arguments),
+            type: "tool_call_start",
+            id: callId,
+            name: mapped.name,
+          });
+          emit({
+            type: "tool_call_delta",
+            arguments: typeof mapped.arguments === "string" ? mapped.arguments : JSON.stringify(mapped.arguments),
+          });
+          emit({
+            type: "tool_call_end",
           });
         }
-      } else if (protocolResult.kind === "final_answer") {
-        console.log(`[qwen-adapter] Qwen đã hoàn tất câu trả lời (${protocolResult.content.length} ký tự).`);
-        emit({
-          type: "text_chunk",
-          delta: protocolResult.content,
-        });
       }
 
-      emit({ type: "turn_completed" });
-      finalStatus = "completed";
+      emit({
+        type: "done",
+      });
+
+      console.log(`[qwen-adapter] Kết thúc lượt thành công.`);
     } catch (error) {
       finalStatus = incoming.abortSignal?.aborted ? "aborted" : "failed";
       throw error;
