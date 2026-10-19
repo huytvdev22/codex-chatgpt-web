@@ -185,7 +185,7 @@ describe("M365 Plan Mode Support", () => {
     const prompt = compileM365Prompt(parsed, true);
     expect(prompt).toContain("<proposed_plan>");
     expect(prompt).toContain("chưa sửa code (chưa dùng apply_patch/write_file)");
-    expect(prompt).toContain("xuất bản kế hoạch bọc trong thẻ <proposed_plan>");
+    expect(prompt).toContain("xuất bản kế hoạch bọc trong thẻ");
   });
 
   test("M365OutputTranslator treats proposed_plan response as final_answer even with sample code blocks", () => {

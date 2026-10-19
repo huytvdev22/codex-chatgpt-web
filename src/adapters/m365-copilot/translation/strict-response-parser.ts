@@ -14,7 +14,8 @@ export type M365ProtocolErrorCode =
   | "INCOMPLETE_PATCH_CALL"
   | "INVALID_PATCH_ENVELOPE"
   | "INVALID_PATCH_GRAMMAR"
-  | "DISALLOWED_COMMAND";
+  | "DISALLOWED_COMMAND"
+  | "UNKNOWN_TOOL";
 
 export interface StrictM365ToolCall {
   id?: string;

@@ -180,9 +180,24 @@ export function validateM365ToolCall(
   args: Record<string, unknown>,
   clientTools: CodexTool[] = []
 ): ToolValidationResult {
-  const advertised = clientTools.some(tool => tool.name === name);
-  if (!advertised && !BRIDGE_TOOLS.has(name)) {
-    return { ok: false, code: "UNKNOWN_TOOL", message: `Tool '${name}' is not advertised or supported by the M365 bridge.` };
+  const isAdvertised = clientTools.length === 0
+    ? BRIDGE_TOOLS.has(name)
+    : clientTools.some(
+        tool =>
+          tool.name === name ||
+          tool.name === `functions.${name}` ||
+          (name.startsWith("functions.") && tool.name === name.slice("functions.".length))
+      );
+
+  if (!isAdvertised) {
+    const availableTools = clientTools.length > 0
+      ? ` Các công cụ khả dụng: [${clientTools.map(t => t.name.replace(/^functions\./, "")).join(", ")}].`
+      : "";
+    return {
+      ok: false,
+      code: "UNKNOWN_TOOL",
+      message: `Công cụ '${name}' không được Codex IDE hỗ trợ hoặc chưa được kích hoạt ở lượt này.${availableTools}`,
+    };
   }
 
   if (!args || typeof args !== "object" || Array.isArray(args)) {

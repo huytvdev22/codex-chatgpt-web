@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation/strict-response-parser";
 import { buildM365FormatRetryPrompt } from "../src/adapters/m365-copilot/prompts/format-retry";
+import { validateM365ToolCall } from "../src/adapters/m365-copilot/tools/tool-validator";
 
 describe("M365 Raw Response Reproduction & Analysis", () => {
   let rawContent = "";
@@ -176,6 +177,51 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
       expect(retryPrompt).toContain("list_dir");
     }
   });
+
+  test("khi M365 gọi công cụ không có trong clientTools: validateM365ToolCall trả về UNKNOWN_TOOL kèm danh sách tool khả dụng", () => {
+    const activeClientTools = [
+      { name: "read_file", description: "Read a file", parameters: {} },
+      { name: "exec_command", description: "Run shell command", parameters: {} },
+      { name: "apply_patch", description: "Apply a patch", parameters: {} },
+    ] as any[];
+
+    // write_stdin nằm trong BRIDGE_TOOLS tĩnh nhưng KHÔNG có trong activeClientTools của lượt này
+    const result = validateM365ToolCall("write_stdin", { session_id: 1, chars: "ls" }, activeClientTools);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("UNKNOWN_TOOL");
+      expect(result.message).toContain("Công cụ 'write_stdin' không được Codex IDE hỗ trợ");
+      expect(result.message).toContain("Các công cụ khả dụng: [read_file, exec_command, apply_patch]");
+
+      const retryPrompt = buildM365FormatRetryPrompt({
+        code: result.code,
+        message: result.message,
+      });
+
+      expect(retryPrompt).toContain("công cụ bạn vừa yêu cầu gọi không tồn tại hoặc không được Codex IDE hỗ trợ");
+      expect(retryPrompt).toContain("[UNKNOWN_TOOL]");
+      expect(retryPrompt).toContain("read_file");
+      expect(retryPrompt).toContain("apply_patch");
+    }
+  });
+
+  test("khi M365 gọi công cụ hoàn toàn lạ: validateM365ToolCall phát hiện UNKNOWN_TOOL và hướng dẫn AI tự chọn lại", () => {
+    const activeClientTools = [
+      { name: "read_file", description: "Read a file", parameters: {} },
+      { name: "list_dir", description: "List directory", parameters: {} },
+    ] as any[];
+
+    const result = validateM365ToolCall("fetch_url_content", { url: "https://example.com" }, activeClientTools);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("UNKNOWN_TOOL");
+      expect(result.message).toContain("fetch_url_content");
+      expect(result.message).toContain("Các công cụ khả dụng: [read_file, list_dir]");
+    }
+  });
 });
+
 
 

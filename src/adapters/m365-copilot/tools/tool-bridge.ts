@@ -142,6 +142,11 @@ export class M365ToolBridge {
 
     const validation = validateM365ToolCall(toolName, parsedArgs, clientTools);
     if (!validation.ok) {
+      if (validation.code === "UNKNOWN_TOOL") {
+        throw new Error(
+          `[M365 Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
+        );
+      }
       throw new Error(`[M365 Tool Validation Error] ${validation.code}: ${validation.message}`);
     }
 

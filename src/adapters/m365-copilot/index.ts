@@ -205,9 +205,14 @@ export class M365CopilotAdapter implements ProviderAdapter {
             const validation = validateM365ToolCall(normalizedCall.name, normalizedCall.arguments, clientTools);
             if (!validation.ok) {
               const isDisallowed = validation.message.includes("vi phạm quy tắc an toàn");
+              const isUnknown = validation.code === "UNKNOWN_TOOL";
               protocolResult = {
                 kind: "protocol_error",
-                code: isDisallowed ? "DISALLOWED_COMMAND" : "INVALID_TOOL_CALL",
+                code: isDisallowed
+                  ? "DISALLOWED_COMMAND"
+                  : isUnknown
+                    ? "UNKNOWN_TOOL"
+                    : "INVALID_TOOL_CALL",
                 message: `${validation.code}: ${validation.message}`,
                 rawResponse: reply,
               };

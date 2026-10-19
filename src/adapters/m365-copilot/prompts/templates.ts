@@ -291,6 +291,19 @@ export type M365FormatRetryOptions = FormatRetryOptions;
 
 /** Tạo follow-up yêu cầu AI phát lại cùng nội dung theo đúng chuẩn format webResponse, tuyệt đối không tiếp tục tác vụ. */
 export function buildFormatRetryPrompt(options: FormatRetryOptions): string {
+  if (options.code === "UNKNOWN_TOOL") {
+    return `Bạn ơi, công cụ bạn vừa yêu cầu gọi không tồn tại hoặc không được Codex IDE hỗ trợ ở phiên làm việc này (chưa có công cụ nào được chạy cả):
+- Điểm bị vấp: [${options.code}] ${options.message}
+
+Bạn vui lòng chỉ sử dụng các công cụ native hợp lệ mà IDE hỗ trợ (như \`read_file\`, \`list_dir\`, \`apply_patch\`, \`exec_command\`) và gửi lại vào chuẩn khung này nhé:
+
+\`\`\`\`markdown
+<webResponse>
+... chỉ đặt các khối <tool_call> / <custom_tool_call name="apply_patch"> hoàn chỉnh (không kèm lời dẫn, không kèm <thought>), HOẶC nội dung câu trả lời Markdown cuối cùng ...
+</webResponse>
+\`\`\`\``;
+  }
+
   if (options.code === "DISALLOWED_COMMAND") {
     return `Bạn ơi, câu lệnh shell bạn yêu cầu vừa bị chính sách an toàn của IDE từ chối (chưa có công cụ nào được chạy ở lượt vừa rồi cả):
 - Điểm bị vấp: [${options.code}] ${options.message}
