@@ -177,7 +177,7 @@ export class M365ToolBridge {
       const commandValidation = SafeCommandGuard.validateShellCommand(cmd);
       if (!commandValidation.allowed) {
         throw new Error(
-          "[M365 Safe Command Error] Command was rejected by the safety policy."
+          `[M365 Safe Command Error] ${commandValidation.rule}: ${commandValidation.message} ${commandValidation.guidance}`
         );
       }
       parsedArgs = buildCodexExecCommandArguments(parsedArgs, cmd);

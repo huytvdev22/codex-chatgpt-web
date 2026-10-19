@@ -291,6 +291,20 @@ export type M365FormatRetryOptions = FormatRetryOptions;
 
 /** Tạo follow-up yêu cầu AI phát lại cùng nội dung theo đúng chuẩn format webResponse, tuyệt đối không tiếp tục tác vụ. */
 export function buildFormatRetryPrompt(options: FormatRetryOptions): string {
+  if (options.code === "DISALLOWED_COMMAND") {
+    return `Bạn ơi, câu lệnh shell bạn yêu cầu vừa bị chính sách an toàn của IDE từ chối (chưa có công cụ nào được chạy ở lượt vừa rồi cả):
+- Điểm bị vấp: [${options.code}] ${options.message}
+
+Bạn vui lòng không sử dụng lệnh quét đệ quy (Get-ChildItem -Recurse, ls -R), vòng lặp duyệt đọc file (foreach... Get-Content) hoặc wildcard (*.ext).
+Hãy đổi sang dùng công cụ native \`read_file\` (tối đa 150 dòng cho mỗi file) hoặc \`list_dir\` (depth=1) và gửi lại vào chuẩn khung này nhé:
+
+\`\`\`\`markdown
+<webResponse>
+... chỉ đặt các khối <tool_call> / <custom_tool_call name="apply_patch"> hoàn chỉnh (không kèm lời dẫn, không kèm <thought>), HOẶC nội dung câu trả lời Markdown cuối cùng ...
+</webResponse>
+\`\`\`\``;
+  }
+
   return `Bạn ơi, tin nhắn vừa rồi bạn gửi hơi lệch quy ước định dạng một chút nên script cầu nối trên máy mình chưa bóc tách để chạy lệnh được (chưa có công cụ nào được chạy ở lượt vừa rồi cả).
 - Điểm bị vấp: [${options.code}] ${options.message}
 

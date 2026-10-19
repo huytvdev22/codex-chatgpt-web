@@ -1,3 +1,5 @@
+import { SafeCommandGuard } from "../tools/safe-command-guard";
+
 export type M365ProtocolErrorCode =
   | "MISSING_TRANSPORT_FENCE"
   | "MISSING_RESPONSE_ENVELOPE"
@@ -11,7 +13,8 @@ export type M365ProtocolErrorCode =
   | "INVALID_TOOL_CALL"
   | "INCOMPLETE_PATCH_CALL"
   | "INVALID_PATCH_ENVELOPE"
-  | "INVALID_PATCH_GRAMMAR";
+  | "INVALID_PATCH_GRAMMAR"
+  | "DISALLOWED_COMMAND";
 
 export interface StrictM365ToolCall {
   id?: string;
@@ -341,6 +344,19 @@ function parseFunctionToolCall(
         rawResponse,
         "INVALID_PATCH_ENVELOPE",
         "apply_patch trong <tool_call> cũng phải chứa input hoàn chỉnh từ *** Begin Patch đến *** End Patch."
+      );
+    }
+  }
+
+  const shortName = record.name.startsWith("functions.") ? record.name.slice("functions.".length) : record.name;
+  if (shortName === "exec_command" || shortName === "run_command") {
+    const cmd = String(args.cmd || args.command || "");
+    const guardResult = SafeCommandGuard.validateShellCommand(cmd);
+    if (!guardResult.allowed) {
+      return protocolError(
+        rawResponse,
+        "DISALLOWED_COMMAND",
+        `Lệnh shell trong <tool_call> bị từ chối do vi phạm quy tắc an toàn [${guardResult.rule}]: ${guardResult.message} ${guardResult.guidance}`
       );
     }
   }

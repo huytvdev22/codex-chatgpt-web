@@ -1,4 +1,5 @@
 import type { CodexTool } from "../../../types";
+import { SafeCommandGuard } from "./safe-command-guard";
 
 export interface ToolValidationSuccess {
   ok: true;
@@ -49,6 +50,16 @@ function validateApplyPatch(args: Record<string, unknown>): ToolValidationResult
 function validateExecCommand(args: Record<string, unknown>): ToolValidationResult {
   const command = requireString(args, "cmd");
   if (!command.ok) return command;
+
+  const cmd = String(args.cmd || "");
+  const safety = SafeCommandGuard.validateShellCommand(cmd);
+  if (!safety.allowed) {
+    return {
+      ok: false,
+      code: "INVALID_ARGUMENT",
+      message: `Lệnh exec_command bị từ chối do vi phạm quy tắc an toàn [${safety.rule}]: ${safety.message} ${safety.guidance}`,
+    };
+  }
 
   const permission = args.sandbox_permissions;
   if (
