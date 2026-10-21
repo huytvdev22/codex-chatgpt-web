@@ -11,3 +11,5 @@
 | **004** | Release verify gate thất bại do check-version và test suite cũ | `core`, `ci/cd` | ✅ Đã Confirm | [004-release-verify-gate-failure.md](./004-release-verify-gate-failure.md) |
 | **005** | Rơi rụng chỉ dẫn AGENTS.md khi gửi sang ChatGPT Web và M365 Copilot | `core`, `prompt` | ✅ Đã Confirm | [005-agents-md-instructions-dropped.md](./005-agents-md-instructions-dropped.md) |
 | **006** | Lệnh vi phạm SafeCommandGuard làm sập SSE stream và gây lặp kết quả cũ Chunk ID | `m365-copilot`, `core` | ⏳ Chờ User Test & Confirm | [006-m365-safe-command-stream-disconnect.md](./006-m365-safe-command-stream-disconnect.md) |
+| **007** | bun run launcher:audit thất bại do lỗ hổng bảo mật mới trong vite <= 6.4.3 | `launcher`, `ci/cd` | ⏳ Chờ User Test & Confirm | [007-launcher-audit-vite-vulnerability.md](./007-launcher-audit-vite-vulnerability.md) |
+
