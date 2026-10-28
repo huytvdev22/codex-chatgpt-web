@@ -530,15 +530,7 @@ function LauncherShell({
             <div className="sidebar-brand-row">
               <div className="sidebar-brand-identity">
                 <BrandMark small />
-                <strong>{
-                  (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen"
-                    ? "Codex Qwen Web"
-                    : (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini"
-                      ? "Codex Gemini Web"
-                      : (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"
-                        ? "Codex M365 Copilot"
-                        : copy.product
-                }</strong>
+                <strong>{copy.product}</strong>
                 {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
               </div>
               <div className="sidebar-brand-actions">
@@ -558,57 +550,11 @@ function LauncherShell({
             <nav className="sidebar-nav" aria-label={copy.workspace}>
               <SidebarGroup label={copy.workspace}>
                 <SidebarItem
-                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini"}
-                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "gemini"
-                    ? <ActionDot pulse tone="required" />
-                    : null}
-                  icon="spark"
-                  label="Google Gemini"
-                  onClick={async () => {
-                    await api!.setProvider("gemini");
-                    updateState((await api!.snapshot()).state);
-                    navigateSurface("browser");
-                    await api!.setBrowserSurfaceActive(true);
-                  }}
-                />
-                <SidebarItem
-                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"}
-                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365"
-                    ? <ActionDot pulse tone="required" />
-                    : null}
+                  active={surface === "browser"}
+                  badge={needsBrowser ? <ActionDot pulse tone="required" /> : null}
                   icon="browser"
-                  label="M365 Copilot"
+                  label={copy.browser}
                   onClick={async () => {
-                    await api!.setProvider("m365");
-                    updateState((await api!.snapshot()).state);
-                    navigateSurface("browser");
-                    await api!.setBrowserSurfaceActive(true);
-                  }}
-                />
-                <SidebarItem
-                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen"}
-                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "qwen"
-                    ? <ActionDot pulse tone="required" />
-                    : null}
-                  icon="activity"
-                  label="Qwen"
-                  onClick={async () => {
-                    await api!.setProvider("qwen");
-                    updateState((await api!.snapshot()).state);
-                    navigateSurface("browser");
-                    await api!.setBrowserSurfaceActive(true);
-                  }}
-                />
-                <SidebarItem
-                  active={surface === "browser" && (browser?.provider || snapshot.state.selectedProvider || "m365") === "chatgpt"}
-                  badge={needsBrowser && (browser?.provider || snapshot.state.selectedProvider) === "chatgpt"
-                    ? <ActionDot pulse tone="required" />
-                    : null}
-                  icon="globe"
-                  label="ChatGPT"
-                  onClick={async () => {
-                    await api!.setProvider("chatgpt");
-                    updateState((await api!.snapshot()).state);
                     navigateSurface("browser");
                     await api!.setBrowserSurfaceActive(true);
                   }}
@@ -1029,11 +975,11 @@ function BrowserSurface({
               : copy.passkeySignIn}
           </button>
         ) : null}
-        <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
-          {visible
-            ? (browser?.provider === "qwen" ? "Hide Qwen" : (browser?.provider === "gemini" ? "Hide Google Gemini" : (browser?.provider === "m365" ? "Hide M365 Copilot" : copy.hideBrowser)))
-            : (browser?.provider === "qwen" ? "Open Qwen" : (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)))}
-        </button>
+        {(browser?.tabs ?? []).length > 0 ? (
+          <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
+            {visible ? "Hide Browser" : "Show Browser"}
+          </button>
+        ) : null}
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
       {selectedManualTab
@@ -1050,45 +996,27 @@ function BrowserSurface({
         {!visible ? (
           <div className="browser-empty">
             <BrandMark />
-            <h1>{manualInteraction
-              ? copy.browserReady
-              : browser?.authenticated
-                ? copy.noActiveTask
-                : browser?.provider === "qwen"
-                  ? "Sign in to Qwen"
-                  : browser?.provider === "gemini"
-                    ? "Sign in to Google Gemini"
-                    : browser?.provider === "m365"
-                      ? "Sign in to Microsoft 365 Copilot"
-                      : copy.stepAccount}</h1>
+            <h1>{manualInteraction ? copy.browserReady : copy.noActiveTask}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
-              : browser?.authenticated
-              ? (browser?.provider === "qwen"
-                ? "Qwen will appear here when Codex starts a Web model turn."
-                : browser?.provider === "gemini"
-                  ? "Google Gemini will appear here when Codex starts a Web model turn."
-                  : browser?.provider === "m365"
-                    ? "M365 Copilot will appear here when Codex starts a Web model turn."
-                    : copy.noActiveTaskBody)
-              : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
-            <div className="browser-empty-actions">
-              <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
-                {manualInteraction || browser?.authenticated
-                  ? (browser?.provider === "qwen" ? "Open Qwen" : (browser?.provider === "gemini" ? "Open Google Gemini" : (browser?.provider === "m365" ? "Open M365 Copilot" : copy.openChatgpt)))
-                  : copy.signIn}
-              </PrimaryButton>
-              {passkeyAvailable ? (
-                <SecondaryButton
-                  disabled={passkeyWaiting && passkeyContinuationRequested}
-                  onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
-                >
-                  {passkeyWaiting
-                    ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-                    : copy.passkeySignIn}
-                </SecondaryButton>
-              ) : null}
-            </div>
+              : "Browser tabs (M365 Copilot, Google Gemini, Qwen, ChatGPT) will appear here automatically when Codex starts a turn."}</p>
+            {(browser?.tabs ?? []).length > 0 ? (
+              <div className="browser-empty-actions">
+                <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
+                  Show Browser
+                </PrimaryButton>
+                {passkeyAvailable ? (
+                  <SecondaryButton
+                    disabled={passkeyWaiting && passkeyContinuationRequested}
+                    onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
+                  >
+                    {passkeyWaiting
+                      ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
+                      : copy.passkeySignIn}
+                  </SecondaryButton>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="browser-underlay" aria-hidden="true">

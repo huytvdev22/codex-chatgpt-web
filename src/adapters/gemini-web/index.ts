@@ -28,11 +28,14 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
 import {
   connectLauncherBrowserHost,
+  notifyLauncherTurn,
   readLauncherBrowserHostDescriptor,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
+import { extractCodexTurnIdentityFromBody } from "../chatgpt-web/environment";
 import { getConfigDir } from "../../config";
 import { processRunning } from "../../process";
 
@@ -130,15 +133,43 @@ export class GeminiWebAdapter implements ProviderAdapter {
       throw new DOMException("Gemini turn aborted before start", "AbortError");
     }
 
+    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+    const threadId =
+      rawPayload.getThreadId() ||
+      incoming.headers.get("x-codex-conversation-key") ||
+      extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
+    const conversationKey = createHash("sha256")
+      .update(`gemini-web:${threadId || "default-session"}`, "utf8")
+      .digest("hex");
+    const turnTraceId = incoming.headers.get("x-codex-trace-id") || randomBytes(12).toString("base64url");
+
     const descriptorPath = resolveDescriptorPath(this.options.descriptorPath);
     let launcherConnection: LauncherBrowserConnection | null = null;
     let page: Page | null = null;
+    let leaseStarted = false;
+    let finalStatus: "completed" | "failed" | "aborted" = "failed";
 
     if (descriptorPath) {
+      let launcherError: Error | null = null;
       try {
         const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
         if (processRunning(descriptor.pid)) {
-          const targetSurfaceId = descriptor.geminiSurfaceId || descriptor.surfaceId;
+          const lease = await notifyLauncherTurn(
+            descriptorPath,
+            {
+              phase: "start",
+              traceId: turnTraceId,
+              helperPid: process.pid,
+              conversationKey,
+              connectorIdentity: "gemini-web",
+              provider: "gemini",
+              requireRetainedConversation: false,
+            },
+            undefined,
+            incoming.abortSignal,
+          );
+          leaseStarted = true;
+          const targetSurfaceId = lease.surfaceId || descriptor.geminiSurfaceId || descriptor.surfaceId;
           console.log(`[gemini-adapter] Kết nối Playwright qua Launcher CDP (pid=${descriptor.pid}, surface=${targetSurfaceId})...`);
           launcherConnection = await connectLauncherBrowserHost(
             descriptorPath,
@@ -149,7 +180,8 @@ export class GeminiWebAdapter implements ProviderAdapter {
           page = launcherConnection.page;
         }
       } catch (err) {
-        console.warn(`[gemini-adapter] Không thể kết nối Launcher qua CDP: ${err instanceof Error ? err.message : String(err)}. Sẽ thử local Chrome.`);
+        launcherError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`[gemini-adapter] Không thể kết nối Launcher qua CDP: ${launcherError.message}. Sẽ thử local Chrome.`);
       }
     }
 
@@ -265,8 +297,10 @@ export class GeminiWebAdapter implements ProviderAdapter {
         type: "done",
       });
 
+      finalStatus = "completed";
       console.log(`[gemini-adapter] Kết thúc lượt thành công.`);
     } catch (error) {
+      finalStatus = incoming.abortSignal?.aborted ? "aborted" : "failed";
       console.error("[gemini-adapter] Lỗi trong quá trình thực thi lượt:", error);
       emit({
         type: "error",
@@ -274,6 +308,21 @@ export class GeminiWebAdapter implements ProviderAdapter {
       });
       throw error;
     } finally {
+      if (descriptorPath && leaseStarted) {
+        try {
+          await notifyLauncherTurn(descriptorPath, {
+            phase: "end",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            provider: "gemini",
+            status: finalStatus,
+            retain: true,
+            connectorBound: finalStatus === "completed",
+          });
+        } catch (releaseErr) {
+          console.warn("[gemini-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
+        }
+      }
       if (launcherConnection) {
         await launcherConnection.browser.close().catch(() => {});
       }

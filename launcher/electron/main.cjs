@@ -1115,6 +1115,13 @@ async function start() {
   if (process.platform === "linux") {
     app.commandLine.appendSwitch("class", IS_DEV_PROFILE ? "codex-web-gpt-dev" : "codex-web-gpt");
   }
+  // Giữ nguyên cơ chế tiết kiệm tài nguyên mặc định của Chromium cho renderer nền.
+  // Lưu ý: Trong Chromium, các cờ "disable-*" là boolean switch (chỉ kiểm tra sự tồn tại
+  // bằng HasSwitch, không đọc giá trị "false"). Do đó phải dùng removeSwitch thay vì appendSwitch.
+  app.commandLine.removeSwitch("disable-background-timer-throttling");
+  app.commandLine.removeSwitch("disable-backgrounding-occluded-windows");
+  app.commandLine.removeSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-component-update");
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 
@@ -1240,6 +1247,7 @@ async function start() {
   const trayAvailable = createTray(logger, stateStore.read().language);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
   const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
+  const rendererReady = loadRenderer(mainWindow);
   let startupAuthenticationRefresh = Promise.resolve();
   if (!launcherSmokeTest && stateStore.read().browserInteractionMode === "automatic") {
     startupAuthenticationRefresh = browserHost.refreshAuthentication().catch((error) => {
@@ -1248,7 +1256,7 @@ async function start() {
       });
     });
   }
-  await loadRenderer(mainWindow);
+  await rendererReady;
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
     const smokeRuntimeRoot = runtimeRootProvider();

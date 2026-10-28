@@ -111,6 +111,11 @@ class ChatGptSurfaceManager {
     const tabs = [...turnTabs.values()].filter(tab => (tab.provider || "chatgpt") === "chatgpt");
     if (tabs.some(tab => tab.conversationKey === conversationKey)) return;
 
+    for (const reclaimable of tabs.filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")) {
+      removeTab(reclaimable);
+      tabs.splice(tabs.indexOf(reclaimable), 1);
+    }
+
     const limit = MAX_CHATGPT_SURFACES;
     while (tabs.length >= limit) {
       const reclaimable = tabs

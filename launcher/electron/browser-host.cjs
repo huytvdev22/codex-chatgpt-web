@@ -12,6 +12,7 @@ const { processRunning } = require("./process-tree.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
 const { readChatGptAuthSession } = require("./chatgpt-auth-session.cjs");
+const { ViewLifecycleManager } = require("./view-lifecycle-manager.cjs");
 const {
   M365_CHAT_URL,
   M365SurfaceManager,
@@ -29,8 +30,15 @@ const {
   normalizeQwenConversationId,
   parseQwenConversationId,
 } = require("./qwen-surface-manager.cjs");
+const {
+  GEMINI_HOME_URL,
+  GeminiSurfaceManager,
+  normalizeGeminiConversationId,
+  parseGeminiConversationId,
+} = require("./gemini-surface-manager.cjs");
 const { bindM365TurnContents, markM365TurnSurface } = require("./m365-turn-surface.cjs");
 const { bindQwenTurnContents, markQwenTurnSurface } = require("./qwen-turn-surface.cjs");
+const { bindGeminiTurnContents, markGeminiTurnSurface } = require("./gemini-turn-surface.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -52,7 +60,7 @@ function resolveChatGptHomeUrl(host) {
   return CHATGPT_HOME_URL;
 }
 const M365_ORIGIN = "https://m365.cloud.microsoft";
-const GEMINI_CHAT_URL = "https://gemini.google.com/app";
+const GEMINI_CHAT_URL = GEMINI_HOME_URL;
 const GEMINI_ORIGIN = "https://gemini.google.com";
 const QWEN_CHAT_URL = QWEN_HOME_URL;
 const QWEN_ORIGIN = "https://chat.qwen.ai";
@@ -400,6 +408,7 @@ class BrowserHost {
     this.m365SurfaceManager = new M365SurfaceManager({ descriptorPath });
     this.chatGptSurfaceManager = new ChatGptSurfaceManager({ descriptorPath });
     this.qwenSurfaceManager = new QwenSurfaceManager({ descriptorPath });
+    this.geminiSurfaceManager = new GeminiSurfaceManager({ descriptorPath });
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -412,6 +421,7 @@ class BrowserHost {
     this.manualCompletionSignals = new Map();
     this.interactionModeOverride = null;
     this.selectedTabId = "home";
+    this.homeSurfaceOpen = false;
     this.manualOperation = null;
     this.loginOperation = null;
     this.sessionRefreshOperation = null;
@@ -465,66 +475,48 @@ class BrowserHost {
     this.geminiAuthenticated = false;
     this.qwenAuthenticated = false;
 
-    this.chatGptView = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-web-gpt-chatgpt",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
+    this.chatGptView = null;
+    this.m365View = null;
+    this.geminiView = null;
+    this.qwenView = null;
+    this.primaryViewManager = new ViewLifecycleManager({
+      window,
+      logger: this.logger,
+      createView: (providerName) => new WebContentsView({
+        webPreferences: {
+          partition: providerName === "qwen"
+            ? "persist:codex-web-gpt-qwen"
+            : providerName === "gemini"
+              ? "persist:codex-gemini-web"
+              : providerName === "m365"
+                ? "persist:codex-m365-copilot"
+                : "persist:codex-web-gpt-chatgpt",
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          spellcheck: true,
+          backgroundThrottling: true,
+        },
+      }),
+      onCreate: (providerName, view) => {
+        if (providerName === "qwen") this.qwenView = view;
+        else if (providerName === "gemini") this.geminiView = view;
+        else if (providerName === "m365") this.m365View = view;
+        else this.chatGptView = view;
       },
     });
-    this.m365View = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-m365-copilot",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
-      },
-    });
-    this.geminiView = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-gemini-web",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
-      },
-    });
-    this.qwenView = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-web-gpt-qwen",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
-      },
-    });
-    window.contentView.addChildView(this.chatGptView);
-    window.contentView.addChildView(this.m365View);
-    window.contentView.addChildView(this.geminiView);
-    window.contentView.addChildView(this.qwenView);
 
-    this.view = this.provider === "qwen" ? this.qwenView : (this.provider === "gemini" ? this.geminiView : (this.provider === "m365" ? this.m365View : this.chatGptView));
+    // Chỉ khởi tạo renderer của provider đang được chọn. Các provider còn lại
+    // được tạo trễ trong switchProvider khi người dùng thực sự mở chúng.
+    this.view = this.primaryViewManager.ensure(this.provider);
 
     this.windowVisibilityListener = () => this.syncViewVisibility();
     for (const event of WINDOW_VISIBILITY_EVENTS) {
       this.window.on(event, this.windowVisibilityListener);
     }
-    this.chatGptView.webContents.setZoomFactor(this.state.zoomFactor);
-    this.m365View.webContents.setZoomFactor(this.state.zoomFactor);
-    this.geminiView.webContents.setZoomFactor(this.state.zoomFactor);
-    this.qwenView.webContents.setZoomFactor(this.state.zoomFactor);
+    this.view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(this.window.webContents);
-    this.bindShellZoomShortcuts(this.chatGptView.webContents);
-    this.bindShellZoomShortcuts(this.m365View.webContents);
-    this.bindShellZoomShortcuts(this.geminiView.webContents);
-    this.bindShellZoomShortcuts(this.qwenView.webContents);
+    this.bindShellZoomShortcuts(this.view.webContents);
     this.bindChatGptBackendRecovery();
     this.bindAuthenticationChanges();
     this.bindWebContents();
@@ -554,23 +546,55 @@ class BrowserHost {
     return resolveChatGptHomeUrl(this);
   }
 
+  releaseInactivePrimaryViews(activeProvider) {
+    const providerRefs = {
+      chatgpt: "chatGptView",
+      m365: "m365View",
+      gemini: "geminiView",
+      qwen: "qwenView",
+    };
+    for (const [providerName, referenceName] of Object.entries(providerRefs)) {
+      if (providerName === activeProvider) continue;
+      const inactiveView = this[referenceName];
+      if (inactiveView?.webContents) {
+        const binding = this.shellZoomShortcutBindings.get(inactiveView.webContents);
+        if (binding && !inactiveView.webContents.isDestroyed()) {
+          inactiveView.webContents.off("before-input-event", binding);
+        }
+        this.shellZoomShortcutBindings.delete(inactiveView.webContents);
+      }
+      this.primaryViewManager.destroy(providerName);
+      this[referenceName] = null;
+    }
+  }
+
   async switchProvider(provider) {
     if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen") return;
     this.provider = provider;
     const isM365 = provider === "m365";
     const isGemini = provider === "gemini";
     const isQwen = provider === "qwen";
-    this.view = isQwen ? this.qwenView : (isGemini ? this.geminiView : (isM365 ? this.m365View : this.chatGptView));
+    const viewExisted = this.primaryViewManager.has(provider);
+    this.view = this.primaryViewManager.ensure(provider);
+    if (!viewExisted) {
+      this.view.webContents.setZoomFactor(this.state.zoomFactor);
+      this.bindShellZoomShortcuts(this.view.webContents);
+      this.bindWebContents(this.view, provider);
+      this.bindAuthenticationChanges();
+      if (provider === "chatgpt") {
+        this.bindChatGptBackendRecovery();
+      }
+    }
     this.surfaceId = isQwen ? this.qwenSurfaceId : (isGemini ? this.geminiSurfaceId : (isM365 ? this.m365SurfaceId : this.chatGptSurfaceId));
     this.partition = isQwen ? "persist:codex-web-gpt-qwen" : (isGemini ? "persist:codex-gemini-web" : (isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt"));
 
-    const allViews = [this.chatGptView, this.m365View, this.geminiView, this.qwenView];
-    for (const v of allViews) {
-      if (v && v !== this.view) {
-        v.setBounds(this.hiddenTurnBounds());
-      }
-    }
-    this.view.setBounds(this.boundsReady ? this.bounds : this.hiddenTurnBounds());
+    // Partition vẫn giữ cookie/session đăng nhập, nhưng renderer và toàn bộ DOM
+    // của provider cũ phải được đóng để số tiến trình hệ điều hành giảm ngay.
+    this.releaseInactivePrimaryViews(provider);
+    this.primaryViewManager.activate(
+      provider,
+      this.boundsReady ? this.bounds : this.hiddenTurnBounds(),
+    );
 
     const currentUrl = this.view.webContents.getURL() || "";
     const isMicrosoftDomain = currentUrl.includes("m365.cloud.microsoft")
@@ -808,21 +832,28 @@ class BrowserHost {
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
     const isM365 = provider === "m365";
     const isQwen = provider === "qwen";
+    const isGemini = provider === "gemini";
     const bootstrapUrl = isM365
       ? this.m365SurfaceManager?.initialUrl(conversationKey)
       : (isQwen
         ? (this.qwenSurfaceManager?.initialUrl(conversationKey) || QWEN_CHAT_URL)
-        : (this.chatGptSurfaceManager?.initialUrl(conversationKey) || resolveChatGptHomeUrl(this)));
+        : (isGemini
+          ? (this.geminiSurfaceManager?.initialUrl(conversationKey) || GEMINI_CHAT_URL)
+          : (this.chatGptSurfaceManager?.initialUrl(conversationKey) || resolveChatGptHomeUrl(this))));
     const conversationId = isM365
       ? this.m365SurfaceManager?.conversationId(conversationKey)
       : (isQwen
         ? (this.qwenSurfaceManager?.conversationId(conversationKey) || null)
-        : (this.chatGptSurfaceManager?.conversationId(conversationKey) || null));
+        : (isGemini
+          ? (this.geminiSurfaceManager?.conversationId(conversationKey) || null)
+          : (this.chatGptSurfaceManager?.conversationId(conversationKey) || null)));
     const view = new WebContentsView({
       webPreferences: {
         partition: isM365
           ? "persist:codex-m365-copilot"
-          : (isQwen ? "persist:codex-web-gpt-qwen" : "persist:codex-web-gpt-chatgpt"),
+          : (isQwen
+            ? "persist:codex-web-gpt-qwen"
+            : (isGemini ? "persist:codex-gemini-web" : "persist:codex-web-gpt-chatgpt")),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -843,11 +874,11 @@ class BrowserHost {
       view,
       status: "running",
       ordinal,
-      label: `${isM365 ? "M365" : (isQwen ? "Qwen" : "ChatGPT")} ${ordinal}`,
-      pageTitle: isM365 ? "M365 Copilot" : "ChatGPT",
+      label: `${isM365 ? "M365" : (isQwen ? "Qwen" : (isGemini ? "Gemini" : "ChatGPT"))} ${ordinal}`,
+      pageTitle: isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT")),
       url: bootstrapUrl,
       loading: true,
-      message: `${isM365 ? "M365 Copilot" : "ChatGPT"} is working`,
+      message: `${isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT"))} is working`,
       interactionMode: "automatic",
       initializingSurface: true,
       bootstrapReady: false,
@@ -865,6 +896,7 @@ class BrowserHost {
     this.bindShellZoomShortcuts(view.webContents);
     if (isM365) bindM365TurnContents(this, tab);
     else if (isQwen) bindQwenTurnContents(this, tab);
+    else if (isGemini) bindGeminiTurnContents(this, tab);
     else this.bindTurnContents(tab);
     await this.initializeTurnTab(tab, signal);
     return tab;
@@ -883,6 +915,7 @@ class BrowserHost {
         signal?.throwIfAborted();
         if (tab.provider === "m365") await markM365TurnSurface(tab);
         else if (tab.provider === "qwen") await markQwenTurnSurface(tab);
+        else if (tab.provider === "gemini") await markGeminiTurnSurface(tab);
         else await this.markTurnTabSurface(tab);
       })(), aborted]);
       signal?.throwIfAborted();
@@ -1292,7 +1325,7 @@ class BrowserHost {
     });
   }
 
-  bindWebContents() {
+  bindWebContents(singleView = null, singleProvider = null) {
     const bindFor = (view, providerName) => {
       const contents = view?.webContents;
       if (!contents || (typeof contents.isDestroyed === "function" && contents.isDestroyed())) return;
@@ -1323,6 +1356,11 @@ class BrowserHost {
         if (!isTargetActive()) return;
         if (inPlace) {
           this.setState({ url });
+          return;
+        }
+        if (url === IDLE_BROWSER_URL || url === "about:blank") {
+          this.clearHomeNavigationTimeout();
+          this.setState({ url, loading: false });
           return;
         }
         this.primaryRendererReady = false;
@@ -1460,7 +1498,9 @@ class BrowserHost {
       });
     };
 
-    if (this.chatGptView || this.m365View || this.geminiView || this.qwenView) {
+    if (singleView && singleProvider) {
+      bindFor(singleView, singleProvider);
+    } else if (this.chatGptView || this.m365View || this.geminiView || this.qwenView) {
       if (this.chatGptView) bindFor(this.chatGptView, "chatgpt");
       if (this.m365View) bindFor(this.m365View, "m365");
       if (this.geminiView) bindFor(this.geminiView, "gemini");
@@ -1563,7 +1603,8 @@ class BrowserHost {
   }
 
   bindAuthenticationChanges() {
-    this.authenticationCookieListener = (_event, cookie, cause, removed) => {
+    this.authenticationCookieBindings ||= new Map();
+    const listener = (_event, cookie, cause, removed) => {
       // HttpOnly cookie changes are a reason to check, never proof of sign-in.
       // Ignore analytics cookies and other sites in the shared browser partition.
       // Session verification can renew its own cookies. Do not recursively verify
@@ -1586,8 +1627,11 @@ class BrowserHost {
     if (this.geminiView?.webContents?.session?.cookies) sessions.add(this.geminiView.webContents.session.cookies);
     if (this.qwenView?.webContents?.session?.cookies) sessions.add(this.qwenView.webContents.session.cookies);
     for (const sessionCookies of sessions) {
-      sessionCookies.on("changed", this.authenticationCookieListener);
+      if (this.authenticationCookieBindings.has(sessionCookies)) continue;
+      sessionCookies.on("changed", listener);
+      this.authenticationCookieBindings.set(sessionCookies, listener);
     }
+    this.authenticationCookieListener = listener;
   }
 
   refreshAuthenticationFromSession() {
@@ -1600,7 +1644,7 @@ class BrowserHost {
         revision = this.authenticationRevision;
         const contents = this.view.webContents;
         if (contents.isDestroyed()) return;
-        if (this.provider === "m365") {
+        if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
           if (this.authenticationProbe) await this.authenticationProbe;
           if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return;
           if (revision !== this.authenticationRevision) continue;
@@ -1646,8 +1690,11 @@ class BrowserHost {
   }
 
   bindChatGptBackendRecovery() {
-    const session = this.chatGptView?.webContents?.session || this.view?.webContents?.session;
-    session?.webRequest?.onCompleted(
+    const targetView = this.chatGptView || (!this.provider || this.provider === "chatgpt" ? this.view : null);
+    const session = targetView?.webContents?.session;
+    if (!session || this.chatGptBackendRecoverySession === session) return;
+    this.chatGptBackendRecoverySession = session;
+    session.webRequest?.onCompleted(
       CHATGPT_BACKEND_REQUEST_FILTER,
       details => browserInteractionModeFor(this) === "automatic"
         ? this.handleChatGptBackendResponse(details)
@@ -1733,8 +1780,21 @@ class BrowserHost {
       status: this.state.status,
       loading: this.state.loading === true,
       active: this.selectedTabId === "home",
-      closable: false,
+      closable: Boolean(this.primaryViewManager),
     };
+    const includeHomeTab = this.primaryViewManager
+      ? Boolean(
+          this.homeSurfaceOpen
+          || this.authView
+          || this.loginOperation
+          || (this.manualOperation && this.manualOperation !== "session refresh")
+        )
+      : (this.turnTabs.size === 0
+          || this.selectedTabId === "home"
+          || Boolean(this.authView || this.loginOperation || this.manualOperation || this.reauthenticationRequired));
+    const effectiveVisible = this.primaryViewManager
+      ? (this.visible && (this.turnTabs.size > 0 || includeHomeTab))
+      : this.visible;
     const state = selected
       ? {
           ...this.state,
@@ -1750,7 +1810,7 @@ class BrowserHost {
     return {
       ...readBrowserNavigationState(contents, {
         ...state,
-        visible: this.visible,
+        visible: effectiveVisible,
         surfaceActive: this.surfaceActive,
       }, {
         readPageTitle: !manualInteraction,
@@ -1760,12 +1820,15 @@ class BrowserHost {
       chatGptAuthenticated: this.chatGptAuthenticated,
       m365Authenticated: this.m365Authenticated,
       geminiAuthenticated: this.geminiAuthenticated,
-      tabs: this.turnTabs.size > 0
-        ? [
-            homeTab,
-            ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
-          ]
-        : [homeTab],
+      qwenAuthenticated: this.qwenAuthenticated,
+      tabs: includeHomeTab
+        ? (this.turnTabs.size > 0
+            ? [
+                homeTab,
+                ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
+              ]
+            : [homeTab])
+        : [...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
       maxTabs: MAX_BROWSER_TABS,
     };
   }
@@ -1974,7 +2037,7 @@ class BrowserHost {
         tab.deviceEmulationViewport = null;
       }
       if (tab.rendererReady) tab.deviceEmulationDirty = false;
-    } else {
+    } else if (tab.status === "running") {
       // A WebContentsView born outside a hidden BrowserWindow has a 0x0 renderer even when its
       // native bounds and View visibility are non-zero. Device emulation gives background turns
       // an explicit renderer viewport before moving the view outside the launcher surface.
@@ -1988,17 +2051,66 @@ class BrowserHost {
         tab.deviceEmulationDirty = false;
       }
       tab.view.setBounds(bounds);
+    } else {
+      // Tab đã hoàn thành (ready/idle) và đang ở nền: tắt device emulation ngay để giải phóng
+      // bộ đệm khung hình (framebuffer/compositor) và cho phép Chromium throttle renderer.
+      if (tab.rendererReady && tab.deviceEmulationViewport) {
+        tab.view.webContents?.disableDeviceEmulation?.();
+        tab.deviceEmulationViewport = null;
+        tab.deviceEmulationDirty = true;
+      }
+      tab.view.setBounds(this.hiddenTurnBounds());
     }
     tab.view.setVisible(visible || tab.status === "running");
+  }
+
+  parkIdlePrimaryView() {
+    if (this.homeSurfaceOpen
+      || (this.manualOperation && this.manualOperation !== "session refresh")
+      || this.loginOperation
+      || this.authView) {
+      return;
+    }
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed?.()) return;
+    contents.setBackgroundThrottling?.(true);
+    const currentUrl = typeof contents.getURL === "function" ? contents.getURL() : "";
+    if (currentUrl && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
+      void contents.loadURL?.(IDLE_BROWSER_URL)?.catch?.(() => {});
+    }
   }
 
   presentPrimaryView(visible) {
     const automatic = browserInteractionModeFor(this) === "automatic";
     const bounds = visible ? this.bounds : this.hiddenTurnBounds();
-    const otherViews = [this.chatGptView, this.m365View, this.geminiView, this.qwenView].filter(v => v && v !== this.view);
-    for (const otherView of otherViews) {
-      otherView.setBounds(this.hiddenTurnBounds());
-      otherView.setVisible(true);
+    if (this.primaryViewManager) {
+      this.primaryViewManager.attach(this.provider);
+    } else {
+      // Tương thích với fixture/test tối giản và host cũ không có lifecycle manager.
+      const otherViews = [
+        this.chatGptView,
+        this.m365View,
+        this.geminiView,
+        this.qwenView,
+      ].filter((candidate) => candidate && candidate !== this.view);
+      for (const otherView of otherViews) {
+        otherView.setBounds(this.hiddenTurnBounds());
+        otherView.setVisible(true);
+      }
+    }
+    if (this.primaryViewManager
+      && !this.homeSurfaceOpen
+      && (!this.manualOperation || this.manualOperation === "session refresh")
+      && !this.loginOperation
+      && !this.authView) {
+      if (this.primaryRendererReady && this.primaryDeviceEmulationViewport) {
+        this.view.webContents?.disableDeviceEmulation?.();
+        this.primaryDeviceEmulationViewport = null;
+        this.primaryDeviceEmulationDirty = true;
+      }
+      this.view.setBounds(this.hiddenTurnBounds());
+      this.view.setVisible(false);
+      return;
     }
     if (visible || !automatic) {
       this.view.setBounds(bounds);
@@ -2074,8 +2186,23 @@ class BrowserHost {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
     }
+    const contents = tab.view?.webContents;
+    if (contents && this.shellZoomShortcutBindings) {
+      const binding = this.shellZoomShortcutBindings.get(contents);
+      if (binding && !contents.isDestroyed?.()) {
+        contents.off?.("before-input-event", binding);
+      }
+      this.shellZoomShortcutBindings.delete(contents);
+    }
     try { this.window.contentView.removeChildView(tab.view); } catch {}
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    if (contents && !contents.isDestroyed()) {
+      if (tab.deviceEmulationViewport) {
+        contents.disableDeviceEmulation?.();
+        tab.deviceEmulationViewport = null;
+      }
+      contents.removeAllListeners?.();
+      contents.close();
+    }
     if (this.selectedTabId === tab.id) {
       this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
       const homeContents = this.view?.webContents;
@@ -2105,6 +2232,17 @@ class BrowserHost {
   }
 
   async closeTab(tabId) {
+    if (tabId === "home") {
+      this.homeSurfaceOpen = false;
+      if (this.turnTabs.size > 0) {
+        this.selectedTabId = [...this.turnTabs.keys()].at(-1);
+      }
+      this.parkIdlePrimaryView();
+      if (this.turnTabs.size === 0) this.hide();
+      else this.syncViewVisibility();
+      this.publishState?.(this.snapshot());
+      return this.snapshot();
+    }
     const tab = this.turnTabs.get(tabId);
     if (!tab) throw new Error("Browser tab does not exist");
     const running = tab.status === "running";
@@ -2298,17 +2436,8 @@ class BrowserHost {
   }
 
   async markOwnedSurface() {
-    if (this.provider === "m365") {
-      const surfaceId = JSON.stringify(this.surfaceId);
-      await this.view.webContents.executeJavaScript(`(() => {
-        Object.defineProperty(globalThis, "__CODEX_WEB_GPT_SURFACE_ID__", {
-          value: ${surfaceId},
-          configurable: true,
-          enumerable: false,
-          writable: false,
-        });
-        document.documentElement.dataset.codexWebGptSurface = ${surfaceId};
-      })()`, true).catch(() => {});
+    if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
+      await this.markOwnedSurfaceFor(this.view.webContents, this.surfaceId);
       return;
     }
     requireAutomaticBrowserInspection(this, "ChatGPT DOM surface ownership marking");
@@ -2334,6 +2463,9 @@ class BrowserHost {
 
   async reveal(inspectSession = true) {
     if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen" && inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
+    if (!this.selectedTurnTab()) {
+      this.homeSurfaceOpen = true;
+    }
     this.show();
     const currentUrl = this.view.webContents.getURL() || "";
     if (!this.selectedTurnTab()) {
@@ -2370,6 +2502,7 @@ class BrowserHost {
   }
 
   hide() {
+    this.homeSurfaceOpen = false;
     this.visible = false;
     this.syncViewVisibility();
     this.setState({ visible: false });
@@ -2872,7 +3005,9 @@ class BrowserHost {
       if (!existing.view.webContents.isDestroyed()) {
         existing.view.webContents.setBackgroundThrottling(false);
       }
+      this.homeSurfaceOpen = false;
       this.selectedTabId = existing.id;
+      this.parkIdlePrimaryView?.();
       if (reveal) this.show();
       else this.syncViewVisibility();
       this.publishState?.(this.snapshot());
@@ -2905,6 +3040,12 @@ class BrowserHost {
         conversationKey,
         tab => this.removeTurnTab(tab, false),
       );
+    } else if (provider === "gemini" && this.geminiSurfaceManager) {
+      this.geminiSurfaceManager.prepareAllocation(
+        this.turnTabs,
+        conversationKey,
+        tab => this.removeTurnTab(tab, false),
+      );
     } else if (provider === "chatgpt" && this.chatGptSurfaceManager) {
       this.chatGptSurfaceManager.prepareAllocation(
         this.turnTabs,
@@ -2912,7 +3053,7 @@ class BrowserHost {
         tab => this.removeTurnTab(tab, false),
       );
     }
-    const tab = (provider === "m365" || provider === "qwen")
+    const tab = (provider === "m365" || provider === "qwen" || provider === "gemini")
       ? await this.createTurnTab(
           traceId,
           helperPid,
@@ -2922,7 +3063,9 @@ class BrowserHost {
           provider,
         )
       : await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal);
+    this.homeSurfaceOpen = false;
     this.selectedTabId = tab.id;
+    this.parkIdlePrimaryView?.();
     if (reveal) this.show();
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
@@ -2984,6 +3127,14 @@ class BrowserHost {
         tab.conversationId = this.qwenSurfaceManager.bind(tab.conversationKey, normalizedConversationId);
         effectiveConnectorBound = true;
       }
+    } else if (tab.provider === "gemini" && status === "completed") {
+      const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
+      const rawId = conversationId || parseGeminiConversationId(liveUrl) || tab.conversationId;
+      const normalizedConversationId = normalizeGeminiConversationId(rawId);
+      if (normalizedConversationId && tab.conversationKey && this.geminiSurfaceManager) {
+        tab.conversationId = this.geminiSurfaceManager.bind(tab.conversationKey, normalizedConversationId);
+        effectiveConnectorBound = true;
+      }
     } else if ((tab.provider || "chatgpt") === "chatgpt" && status === "completed") {
       const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
       const rawId = conversationId || parseChatGptConversationId(liveUrl) || tab.conversationId;
@@ -3007,7 +3158,16 @@ class BrowserHost {
       && (!tab.connectorIdentity || effectiveConnectorBound)) {
       tab.connectorBound = effectiveConnectorBound;
       tab.lastHeartbeatAt = Date.now();
+      for (const candidate of [...this.turnTabs.values()]) {
+        if (candidate !== tab
+          && candidate.status === "ready"
+          && candidate.interactionMode !== "manual"
+          && (candidate.provider || "chatgpt") === (tab.provider || "chatgpt")) {
+          this.removeTurnTab(candidate, false);
+        }
+      }
       if (hideAfterTurn && !this.activeTraceId) this.hide();
+      else this.syncViewVisibility?.();
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
@@ -3034,6 +3194,16 @@ class BrowserHost {
   }
 
   openLogin() {
+    this.homeSurfaceOpen = true;
+    if (this.provider === "qwen") {
+      this.activateHomeSurface();
+      this.show();
+      const current = this.view.webContents.getURL();
+      if (!current.includes("chat.qwen.ai") && !current.includes("aliyun.com")) {
+        void this.view.webContents.loadURL(QWEN_CHAT_URL);
+      }
+      return Promise.resolve(this.snapshot());
+    }
     if (this.provider === "gemini") {
       this.activateHomeSurface();
       this.show();
@@ -3251,15 +3421,40 @@ class BrowserHost {
 
   refreshAuthentication() {
     if (this.provider === "m365") {
-      const currentUrl = this.m365View?.webContents?.getURL() || "";
+      const targetView = this.m365View || this.view;
+      const currentUrl = targetView?.webContents?.getURL() || "";
       const isMicrosoftDomain = currentUrl.includes("m365.cloud.microsoft")
         || currentUrl.includes("login.microsoftonline.com")
         || currentUrl.includes("login.live.com")
         || currentUrl.includes("account.activedirectory.windowsazure.com");
-      if (!isMicrosoftDomain && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
-        void this.m365View?.webContents?.loadURL(M365_CHAT_URL).catch(() => {});
-      }
-      return this.probeAuthentication();
+      const loadPromise = !isMicrosoftDomain
+        ? Promise.resolve(targetView?.webContents?.loadURL?.(M365_CHAT_URL)).catch(() => {})
+        : Promise.resolve();
+      return loadPromise
+        .then(() => this.probeAuthentication())
+        .finally(() => {
+          if (this.primaryViewManager) {
+            this.parkIdlePrimaryView?.();
+            this.syncViewVisibility?.();
+          }
+        });
+    }
+    if (this.provider === "gemini" || this.provider === "qwen") {
+      const targetView = (this.provider === "gemini" ? this.geminiView : this.qwenView) || this.view;
+      const targetUrl = this.provider === "gemini" ? GEMINI_CHAT_URL : QWEN_CHAT_URL;
+      const domain = this.provider === "gemini" ? "gemini.google.com" : "chat.qwen.ai";
+      const currentUrl = targetView?.webContents?.getURL() || "";
+      const loadPromise = !currentUrl.includes(domain)
+        ? Promise.resolve(targetView?.webContents?.loadURL?.(targetUrl)).catch(() => {})
+        : Promise.resolve();
+      return loadPromise
+        .then(() => this.probeAuthentication())
+        .finally(() => {
+          if (this.primaryViewManager) {
+            this.parkIdlePrimaryView?.();
+            this.syncViewVisibility?.();
+          }
+        });
     }
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
@@ -3279,6 +3474,10 @@ class BrowserHost {
     let tracked;
     tracked = operation.finally(() => {
       if (this.sessionRefreshOperation === tracked) this.sessionRefreshOperation = null;
+      if (this.primaryViewManager) {
+        this.parkIdlePrimaryView?.();
+        this.syncViewVisibility?.();
+      }
     });
     this.sessionRefreshOperation = tracked;
     return tracked;
@@ -3640,12 +3839,17 @@ class BrowserHost {
   }
 
   async runSmokeTest() {
+    this.homeSurfaceOpen = true;
     if (this.provider === "gemini") {
       this.show();
       this.activateHomeSurface();
       await this.waitForSurfaceReady();
       this.setState({ status: "testing", message: "Running Google Gemini smoke test..." });
-      const currentUrl = this.view.webContents.getURL() || "";
+      let currentUrl = this.view.webContents.getURL() || "";
+      if (!currentUrl || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
+        await this.view.webContents.loadURL(GEMINI_CHAT_URL);
+        currentUrl = this.view.webContents.getURL() || "";
+      }
       const isGemini = currentUrl.includes("gemini.google.com");
       const isLogin = currentUrl.includes("accounts.google.com");
       if (!isGemini || isLogin) {
@@ -3771,7 +3975,11 @@ class BrowserHost {
       this.activateHomeSurface();
       await this.waitForSurfaceReady();
       this.setState({ status: "testing", message: "Running M365 Copilot smoke test..." });
-      const currentUrl = this.view.webContents.getURL() || "";
+      let currentUrl = this.view.webContents.getURL() || "";
+      if (!currentUrl || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
+        await this.view.webContents.loadURL(M365_CHAT_URL);
+        currentUrl = this.view.webContents.getURL() || "";
+      }
       const isM365 = currentUrl.includes("m365.cloud.microsoft");
       const isLogin = currentUrl.includes("login.microsoftonline.com") || currentUrl.includes("login.live.com");
       if (!isM365 || isLogin) {
@@ -4121,7 +4329,12 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
-    if (this.authenticationCookieListener) {
+    if (this.authenticationCookieBindings) {
+      for (const [sessionCookies, listener] of this.authenticationCookieBindings) {
+        sessionCookies.off("changed", listener);
+      }
+      this.authenticationCookieBindings.clear();
+    } else if (this.authenticationCookieListener && this.view?.webContents?.session?.cookies) {
       this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
     }
     try {
@@ -4157,10 +4370,23 @@ class BrowserHost {
         tab.manualTerminalWaiters?.clear();
       }
       try { this.window.contentView.removeChildView(tab.view); } catch {}
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+      if (!tab.view.webContents.isDestroyed()) {
+        if (tab.deviceEmulationViewport) {
+          tab.view.webContents.disableDeviceEmulation?.();
+          tab.deviceEmulationViewport = null;
+        }
+        tab.view.webContents.removeAllListeners?.();
+        tab.view.webContents.close();
+      }
     }
     this.turnTabs.clear();
-    if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.close();
+    this.primaryViewManager?.destroyAll();
+    this.chatGptBackendRecoverySession = null;
+    this.chatGptView = null;
+    this.m365View = null;
+    this.geminiView = null;
+    this.qwenView = null;
+    this.view = null;
   }
 }
 
