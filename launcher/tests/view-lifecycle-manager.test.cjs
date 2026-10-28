@@ -218,7 +218,7 @@ test("endTurn evicts older ready automatic tabs and syncs visibility when retain
   assert.equal(visibilitySynced, 1);
 });
 
-test("releaseInactivePrimaryViews destroys inactive primary views and idle turn tabs of other providers", () => {
+test("releaseInactivePrimaryViews destroys inactive primary views while preserving turnTabs in unified Browser workspace", () => {
   const destroyedProviders = [];
   const removedTabs = [];
   const m365ReadyTab = {
@@ -265,7 +265,8 @@ test("releaseInactivePrimaryViews destroys inactive primary views and idle turn 
   assert.deepEqual(destroyedProviders, ["m365", "gemini", "qwen"]);
   assert.equal(fixture.m365View, null);
   assert.notEqual(fixture.chatGptView, null);
-  assert.deepEqual(removedTabs, [["m365-ready", false]]);
+  assert.deepEqual(removedTabs, []);
+  assert.equal(fixture.turnTabs.has("m365-ready"), true);
   assert.equal(fixture.turnTabs.has("m365-running"), true);
   assert.equal(fixture.turnTabs.has("chatgpt-ready"), true);
 });
@@ -368,6 +369,12 @@ test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab wh
       webContents: {
         isDestroyed: () => false,
         getURL: () => homeUrl,
+        getTitle: () => "M365 Copilot",
+        isLoading: () => false,
+        navigationHistory: {
+          canGoBack: () => false,
+          canGoForward: () => false,
+        },
         setBackgroundThrottling: (val) => { homeThrottling = val; },
         loadURL: async (url) => { homeUrl = url; },
       },
@@ -380,6 +387,15 @@ test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab wh
 
   const snap = fixture.snapshot();
   assert.deepEqual(snap.tabs.map((t) => t.id), ["m365-tab-1"]);
+
+  // Khi vào màn hình Browser lúc chưa có turnTab nào và chưa bấm Sign in / Run verify,
+  // snapshot().tabs phải rỗng (không tự động mở trang chủ ChatGPT / M365)
+  fixture.turnTabs.clear();
+  fixture.primaryViewManager = {};
+  fixture.homeSurfaceOpen = false;
+  const idleSnap = fixture.snapshot();
+  assert.deepEqual(idleSnap.tabs, []);
+  assert.equal(idleSnap.visible, false);
 
   // Và khi bắt đầu một phiên M365 mới, tab ready cũ (M365 1) được đóng ngay lập tức
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "m365-evict-ready-"));

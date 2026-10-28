@@ -421,6 +421,7 @@ class BrowserHost {
     this.manualCompletionSignals = new Map();
     this.interactionModeOverride = null;
     this.selectedTabId = "home";
+    this.homeSurfaceOpen = false;
     this.manualOperation = null;
     this.loginOperation = null;
     this.sessionRefreshOperation = null;
@@ -564,15 +565,6 @@ class BrowserHost {
       }
       this.primaryViewManager.destroy(providerName);
       this[referenceName] = null;
-    }
-    if (this.turnTabs instanceof Map) {
-      for (const tab of [...this.turnTabs.values()]) {
-        if (tab.status === "ready"
-          && tab.interactionMode !== "manual"
-          && (tab.provider || "chatgpt") !== activeProvider) {
-          this.removeTurnTab(tab, false);
-        }
-      }
     }
   }
 
@@ -1801,8 +1793,21 @@ class BrowserHost {
       status: this.state.status,
       loading: this.state.loading === true,
       active: this.selectedTabId === "home",
-      closable: false,
+      closable: Boolean(this.primaryViewManager),
     };
+    const includeHomeTab = this.primaryViewManager
+      ? Boolean(
+          this.homeSurfaceOpen
+          || this.authView
+          || this.loginOperation
+          || (this.manualOperation && this.manualOperation !== "session refresh")
+        )
+      : (this.turnTabs.size === 0
+          || this.selectedTabId === "home"
+          || Boolean(this.authView || this.loginOperation || this.manualOperation || this.reauthenticationRequired));
+    const effectiveVisible = this.primaryViewManager
+      ? (this.visible && (this.turnTabs.size > 0 || includeHomeTab))
+      : this.visible;
     const state = selected
       ? {
           ...this.state,
@@ -1818,7 +1823,7 @@ class BrowserHost {
     return {
       ...readBrowserNavigationState(contents, {
         ...state,
-        visible: this.visible,
+        visible: effectiveVisible,
         surfaceActive: this.surfaceActive,
       }, {
         readPageTitle: !manualInteraction,
@@ -1828,9 +1833,8 @@ class BrowserHost {
       chatGptAuthenticated: this.chatGptAuthenticated,
       m365Authenticated: this.m365Authenticated,
       geminiAuthenticated: this.geminiAuthenticated,
-      tabs: (this.turnTabs.size === 0
-        || this.selectedTabId === "home"
-        || Boolean(this.authView || this.loginOperation || this.manualOperation || this.reauthenticationRequired))
+      qwenAuthenticated: this.qwenAuthenticated,
+      tabs: includeHomeTab
         ? (this.turnTabs.size > 0
             ? [
                 homeTab,
@@ -2074,10 +2078,8 @@ class BrowserHost {
   }
 
   parkIdlePrimaryView() {
-    if (this.selectedTabId === "home"
-      || !(this.turnTabs instanceof Map)
-      || this.turnTabs.size === 0
-      || this.manualOperation
+    if (this.homeSurfaceOpen
+      || (this.manualOperation && this.manualOperation !== "session refresh")
       || this.loginOperation
       || this.authView) {
       return;
@@ -2109,18 +2111,17 @@ class BrowserHost {
         otherView.setVisible(true);
       }
     }
-    if (!visible
-      && this.primaryViewManager
-      && this.turnTabs instanceof Map
-      && this.turnTabs.size > 0
-      && !this.manualOperation
-      && !this.loginOperation) {
+    if (this.primaryViewManager
+      && !this.homeSurfaceOpen
+      && (!this.manualOperation || this.manualOperation === "session refresh")
+      && !this.loginOperation
+      && !this.authView) {
       if (this.primaryRendererReady && this.primaryDeviceEmulationViewport) {
         this.view.webContents?.disableDeviceEmulation?.();
         this.primaryDeviceEmulationViewport = null;
         this.primaryDeviceEmulationDirty = true;
       }
-      this.view.setBounds(bounds);
+      this.view.setBounds(this.hiddenTurnBounds());
       this.view.setVisible(false);
       return;
     }
@@ -2244,6 +2245,17 @@ class BrowserHost {
   }
 
   async closeTab(tabId) {
+    if (tabId === "home") {
+      this.homeSurfaceOpen = false;
+      if (this.turnTabs.size > 0) {
+        this.selectedTabId = [...this.turnTabs.keys()].at(-1);
+      }
+      this.parkIdlePrimaryView();
+      if (this.turnTabs.size === 0) this.hide();
+      else this.syncViewVisibility();
+      this.publishState?.(this.snapshot());
+      return this.snapshot();
+    }
     const tab = this.turnTabs.get(tabId);
     if (!tab) throw new Error("Browser tab does not exist");
     const running = tab.status === "running";
@@ -2464,6 +2476,9 @@ class BrowserHost {
 
   async reveal(inspectSession = true) {
     if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen" && inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
+    if (!this.selectedTurnTab()) {
+      this.homeSurfaceOpen = true;
+    }
     this.show();
     const currentUrl = this.view.webContents.getURL() || "";
     if (!this.selectedTurnTab()) {
@@ -2500,6 +2515,7 @@ class BrowserHost {
   }
 
   hide() {
+    this.homeSurfaceOpen = false;
     this.visible = false;
     this.syncViewVisibility();
     this.setState({ visible: false });
@@ -3002,6 +3018,7 @@ class BrowserHost {
       if (!existing.view.webContents.isDestroyed()) {
         existing.view.webContents.setBackgroundThrottling(false);
       }
+      this.homeSurfaceOpen = false;
       this.selectedTabId = existing.id;
       this.parkIdlePrimaryView?.();
       if (reveal) this.show();
@@ -3059,6 +3076,7 @@ class BrowserHost {
           provider,
         )
       : await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal);
+    this.homeSurfaceOpen = false;
     this.selectedTabId = tab.id;
     this.parkIdlePrimaryView?.();
     if (reveal) this.show();
@@ -3156,7 +3174,8 @@ class BrowserHost {
       for (const candidate of [...this.turnTabs.values()]) {
         if (candidate !== tab
           && candidate.status === "ready"
-          && candidate.interactionMode !== "manual") {
+          && candidate.interactionMode !== "manual"
+          && (candidate.provider || "chatgpt") === (tab.provider || "chatgpt")) {
           this.removeTurnTab(candidate, false);
         }
       }
@@ -3188,6 +3207,16 @@ class BrowserHost {
   }
 
   openLogin() {
+    this.homeSurfaceOpen = true;
+    if (this.provider === "qwen") {
+      this.activateHomeSurface();
+      this.show();
+      const current = this.view.webContents.getURL();
+      if (!current.includes("chat.qwen.ai") && !current.includes("aliyun.com")) {
+        void this.view.webContents.loadURL(QWEN_CHAT_URL);
+      }
+      return Promise.resolve(this.snapshot());
+    }
     if (this.provider === "gemini") {
       this.activateHomeSurface();
       this.show();
@@ -3413,7 +3442,20 @@ class BrowserHost {
       if (!isMicrosoftDomain && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
         void this.m365View?.webContents?.loadURL(M365_CHAT_URL).catch(() => {});
       }
-      return this.probeAuthentication();
+      return this.probeAuthentication().finally(() => {
+        if (this.primaryViewManager) {
+          this.parkIdlePrimaryView?.();
+          this.syncViewVisibility?.();
+        }
+      });
+    }
+    if (this.provider === "gemini" || this.provider === "qwen") {
+      return this.probeAuthentication().finally(() => {
+        if (this.primaryViewManager) {
+          this.parkIdlePrimaryView?.();
+          this.syncViewVisibility?.();
+        }
+      });
     }
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
@@ -3433,6 +3475,10 @@ class BrowserHost {
     let tracked;
     tracked = operation.finally(() => {
       if (this.sessionRefreshOperation === tracked) this.sessionRefreshOperation = null;
+      if (this.primaryViewManager) {
+        this.parkIdlePrimaryView?.();
+        this.syncViewVisibility?.();
+      }
     });
     this.sessionRefreshOperation = tracked;
     return tracked;
@@ -3794,6 +3840,7 @@ class BrowserHost {
   }
 
   async runSmokeTest() {
+    this.homeSurfaceOpen = true;
     if (this.provider === "gemini") {
       this.show();
       this.activateHomeSurface();
