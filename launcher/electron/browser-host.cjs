@@ -12,6 +12,7 @@ const { processRunning } = require("./process-tree.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
 const { readChatGptAuthSession } = require("./chatgpt-auth-session.cjs");
+const { ViewLifecycleManager } = require("./view-lifecycle-manager.cjs");
 const {
   M365_CHAT_URL,
   M365SurfaceManager,
@@ -465,66 +466,48 @@ class BrowserHost {
     this.geminiAuthenticated = false;
     this.qwenAuthenticated = false;
 
-    this.chatGptView = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-web-gpt-chatgpt",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
+    this.chatGptView = null;
+    this.m365View = null;
+    this.geminiView = null;
+    this.qwenView = null;
+    this.primaryViewManager = new ViewLifecycleManager({
+      window,
+      logger: this.logger,
+      createView: (providerName) => new WebContentsView({
+        webPreferences: {
+          partition: providerName === "qwen"
+            ? "persist:codex-web-gpt-qwen"
+            : providerName === "gemini"
+              ? "persist:codex-gemini-web"
+              : providerName === "m365"
+                ? "persist:codex-m365-copilot"
+                : "persist:codex-web-gpt-chatgpt",
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          spellcheck: true,
+          backgroundThrottling: true,
+        },
+      }),
+      onCreate: (providerName, view) => {
+        if (providerName === "qwen") this.qwenView = view;
+        else if (providerName === "gemini") this.geminiView = view;
+        else if (providerName === "m365") this.m365View = view;
+        else this.chatGptView = view;
       },
     });
-    this.m365View = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-m365-copilot",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
-      },
-    });
-    this.geminiView = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-gemini-web",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
-      },
-    });
-    this.qwenView = new WebContentsView({
-      webPreferences: {
-        partition: "persist:codex-web-gpt-qwen",
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: true,
-      },
-    });
-    window.contentView.addChildView(this.chatGptView);
-    window.contentView.addChildView(this.m365View);
-    window.contentView.addChildView(this.geminiView);
-    window.contentView.addChildView(this.qwenView);
 
-    this.view = this.provider === "qwen" ? this.qwenView : (this.provider === "gemini" ? this.geminiView : (this.provider === "m365" ? this.m365View : this.chatGptView));
+    // Chỉ khởi tạo renderer của provider đang được chọn. Các provider còn lại
+    // được tạo trễ trong switchProvider khi người dùng thực sự mở chúng.
+    this.view = this.primaryViewManager.ensure(this.provider);
 
     this.windowVisibilityListener = () => this.syncViewVisibility();
     for (const event of WINDOW_VISIBILITY_EVENTS) {
       this.window.on(event, this.windowVisibilityListener);
     }
-    this.chatGptView.webContents.setZoomFactor(this.state.zoomFactor);
-    this.m365View.webContents.setZoomFactor(this.state.zoomFactor);
-    this.geminiView.webContents.setZoomFactor(this.state.zoomFactor);
-    this.qwenView.webContents.setZoomFactor(this.state.zoomFactor);
+    this.view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(this.window.webContents);
-    this.bindShellZoomShortcuts(this.chatGptView.webContents);
-    this.bindShellZoomShortcuts(this.m365View.webContents);
-    this.bindShellZoomShortcuts(this.geminiView.webContents);
-    this.bindShellZoomShortcuts(this.qwenView.webContents);
+    this.bindShellZoomShortcuts(this.view.webContents);
     this.bindChatGptBackendRecovery();
     this.bindAuthenticationChanges();
     this.bindWebContents();
@@ -554,23 +537,52 @@ class BrowserHost {
     return resolveChatGptHomeUrl(this);
   }
 
+  releaseInactivePrimaryViews(activeProvider) {
+    const providerRefs = {
+      chatgpt: "chatGptView",
+      m365: "m365View",
+      gemini: "geminiView",
+      qwen: "qwenView",
+    };
+    for (const [providerName, referenceName] of Object.entries(providerRefs)) {
+      if (providerName === activeProvider) continue;
+      const inactiveView = this[referenceName];
+      if (inactiveView?.webContents) {
+        const binding = this.shellZoomShortcutBindings.get(inactiveView.webContents);
+        if (binding && !inactiveView.webContents.isDestroyed()) {
+          inactiveView.webContents.off("before-input-event", binding);
+        }
+        this.shellZoomShortcutBindings.delete(inactiveView.webContents);
+      }
+      this.primaryViewManager.destroy(providerName);
+      this[referenceName] = null;
+    }
+  }
+
   async switchProvider(provider) {
     if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen") return;
     this.provider = provider;
     const isM365 = provider === "m365";
     const isGemini = provider === "gemini";
     const isQwen = provider === "qwen";
-    this.view = isQwen ? this.qwenView : (isGemini ? this.geminiView : (isM365 ? this.m365View : this.chatGptView));
+    const viewExisted = this.primaryViewManager.has(provider);
+    this.view = this.primaryViewManager.ensure(provider);
+    if (!viewExisted) {
+      this.view.webContents.setZoomFactor(this.state.zoomFactor);
+      this.bindShellZoomShortcuts(this.view.webContents);
+      this.bindWebContents(this.view, provider);
+      this.bindAuthenticationChanges();
+    }
     this.surfaceId = isQwen ? this.qwenSurfaceId : (isGemini ? this.geminiSurfaceId : (isM365 ? this.m365SurfaceId : this.chatGptSurfaceId));
     this.partition = isQwen ? "persist:codex-web-gpt-qwen" : (isGemini ? "persist:codex-gemini-web" : (isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt"));
 
-    const allViews = [this.chatGptView, this.m365View, this.geminiView, this.qwenView];
-    for (const v of allViews) {
-      if (v && v !== this.view) {
-        v.setBounds(this.hiddenTurnBounds());
-      }
-    }
-    this.view.setBounds(this.boundsReady ? this.bounds : this.hiddenTurnBounds());
+    // Partition vẫn giữ cookie/session đăng nhập, nhưng renderer và toàn bộ DOM
+    // của provider cũ phải được đóng để số tiến trình hệ điều hành giảm ngay.
+    this.releaseInactivePrimaryViews(provider);
+    this.primaryViewManager.activate(
+      provider,
+      this.boundsReady ? this.bounds : this.hiddenTurnBounds(),
+    );
 
     const currentUrl = this.view.webContents.getURL() || "";
     const isMicrosoftDomain = currentUrl.includes("m365.cloud.microsoft")
@@ -1292,7 +1304,7 @@ class BrowserHost {
     });
   }
 
-  bindWebContents() {
+  bindWebContents(singleView = null, singleProvider = null) {
     const bindFor = (view, providerName) => {
       const contents = view?.webContents;
       if (!contents || (typeof contents.isDestroyed === "function" && contents.isDestroyed())) return;
@@ -1460,7 +1472,9 @@ class BrowserHost {
       });
     };
 
-    if (this.chatGptView || this.m365View || this.geminiView || this.qwenView) {
+    if (singleView && singleProvider) {
+      bindFor(singleView, singleProvider);
+    } else if (this.chatGptView || this.m365View || this.geminiView || this.qwenView) {
       if (this.chatGptView) bindFor(this.chatGptView, "chatgpt");
       if (this.m365View) bindFor(this.m365View, "m365");
       if (this.geminiView) bindFor(this.geminiView, "gemini");
@@ -1563,7 +1577,8 @@ class BrowserHost {
   }
 
   bindAuthenticationChanges() {
-    this.authenticationCookieListener = (_event, cookie, cause, removed) => {
+    this.authenticationCookieBindings ||= new Map();
+    const listener = (_event, cookie, cause, removed) => {
       // HttpOnly cookie changes are a reason to check, never proof of sign-in.
       // Ignore analytics cookies and other sites in the shared browser partition.
       // Session verification can renew its own cookies. Do not recursively verify
@@ -1586,8 +1601,11 @@ class BrowserHost {
     if (this.geminiView?.webContents?.session?.cookies) sessions.add(this.geminiView.webContents.session.cookies);
     if (this.qwenView?.webContents?.session?.cookies) sessions.add(this.qwenView.webContents.session.cookies);
     for (const sessionCookies of sessions) {
-      sessionCookies.on("changed", this.authenticationCookieListener);
+      if (this.authenticationCookieBindings.has(sessionCookies)) continue;
+      sessionCookies.on("changed", listener);
+      this.authenticationCookieBindings.set(sessionCookies, listener);
     }
+    this.authenticationCookieListener = listener;
   }
 
   refreshAuthenticationFromSession() {
@@ -1995,10 +2013,23 @@ class BrowserHost {
   presentPrimaryView(visible) {
     const automatic = browserInteractionModeFor(this) === "automatic";
     const bounds = visible ? this.bounds : this.hiddenTurnBounds();
-    const otherViews = [this.chatGptView, this.m365View, this.geminiView, this.qwenView].filter(v => v && v !== this.view);
-    for (const otherView of otherViews) {
-      otherView.setBounds(this.hiddenTurnBounds());
-      otherView.setVisible(true);
+    if (this.primaryViewManager) {
+      this.primaryViewManager.attach(this.provider);
+    } else {
+      // Tương thích với fixture/test tối giản và host cũ không có lifecycle manager.
+      const otherViews = [
+        this.chatGptView,
+        this.m365View,
+        this.geminiView,
+        this.qwenView,
+      ].filter((candidate) => candidate && candidate !== this.view);
+      for (const otherView of otherViews) {
+        otherView.setBounds(this.hiddenTurnBounds());
+        // Fixture/host cũ không có lifecycle manager vẫn cần viewport renderer
+        // sống để Playwright điều khiển turn nền. Host thật dùng manager phía
+        // trên để detach và hibernate các provider không hoạt động.
+        otherView.setVisible(true);
+      }
     }
     if (visible || !automatic) {
       this.view.setBounds(bounds);
@@ -2018,7 +2049,9 @@ class BrowserHost {
       }
       this.view.setBounds(bounds);
     }
-    this.view.setVisible(true);
+    // Manager mới có thể detach renderer nền; fixture/host cũ phải giữ view
+    // visible ngoài màn hình để bảo toàn hợp đồng viewport hiện hữu.
+    this.view.setVisible(this.primaryViewManager ? (visible || !automatic) : true);
   }
 
   activateHomeSurface() {
@@ -4121,7 +4154,12 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
-    if (this.authenticationCookieListener) {
+    if (this.authenticationCookieBindings) {
+      for (const [sessionCookies, listener] of this.authenticationCookieBindings) {
+        sessionCookies.off("changed", listener);
+      }
+      this.authenticationCookieBindings.clear();
+    } else if (this.authenticationCookieListener && this.view?.webContents?.session?.cookies) {
       this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
     }
     try {
@@ -4160,7 +4198,12 @@ class BrowserHost {
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     }
     this.turnTabs.clear();
-    if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.close();
+    this.primaryViewManager?.destroyAll();
+    this.chatGptView = null;
+    this.m365View = null;
+    this.geminiView = null;
+    this.qwenView = null;
+    this.view = null;
   }
 }
 

@@ -1115,6 +1115,13 @@ async function start() {
   if (process.platform === "linux") {
     app.commandLine.appendSwitch("class", IS_DEV_PROFILE ? "codex-web-gpt-dev" : "codex-web-gpt");
   }
+  // Giữ nguyên cơ chế tiết kiệm tài nguyên mặc định của Chromium cho renderer nền.
+  // Không dùng các cờ "disable-*" ở trạng thái bật vì chúng làm timer và renderer
+  // của cửa sổ bị che khuất tiếp tục chạy ở toàn bộ công suất.
+  app.commandLine.appendSwitch("disable-background-timer-throttling", "false");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows", "false");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding", "false");
+  app.commandLine.appendSwitch("disable-component-update");
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 
