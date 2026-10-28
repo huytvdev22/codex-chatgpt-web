@@ -110,6 +110,11 @@ class QwenSurfaceManager {
     const tabs = [...turnTabs.values()].filter(tab => tab.provider === "qwen");
     if (tabs.some(tab => tab.conversationKey === conversationKey)) return;
 
+    for (const reclaimable of tabs.filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")) {
+      removeTab(reclaimable);
+      tabs.splice(tabs.indexOf(reclaimable), 1);
+    }
+
     const limit = MAX_QWEN_SURFACES;
     while (tabs.length >= limit) {
       const reclaimable = tabs

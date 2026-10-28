@@ -316,4 +316,90 @@ test("GeminiSurfaceManager and bindGeminiTurnContents unify Gemini turn lifecycl
   assert.equal(tab.url, "https://gemini.google.com/app/9f8e7d6c5b4a3210");
 });
 
+test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab while a turn tab is active", () => {
+  const { M365SurfaceManager } = require("../electron/m365-surface-manager.cjs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const fs = require("node:fs");
+
+  let homeUrl = "https://m365.cloud.microsoft/chat";
+  let homeThrottling = false;
+  const activeTurnTab = {
+    id: "m365-tab-1",
+    traceId: "trace_m365_1",
+    label: "M365 1",
+    pageTitle: "M365 Copilot",
+    status: "running",
+    url: "https://m365.cloud.microsoft/chat",
+    loading: false,
+    message: "M365 Copilot is working",
+    interactionMode: "automatic",
+    view: {
+      webContents: {
+        isDestroyed: () => false,
+        isLoading: () => false,
+        navigationHistory: {
+          canGoBack: () => false,
+          canGoForward: () => false,
+        },
+        getURL: () => "https://m365.cloud.microsoft/chat",
+        getTitle: () => "M365 Copilot",
+      },
+    },
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    provider: "m365",
+    selectedTabId: activeTurnTab.id,
+    turnTabs: new Map([[activeTurnTab.id, activeTurnTab]]),
+    manualOperation: null,
+    loginOperation: null,
+    authView: null,
+    reauthenticationRequired: false,
+    visible: true,
+    surfaceActive: true,
+    state: {
+      title: "M365 Copilot",
+      status: "running",
+      loading: false,
+      visible: true,
+      surfaceActive: true,
+    },
+    view: {
+      webContents: {
+        isDestroyed: () => false,
+        getURL: () => homeUrl,
+        setBackgroundThrottling: (val) => { homeThrottling = val; },
+        loadURL: async (url) => { homeUrl = url; },
+      },
+    },
+  });
+
+  fixture.parkIdlePrimaryView();
+  assert.equal(homeThrottling, true);
+  assert.equal(homeUrl, IDLE_BROWSER_URL);
+
+  const snap = fixture.snapshot();
+  assert.deepEqual(snap.tabs.map((t) => t.id), ["m365-tab-1"]);
+
+  // Và khi bắt đầu một phiên M365 mới, tab ready cũ (M365 1) được đóng ngay lập tức
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "m365-evict-ready-"));
+  try {
+    const manager = new M365SurfaceManager({
+      descriptorPath: path.join(tmpDir, "launcher-browser.json"),
+    });
+    const tabs = new Map([
+      ["m365-1", { id: "m365-1", provider: "m365", status: "ready", interactionMode: "automatic", conversationKey: "1".repeat(64) }],
+    ]);
+    const removed = [];
+    manager.prepareAllocation(tabs, "2".repeat(64), (tab) => {
+      removed.push(tab.id);
+      tabs.delete(tab.id);
+    });
+    assert.deepEqual(removed, ["m365-1"]);
+    assert.equal(tabs.size, 0);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 

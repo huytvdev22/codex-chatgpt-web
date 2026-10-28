@@ -1665,7 +1665,7 @@ class BrowserHost {
         revision = this.authenticationRevision;
         const contents = this.view.webContents;
         if (contents.isDestroyed()) return;
-        if (this.provider === "m365") {
+        if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
           if (this.authenticationProbe) await this.authenticationProbe;
           if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return;
           if (revision !== this.authenticationRevision) continue;
@@ -1828,12 +1828,16 @@ class BrowserHost {
       chatGptAuthenticated: this.chatGptAuthenticated,
       m365Authenticated: this.m365Authenticated,
       geminiAuthenticated: this.geminiAuthenticated,
-      tabs: this.turnTabs.size > 0
-        ? [
-            homeTab,
-            ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
-          ]
-        : [homeTab],
+      tabs: (this.turnTabs.size === 0
+        || this.selectedTabId === "home"
+        || Boolean(this.authView || this.loginOperation || this.manualOperation || this.reauthenticationRequired))
+        ? (this.turnTabs.size > 0
+            ? [
+                homeTab,
+                ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
+              ]
+            : [homeTab])
+        : [...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
       maxTabs: MAX_BROWSER_TABS,
     };
   }
@@ -2069,6 +2073,24 @@ class BrowserHost {
     tab.view.setVisible(visible || tab.status === "running");
   }
 
+  parkIdlePrimaryView() {
+    if (this.selectedTabId === "home"
+      || !(this.turnTabs instanceof Map)
+      || this.turnTabs.size === 0
+      || this.manualOperation
+      || this.loginOperation
+      || this.authView) {
+      return;
+    }
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed?.()) return;
+    contents.setBackgroundThrottling?.(true);
+    const currentUrl = typeof contents.getURL === "function" ? contents.getURL() : "";
+    if (currentUrl && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
+      void contents.loadURL?.(IDLE_BROWSER_URL)?.catch?.(() => {});
+    }
+  }
+
   presentPrimaryView(visible) {
     const automatic = browserInteractionModeFor(this) === "automatic";
     const bounds = visible ? this.bounds : this.hiddenTurnBounds();
@@ -2086,6 +2108,21 @@ class BrowserHost {
         otherView.setBounds(this.hiddenTurnBounds());
         otherView.setVisible(true);
       }
+    }
+    if (!visible
+      && this.primaryViewManager
+      && this.turnTabs instanceof Map
+      && this.turnTabs.size > 0
+      && !this.manualOperation
+      && !this.loginOperation) {
+      if (this.primaryRendererReady && this.primaryDeviceEmulationViewport) {
+        this.view.webContents?.disableDeviceEmulation?.();
+        this.primaryDeviceEmulationViewport = null;
+        this.primaryDeviceEmulationDirty = true;
+      }
+      this.view.setBounds(bounds);
+      this.view.setVisible(false);
+      return;
     }
     if (visible || !automatic) {
       this.view.setBounds(bounds);
@@ -2966,6 +3003,7 @@ class BrowserHost {
         existing.view.webContents.setBackgroundThrottling(false);
       }
       this.selectedTabId = existing.id;
+      this.parkIdlePrimaryView?.();
       if (reveal) this.show();
       else this.syncViewVisibility();
       this.publishState?.(this.snapshot());
@@ -3022,6 +3060,7 @@ class BrowserHost {
         )
       : await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal);
     this.selectedTabId = tab.id;
+    this.parkIdlePrimaryView?.();
     if (reveal) this.show();
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
@@ -3760,7 +3799,11 @@ class BrowserHost {
       this.activateHomeSurface();
       await this.waitForSurfaceReady();
       this.setState({ status: "testing", message: "Running Google Gemini smoke test..." });
-      const currentUrl = this.view.webContents.getURL() || "";
+      let currentUrl = this.view.webContents.getURL() || "";
+      if (!currentUrl || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
+        await this.view.webContents.loadURL(GEMINI_CHAT_URL);
+        currentUrl = this.view.webContents.getURL() || "";
+      }
       const isGemini = currentUrl.includes("gemini.google.com");
       const isLogin = currentUrl.includes("accounts.google.com");
       if (!isGemini || isLogin) {
@@ -3886,7 +3929,11 @@ class BrowserHost {
       this.activateHomeSurface();
       await this.waitForSurfaceReady();
       this.setState({ status: "testing", message: "Running M365 Copilot smoke test..." });
-      const currentUrl = this.view.webContents.getURL() || "";
+      let currentUrl = this.view.webContents.getURL() || "";
+      if (!currentUrl || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
+        await this.view.webContents.loadURL(M365_CHAT_URL);
+        currentUrl = this.view.webContents.getURL() || "";
+      }
       const isM365 = currentUrl.includes("m365.cloud.microsoft");
       const isLogin = currentUrl.includes("login.microsoftonline.com") || currentUrl.includes("login.live.com");
       if (!isM365 || isLogin) {

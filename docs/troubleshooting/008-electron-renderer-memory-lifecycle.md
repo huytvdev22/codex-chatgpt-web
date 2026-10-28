@@ -21,7 +21,8 @@
    - Chỉ tạo Primary View cho provider hiện hành; `initializePrimaryView()` và `markOwnedSurface()` phân nhánh đúng URL/ownership cho cả `chatgpt`, `m365`, `gemini`, `qwen`.
    - `releaseInactivePrimaryViews()`: khi đổi provider, hủy Primary View của provider không dùng và đóng luôn các `turnTabs` đang ở trạng thái `ready` của provider cũ.
    - `presentTurnView()`: chỉ bật `enableHiddenTurnViewport` khi `tab.status === "running"`; khi tab đã `ready` và ở nền (`!visible`), gọi `disableDeviceEmulation()` và `setVisible(false)` để Chromium kích hoạt `backgroundThrottling`.
-   - `endTurn()`: khi giữ lại tab hoàn thành (`retain = true`), thu hồi các tab automatic `ready` cũ hơn và gọi `syncViewVisibility()` ngay cả khi `hideAfterTurn === false`.
+   - `parkIdlePrimaryView()` & `snapshot()`: khi đã có `turnTab` hoạt động, tự động đưa `primaryView` (`homeTab`) về `IDLE_BROWSER_URL` (`about:blank`), tắt `deviceEmulation`, đặt `setVisible(false)` và ẩn `homeTab` khỏi thanh tab để không giữ một tab trang chủ thừa không bao giờ dùng.
+   - `prepareAllocation()` (`M365SurfaceManager`, `ChatGptSurfaceManager`, `QwenSurfaceManager`, `GeminiSurfaceManager`) & `endTurn()`: thu hồi ngay lập tức các `turnTab` ở trạng thái `ready` cũ trước khi cấp phát tab cho phiên mới hoặc khi kết thúc lượt.
    - `removeTurnTab()` & `destroy()`: gỡ `shellZoomShortcutBindings`, tắt `deviceEmulation`, gọi `removeAllListeners()` trước khi `webContents.close()`, và gỡ `authenticationCookieBindings`.
    - `bindChatGptBackendRecovery()`: chỉ gắn vào session của ChatGPT và tự gắn lại khi lazy-create `chatGptView`.
 4. **`launcher/electron/gemini-surface-manager.cjs`, `launcher/electron/gemini-turn-surface.cjs` & `src/adapters/gemini-web/index.ts`**:

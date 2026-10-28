@@ -161,6 +161,9 @@ class GeminiSurfaceManager {
       ? this.geminiTabs(turnTabs).find(tab => tab.status === "ready" && tab.conversationKey === key)
       : null;
     if (existing) return existing;
+    for (const reclaimable of this.geminiTabs(turnTabs).filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")) {
+      removeTab(reclaimable);
+    }
     while (this.geminiTabs(turnTabs).length >= this.maxSurfaces) {
       if (!this.evictOldestRetainedTab(turnTabs, removeTab)) {
         throw new Error(
