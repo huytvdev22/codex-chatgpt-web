@@ -30,8 +30,15 @@ const {
   normalizeQwenConversationId,
   parseQwenConversationId,
 } = require("./qwen-surface-manager.cjs");
+const {
+  GEMINI_HOME_URL,
+  GeminiSurfaceManager,
+  normalizeGeminiConversationId,
+  parseGeminiConversationId,
+} = require("./gemini-surface-manager.cjs");
 const { bindM365TurnContents, markM365TurnSurface } = require("./m365-turn-surface.cjs");
 const { bindQwenTurnContents, markQwenTurnSurface } = require("./qwen-turn-surface.cjs");
+const { bindGeminiTurnContents, markGeminiTurnSurface } = require("./gemini-turn-surface.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -53,7 +60,7 @@ function resolveChatGptHomeUrl(host) {
   return CHATGPT_HOME_URL;
 }
 const M365_ORIGIN = "https://m365.cloud.microsoft";
-const GEMINI_CHAT_URL = "https://gemini.google.com/app";
+const GEMINI_CHAT_URL = GEMINI_HOME_URL;
 const GEMINI_ORIGIN = "https://gemini.google.com";
 const QWEN_CHAT_URL = QWEN_HOME_URL;
 const QWEN_ORIGIN = "https://chat.qwen.ai";
@@ -401,6 +408,7 @@ class BrowserHost {
     this.m365SurfaceManager = new M365SurfaceManager({ descriptorPath });
     this.chatGptSurfaceManager = new ChatGptSurfaceManager({ descriptorPath });
     this.qwenSurfaceManager = new QwenSurfaceManager({ descriptorPath });
+    this.geminiSurfaceManager = new GeminiSurfaceManager({ descriptorPath });
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -557,6 +565,15 @@ class BrowserHost {
       this.primaryViewManager.destroy(providerName);
       this[referenceName] = null;
     }
+    if (this.turnTabs instanceof Map) {
+      for (const tab of [...this.turnTabs.values()]) {
+        if (tab.status === "ready"
+          && tab.interactionMode !== "manual"
+          && (tab.provider || "chatgpt") !== activeProvider) {
+          this.removeTurnTab(tab, false);
+        }
+      }
+    }
   }
 
   async switchProvider(provider) {
@@ -572,6 +589,9 @@ class BrowserHost {
       this.bindShellZoomShortcuts(this.view.webContents);
       this.bindWebContents(this.view, provider);
       this.bindAuthenticationChanges();
+      if (provider === "chatgpt") {
+        this.bindChatGptBackendRecovery();
+      }
     }
     this.surfaceId = isQwen ? this.qwenSurfaceId : (isGemini ? this.geminiSurfaceId : (isM365 ? this.m365SurfaceId : this.chatGptSurfaceId));
     this.partition = isQwen ? "persist:codex-web-gpt-qwen" : (isGemini ? "persist:codex-gemini-web" : (isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt"));
@@ -700,9 +720,27 @@ class BrowserHost {
     } else if (this.view) {
       this.view.setBounds(this.hiddenTurnBounds());
       this.view.setVisible(true);
-      await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
-      if (browserInteractionModeFor(this) === "automatic") {
-        await this.markOwnedSurface();
+      if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
+        const initialUrl = this.provider === "m365"
+          ? M365_CHAT_URL
+          : this.provider === "gemini"
+            ? GEMINI_CHAT_URL
+            : QWEN_CHAT_URL;
+        try {
+          await loadCommittedBrowserSurface(this.view.webContents, initialUrl);
+          if (browserInteractionModeFor(this) === "automatic") {
+            await this.markOwnedSurface();
+          }
+        } catch (err) {
+          this.logger.warn(`browser.${this.provider}_init_failed`, {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else {
+        await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
+        if (browserInteractionModeFor(this) === "automatic") {
+          await this.markOwnedSurface();
+        }
       }
     }
 
@@ -820,21 +858,28 @@ class BrowserHost {
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
     const isM365 = provider === "m365";
     const isQwen = provider === "qwen";
+    const isGemini = provider === "gemini";
     const bootstrapUrl = isM365
       ? this.m365SurfaceManager?.initialUrl(conversationKey)
       : (isQwen
         ? (this.qwenSurfaceManager?.initialUrl(conversationKey) || QWEN_CHAT_URL)
-        : (this.chatGptSurfaceManager?.initialUrl(conversationKey) || resolveChatGptHomeUrl(this)));
+        : (isGemini
+          ? (this.geminiSurfaceManager?.initialUrl(conversationKey) || GEMINI_CHAT_URL)
+          : (this.chatGptSurfaceManager?.initialUrl(conversationKey) || resolveChatGptHomeUrl(this))));
     const conversationId = isM365
       ? this.m365SurfaceManager?.conversationId(conversationKey)
       : (isQwen
         ? (this.qwenSurfaceManager?.conversationId(conversationKey) || null)
-        : (this.chatGptSurfaceManager?.conversationId(conversationKey) || null));
+        : (isGemini
+          ? (this.geminiSurfaceManager?.conversationId(conversationKey) || null)
+          : (this.chatGptSurfaceManager?.conversationId(conversationKey) || null)));
     const view = new WebContentsView({
       webPreferences: {
         partition: isM365
           ? "persist:codex-m365-copilot"
-          : (isQwen ? "persist:codex-web-gpt-qwen" : "persist:codex-web-gpt-chatgpt"),
+          : (isQwen
+            ? "persist:codex-web-gpt-qwen"
+            : (isGemini ? "persist:codex-gemini-web" : "persist:codex-web-gpt-chatgpt")),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -855,11 +900,11 @@ class BrowserHost {
       view,
       status: "running",
       ordinal,
-      label: `${isM365 ? "M365" : (isQwen ? "Qwen" : "ChatGPT")} ${ordinal}`,
-      pageTitle: isM365 ? "M365 Copilot" : "ChatGPT",
+      label: `${isM365 ? "M365" : (isQwen ? "Qwen" : (isGemini ? "Gemini" : "ChatGPT"))} ${ordinal}`,
+      pageTitle: isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT")),
       url: bootstrapUrl,
       loading: true,
-      message: `${isM365 ? "M365 Copilot" : "ChatGPT"} is working`,
+      message: `${isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT"))} is working`,
       interactionMode: "automatic",
       initializingSurface: true,
       bootstrapReady: false,
@@ -877,6 +922,7 @@ class BrowserHost {
     this.bindShellZoomShortcuts(view.webContents);
     if (isM365) bindM365TurnContents(this, tab);
     else if (isQwen) bindQwenTurnContents(this, tab);
+    else if (isGemini) bindGeminiTurnContents(this, tab);
     else this.bindTurnContents(tab);
     await this.initializeTurnTab(tab, signal);
     return tab;
@@ -895,6 +941,7 @@ class BrowserHost {
         signal?.throwIfAborted();
         if (tab.provider === "m365") await markM365TurnSurface(tab);
         else if (tab.provider === "qwen") await markQwenTurnSurface(tab);
+        else if (tab.provider === "gemini") await markGeminiTurnSurface(tab);
         else await this.markTurnTabSurface(tab);
       })(), aborted]);
       signal?.throwIfAborted();
@@ -1664,8 +1711,11 @@ class BrowserHost {
   }
 
   bindChatGptBackendRecovery() {
-    const session = this.chatGptView?.webContents?.session || this.view?.webContents?.session;
-    session?.webRequest?.onCompleted(
+    const targetView = this.chatGptView || (!this.provider || this.provider === "chatgpt" ? this.view : null);
+    const session = targetView?.webContents?.session;
+    if (!session || this.chatGptBackendRecoverySession === session) return;
+    this.chatGptBackendRecoverySession = session;
+    session.webRequest?.onCompleted(
       CHATGPT_BACKEND_REQUEST_FILTER,
       details => browserInteractionModeFor(this) === "automatic"
         ? this.handleChatGptBackendResponse(details)
@@ -1992,7 +2042,7 @@ class BrowserHost {
         tab.deviceEmulationViewport = null;
       }
       if (tab.rendererReady) tab.deviceEmulationDirty = false;
-    } else {
+    } else if (tab.status === "running") {
       // A WebContentsView born outside a hidden BrowserWindow has a 0x0 renderer even when its
       // native bounds and View visibility are non-zero. Device emulation gives background turns
       // an explicit renderer viewport before moving the view outside the launcher surface.
@@ -2006,6 +2056,15 @@ class BrowserHost {
         tab.deviceEmulationDirty = false;
       }
       tab.view.setBounds(bounds);
+    } else {
+      // Tab đã hoàn thành (ready/idle) và đang ở nền: tắt device emulation ngay để giải phóng
+      // bộ đệm khung hình (framebuffer/compositor) và cho phép Chromium throttle renderer.
+      if (tab.rendererReady && tab.deviceEmulationViewport) {
+        tab.view.webContents?.disableDeviceEmulation?.();
+        tab.deviceEmulationViewport = null;
+        tab.deviceEmulationDirty = true;
+      }
+      tab.view.setBounds(this.hiddenTurnBounds());
     }
     tab.view.setVisible(visible || tab.status === "running");
   }
@@ -2025,9 +2084,6 @@ class BrowserHost {
       ].filter((candidate) => candidate && candidate !== this.view);
       for (const otherView of otherViews) {
         otherView.setBounds(this.hiddenTurnBounds());
-        // Fixture/host cũ không có lifecycle manager vẫn cần viewport renderer
-        // sống để Playwright điều khiển turn nền. Host thật dùng manager phía
-        // trên để detach và hibernate các provider không hoạt động.
         otherView.setVisible(true);
       }
     }
@@ -2049,9 +2105,7 @@ class BrowserHost {
       }
       this.view.setBounds(bounds);
     }
-    // Manager mới có thể detach renderer nền; fixture/host cũ phải giữ view
-    // visible ngoài màn hình để bảo toàn hợp đồng viewport hiện hữu.
-    this.view.setVisible(this.primaryViewManager ? (visible || !automatic) : true);
+    this.view.setVisible(true);
   }
 
   activateHomeSurface() {
@@ -2107,8 +2161,23 @@ class BrowserHost {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
     }
+    const contents = tab.view?.webContents;
+    if (contents && this.shellZoomShortcutBindings) {
+      const binding = this.shellZoomShortcutBindings.get(contents);
+      if (binding && !contents.isDestroyed?.()) {
+        contents.off?.("before-input-event", binding);
+      }
+      this.shellZoomShortcutBindings.delete(contents);
+    }
     try { this.window.contentView.removeChildView(tab.view); } catch {}
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    if (contents && !contents.isDestroyed()) {
+      if (tab.deviceEmulationViewport) {
+        contents.disableDeviceEmulation?.();
+        tab.deviceEmulationViewport = null;
+      }
+      contents.removeAllListeners?.();
+      contents.close();
+    }
     if (this.selectedTabId === tab.id) {
       this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
       const homeContents = this.view?.webContents;
@@ -2331,17 +2400,8 @@ class BrowserHost {
   }
 
   async markOwnedSurface() {
-    if (this.provider === "m365") {
-      const surfaceId = JSON.stringify(this.surfaceId);
-      await this.view.webContents.executeJavaScript(`(() => {
-        Object.defineProperty(globalThis, "__CODEX_WEB_GPT_SURFACE_ID__", {
-          value: ${surfaceId},
-          configurable: true,
-          enumerable: false,
-          writable: false,
-        });
-        document.documentElement.dataset.codexWebGptSurface = ${surfaceId};
-      })()`, true).catch(() => {});
+    if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
+      await this.markOwnedSurfaceFor(this.view.webContents, this.surfaceId);
       return;
     }
     requireAutomaticBrowserInspection(this, "ChatGPT DOM surface ownership marking");
@@ -2938,6 +2998,12 @@ class BrowserHost {
         conversationKey,
         tab => this.removeTurnTab(tab, false),
       );
+    } else if (provider === "gemini" && this.geminiSurfaceManager) {
+      this.geminiSurfaceManager.prepareAllocation(
+        this.turnTabs,
+        conversationKey,
+        tab => this.removeTurnTab(tab, false),
+      );
     } else if (provider === "chatgpt" && this.chatGptSurfaceManager) {
       this.chatGptSurfaceManager.prepareAllocation(
         this.turnTabs,
@@ -2945,7 +3011,7 @@ class BrowserHost {
         tab => this.removeTurnTab(tab, false),
       );
     }
-    const tab = (provider === "m365" || provider === "qwen")
+    const tab = (provider === "m365" || provider === "qwen" || provider === "gemini")
       ? await this.createTurnTab(
           traceId,
           helperPid,
@@ -3017,6 +3083,14 @@ class BrowserHost {
         tab.conversationId = this.qwenSurfaceManager.bind(tab.conversationKey, normalizedConversationId);
         effectiveConnectorBound = true;
       }
+    } else if (tab.provider === "gemini" && status === "completed") {
+      const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
+      const rawId = conversationId || parseGeminiConversationId(liveUrl) || tab.conversationId;
+      const normalizedConversationId = normalizeGeminiConversationId(rawId);
+      if (normalizedConversationId && tab.conversationKey && this.geminiSurfaceManager) {
+        tab.conversationId = this.geminiSurfaceManager.bind(tab.conversationKey, normalizedConversationId);
+        effectiveConnectorBound = true;
+      }
     } else if ((tab.provider || "chatgpt") === "chatgpt" && status === "completed") {
       const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
       const rawId = conversationId || parseChatGptConversationId(liveUrl) || tab.conversationId;
@@ -3040,7 +3114,15 @@ class BrowserHost {
       && (!tab.connectorIdentity || effectiveConnectorBound)) {
       tab.connectorBound = effectiveConnectorBound;
       tab.lastHeartbeatAt = Date.now();
+      for (const candidate of [...this.turnTabs.values()]) {
+        if (candidate !== tab
+          && candidate.status === "ready"
+          && candidate.interactionMode !== "manual") {
+          this.removeTurnTab(candidate, false);
+        }
+      }
       if (hideAfterTurn && !this.activeTraceId) this.hide();
+      else this.syncViewVisibility?.();
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
@@ -4195,10 +4277,18 @@ class BrowserHost {
         tab.manualTerminalWaiters?.clear();
       }
       try { this.window.contentView.removeChildView(tab.view); } catch {}
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+      if (!tab.view.webContents.isDestroyed()) {
+        if (tab.deviceEmulationViewport) {
+          tab.view.webContents.disableDeviceEmulation?.();
+          tab.deviceEmulationViewport = null;
+        }
+        tab.view.webContents.removeAllListeners?.();
+        tab.view.webContents.close();
+      }
     }
     this.turnTabs.clear();
     this.primaryViewManager?.destroyAll();
+    this.chatGptBackendRecoverySession = null;
     this.chatGptView = null;
     this.m365View = null;
     this.geminiView = null;

@@ -1,111 +1,28 @@
-# Lỗi 008: Electron tích lũy Renderer và sử dụng hơn 2 GB RAM
+# [ISSUE-008] Electron tích lũy Renderer và sử dụng hơn 2 GB RAM
+
+> **Status:** ⏳ Chờ User Test & Confirm
+> **Providers:** `launcher`, `electron`, `chatgpt-web`, `m365-copilot`, `gemini-web`, `qwen-web`
+> **Keywords:** `renderer`, `WebContentsView`, `RAM`, `memory leak`, `ViewLifecycleManager`, `turnTabs`, `backgroundThrottling`
 
 ## ⚡ TL;DR
-- **Triệu chứng**: Launcher tạo hơn 9 Renderer; RAM tổng vượt 2,1 GB và `renderer-client-id` tăng liên tục.
-- **Nguyên nhân gốc rễ**: Bốn provider được tạo và tải ngay khi khởi động; view nền chỉ bị đưa ra ngoài màn hình, không bị detach/destroy; listener cookie có thể được đăng ký lặp.
-- **Cách sửa**: Lazy-load provider, destroy renderer provider cũ khi chuyển, đóng triệt để tab, quản lý listener theo session và bật throttling Chromium.
+- **Triệu chứng**: Launcher tạo 9–12 tiến trình `--type=renderer`, tổng RAM vượt 2,1 GB và `renderer-client-id` tăng liên tục.
+- **Nguyên nhân gốc rễ**: (1) Khởi tạo đồng loạt 4 Primary `WebContentsView` lúc mở app; (2) Các `turnTabs` sau khi hoàn thành (`retain: true`) không gọi `syncViewVisibility()` khi chạy ngầm nên vẫn giữ `setVisible(true)` + `deviceEmulation` khiến Chromium không bao giờ throttle; (3) Tích lũy tối đa 5 `turnTabs` chờ cùng lúc suốt 30 phút; (4) Cờ `appendSwitch("disable-...", "false")` trong `main.cjs` vô tình bật cờ boolean `HasSwitch` của Chromium làm tắt hoàn toàn throttling nền.
+- **Cách sửa**: Dùng `ViewLifecycleManager` lazy-load đúng 1 Primary View đang chọn và hủy view + tab chờ của provider cũ khi chuyển; gọi `removeSwitch` cho các cờ `disable-*` ở `main.cjs`; trong `endTurn()` và `presentTurnView()`, thu hồi ngay các tab `ready` cũ hơn, tắt `deviceEmulation`, đặt `setVisible(false)` và dọn sạch listener khi đóng tab; đồng bộ `GeminiWebAdapter` qua `notifyLauncherTurn`.
 
 ---
 
-## Trạng thái
+## 🛠️ File Sửa & Quy Tắc Cốt Lõi
 
-⏳ Chờ User Test & Confirm
-
-## Nguyên nhân kỹ thuật
-
-### 1. Provider bị tạo đồng loạt
-
-Trước bản sửa, constructor `BrowserHost` tạo ngay bốn `WebContentsView`:
-
-- ChatGPT
-- M365 Copilot
-- Gemini
-- Qwen
-
-Mỗi view được gắn vào `window.contentView`, tạo renderer riêng dù người dùng chưa mở provider.
-
-### 2. View nền vẫn hoạt động
-
-`presentPrimaryView()` và `switchProvider()` trước đây chỉ:
-
-- chuyển view ra ngoài vùng nhìn thấy;
-- giữ `setVisible(true)`;
-- giữ DOM, JavaScript và renderer sống.
-
-Do đó chuyển provider không làm số tiến trình Renderer giảm.
-
-### 3. Tab turn cần được đóng triệt để
-
-Các turn tab được tạo bằng `WebContentsView` riêng. Đường đóng chuẩn phải:
-
-1. xóa tab khỏi `turnTabs`;
-2. clear timer, prompt và waiter;
-3. detach khỏi `window.contentView`;
-4. gọi `webContents.close()`;
-5. xóa reference còn giữ tab.
-
-### 4. Listener xác thực có thể đăng ký lặp
-
-Khi provider được tạo trễ, listener `cookies.changed` có thể bị đăng ký lại. Bản sửa lưu binding theo đối tượng cookie session và gỡ toàn bộ khi `BrowserHost.destroy()`.
-
-## Thay đổi đã áp dụng
-
-### Module lifecycle
-
-File: `launcher/electron/view-lifecycle-manager.cjs`
-
-- Lazy-create một renderer cho provider đang dùng.
-- Reuse instance hiện có nếu còn sống.
-- Attach/detach view khỏi `BrowserWindow`.
-- Hỗ trợ hibernate bằng `setBackgroundThrottling(true)`.
-- Hỗ trợ destroy từng provider hoặc toàn bộ.
-- Gỡ listener khỏi `webContents` trước khi đóng.
-
-### Tích hợp BrowserHost
-
-File: `launcher/electron/browser-host.cjs`
-
-- Chỉ provider ban đầu được khởi tạo.
-- Provider khác chỉ được tạo khi `switchProvider()` được gọi.
-- Khi chuyển provider, renderer provider cũ bị destroy và reference được đặt về `null`.
-- Cookie listener được quản lý bằng `authenticationCookieBindings`.
-- `destroy()` giải phóng toàn bộ provider, turn tab, timer và listener.
-
-### Cờ Chromium
-
-File: `launcher/electron/main.cjs`
-
-- `disable-background-timer-throttling=false`
-- `disable-backgrounding-occluded-windows=false`
-- `disable-renderer-backgrounding=false`
-- `disable-component-update`
-
-## Frontend và IPC
-
-Kết quả rà soát:
-
-- `launcher/electron/preload.cjs` trả về hàm unsubscribe và gọi `ipcRenderer.removeListener()`.
-- `launcher/src/App.tsx` lưu các hàm unsubscribe và gọi chúng trong cleanup của `useEffect`.
-- Listener resize, media query, keyboard, interval và timeout đều có cleanup.
-- Log streaming phía UI đã giới hạn còn tối đa khoảng 5.000 bản ghi.
-- Launcher không render lịch sử hội thoại LLM hoặc code highlight trong React; nội dung hội thoại nằm trong các website provider, nên virtual scroll phải do provider thực hiện. Không có danh sách chat nội bộ phù hợp để thêm virtual scrolling.
-
-## Kiểm thử
-
-- `node --check`: đạt cho các file Electron đã sửa.
-- `bun run typecheck`: đạt.
-- `git diff --check`: đạt.
-- `bun test tests/browser-host.test.cjs`: 107/113 test đạt.
-- 6 test còn lỗi thuộc nhóm hành vi authentication/Temporary Chat có sẵn, không nằm trong lifecycle renderer vừa thay đổi.
-- `node --test` không chạy được trên môi trường hiện tại do Windows trả `spawn EPERM`; dùng `bun test` để kiểm tra trực tiếp.
-
-## Checklist User Test
-
-1. Khởi động launcher và ghi nhận số process `--type=renderer`.
-2. Chưa mở provider khác: chỉ renderer shell và provider mặc định được tạo.
-3. Chuyển ChatGPT → M365 → Gemini → Qwen nhiều lần.
-4. Xác nhận renderer provider cũ biến mất sau mỗi lần chuyển.
-5. Mở và đóng turn tab; xác nhận mỗi renderer tab đóng tương ứng.
-6. Kiểm tra lại đăng nhập provider sau khi renderer được tạo lại.
-7. Theo dõi RAM trong 15-30 phút và xác nhận không tăng tuyến tính theo số lần đổi tab.
-
+1. **`launcher/electron/main.cjs`**:
+   - Dùng `app.commandLine.removeSwitch(...)` cho `disable-background-timer-throttling`, `disable-backgrounding-occluded-windows`, `disable-renderer-backgrounding` (TUYỆT ĐỐI không dùng `appendSwitch(..., "false")` vì Chromium kiểm tra sự tồn tại của cờ bằng `HasSwitch`).
+2. **`launcher/electron/view-lifecycle-manager.cjs`**:
+   - Quản lý lazy-create, attach/detach, hibernate và destroy `WebContentsView` của từng provider.
+3. **`launcher/electron/browser-host.cjs`**:
+   - Chỉ tạo Primary View cho provider hiện hành; `initializePrimaryView()` và `markOwnedSurface()` phân nhánh đúng URL/ownership cho cả `chatgpt`, `m365`, `gemini`, `qwen`.
+   - `releaseInactivePrimaryViews()`: khi đổi provider, hủy Primary View của provider không dùng và đóng luôn các `turnTabs` đang ở trạng thái `ready` của provider cũ.
+   - `presentTurnView()`: chỉ bật `enableHiddenTurnViewport` khi `tab.status === "running"`; khi tab đã `ready` và ở nền (`!visible`), gọi `disableDeviceEmulation()` và `setVisible(false)` để Chromium kích hoạt `backgroundThrottling`.
+   - `endTurn()`: khi giữ lại tab hoàn thành (`retain = true`), thu hồi các tab automatic `ready` cũ hơn và gọi `syncViewVisibility()` ngay cả khi `hideAfterTurn === false`.
+   - `removeTurnTab()` & `destroy()`: gỡ `shellZoomShortcutBindings`, tắt `deviceEmulation`, gọi `removeAllListeners()` trước khi `webContents.close()`, và gỡ `authenticationCookieBindings`.
+   - `bindChatGptBackendRecovery()`: chỉ gắn vào session của ChatGPT và tự gắn lại khi lazy-create `chatGptView`.
+4. **`launcher/electron/gemini-surface-manager.cjs`, `launcher/electron/gemini-turn-surface.cjs` & `src/adapters/gemini-web/index.ts`**:
+   - Đồng nhất 100% quy trình vòng đời lượt (`notifyLauncherTurn` `phase: "start"` / `"end"`, `GeminiSurfaceManager`, `bindGeminiTurnContents`, `markGeminiTurnSurface`) của Gemini với ChatGPT, M365 và Qwen.
