@@ -1,5 +1,6 @@
 const { createHash } = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { renameAtomicFile } = require("./atomic-file.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
@@ -7,6 +8,37 @@ const { runtimeBundlePaths } = require("./runtime-command.cjs");
 const DEFAULT_SOURCE_WAIT_TIMEOUT_MS = 30_000;
 const DEFAULT_SOURCE_WAIT_INTERVAL_MS = 50;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const PERSISTED_HASH_MIN_BYTES = 65_536;
+const PERSISTED_HASH_CACHE_PATH = path.join(os.tmpdir(), "codex-web-gpt-runtime-hash-cache-v1.json");
+const verifiedFileHashes = new Map();
+let persistedCacheLoaded = false;
+
+function loadPersistedHashCache() {
+  if (persistedCacheLoaded) return;
+  persistedCacheLoaded = true;
+  try {
+    const raw = JSON.parse(fs.readFileSync(PERSISTED_HASH_CACHE_PATH, "utf8"));
+    if (raw && typeof raw === "object") {
+      for (const [key, entry] of Object.entries(raw)) {
+        if (entry && typeof entry === "object" && typeof entry.sha256 === "string") {
+          verifiedFileHashes.set(key, entry);
+        }
+      }
+    }
+  } catch {}
+}
+
+function savePersistedHashCache() {
+  try {
+    const serializable = {};
+    for (const [key, entry] of verifiedFileHashes.entries()) {
+      if (entry.size >= PERSISTED_HASH_MIN_BYTES) {
+        serializable[key] = entry;
+      }
+    }
+    fs.writeFileSync(PERSISTED_HASH_CACHE_PATH, JSON.stringify(serializable));
+  } catch {}
+}
 
 function comparePaths(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -136,9 +168,27 @@ function validateRuntimeFile(runtimeRoot, canonicalRoot, file) {
   if (metadata.size !== file.size) {
     throw new Error(`Runtime bundle file size mismatch: ${absolutePath}`);
   }
+  loadPersistedHashCache();
+  const cached = verifiedFileHashes.get(absolutePath);
+  if (cached
+    && cached.size === metadata.size
+    && cached.mtimeMs === metadata.mtimeMs
+    && (cached.ctimeMs === undefined || cached.ctimeMs === metadata.ctimeMs)
+    && cached.sha256 === file.sha256) {
+    return;
+  }
   const sha256 = createHash("sha256").update(fs.readFileSync(absolutePath)).digest("hex");
   if (sha256 !== file.sha256) {
     throw new Error(`Runtime bundle file checksum mismatch: ${absolutePath}`);
+  }
+  verifiedFileHashes.set(absolutePath, {
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ctimeMs: metadata.ctimeMs,
+    sha256,
+  });
+  if (metadata.size >= PERSISTED_HASH_MIN_BYTES) {
+    savePersistedHashCache();
   }
 }
 
@@ -255,9 +305,10 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
       renameAtomicFile(destination, previous);
       previousMoved = true;
     }
+    let validatedDestination;
     try {
       renameAtomicFile(temporary, destination);
-      validateRuntimeBundle(destination, expectedIdentity);
+      validatedDestination = validateRuntimeBundle(destination, expectedIdentity);
     } catch (error) {
       fs.rmSync(destination, { recursive: true, force: true });
       if (previousMoved) {
@@ -277,6 +328,8 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
       fs.rmSync(previous, { recursive: true, force: true });
       previousMoved = false;
     }
+    try { fs.chmodSync(destination, 0o700); } catch {}
+    return validatedDestination;
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
     if (previousMoved && fs.existsSync(previous) && !fs.existsSync(destination)) {
@@ -284,8 +337,6 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
       previousMoved = false;
     }
   }
-  try { fs.chmodSync(destination, 0o700); } catch {}
-  return validateRuntimeBundle(destination, expectedIdentity);
 }
 
 module.exports = {

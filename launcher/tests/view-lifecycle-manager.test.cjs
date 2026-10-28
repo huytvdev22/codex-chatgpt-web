@@ -56,13 +56,8 @@ test("ViewLifecycleManager lazy-loads views and destroys inactive ones cleanly",
   assert.equal(manager.has("chatgpt"), false);
 });
 
-test("initializePrimaryView loads provider-specific home URL when starting on non-ChatGPT provider", async () => {
-  for (const [provider, expectedUrl] of [
-    ["m365", "https://m365.cloud.microsoft/chat"],
-    ["gemini", "https://gemini.google.com/app"],
-    ["qwen", "https://chat.qwen.ai/"],
-    ["chatgpt", IDLE_BROWSER_URL],
-  ]) {
+test("initializePrimaryView loads IDLE_BROWSER_URL immediately without blocking startup on network I/O", async () => {
+  for (const provider of ["m365", "gemini", "qwen", "chatgpt"]) {
     const calls = [];
     let currentUrl = "about:blank";
     const contents = new EventEmitter();
@@ -96,11 +91,11 @@ test("initializePrimaryView loads provider-specific home URL when starting on no
     assert.deepEqual(calls, [
       ["bounds", hiddenBounds],
       ["visible", true],
-      ["load", expectedUrl],
+      ["load", IDLE_BROWSER_URL],
       ["owned", provider],
       "sync",
       "descriptor",
-      ["browser.initialized", { url: expectedUrl }],
+      ["browser.initialized", { url: IDLE_BROWSER_URL }],
     ]);
   }
 });

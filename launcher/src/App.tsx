@@ -1005,6 +1005,16 @@ function BrowserSurface({
                 <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
                   Show Browser
                 </PrimaryButton>
+                {passkeyAvailable ? (
+                  <SecondaryButton
+                    disabled={passkeyWaiting && passkeyContinuationRequested}
+                    onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
+                  >
+                    {passkeyWaiting
+                      ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
+                      : copy.passkeySignIn}
+                  </SecondaryButton>
+                ) : null}
               </div>
             ) : null}
           </div>

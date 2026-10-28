@@ -712,27 +712,9 @@ class BrowserHost {
     } else if (this.view) {
       this.view.setBounds(this.hiddenTurnBounds());
       this.view.setVisible(true);
-      if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
-        const initialUrl = this.provider === "m365"
-          ? M365_CHAT_URL
-          : this.provider === "gemini"
-            ? GEMINI_CHAT_URL
-            : QWEN_CHAT_URL;
-        try {
-          await loadCommittedBrowserSurface(this.view.webContents, initialUrl);
-          if (browserInteractionModeFor(this) === "automatic") {
-            await this.markOwnedSurface();
-          }
-        } catch (err) {
-          this.logger.warn(`browser.${this.provider}_init_failed`, {
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      } else {
-        await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
-        if (browserInteractionModeFor(this) === "automatic") {
-          await this.markOwnedSurface();
-        }
+      await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
+      if (browserInteractionModeFor(this) === "automatic") {
+        await this.markOwnedSurface();
       }
     }
 
@@ -1374,6 +1356,11 @@ class BrowserHost {
         if (!isTargetActive()) return;
         if (inPlace) {
           this.setState({ url });
+          return;
+        }
+        if (url === IDLE_BROWSER_URL || url === "about:blank") {
+          this.clearHomeNavigationTimeout();
+          this.setState({ url, loading: false });
           return;
         }
         this.primaryRendererReady = false;
@@ -3434,28 +3421,40 @@ class BrowserHost {
 
   refreshAuthentication() {
     if (this.provider === "m365") {
-      const currentUrl = this.m365View?.webContents?.getURL() || "";
+      const targetView = this.m365View || this.view;
+      const currentUrl = targetView?.webContents?.getURL() || "";
       const isMicrosoftDomain = currentUrl.includes("m365.cloud.microsoft")
         || currentUrl.includes("login.microsoftonline.com")
         || currentUrl.includes("login.live.com")
         || currentUrl.includes("account.activedirectory.windowsazure.com");
-      if (!isMicrosoftDomain && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
-        void this.m365View?.webContents?.loadURL(M365_CHAT_URL).catch(() => {});
-      }
-      return this.probeAuthentication().finally(() => {
-        if (this.primaryViewManager) {
-          this.parkIdlePrimaryView?.();
-          this.syncViewVisibility?.();
-        }
-      });
+      const loadPromise = !isMicrosoftDomain
+        ? Promise.resolve(targetView?.webContents?.loadURL?.(M365_CHAT_URL)).catch(() => {})
+        : Promise.resolve();
+      return loadPromise
+        .then(() => this.probeAuthentication())
+        .finally(() => {
+          if (this.primaryViewManager) {
+            this.parkIdlePrimaryView?.();
+            this.syncViewVisibility?.();
+          }
+        });
     }
     if (this.provider === "gemini" || this.provider === "qwen") {
-      return this.probeAuthentication().finally(() => {
-        if (this.primaryViewManager) {
-          this.parkIdlePrimaryView?.();
-          this.syncViewVisibility?.();
-        }
-      });
+      const targetView = (this.provider === "gemini" ? this.geminiView : this.qwenView) || this.view;
+      const targetUrl = this.provider === "gemini" ? GEMINI_CHAT_URL : QWEN_CHAT_URL;
+      const domain = this.provider === "gemini" ? "gemini.google.com" : "chat.qwen.ai";
+      const currentUrl = targetView?.webContents?.getURL() || "";
+      const loadPromise = !currentUrl.includes(domain)
+        ? Promise.resolve(targetView?.webContents?.loadURL?.(targetUrl)).catch(() => {})
+        : Promise.resolve();
+      return loadPromise
+        .then(() => this.probeAuthentication())
+        .finally(() => {
+          if (this.primaryViewManager) {
+            this.parkIdlePrimaryView?.();
+            this.syncViewVisibility?.();
+          }
+        });
     }
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;

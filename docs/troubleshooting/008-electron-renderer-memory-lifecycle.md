@@ -13,13 +13,15 @@
 
 ## 🛠️ File Sửa & Quy Tắc Cốt Lõi
 
-1. **`launcher/electron/main.cjs`**:
+1. **`launcher/electron/main.cjs` & `launcher/electron/runtime-install.cjs`**:
    - Dùng `app.commandLine.removeSwitch(...)` cho `disable-background-timer-throttling`, `disable-backgrounding-occluded-windows`, `disable-renderer-backgrounding` (TUYỆT ĐỐI không dùng `appendSwitch(..., "false")` vì Chromium kiểm tra sự tồn tại của cờ bằng `HasSwitch`).
+   - Khởi chạy `loadRenderer(mainWindow)` song song ngay khi `browserHost.ready()` hoàn tất mà không đứng chờ `refreshAuthentication()`.
+   - Cache SHA-256 theo `(size, mtimeMs, ctimeMs)` trong `runtime-install.cjs` và bỏ lần `validateRuntimeBundle(destination)` thừa cuối hàm `ensurePackagedRuntime` để tránh đọc/băm đồng bộ `bun.exe` (~100 MB) 3–5 lần liên tiếp lúc mở app trên Windows.
 2. **`launcher/electron/view-lifecycle-manager.cjs`**:
    - Quản lý lazy-create, attach/detach, hibernate và destroy `WebContentsView` của từng provider.
 3. **`launcher/electron/browser-host.cjs` & `launcher/src/App.tsx`**:
    - Gộp 4 nút provider dưới mục `Workspace` ở Sidebar (`Google Gemini`, `M365 Copilot`, `Qwen`, `ChatGPT`) thành **1 nút `Browser` duy nhất** để người dùng chuyển sang màn hình quản lý tab mà không kích hoạt `setProvider(...)` làm mất các tab đang chạy/đang giữ.
-   - Chỉ tạo Primary View cho provider hiện hành; `initializePrimaryView()` và `markOwnedSurface()` phân nhánh đúng URL/ownership cho cả `chatgpt`, `m365`, `gemini`, `qwen`.
+   - Chỉ tạo Primary View cho provider hiện hành; `initializePrimaryView()` nạp ngay `IDLE_BROWSER_URL` (`data:text/html`) cho mọi provider để không chặn hiển thị cửa sổ bởi request mạng lúc mở app, còn việc kiểm tra phiên được thực hiện ngầm trong `refreshAuthentication()`.
    - `releaseInactivePrimaryViews()`: khi đổi provider trong `Setup`, hủy Primary View của provider không dùng nhưng bảo toàn nguyên vẹn các `turnTabs` trong `Browser`.
    - `presentTurnView()`: chỉ bật `enableHiddenTurnViewport` khi `tab.status === "running"`; khi tab đã `ready` và ở nền (`!visible`), gọi `disableDeviceEmulation()` và `setVisible(false)` để Chromium kích hoạt `backgroundThrottling`.
    - `parkIdlePrimaryView()`, `homeSurfaceOpen` & `snapshot()`: mặc định khi vào `Browser` mà chưa có `turnTab` và chưa bấm *Sign in* / *Run verify* từ `Setup`, `homeSurfaceOpen = false` nên `snapshot().tabs` trả về `[]` và không tự động mở trang chủ `ChatGPT`/`M365`; sau khi `refreshAuthentication()` hoặc khi đã có `turnTab` hoạt động, tự động đưa `primaryView` (`homeTab`) về `IDLE_BROWSER_URL` (`about:blank`), tắt `deviceEmulation`, đặt `setVisible(false)` và ẩn `homeTab` khỏi thanh tab.
