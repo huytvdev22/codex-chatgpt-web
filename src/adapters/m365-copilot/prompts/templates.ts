@@ -92,11 +92,11 @@ Bạn ơi, với yêu cầu này mình muốn cùng bạn khảo sát kỹ và l
    - Chưa gọi công cụ apply_patch hoặc write_file.
    - Không chạy bất kỳ lệnh terminal nào làm thay đổi trạng thái file trong dự án.
 2. CÁC HÀNH ĐỘNG KHẢO SÁT & LÀM RÕ ĐƯỢC PHÉP:
-   - Thoải mái đọc và tìm kiếm file để hiểu cấu trúc: exec_command (cat, head, ls, grep, find, git status, git diff), read_file, list_dir, grep_code, search_files.
+   - Thoải mái đọc và tìm kiếm file để hiểu cấu trúc, nhưng chỉ sử dụng công cụ đang xuất hiện trong danh sách AVAILABLE TOOLS của lượt hiện tại.
    - PHỎNG VẤN TƯƠNG TÁC (INTERACTIVE USER INTERVIEW WIZARD):
      + Khi bài toán có nhiều lựa chọn kiến trúc, phương án công nghệ hoặc cần làm rõ yêu cầu, bạn cứ gọi công cụ request_user_input để mở wizard cho mình click chọn phương án kèm badge (Recommended) trước khi chốt kế hoạch nhé!
    - ĐỌC FILE AN TOÀN:
-     + Dùng read_file hoặc exec_command (head -n 150), mỗi lần đọc tối đa 1-3 file (tổng không quá 150 dòng). Với file dài, nhớ chỉ định start_line và end_line.
+     + Nếu inventory hiện tại có công cụ đọc file semantic, hãy ưu tiên công cụ đó. Nếu không có, dùng exec_command với đường dẫn cụ thể và giới hạn tối đa 150 dòng; mỗi lần chỉ đọc 1-3 file.
      + Không dùng script shell lặp đọc hàng loạt file và không quét đệ quy vào node_modules, .git, dist, build (nhớ loại trừ: --exclude-dir=node_modules).
    - Nếu cần khảo sát thêm trước khi lên kế hoạch, bạn cứ xuất thẳng khối <tool_call> đọc file/chạy lệnh (có thể xuất nhiều khối <tool_call> cùng lúc để khảo sát nhanh).
 3. ĐỊNH DẠNG ĐẦU RA KHI XUẤT KẾ HOẠCH:
@@ -125,7 +125,7 @@ Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệ
    - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Làm tuần tự từng file (sửa file 1 -> nhận kết quả -> sửa file 2).
    - Tuyệt đối không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
    - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, git status, mkdir -p ...).
-   - Đọc file an toàn: Dùng read_file hoặc exec_command (tối đa 1-3 file, tổng <= 150 dòng). Không quét đệ quy vào node_modules.
+   - Đọc file an toàn: Ưu tiên công cụ semantic nếu nó có trong inventory hiện tại; nếu không có, dùng exec_command với đường dẫn cụ thể. Tối đa 1-3 file, tổng không quá 150 dòng và không quét đệ quy vào node_modules.
 2. Sau khi file được tạo/sửa xong và nhận kết quả tool_result, bạn tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command) để kiểm tra tính đúng đắn.
 3. Không xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt.
 4. Khi giải thích mã nguồn hoặc nhắc đến tệp tin nào, bạn nhớ dùng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc [tên_file — dòng N](đường_dẫn_tương_đối#LN) nha.`;
@@ -153,7 +153,7 @@ export const TOOL_RESULT_HINTS = {
  * Các chỉ dẫn định dạng đầu ra ở cuối lượt yêu cầu của người dùng
  */
 export const OUTPUT_FORMAT_HINTS = {
-  planMode: `[Yêu cầu đầu ra - Plan Mode]: Đang ở chế độ Plan Mode. Nếu cần mình chốt phương án kỹ thuật, hãy gọi request_user_input. Nếu cần khảo sát thêm, hãy gọi tool đọc (read_file, list_dir). Nếu đã đủ thông tin, bạn xuất bản kế hoạch hoàn chỉnh bọc trong thẻ <webResponse><proposed_plan>...</proposed_plan></webResponse> bằng tiếng Việt giúp mình nha.`,
+  planMode: `[Yêu cầu đầu ra - Plan Mode]: Đang ở chế độ Plan Mode. Nếu cần mình chốt phương án kỹ thuật, hãy gọi request_user_input khi công cụ này có trong inventory. Nếu cần khảo sát thêm, chỉ sử dụng công cụ đọc hoặc tìm kiếm đang thực sự xuất hiện trong danh sách AVAILABLE TOOLS của lượt hiện tại. Nếu đã đủ thông tin, bạn xuất bản kế hoạch hoàn chỉnh theo đúng response protocol bằng tiếng Việt giúp mình nha.`,
   implementPlan: `[Yêu cầu đầu ra]: Kế hoạch đã duyệt rồi. Bạn xuất ngay khối công cụ tạo hoặc sửa file (dùng apply_patch) tương ứng với bước đầu tiên để triển khai code trực tiếp nhé.`,
   default: `[Yêu cầu đầu ra]: Bạn xuất ngay khối công cụ tương ứng để script trên máy mình thực thi trực tiếp trên dự án thay vì chỉ viết hướng dẫn văn bản nhé.`,
 };
@@ -222,7 +222,7 @@ Mình gửi bạn các câu trả lời / phương án mình đã chọn qua h�
 export const PLAN_SURVEY_CONTINUATION_PROMPT = `[KẾT QUẢ KHẢO SÁT MÃ NGUỒN - PLAN MODE]
 Mình gửi bạn kết quả đọc file / khảo sát lệnh trên máy trong thẻ <tool_result> bên dưới nhé.
 Lưu ý là tụi mình vẫn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE) nên chưa sửa code (chưa dùng apply_patch/write_file).
-- Nếu cần khảo sát tiếp: Bạn cứ xuất khối công cụ đọc file (read_file, list_dir, grep_code) hoặc chạy lệnh kiểm tra.
+- Nếu cần khảo sát tiếp: Chỉ gọi công cụ đọc hoặc tìm kiếm đang xuất hiện trong inventory của lượt hiện tại; nếu không có semantic tool phù hợp thì dùng exec_command có phạm vi hẹp.
 - Nếu cần mình chốt phương án thiết kế: Hãy gọi request_user_input để mở wizard cho mình chọn.
 - Nếu đã đủ thông tin: Bạn xuất bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> và Đặt trọn trong <webResponse>...</webResponse> bằng tiếng Việt để mình duyệt nhé!`;
 
@@ -295,7 +295,7 @@ export function buildFormatRetryPrompt(options: FormatRetryOptions): string {
     return `Bạn ơi, công cụ bạn vừa yêu cầu gọi không tồn tại hoặc không được Codex IDE hỗ trợ ở phiên làm việc này (chưa có công cụ nào được chạy cả):
 - Điểm bị vấp: [${options.code}] ${options.message}
 
-Bạn vui lòng chỉ sử dụng các công cụ native hợp lệ mà IDE hỗ trợ (như \`read_file\`, \`list_dir\`, \`apply_patch\`, \`exec_command\`) và gửi lại vào chuẩn khung này nhé:
+Bạn vui lòng chỉ sử dụng công cụ đang xuất hiện trong danh sách AVAILABLE TOOLS của lượt hiện tại. Không gọi công cụ chỉ vì nó được nhắc trong hướng dẫn hoặc từng xuất hiện ở lượt trước, rồi gửi lại theo đúng response protocol nhé:
 
 \`\`\`\`markdown
 <webResponse>
@@ -309,7 +309,7 @@ Bạn vui lòng chỉ sử dụng các công cụ native hợp lệ mà IDE hỗ
 - Điểm bị vấp: [${options.code}] ${options.message}
 
 Bạn vui lòng không sử dụng lệnh quét đệ quy (Get-ChildItem -Recurse, ls -R), vòng lặp duyệt đọc file (foreach... Get-Content) hoặc wildcard (*.ext).
-Hãy đổi sang dùng công cụ native \`read_file\` (tối đa 150 dòng cho mỗi file) hoặc \`list_dir\` (depth=1) và gửi lại vào chuẩn khung này nhé:
+Hãy đổi sang công cụ semantic phù hợp nếu công cụ đó có trong inventory hiện tại. Nếu inventory không có công cụ đọc hoặc liệt kê semantic, dùng \`exec_command\` với đường dẫn cụ thể, không quét đệ quy, không wildcard, không vòng lặp đọc file và giới hạn tối đa 150 dòng; sau đó gửi lại theo đúng response protocol nhé:
 
 \`\`\`\`markdown
 <webResponse>

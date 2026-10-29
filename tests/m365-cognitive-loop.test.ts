@@ -408,7 +408,7 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
     expect(remainingText).toBe("`");
   });
 
-  test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ m365Response, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
+  test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ webResponse, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
     const detector = new M365ToolCallDetector({ renderThinkingInText: true });
     const rawStream = [
       "<webResponse>\n<thought>\n",
@@ -472,7 +472,7 @@ Tôi sẽ kiểm tra cấu trúc dự án trước:
     }
   });
 
-  test("M365OutputTranslator làm sạch hoàn toàn envelope m365Response trong Final Answer", () => {
+  test("M365OutputTranslator làm sạch hoàn toàn envelope webResponse trong Final Answer", () => {
     const translator = new M365OutputTranslator();
     const raw = `<webResponse>
 <thought>

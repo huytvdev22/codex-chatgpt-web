@@ -123,7 +123,8 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
       expect(retryPrompt).toContain("câu lệnh shell bạn yêu cầu vừa bị chính sách an toàn của IDE từ chối");
       expect(retryPrompt).toContain("[DISALLOWED_COMMAND]");
-      expect(retryPrompt).toContain("read_file");
+      expect(retryPrompt).toContain("inventory hiện tại");
+      expect(retryPrompt).toContain("exec_command");
     }
   });
 
@@ -150,11 +151,11 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
   });
 
   test("tái hiện chính xác response thực tế từ M365: phát hiện vi phạm RECURSIVE_SCAN_DISALLOWED và trả về DISALLOWED_COMMAND an toàn", () => {
-    const actualM365Response = `<m365Response>
+    const actualM365Response = `<webResponse>
 <tool_call>
 {"name":"exec_command","arguments":{"cmd":"$ErrorActionPreference='Stop'; Write-Output '=== LEAD DIFF ==='; git diff -- src/main/java/vn/com/gpbank/corp/sale/lead/dto/bsp/response/CustomerCoreResponse.java src/main/java/vn/com/gpbank/corp/sale/lead/dto/request/TaskRequest.java; Write-Output '=== SQL PREVIEWS ==='; Get-Content .\\\\add_acquisition_source_to_program.sql -TotalCount 150; Write-Output '--- add_business_line_to_task.sql ---'; Get-Content .\\\\add_business_line_to_task.sql -TotalCount 150; Write-Output '--- clear_task_data.sql ---'; Get-Content .\\\\clear_task_data.sql -TotalCount 150; Write-Output '=== AUTH CANDIDATE PATHS ==='; Get-ChildItem ..\\\\corp-sale-auth-service\\\\src\\\\main\\\\java -Recurse -File -Filter '*.java' | Where-Object { $_.Name -in @('CustomerCoreResponse.java','TaskRequest.java') -or $_.FullName -match '\\\\\\\\dto\\\\\\\\(bsp\\\\\\\\response|request)\\\\\\\\' } | Select-Object -First 100 -ExpandProperty FullName; Write-Output '=== AUTH TOP LEVEL ==='; Get-ChildItem ..\\\\corp-sale-auth-service -Force | Select-Object Mode,Name","workdir":"D:\\\\GP\\\\2.WORK\\\\2.projects\\\\2.SalePortal\\\\corp-sale-lead-service","yield_time_ms":10000,"max_output_tokens":30000}}
 </tool_call>
-</m365Response>`;
+</webResponse>`;
 
     const result = parseStrictM365Response(actualM365Response);
 
@@ -173,8 +174,8 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
       expect(retryPrompt).toContain("câu lệnh shell bạn yêu cầu vừa bị chính sách an toàn của IDE từ chối");
       expect(retryPrompt).toContain("[DISALLOWED_COMMAND]");
-      expect(retryPrompt).toContain("read_file");
-      expect(retryPrompt).toContain("list_dir");
+      expect(retryPrompt).toContain("inventory hiện tại");
+      expect(retryPrompt).toContain("exec_command");
     }
   });
 

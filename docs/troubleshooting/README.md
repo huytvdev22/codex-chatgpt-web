@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **010** | Final answer nhắc cú pháp response envelope bị nhận nhầm là nhiều envelope | `m365-copilot`, `parser` | ⏳ Chờ User Test & Confirm | [010-m365-final-answer-envelope-false-positive.md](./010-m365-final-answer-envelope-false-positive.md) |
 | **009** | Mở app trên Windows mất 5–6 phút không hiện cửa sổ và không có thông báo tiến trình | `launcher`, `electron`, `windows` | ✅ Đã Confirm | [009-windows-slow-startup-and-no-loading-ui.md](./009-windows-slow-startup-and-no-loading-ui.md) |
 | **008** | Electron tích lũy Renderer và sử dụng hơn 2 GB RAM | `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [008-electron-renderer-memory-lifecycle.md](./008-electron-renderer-memory-lifecycle.md) |
 | **001** | Mỗi tin nhắn trên Codex tạo 1 đoạn chat mới trên Web | `qwen-web`, `chatgpt-web` | ✅ Đã Confirm | [001-multi-turn-creates-new-chat.md](./001-multi-turn-creates-new-chat.md) |

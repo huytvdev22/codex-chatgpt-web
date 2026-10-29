@@ -43,8 +43,6 @@ export type StrictM365ResponseResult =
 
 const ROOT_OPEN = "<webResponse>";
 const ROOT_CLOSE = "</webResponse>";
-const LEGACY_ROOT_OPEN = "<m365Response>";
-const LEGACY_ROOT_CLOSE = "</m365Response>";
 const TOOL_OPEN = "<tool_call>";
 const TOOL_CLOSE = "</tool_call>";
 const PATCH_OPEN = '<custom_tool_call name="apply_patch">';
@@ -147,15 +145,15 @@ function unwrapTransportFence(rawResponse: string): string {
     return match[1].trim();
   }
 
-  // 2. Tự động làm sạch trailing backticks còn sót lại ở cuối sau </webResponse> hoặc </m365Response>
+  // 2. Tự động làm sạch trailing backticks còn sót lại ở cuối sau </webResponse>
   // Thường xảy ra khi copy từ giao diện web / code block bị dính các dấu backtick đóng (ví dụ: </webResponse>```)
-  const trailingFenceMatch = trimmed.match(/^([\s\S]*<\/(?:webResponse|m365Response)>)[ \t\r\n]*`{1,4}[ \t\r\n]*$/);
+  const trailingFenceMatch = trimmed.match(/^([\s\S]*<\/webResponse>)[ \t\r\n]*`{1,4}[ \t\r\n]*$/);
   if (trailingFenceMatch) {
     trimmed = trailingFenceMatch[1].trim();
   }
 
-  // 3. Tự động làm sạch leading backticks còn sót lại ở đầu trước <webResponse> hoặc <m365Response>
-  const leadingFenceMatch = trimmed.match(/^`{1,4}(?:markdown)?[ \t\r\n]+(<(?:webResponse|m365Response)>[\s\S]*)$/);
+  // 3. Tự động làm sạch leading backticks còn sót lại ở đầu trước <webResponse>
+  const leadingFenceMatch = trimmed.match(/^`{1,4}(?:markdown)?[ \t\r\n]+(<webResponse>[\s\S]*)$/);
   if (leadingFenceMatch) {
     trimmed = leadingFenceMatch[1].trim();
   }
@@ -201,8 +199,8 @@ function detectReservedControlMarkers(content: string): ReservedControlMarker[] 
     ["INTERNAL_REASONING_CLOSE", new RegExp("<" + "\\/(?:thought|thinking)\\s*>", "i")],
     ["PATCH_BEGIN", /\*{3}\s*Begin Patch/i],
     ["PATCH_END", /\*{3}\s*End Patch/i],
-    ["ROOT_OPEN", new RegExp("<" + "(?:webResponse|m365Response)\\s*>", "i")],
-    ["ROOT_CLOSE", new RegExp("<" + "\\/(?:webResponse|m365Response)\\s*>", "i")],
+    ["ROOT_OPEN", new RegExp("<" + "webResponse\\s*>", "i")],
+    ["ROOT_CLOSE", new RegExp("<" + "\\/webResponse\\s*>", "i")],
   ];
 
   return markerPatterns
@@ -243,8 +241,8 @@ function buildMissingEnvelopeMessage(
 
   // Chẩn đoán định vị chính xác vị trí sai nếu có ngữ cảnh
   if (context) {
-    const hasRootOpen = context.framed.includes(ROOT_OPEN) || context.framed.includes(LEGACY_ROOT_OPEN);
-    const hasRootClose = context.framed.includes(ROOT_CLOSE) || context.framed.includes(LEGACY_ROOT_CLOSE);
+    const hasRootOpen = context.framed.includes(ROOT_OPEN);
+    const hasRootClose = context.framed.includes(ROOT_CLOSE);
 
     if (hasRootOpen && !hasRootClose) {
       lines.push(
@@ -409,12 +407,8 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
     return protocolError(rawResponse, "EMPTY_RESPONSE", "Phản hồi M365 không được rỗng.");
   }
 
-  const matchedRootOpen = framed.startsWith(ROOT_OPEN)
-    ? ROOT_OPEN
-    : (framed.startsWith(LEGACY_ROOT_OPEN) ? LEGACY_ROOT_OPEN : null);
-  const matchedRootClose = framed.endsWith(ROOT_CLOSE)
-    ? ROOT_CLOSE
-    : (framed.endsWith(LEGACY_ROOT_CLOSE) ? LEGACY_ROOT_CLOSE : null);
+  const matchedRootOpen = framed.startsWith(ROOT_OPEN) ? ROOT_OPEN : null;
+  const matchedRootClose = framed.endsWith(ROOT_CLOSE) ? ROOT_CLOSE : null;
 
   const hasOpeningEnvelope = matchedRootOpen !== null;
   const hasClosingEnvelope = matchedRootClose !== null;
@@ -462,16 +456,15 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
   }
 
   const inner = framed.slice(matchedRootOpen.length, framed.length - matchedRootClose.length);
-  if (
-    inner.includes(ROOT_OPEN) ||
-    inner.includes(ROOT_CLOSE) ||
-    inner.includes(LEGACY_ROOT_OPEN) ||
-    inner.includes(LEGACY_ROOT_CLOSE)
-  ) {
+  const trimmedInner = inner.trim();
+  const startsWithNestedEnvelope = trimmedInner.startsWith(ROOT_OPEN);
+  const containsSiblingEnvelope =
+    /<\/webResponse>\s*<webResponse>/.test(trimmedInner);
+  if (startsWithNestedEnvelope || containsSiblingEnvelope) {
     return protocolError(rawResponse, "MULTIPLE_RESPONSE_ENVELOPES", "Mỗi lượt chỉ được chứa đúng một webResponse envelope.");
   }
 
-  const content = inner.trim();
+  const content = trimmedInner;
   if (!content) {
     return protocolError(rawResponse, "EMPTY_RESPONSE", "webResponse không được rỗng.");
   }

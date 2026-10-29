@@ -471,7 +471,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         return;
       }
 
-      // Chỉ emit sau khi toàn bộ m365Response đã được strict parser xác nhận hợp lệ.
+      // Chỉ emit sau khi toàn bộ webResponse đã được strict parser xác nhận hợp lệ.
       if (finalContent) {
         emit({ type: "text_delta", text: finalContent });
         streamedAnyText = true;
@@ -487,7 +487,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
         conversationGuard.delete(conversationKey);
       }
       const terminalReason = "model_final_answer";
-      const terminalExplanation = "M365 Copilot hoàn tất một m365Response hợp lệ dạng Final Answer. Codex dừng chu trình agent và chờ người dùng.";
+      const terminalExplanation = "M365 Copilot hoàn tất một webResponse hợp lệ dạng Final Answer. Codex dừng chu trình agent và chờ người dùng.";
       console.log(`[m365-adapter] [turn-completed] terminalReason=${terminalReason} explanation=${terminalExplanation}`);
 
       if (!markTurnConsumed()) {

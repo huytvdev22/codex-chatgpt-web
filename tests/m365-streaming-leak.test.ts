@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { M365ToolCallDetector } from "../src/adapters/m365-copilot/translation/toolcall-detector";
 
 /**
- * Regression: M365ToolCallDetector không được làm rò rỉ thẻ nội bộ (m365Response, thought, tool_call,
+ * Regression: M365ToolCallDetector không được làm rò rỉ thẻ nội bộ (webResponse, thought, tool_call,
  * custom_tool_call, patch) hay mảnh thẻ dở dang (`</`) ra text_delta, bất kể chunk bị cắt ở vị trí nào.
  */
 

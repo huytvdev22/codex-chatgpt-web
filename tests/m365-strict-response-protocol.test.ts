@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { M365OutputTranslator, parseStrictM365Response } from "../src/adapters/m365-copilot/translation";
+import {
+  M365OutputTranslator,
+  M365_RESPONSE_CLOSE_TAG,
+  M365_RESPONSE_OPEN_TAG,
+  parseStrictM365Response,
+} from "../src/adapters/m365-copilot/translation";
 
 describe("M365 strict response protocol", () => {
   test("default output translator does not infer tools from shell fences or standalone JSON", () => {
@@ -22,6 +27,49 @@ Invoke-RestMethod -Uri "https://YOUR_HOST/api"
     if (result.kind === "final_answer") {
       expect(result.content).toContain("Invoke-RestMethod");
       expect(result.content).toEndWith("```");
+    }
+  });
+
+  test("final answer may discuss response envelope syntax without being treated as multiple envelopes", () => {
+    const raw = [
+      M365_RESPONSE_OPEN_TAG,
+      "Parser chỉ nên coi thẻ ở biên ngoài là cấu trúc điều khiển.",
+      "",
+      `Tên thẻ mở là \`${M365_RESPONSE_OPEN_TAG}\` và tên thẻ đóng là \`${M365_RESPONSE_CLOSE_TAG}\`.`,
+      "Các chuỗi này nằm trong nội dung Markdown nên phải được giữ nguyên như dữ liệu.",
+      M365_RESPONSE_CLOSE_TAG,
+    ].join("\n");
+
+    const result = parseStrictM365Response(raw);
+
+    expect(result.kind).toBe("final_answer");
+    if (result.kind === "final_answer") {
+      expect(result.content).toContain(`\`${M365_RESPONSE_OPEN_TAG}\``);
+      expect(result.content).toContain(`\`${M365_RESPONSE_CLOSE_TAG}\``);
+    }
+  });
+
+  test("final answer may contain an escaped response-envelope example", () => {
+    const escapedOpen = M365_RESPONSE_OPEN_TAG.replace("<", "&lt;").replace(">", "&gt;");
+    const escapedClose = M365_RESPONSE_CLOSE_TAG.replace("<", "&lt;").replace(">", "&gt;");
+    const raw = [
+      M365_RESPONSE_OPEN_TAG,
+      "Ví dụ cấu trúc được escape để hiển thị:",
+      "",
+      "```xml",
+      escapedOpen,
+      "nội dung minh họa",
+      escapedClose,
+      "```",
+      M365_RESPONSE_CLOSE_TAG,
+    ].join("\n");
+
+    const result = parseStrictM365Response(raw);
+
+    expect(result.kind).toBe("final_answer");
+    if (result.kind === "final_answer") {
+      expect(result.content).toContain(escapedOpen);
+      expect(result.content).toContain(escapedClose);
     }
   });
 
@@ -115,7 +163,7 @@ Không cần gọi công cụ.
   });
 
   test("rejects incomplete response envelope even for plain text", () => {
-    const responseOpen = `${"<"}m365Response>`;
+    const responseOpen = M365_RESPONSE_OPEN_TAG;
     const result = parseStrictM365Response(`${responseOpen}Câu trả lời chưa đóng envelope`);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
