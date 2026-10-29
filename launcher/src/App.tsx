@@ -115,6 +115,8 @@ export function App() {
 
   const language = snapshot.state.language ?? "en";
   const copy = copyFor(language, snapshot.connectorNames);
+  const startupLoadingOpen = operation?.status === "running"
+    && (operation.name === "launcher-startup" || operation.name === "runtime-upgrade");
 
   return (
     <div
@@ -146,6 +148,14 @@ export function App() {
             updateState={updateState}
           />
         )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {startupLoadingOpen && operation ? (
+          <StartupLoadingModal
+            operation={operation}
+            version={snapshot.version}
+          />
+        ) : null}
       </AnimatePresence>
       <AnimatePresence>
         {error ? <ErrorToast copy={copy} message={error} onDismiss={() => setError(null)} /> : null}
@@ -330,8 +340,11 @@ function LauncherShell({
   );
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
+  const startupLoadingOpen = operation?.status === "running"
+    && (operation.name === "launcher-startup" || operation.name === "runtime-upgrade");
   const browserSurfaceActive = surface === "browser"
     && !(compactSidebar && sidebarOpen)
+    && !startupLoadingOpen
     && !biggerContextRecommendationOpen;
   const needsBrowser = snapshot.state.browserInteractionMode === "automatic"
     && browser?.authenticated !== true;
@@ -2774,6 +2787,123 @@ function BiggerContextRecommendation({
         {checked ? <p className="bigger-context-recommendation-restart">{copy.restartCodex}</p> : null}
         <footer>
           <SecondaryButton disabled={busy} onClick={onClose}>{copy.close}</SecondaryButton>
+        </footer>
+      </motion.section>
+    </motion.div>
+  );
+}
+
+const STARTUP_LOADING_STEPS = [
+  {
+    id: "runtime",
+    match: "Preparing local runtime",
+    title: "Kiểm tra & đồng bộ gói thực thi (Runtime Bundle)",
+    detail: "Xác thực chữ ký manifest và chuẩn bị môi trường thực thi cục bộ",
+  },
+  {
+    id: "browser",
+    match: "Initializing embedded browser",
+    title: "Khởi tạo trình duyệt nhúng (Embedded Browser)",
+    detail: "Khởi chạy máy chủ điều khiển và phiên trình duyệt cô lập",
+  },
+  {
+    id: "auth",
+    match: "Checking saved sign-in session",
+    title: "Kiểm tra phiên đăng nhập đã lưu",
+    detail: "Khôi phục trạng thái xác thực tài khoản tự động",
+  },
+  {
+    id: "bridge",
+    match: "Starting local bridge service",
+    title: "Khởi động dịch vụ cầu nối & kết nối Codex",
+    detail: "Đồng bộ cấu hình route và khởi chạy dịch vụ cầu nối cục bộ",
+  },
+] as const;
+
+function StartupLoadingModal({
+  operation,
+  version,
+}: {
+  operation: OperationState;
+  version: string;
+}) {
+  const matchedIndex = operation.name === "runtime-upgrade"
+    ? 3
+    : STARTUP_LOADING_STEPS.findIndex(step => step.match === operation.message);
+  const activeStepIndex = matchedIndex >= 0 ? matchedIndex : 0;
+
+  return (
+    <motion.div
+      animate={{ opacity: 1 }}
+      aria-describedby="startup-loading-body"
+      aria-labelledby="startup-loading-title"
+      aria-live="polite"
+      aria-modal="true"
+      className="startup-loading-backdrop"
+      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }}
+      role="dialog"
+      transition={{ duration: 0.18 }}
+    >
+      <motion.section
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="startup-loading-card"
+        exit={{ opacity: 0, scale: 0.98, y: 6 }}
+        initial={{ opacity: 0, scale: 0.98, y: 8 }}
+        transition={PANEL_TRANSITION}
+      >
+        <header className="startup-loading-header">
+          <div className="startup-loading-brand">
+            <BrandMark small />
+            <span>Codex M365 Copilot</span>
+            <small>v{version}</small>
+          </div>
+          <h2 id="startup-loading-title">Đang khởi động ứng dụng…</h2>
+          <p className="startup-loading-body" id="startup-loading-body">
+            Hệ thống đang chuẩn bị môi trường làm việc và kết nối các dịch vụ nền. Vui lòng đợi trong giây lát.
+          </p>
+        </header>
+
+        <div className="startup-loading-steps" role="list">
+          {STARTUP_LOADING_STEPS.map((step, index) => {
+            const state = index < activeStepIndex
+              ? "complete"
+              : index === activeStepIndex
+                ? "active"
+                : "pending";
+            return (
+              <div
+                className={`startup-loading-step is-${state}`}
+                key={step.id}
+                role="listitem"
+              >
+                <span className="startup-loading-step-marker" aria-hidden="true">
+                  {state === "complete" ? (
+                    <Icon name="check" />
+                  ) : state === "active" ? (
+                    <StateDot state="busy" />
+                  ) : (
+                    `0${index + 1}`
+                  )}
+                </span>
+                <div className="startup-loading-step-copy">
+                  <strong>{step.title}</strong>
+                  <p>{step.detail}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <footer className="startup-loading-footer">
+          <div className="startup-loading-bar" aria-hidden="true">
+            <span
+              style={{
+                width: `${Math.min(100, Math.round(((activeStepIndex + 1) / STARTUP_LOADING_STEPS.length) * 100))}%`,
+              }}
+            />
+          </div>
+          <small>{operation.message}</small>
         </footer>
       </motion.section>
     </motion.div>

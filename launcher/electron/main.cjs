@@ -506,7 +506,7 @@ function syncFreshConversationPreference(stateStore, config) {
   const useSavedChats = config?.useSavedChats === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true;
   const current = stateStore.read();
-  if (runtimeHost?.currentOperation()) return current;
+  if (!runtimeHost || !browserHost || runtimeHost?.currentOperation()) return current;
   if (current.experimentalFreshConversationPerTurn === enabled && current.useSavedChats === useSavedChats) return current;
   // Runtime restarts leave browser views alive. Retire completed chats when their
   // persistence policy changes, including changes made by the CLI.
@@ -545,12 +545,12 @@ function registerIpc({ logger, stateStore }) {
       codexHome: LAUNCHER_PROFILE.codexHome,
       userData: launcherUserData,
     },
-    state: syncFreshConversationPreference(stateStore, runtimeHost.runtimeConfigSnapshot().config),
+    state: syncFreshConversationPreference(stateStore, runtimeHost?.runtimeConfigSnapshot().config),
     browser: browserHost?.snapshot() ?? null,
-    connectorName: runtimeHost.browserConnectorName(),
+    connectorName: runtimeHost ? runtimeHost.browserConnectorName() : "Codex Native2",
     connectorNames: {
-      automatic: runtimeHost.setupConnectorName(),
-      manual: runtimeHost.setupConnectorName("manual"),
+      automatic: runtimeHost ? runtimeHost.setupConnectorName() : "Codex Native2",
+      manual: runtimeHost ? runtimeHost.setupConnectorName("manual") : "Codex Zero Risk",
     },
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
@@ -603,18 +603,19 @@ function registerIpc({ logger, stateStore }) {
     browserHost?.setBounds(validateBounds(bounds), event.sender.getZoomFactor());
     return true;
   });
-  handle("launcher:browser-surface-active", (_event, active) => browserHost.setSurfaceActive(active === true));
-  handle("launcher:browser-show", () => browserHost.reveal(
+  handle("launcher:browser-surface-active", (_event, active) => browserHost ? browserHost.setSurfaceActive(active === true) : false);
+  handle("launcher:browser-show", () => browserHost ? browserHost.reveal(
     stateStore.read().browserInteractionMode === "automatic",
-  ));
-  handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot(); });
-  handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
-  handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
-  handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
-  handle("launcher:browser-tab-close", (_event, tabId) => browserHost.closeTab(tabId));
-  handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
-  handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
+  ) : null);
+  handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot() ?? null; });
+  handle("launcher:browser-navigate", (_event, action) => browserHost ? browserHost.navigate(action) : null);
+  handle("launcher:browser-zoom", (_event, action) => browserHost ? browserHost.zoom(action) : null);
+  handle("launcher:browser-tab-select", (_event, tabId) => browserHost ? browserHost.selectTab(tabId) : null);
+  handle("launcher:browser-tab-close", (_event, tabId) => browserHost ? browserHost.closeTab(tabId) : null);
+  handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost ? browserHost.copyManualPrompt(tabId) : null);
+  handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost ? browserHost.confirmManualSent(tabId) : null);
   handle("launcher:browser-login", async () => {
+    if (!browserHost) await runtimeStartup;
     const browser = await browserHost.openLogin();
     if (browser.authenticated) {
       const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
@@ -1093,24 +1094,6 @@ async function start() {
   app.on("second-instance", () => showMainWindow());
   app.on("activate", () => showMainWindow());
 
-  await waitForPackagedRuntimeSource({ app, resourcesPath: process.resourcesPath });
-  let installedRuntimeRoot = null;
-  let runtimeRootResolved = false;
-  const runtimeRootProvider = () => {
-    const packagedRuntimeWasRemoved = app.isPackaged
-      && (!installedRuntimeRoot || !fs.existsSync(installedRuntimeRoot));
-    if (!runtimeRootResolved || packagedRuntimeWasRemoved) {
-      installedRuntimeRoot = ensurePackagedRuntime({
-        app,
-        coreHome: CORE_HOME,
-        resourcesPath: process.resourcesPath,
-      });
-      runtimeRootResolved = true;
-    }
-    return installedRuntimeRoot;
-  };
-  installedRuntimeRoot = runtimeRootProvider();
-
   cdpPort = await findFreePort();
   if (process.platform === "linux") {
     app.commandLine.appendSwitch("class", IS_DEV_PROFILE ? "codex-web-gpt-dev" : "codex-web-gpt");
@@ -1161,12 +1144,50 @@ async function start() {
     publish: (record) => send("launcher:log", record),
   });
   const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
+  const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
   nativeTheme.themeSource = "system";
+  publishOperation({
+    name: "launcher-startup",
+    status: "running",
+    message: "Preparing local runtime",
+  });
   mainWindow = createWindow({
     logger,
     stateStore,
     windowStatePath: path.join(app.getPath("userData"), "window-state.json"),
     startHidden,
+  });
+  registerIpc({ logger, stateStore });
+  const trayAvailable = createTray(logger, stateStore.read().language);
+  if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
+  const rendererReady = loadRenderer(mainWindow);
+  await rendererReady;
+  if (!launcherSmokeTest && !startHidden) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+
+  await waitForPackagedRuntimeSource({ app, resourcesPath: process.resourcesPath });
+  let installedRuntimeRoot = null;
+  let runtimeRootResolved = false;
+  const runtimeRootProvider = () => {
+    const packagedRuntimeWasRemoved = app.isPackaged
+      && (!installedRuntimeRoot || !fs.existsSync(installedRuntimeRoot));
+    if (!runtimeRootResolved || packagedRuntimeWasRemoved) {
+      installedRuntimeRoot = ensurePackagedRuntime({
+        app,
+        coreHome: CORE_HOME,
+        resourcesPath: process.resourcesPath,
+      });
+      runtimeRootResolved = true;
+    }
+    return installedRuntimeRoot;
+  };
+  installedRuntimeRoot = runtimeRootProvider();
+
+  publishOperation({
+    name: "launcher-startup",
+    status: "running",
+    message: "Initializing embedded browser",
   });
   browserControl = await new BrowserControlServer({
     logger,
@@ -1243,20 +1264,28 @@ async function start() {
     publish: (state) => send("launcher:update-state", state),
     logger,
   });
-  registerIpc({ logger, stateStore });
-  const trayAvailable = createTray(logger, stateStore.read().language);
-  if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
-  const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
-  const rendererReady = loadRenderer(mainWindow);
+  send("launcher:connector-names-changed", {
+    connectorName: runtimeHost.browserConnectorName(),
+    connectorNames: {
+      automatic: runtimeHost.setupConnectorName(),
+      manual: runtimeHost.setupConnectorName("manual"),
+    },
+  });
+  send("launcher:state-changed", syncFreshConversationPreference(stateStore, runtimeHost.runtimeConfigSnapshot().config));
+  send("launcher:browser-state", browserHost.snapshot());
   let startupAuthenticationRefresh = Promise.resolve();
   if (!launcherSmokeTest && stateStore.read().browserInteractionMode === "automatic") {
+    publishOperation({
+      name: "launcher-startup",
+      status: "running",
+      message: "Checking saved sign-in session",
+    });
     startupAuthenticationRefresh = browserHost.refreshAuthentication().catch((error) => {
       logger.warn("browser.session_refresh_failed", {
         ...navigationErrorForLog(error),
       });
     });
   }
-  await rendererReady;
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
     const smokeRuntimeRoot = runtimeRootProvider();
@@ -1326,15 +1355,25 @@ async function start() {
       userData: launcherUserData,
     });
     if (config?.mode === "full") {
-      void startupAuthenticationRefresh.then(() => runtimeSupervisor.startIfConfigured()).catch((error) => {
+      void startupAuthenticationRefresh.then(() => {
+        publishOperation({ name: "launcher-startup", status: "running", message: "Starting local bridge service" });
+        return runtimeSupervisor.startIfConfigured();
+      }).then(() => {
+        publishOperation({ name: "launcher-startup", status: "completed", message: "Launcher ready" });
+      }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         logger.error("dev_profile.runtime_start_failed", { message });
         const failed = stateStore.update({ mcpSetupComplete: false });
         send("launcher:state-changed", failed);
+        publishOperation({ name: "dev-profile", status: "failed", message });
       }).finally(finishRuntimeStartup);
-    } else finishRuntimeStartup();
+    } else {
+      publishOperation({ name: "launcher-startup", status: "completed", message: "Launcher ready" });
+      finishRuntimeStartup();
+    }
   } else void (async () => {
     await startupAuthenticationRefresh;
+    publishOperation({ name: "launcher-startup", status: "running", message: "Starting local bridge service" });
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) {
       const state = stateStore.update({
@@ -1386,6 +1425,7 @@ async function start() {
     const route = await runtimeHost.connectBridgeRoute();
     return { ...runtime, bridgeRouteChanged: route.changed === true };
   })().then(async (runtime) => {
+    publishOperation({ name: "launcher-startup", status: "completed", message: "Launcher ready" });
     if (runtime.status === "ready") {
       const config = runtimeSupervisor.readConfig();
       const current = stateStore.read();

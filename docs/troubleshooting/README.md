@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **009** | Mở app trên Windows mất 5–6 phút không hiện cửa sổ và không có thông báo tiến trình | `launcher`, `electron`, `windows` | ✅ Đã Confirm | [009-windows-slow-startup-and-no-loading-ui.md](./009-windows-slow-startup-and-no-loading-ui.md) |
 | **008** | Electron tích lũy Renderer và sử dụng hơn 2 GB RAM | `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [008-electron-renderer-memory-lifecycle.md](./008-electron-renderer-memory-lifecycle.md) |
 | **001** | Mỗi tin nhắn trên Codex tạo 1 đoạn chat mới trên Web | `qwen-web`, `chatgpt-web` | ✅ Đã Confirm | [001-multi-turn-creates-new-chat.md](./001-multi-turn-creates-new-chat.md) |
 | **002** | HTTP 400: provider is invalid khi kết nối Launcher | `qwen-web` | ✅ Đã Confirm | [002-launcher-invalid-provider.md](./002-launcher-invalid-provider.md) |
@@ -13,4 +14,3 @@
 | **005** | Rơi rụng chỉ dẫn AGENTS.md khi gửi sang ChatGPT Web và M365 Copilot | `core`, `prompt` | ✅ Đã Confirm | [005-agents-md-instructions-dropped.md](./005-agents-md-instructions-dropped.md) |
 | **006** | Lệnh vi phạm SafeCommandGuard làm sập SSE stream và gây lặp kết quả cũ Chunk ID | `m365-copilot`, `core` | ⏳ Chờ User Test & Confirm | [006-m365-safe-command-stream-disconnect.md](./006-m365-safe-command-stream-disconnect.md) |
 | **007** | bun run launcher:audit thất bại do lỗ hổng bảo mật mới trong vite <= 6.4.3 | `launcher`, `ci/cd` | ✅ Đã Confirm | [007-launcher-audit-vite-vulnerability.md](./007-launcher-audit-vite-vulnerability.md) |
-

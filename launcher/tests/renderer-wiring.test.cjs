@@ -246,14 +246,23 @@ test("packaged runtime is verified before launcher browser surfaces can bind por
   const browserReady = electronMain.indexOf("await browserHost.ready();", start);
 
   assert.ok(runtimeValidation > start, "startup must eagerly verify the packaged runtime");
+  assert.ok(cdpPortAllocation < runtimeValidation, "CDP port switch must be configured before app.whenReady()");
+  assert.ok(windowCreation < runtimeValidation, "launcher window must open immediately before packaged runtime verification");
   for (const [surface, position] of [
-    ["CDP port allocation", cdpPortAllocation],
-    ["launcher window", windowCreation],
     ["browser control server", controlServerStart],
     ["embedded browser", browserReady],
   ]) {
     assert.ok(position > runtimeValidation, `${surface} must start only after runtime verification`);
   }
+});
+
+test("startup loading popup tracks launcher-startup phases and hides native browser surface while active", () => {
+  assert.match(electronMain, /name:\s*"launcher-startup"[\s\S]*?message:\s*"Preparing local runtime"/);
+  assert.match(electronMain, /name:\s*"launcher-startup"[\s\S]*?message:\s*"Initializing embedded browser"/);
+  assert.match(electronMain, /name:\s*"launcher-startup"[\s\S]*?message:\s*"Starting local bridge service"/);
+  assert.match(appSource, /const startupLoadingOpen = operation\?\.status === "running"/);
+  assert.match(appSource, /<StartupLoadingModal/);
+  assert.match(stylesSource, /\.startup-loading-backdrop\s*\{[^}]*position:\s*fixed;/s);
 });
 
 test("DEV launcher exposes its profile and supervises only its Full-mode MCP runtime", () => {
