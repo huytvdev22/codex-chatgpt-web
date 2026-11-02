@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **014** | GitHub Actions release thất bại do lỗ hổng bảo mật mới trong vite và minimatch | `launcher`, `ci/cd` | ⏳ Chờ User Test & Confirm | [014-launcher-audit-vite-and-minimatch-vulnerability.md](./014-launcher-audit-vite-and-minimatch-vulnerability.md) |
 | **013** | M365 Copilot sinh patch vụn vặt và lệch thụt lề dẫn đến apply_patch +0 -0 | `m365-copilot`, `prompts`, `patch` | ✅ Đã Confirm | [013-m365-apply-patch-fragmentation-and-indentation-mismatch.md](./013-m365-apply-patch-fragmentation-and-indentation-mismatch.md) |
 | **012** | Final answer nhắc cú pháp tool bị nhận nhầm mixed content và batch read bị chặn | `m365-copilot`, `parser`, `tools` | ✅ Đã Confirm | [012-inline-control-syntax-false-positive.md](./012-inline-control-syntax-false-positive.md) |
 | **011** | Lệnh quét đệ quy bị từ chối và giới hạn đọc file làm giảm quyền tự chủ của model | `m365-copilot`, `prompts`, `tools` | ⏳ Chờ User Test & Confirm | [011-unblock-recursive-scan-and-relax-file-limits.md](./011-unblock-recursive-scan-and-relax-file-limits.md) |
