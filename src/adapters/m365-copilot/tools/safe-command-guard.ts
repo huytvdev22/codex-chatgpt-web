@@ -25,12 +25,14 @@ export interface CommandValidationResult {
  * Semantic tools như read_file, list_dir, search_files và grep_code được
  * forward trực tiếp tới Codex runtime, không còn được chuyển thành lệnh
  * PowerShell hoặc POSIX tại M365 adapter.
+ *
+ * Lưu ý: Đã bỏ chặn quét đệ quy (recursive scan) để trao quyền cho mô hình
+ * tự quyết định phương thức duyệt file/thư mục dựa trên khả năng tư duy.
  */
 export class SafeCommandGuard {
   /**
    * Kiểm tra câu lệnh shell thô với các biểu thức hẹp nhằm ngăn:
-   * - Đọc hàng loạt file bằng vòng lặp.
-   * - Quét đệ quy toàn bộ repository.
+   * - Đọc hàng loạt file bằng vòng lặp shell.
    * - Đọc hàng loạt file bằng wildcard.
    */
   static validateShellCommand(cmd: string): CommandValidationResult {
@@ -56,35 +58,12 @@ export class SafeCommandGuard {
         message:
           "Batch file reading loop in shell script is disallowed for safety and token conservation.",
         guidance:
-          "Use native read_file for at most 3 files and no more than 150 total lines, or locate content with search_files or grep_code.",
+          "Use native read_file or locate content with search_files or grep_code.",
       };
     }
 
-    const isRecursiveTree =
-      /^\s*tree\s+[\/\\][fF]/i.test(trimmed) ||
-      /^\s*tree\s+-[a-zA-Z]*f/i.test(trimmed);
-
-    const isPowerShellRecursiveScan =
-      /\bGet-ChildItem\b/i.test(trimmed) &&
-      /-(?:Recurse|r)\b/i.test(trimmed) &&
-      !/-Depth\s+[12]\b/i.test(trimmed);
-
-    const isPosixRecursiveScan = /^\s*ls\s+-[a-zA-Z]*R\b/i.test(trimmed);
-
-    if (
-      isRecursiveTree ||
-      isPowerShellRecursiveScan ||
-      isPosixRecursiveScan
-    ) {
-      return {
-        allowed: false,
-        rule: "RECURSIVE_SCAN_DISALLOWED",
-        message:
-          "Recursive directory scan across the repository is disallowed to prevent context overload.",
-        guidance:
-          "Use native list_dir for one directory level or use search_files and grep_code for targeted discovery.",
-      };
-    }
+    // Đã bỏ chặn rule RECURSIVE_SCAN_DISALLOWED (Get-ChildItem -Recurse, ls -R, tree /F)
+    // để model tự do quyết định cách duyệt thư mục và tìm kiếm file.
 
     const isPowerShellWildcardRead =
       /\bGet-Content\s+(?:-(?:LiteralPath|Path)\s+)?[\*]\.[a-zA-Z0-9]+/i.test(
@@ -100,7 +79,7 @@ export class SafeCommandGuard {
         rule: "WILDCARD_READ_DISALLOWED",
         message: "Wildcard bulk file reading is disallowed.",
         guidance:
-          "Use native read_file with explicit paths and a total limit of 150 lines.",
+          "Use native read_file with explicit paths or locate content with search_files or grep_code.",
       };
     }
 

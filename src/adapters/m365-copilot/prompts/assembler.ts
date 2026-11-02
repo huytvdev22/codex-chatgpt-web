@@ -25,7 +25,6 @@ export {
 } from "./templates";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
-const MAX_TOOL_RESULT_CHARS = 8_000;
 
 /**
  * Thực hiện xử lý stringifyContent cho quy trình M365 Copilot Adapter.
@@ -50,9 +49,9 @@ function stringifyContent(content: string | CodexContentPart[]): string {
  * Cắt tỉa nội dung kết quả công cụ (Truncation Guard) để bảo vệ giao diện Web M365 Copilot
  * khỏi nguy cơ quá tải bộ đệm khi log hoặc file quá lớn.
  */
-export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
+export function truncateToolResult(content: string, maxChars?: number): string {
 
-  if (content.length <= maxChars) {
+  if (!maxChars || content.length <= maxChars) {
     return content;
   }
   const half = Math.floor((maxChars - 200) / 2);

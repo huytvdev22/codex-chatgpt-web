@@ -17,7 +17,6 @@ import { conversationScenarioBuilder } from "./conversation-scenario-builder";
 import { hasActualPriorAssistantReply } from "../../base";
 
 const MAX_M365_PROMPT_CHARS = 95_000;
-const MAX_TOOL_RESULT_CHARS = 8_000;
 const MAX_COMPACT_TOOL_DESCRIPTION_CHARS = 320;
 const MAX_FULL_TOOL_DESCRIPTION_CHARS = 1_200;
 
@@ -114,9 +113,9 @@ export function sanitizeCodexInstructions(text: string): string {
 /**
  * Thực hiện xử lý truncateToolResult cho quy trình M365 Copilot Adapter.
  */
-export function truncateToolResult(content: string, maxChars = MAX_TOOL_RESULT_CHARS): string {
+export function truncateToolResult(content: string, maxChars?: number): string {
 
-  if (content.length <= maxChars) return content;
+  if (!maxChars || content.length <= maxChars) return content;
   const half = Math.floor((maxChars - 200) / 2);
   const head = content.slice(0, half);
   const tail = content.slice(-half);
@@ -644,7 +643,7 @@ export class M365PromptCompiler {
         } else if (h.role === "assistant") {
           historyLines.push(`Trợ lý: ${h.content}`);
         } else if (h.role === "tool") {
-          historyLines.push(`<tool_result id="${h.callId || ""}">\n${truncateToolResult(h.content)}\n</tool_result>`);
+          historyLines.push(`<tool_result id="${h.callId || ""}">\n${h.content}\n</tool_result>`);
         }
       }
       if (historyLines.length > 0) {
@@ -655,7 +654,7 @@ export class M365PromptCompiler {
     let toolResultsText = "";
     if (normalized.trailingToolResults.length > 0) {
       const resultBlocks = normalized.trailingToolResults.map(res => {
-        const content = truncateToolResult(res.output);
+        const content = res.output;
         const isFenced = content.startsWith("```");
         const safeBody = isFenced ? content : `\`\`\`\n${content}\n\`\`\``;
         return `<tool_result id="${res.callId}">\n${safeBody}\n</tool_result>`;

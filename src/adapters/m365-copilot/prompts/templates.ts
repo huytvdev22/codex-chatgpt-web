@@ -72,9 +72,8 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
    - Khi đã có đủ thông tin hoặc đã sửa xong hết code, bạn viết câu trả lời chi tiết bằng Markdown cho mình đọc bên trong <webResponse>...</webResponse> (nằm trong khối 4-backtick \`\`\`\`markdown), và nhớ không kèm theo thẻ <tool_call> nào trong lượt kết thúc này nhé.
    - Khi nhắc tới file hoặc dòng code nào, bạn gắn link Markdown tương đối kiểu [index.html](index.html) hoặc [app.ts — dòng 25](src/app.ts#L25) để mình bấm vào nhảy thẳng tới chỗ đó trên IDE luôn nha.
 
-Một vài kinh nghiệm nhỏ để giữ tốc độ nhanh khi đọc file và chạy terminal trên máy mình:
-- Khi đọc file: Mỗi lần bạn đọc khoảng 1-5 file thôi (tổng <= 500 dòng). Với file dài, bạn đọc từng đoạn <= 150 dòng (dùng start_line/end_line hoặc head -n 150, sed -n '1,150p').
-- Khi tìm kiếm/duyệt thư mục: Đừng chạy vòng lặp đọc hàng loạt hay quét đệ quy toàn bộ cây thư mục (như tree /F, ls -R, Get-ChildItem -Recurse), và nhớ bỏ qua các thư mục nặng như node_modules, .git, dist, build (--exclude-dir=node_modules hoặc find . -maxdepth 2).
+Một vài kinh nghiệm nhỏ để làm việc hiệu quả và mượt mà trên máy mình:
+- Khi đọc file và khảo sát dự án: Bạn hoàn toàn chủ động quyết định số lượng file, phạm vi dòng cần đọc cũng như phương pháp khảo sát (kể cả đọc toàn bộ file hoặc từng đoạn 150 dòng, và duyệt đệ quy khi cần) dựa trên khả năng tư duy và phân tích của bạn. Bạn nên lưu ý bỏ qua các thư mục sinh tự động quá nặng như node_modules, .git, dist, build để tối ưu tốc độ.
 - Chỉ dùng các công cụ có trong danh sách AVAILABLE TOOLS bên dưới thôi nhé.`;
 }
 
@@ -95,9 +94,9 @@ Bạn ơi, với yêu cầu này mình muốn cùng bạn khảo sát kỹ và l
    - Thoải mái đọc và tìm kiếm file để hiểu cấu trúc, nhưng chỉ sử dụng công cụ đang xuất hiện trong danh sách AVAILABLE TOOLS của lượt hiện tại.
    - PHỎNG VẤN TƯƠNG TÁC (INTERACTIVE USER INTERVIEW WIZARD):
      + Khi bài toán có nhiều lựa chọn kiến trúc, phương án công nghệ hoặc cần làm rõ yêu cầu, bạn cứ gọi công cụ request_user_input để mở wizard cho mình click chọn phương án kèm badge (Recommended) trước khi chốt kế hoạch nhé!
-   - ĐỌC FILE AN TOÀN:
-     + Nếu inventory hiện tại có công cụ đọc file semantic, hãy ưu tiên công cụ đó. Nếu không có, dùng exec_command với đường dẫn cụ thể và giới hạn tối đa 150 dòng; mỗi lần chỉ đọc 1-3 file.
-     + Không dùng script shell lặp đọc hàng loạt file và không quét đệ quy vào node_modules, .git, dist, build (nhớ loại trừ: --exclude-dir=node_modules).
+   - KHẢO SÁT & ĐỌC FILE:
+     + Bạn tự do quyết định cách đọc file, tra cứu mã nguồn và duyệt cấu trúc thư mục phù hợp với khả năng tư duy của bạn để nắm bắt trọn vẹn dự án. Bạn có thể đọc từng phần hoặc toàn bộ file, chỉ cần lưu ý tránh quét sâu vào các thư mục thư viện nặng như node_modules, .git, dist.
+     + Ưu tiên công cụ semantic nếu có trong AVAILABLE TOOLS, hoặc dùng exec_command khi cần thiết.
    - Nếu cần khảo sát thêm trước khi lên kế hoạch, bạn cứ xuất thẳng khối <tool_call> đọc file/chạy lệnh (có thể xuất nhiều khối <tool_call> cùng lúc để khảo sát nhanh).
 3. ĐỊNH DẠNG ĐẦU RA KHI XUẤT KẾ HOẠCH:
    - Khi đã có đủ thông tin, bạn bọc toàn bộ bản kế hoạch trong cặp thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt để IDE hiển thị giao diện duyệt kế hoạch cho mình nhé:
@@ -125,7 +124,7 @@ Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệ
    - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Làm tuần tự từng file (sửa file 1 -> nhận kết quả -> sửa file 2).
    - Tuyệt đối không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
    - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, git status, mkdir -p ...).
-   - Đọc file an toàn: Ưu tiên công cụ semantic nếu nó có trong inventory hiện tại; nếu không có, dùng exec_command với đường dẫn cụ thể. Tối đa 1-3 file, tổng không quá 150 dòng và không quét đệ quy vào node_modules.
+   - Khảo sát mã nguồn: Bạn chủ động lựa chọn công cụ đọc file hoặc lệnh kiểm tra phù hợp theo tư duy kỹ thuật của mình, tránh các thư mục nặng như node_modules.
 2. Sau khi file được tạo/sửa xong và nhận kết quả tool_result, bạn tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command) để kiểm tra tính đúng đắn.
 3. Không xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt.
 4. Khi giải thích mã nguồn hoặc nhắc đến tệp tin nào, bạn nhớ dùng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc [tên_file — dòng N](đường_dẫn_tương_đối#LN) nha.`;
@@ -222,7 +221,7 @@ Mình gửi bạn các câu trả lời / phương án mình đã chọn qua h�
 export const PLAN_SURVEY_CONTINUATION_PROMPT = `[KẾT QUẢ KHẢO SÁT MÃ NGUỒN - PLAN MODE]
 Mình gửi bạn kết quả đọc file / khảo sát lệnh trên máy trong thẻ <tool_result> bên dưới nhé.
 Lưu ý là tụi mình vẫn đang ở CHẾ ĐỘ LẬP KẾ HOẠCH (PLAN MODE) nên chưa sửa code (chưa dùng apply_patch/write_file).
-- Nếu cần khảo sát tiếp: Chỉ gọi công cụ đọc hoặc tìm kiếm đang xuất hiện trong inventory của lượt hiện tại; nếu không có semantic tool phù hợp thì dùng exec_command có phạm vi hẹp.
+- Nếu cần khảo sát tiếp: Bạn chủ động dùng các công cụ phù hợp trong inventory hoặc exec_command để thu thập đầy đủ ngữ cảnh.
 - Nếu cần mình chốt phương án thiết kế: Hãy gọi request_user_input để mở wizard cho mình chọn.
 - Nếu đã đủ thông tin: Bạn xuất bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> và Đặt trọn trong <webResponse>...</webResponse> bằng tiếng Việt để mình duyệt nhé!`;
 
@@ -308,8 +307,8 @@ Bạn vui lòng chỉ sử dụng công cụ đang xuất hiện trong danh sác
     return `Bạn ơi, câu lệnh shell bạn yêu cầu vừa bị chính sách an toàn của IDE từ chối (chưa có công cụ nào được chạy ở lượt vừa rồi cả):
 - Điểm bị vấp: [${options.code}] ${options.message}
 
-Bạn vui lòng không sử dụng lệnh quét đệ quy (Get-ChildItem -Recurse, ls -R), vòng lặp duyệt đọc file (foreach... Get-Content) hoặc wildcard (*.ext).
-Hãy đổi sang công cụ semantic phù hợp nếu công cụ đó có trong inventory hiện tại. Nếu inventory không có công cụ đọc hoặc liệt kê semantic, dùng \`exec_command\` với đường dẫn cụ thể, không quét đệ quy, không wildcard, không vòng lặp đọc file và giới hạn tối đa 150 dòng; sau đó gửi lại theo đúng response protocol nhé:
+Bạn vui lòng không sử dụng vòng lặp duyệt đọc file hàng loạt (foreach... Get-Content) hoặc wildcard (*.ext).
+Hãy đổi sang công cụ semantic phù hợp nếu công cụ đó có trong inventory hiện tại, hoặc dùng \`exec_command\` với đường dẫn cụ thể; sau đó gửi lại theo đúng response protocol nhé:
 
 \`\`\`\`markdown
 <webResponse>
