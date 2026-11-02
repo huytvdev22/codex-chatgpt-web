@@ -27,4 +27,4 @@
 - **Kiểm thử**:
   - `bun test tests/m365-user-reported-mixed-content.test.ts`: 7/7 pass (Case 1, 2, 3 cả có backtick lẫn không backtick đều ra `final_answer`, Case 4 chạy foreach read thành công ra `tool_calls`).
   - Toàn bộ test suite M365: `219 pass, 0 fail` across 24 files.
-- **Trạng thái**: ⏳ Chờ User Test & Confirm
+- **Trạng thái**: ✅ Đã Confirm
