@@ -172,9 +172,45 @@ function hasCompleteTransportFence(rawResponse: string): boolean {
   return /^````markdown[ \t]*\r?\n[\s\S]*\r?\n````$/.test(rawResponse.trim());
 }
 
-function hasReservedControlMarker(content: string): boolean {
-  return /<\/?(?:tool_call|custom_tool_call|thought|thinking)\b/i.test(content)
-    || /\*{3}\s*(?:Begin|End) Patch/i.test(content);
+/**
+ * Loại bỏ các khối code block (cả fenced code ```...``` / ````...```` và inline code `...`)
+ * khỏi Markdown text để phân tách giữa cú pháp thực thi (executable action) và dữ liệu tài liệu
+ * được trích dẫn (quoted documentation/tutorial).
+ */
+export function stripMarkdownCode(text: string): string {
+  // 1. Loại bỏ fenced code blocks
+  let clean = text.replace(/`{3,}[\s\S]*?`{3,}/g, "");
+  // 2. Loại bỏ inline code
+  clean = clean.replace(/`[^`\r\n]*`/g, "");
+  return clean;
+}
+
+/**
+ * Kiểm tra xem một chuỗi text có chứa hành động công cụ có thể thực thi (executable tool action)
+ * hay không. Các thẻ XML hoặc marker chỉ là đề cập thuật ngữ trong văn bản tự nhiên
+ * (ví dụ: <tool_call> hoặc <custom_tool_call>, không có JSON payload hoặc patch directives đi kèm)
+ * hoặc nằm trong Markdown code block thì không được coi là executable tool action.
+ */
+function hasExecutableToolAction(content: string): boolean {
+  const clean = stripMarkdownCode(content);
+
+  // 1. Function tool call:
+  // - Bắt đầu bằng <tool_call> theo sau bởi JSON object '{'
+  // - Hoặc có cặp thẻ <tool_call>...{...}...</tool_call>
+  const hasFunctionCall =
+    /<tool_call\b\s*\{/i.test(clean) ||
+    /<tool_call\b[\s\S]*?\{[\s\S]*?\}[\s\S]*?<\/\s*tool_call\s*>/i.test(clean);
+
+  // 2. Custom tool call apply_patch:
+  // - Có <custom_tool_call name="apply_patch"> theo sau bởi *** Begin Patch
+  // - Hoặc chứa cặp thẻ <custom_tool_call>...</custom_tool_call>
+  // - Hoặc chứa directive apply_patch *** Begin Patch ... *** End Patch
+  const hasPatchCall =
+    /<custom_tool_call\b[\s\S]*?\*{3}\s*Begin Patch/i.test(clean) ||
+    /<custom_tool_call\b[\s\S]*?<\/\s*custom_tool_call\s*>/i.test(clean) ||
+    /\*{3}\s*Begin Patch[\s\S]*?\*{3}\s*End Patch/i.test(clean);
+
+  return hasFunctionCall || hasPatchCall;
 }
 
 type ReservedControlMarker =
@@ -468,7 +504,7 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
   if (!content) {
     return protocolError(rawResponse, "EMPTY_RESPONSE", "webResponse không được rỗng.");
   }
-  if (/<\/?(?:thought|thinking)\b/i.test(content)) {
+  if (/<\/?(?:thought|thinking)\b/i.test(stripMarkdownCode(content))) {
     return protocolError(rawResponse, "FORBIDDEN_THOUGHT_BLOCK", "Không được xuất thought/thinking trong response protocol.");
   }
 
@@ -509,7 +545,7 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
       continue;
     }
 
-    if (sawToolFrame || hasReservedControlMarker(content.slice(offset))) {
+    if (sawToolFrame || hasExecutableToolAction(content.slice(offset))) {
       return protocolError(
         rawResponse,
         "MIXED_TOOL_AND_TEXT_CONTENT",

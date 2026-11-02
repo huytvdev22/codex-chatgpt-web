@@ -84,14 +84,15 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
     }
   });
 
-  test("khi phản hồi chứa lệnh exec_command vi phạm batch read foreach: trả về DISALLOWED_COMMAND", () => {
+  test("khi phản hồi chứa lệnh exec_command chứa batch read foreach: cho phép thực thi theo quyền tự chủ của model", () => {
     const raw = "````markdown\n<webResponse>\n<tool_call>\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"$files = @('a.java', 'b.java'); foreach ($f in $files) { Get-Content $f }\"}}\n</tool_call>\n</webResponse>\n````";
     const result = parseStrictM365Response(raw);
 
-    expect(result.kind).toBe("protocol_error");
-    if (result.kind === "protocol_error") {
-      expect(result.code).toBe("DISALLOWED_COMMAND");
-      expect(result.message).toContain("BATCH_READ_DISALLOWED");
+    expect(result.kind).toBe("tool_calls");
+    if (result.kind === "tool_calls") {
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0].name).toBe("exec_command");
+      expect(result.calls[0].arguments.cmd).toContain("foreach ($f in $files)");
     }
   });
 
