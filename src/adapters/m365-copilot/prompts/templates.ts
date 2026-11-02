@@ -41,6 +41,9 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
 3. Khi bạn tạo mới hoặc chỉnh sửa file (Sử dụng apply_patch):
    - Tụi mình thống nhất dùng <custom_tool_call name="apply_patch"> cho mọi thao tác tạo mới hoặc sửa file (thay vì dùng lệnh shell cat/echo/heredoc hay write_file).
    - Để tránh lỗi lệch dòng (invalid hunk), mỗi lượt bạn chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT thôi nhé. Làm xong file này, script báo thành công rồi mình làm tiếp file sau.
+   - NGUYÊN TẮC GỘP HUNK: Khi các vị trí cần sửa nằm gần nhau trong cùng một hàm/block hoặc trong file thụt lề sâu (TSX/JSX), hãy gộp chung vào đúng 1 khối hunk @@ duy nhất bao bọc toàn bộ phạm vi thay đổi. TUYỆT ĐỐI KHÔNG chia nhỏ thành 4-5 hunk @@ lắt nhắt vì rất dễ gây lỗi lệch ngữ cảnh (context mismatch) khiến IDE từ chối bản vá (+0 -0).
+   - BẢO TOÀN THỤT LỀ & DÒNG NGỮ CẢNH: Các dòng ngữ cảnh (dòng giữ nguyên có 1 khoảng trắng đầu dòng) bắt buộc phải khớp chính xác 100% thụt lề (spaces/tabs) của file gốc; tuyệt đối không cắt cụt hoặc làm rụng ký tự đầu dòng (ví dụ không để mất chữ 's' thành 'ource:').
+   - CLEAN CODE TRONG JSX/TSX: Tránh viết logic cập nhật object phức tạp lồng sâu inline trong JSX. Hãy tách thành hàm helper riêng phía trên return rồi gọi trong event handler để giữ code phẳng và an toàn.
    - Mẫu khi sửa một đoạn trong file code logic (.ts, .js, .py, .java...):
      \`\`\`\`markdown
      <webResponse>
@@ -122,10 +125,11 @@ Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệ
 1. Bạn bắt đầu ngay bằng cách xuất thẳng khối <custom_tool_call name="apply_patch"> cho bước đầu tiên để script trên máy mình chạy nhé:
    - Tạo file mới hoặc sửa file: Luôn dùng <custom_tool_call name="apply_patch"> (với *** Add File: path/to/file khi tạo file mới hoặc *** Update File: path/to/file khi sửa file). Tuyệt đối không dùng write_file.
    - NGUYÊN TẮC ĐỘC LẬP TỪNG FILE: Mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT. Làm tuần tự từng file (sửa file 1 -> nhận kết quả -> sửa file 2).
+   - Gộp các vị trí sửa gần nhau vào 1 hunk @@ duy nhất, giữ đúng 100% thụt lề gốc và không để rụng ký tự đầu dòng.
    - Tuyệt đối không dùng các lệnh shell (cat <<EOF, cat >, echo >, python, perl, heredoc) để tạo hoặc ghi file trong exec_command.
-   - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, git status, mkdir -p ...).
+   - Lệnh exec_command chỉ dùng để chạy lệnh cài đặt hoặc kiểm thử không tương tác (ví dụ: npm install, npm test, tsc --noEmit, git status, mkdir -p ...).
    - Khảo sát mã nguồn: Bạn chủ động lựa chọn công cụ đọc file hoặc lệnh kiểm tra phù hợp theo tư duy kỹ thuật của mình, tránh các thư mục nặng như node_modules.
-2. Sau khi file được tạo/sửa xong và nhận kết quả tool_result, bạn tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command) để kiểm tra tính đúng đắn.
+2. Sau khi file được tạo/sửa xong và nhận kết quả tool_result, bạn tiếp tục các bước kế tiếp hoặc chạy test/lệnh (exec_command, ví dụ npm run typecheck hoặc npx tsc --noEmit) để kiểm tra tính đúng đắn trước khi chốt xong.
 3. Không xuất lại thẻ <proposed_plan> nữa vì kế hoạch đã được duyệt.
 4. Khi giải thích mã nguồn hoặc nhắc đến tệp tin nào, bạn nhớ dùng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc [tên_file — dòng N](đường_dẫn_tương_đối#LN) nha.`;
 
@@ -136,7 +140,8 @@ export const TOOL_REMINDER_PROMPT = `Mình vừa chạy các lệnh bạn yêu c
 (Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là lệnh vừa rồi đã chạy thành công mỹ mãn rồi đó).
 
 Bạn xem kết quả rồi xử lý tiếp giúp mình nha:
-- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> .
+- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé, gộp các thay đổi gần nhau vào 1 hunk @@ duy nhất), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> .
+- Nếu vừa sửa xong file mã nguồn TypeScript/JavaScript, bạn có thể chạy lệnh kiểm tra cú pháp (như tsc --noEmit hoặc npm test) để đảm bảo không phát sinh lỗi trước khi kết luận.
 - Nếu đã xong hết việc, bạn viết câu trả lời kết luận (kèm link file tương đối [tên_file](đường_dẫn)) cho mình đọc nha!`;
 
 /**

@@ -240,7 +240,8 @@ ${JSON.stringify({ name: wireName, arguments: argumentsExample })}
 \`\`\`\`
 
 File chưa tồn tại dùng *** Add File. File đã tồn tại dùng *** Update File.
-Không dùng *** Add File để giả định ghi đè file đã tồn tại.`);
+Không dùng *** Add File để giả định ghi đè file đã tồn tại.
+Khi sửa các dòng gần nhau, hãy gộp vào 1 hunk @@ duy nhất và giữ nguyên thụt lề file gốc, tránh chia nhỏ nhiều @@ vụn vặt.`);
   }
 
   return examples.length > 0

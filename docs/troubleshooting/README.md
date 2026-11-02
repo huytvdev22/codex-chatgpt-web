@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **013** | M365 Copilot sinh patch vụn vặt và lệch thụt lề dẫn đến apply_patch +0 -0 | `m365-copilot`, `prompts`, `patch` | ✅ Đã Confirm | [013-m365-apply-patch-fragmentation-and-indentation-mismatch.md](./013-m365-apply-patch-fragmentation-and-indentation-mismatch.md) |
 | **012** | Final answer nhắc cú pháp tool bị nhận nhầm mixed content và batch read bị chặn | `m365-copilot`, `parser`, `tools` | ✅ Đã Confirm | [012-inline-control-syntax-false-positive.md](./012-inline-control-syntax-false-positive.md) |
 | **011** | Lệnh quét đệ quy bị từ chối và giới hạn đọc file làm giảm quyền tự chủ của model | `m365-copilot`, `prompts`, `tools` | ⏳ Chờ User Test & Confirm | [011-unblock-recursive-scan-and-relax-file-limits.md](./011-unblock-recursive-scan-and-relax-file-limits.md) |
 | **010** | Final answer nhắc cú pháp response envelope bị nhận nhầm là nhiều envelope | `m365-copilot`, `parser` | ⏳ Chờ User Test & Confirm | [010-m365-final-answer-envelope-false-positive.md](./010-m365-final-answer-envelope-false-positive.md) |

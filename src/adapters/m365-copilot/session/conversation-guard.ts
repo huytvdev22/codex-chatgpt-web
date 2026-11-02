@@ -2,7 +2,7 @@
 import type { CodexMessage } from "../../../types";
 import type { ConversationGuardState } from "./conversation-state";
 
-export const MAX_TOOL_ITERATIONS = 100;
+export const MAX_TOOL_ITERATIONS = 500;
 export const MAX_IDENTICAL_TOOL_CALLS = 10;
 export const MAX_IDENTICAL_READ_TOOL_CALLS = 20;
 export const MAX_IDENTICAL_WRITE_TOOL_CALLS = 6;
