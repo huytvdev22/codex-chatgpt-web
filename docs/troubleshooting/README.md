@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **016** | Tự động lưu raw request vào thư mục `scratch` | `server`, `privacy`, `filesystem` | ⏳ Chờ User Test & Confirm | ./016-remove-raw-request-scratch-dump.md |
 | **015** | M365 đóng/mở tab liên tục gây bootstrap timeout `Browser idle document did not commit within 10000ms` | `launcher`, `m365-copilot`, `electron` | ✅ Đã Confirm | ./015-m365-tab-churn-bootstrap-timeout.md |
 | **014** | GitHub Actions release thất bại do lỗ hổng bảo mật mới trong vite và minimatch | `launcher`, `ci/cd` | ⏳ Chờ User Test & Confirm | [014-launcher-audit-vite-and-minimatch-vulnerability.md](./014-launcher-audit-vite-and-minimatch-vulnerability.md) |
 | **013** | M365 Copilot sinh patch vụn vặt và lệch thụt lề dẫn đến apply_patch +0 -0 | `m365-copilot`, `prompts`, `patch` | ✅ Đã Confirm | [013-m365-apply-patch-fragmentation-and-indentation-mismatch.md](./013-m365-apply-patch-fragmentation-and-indentation-mismatch.md) |

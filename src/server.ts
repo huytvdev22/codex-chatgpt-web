@@ -3,13 +3,11 @@ import { httpStatusFromTerminalError } from "./lib/errors";
 import { extractCodexTurnIdentityFromBody } from "./adapters/chatgpt-web/environment";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
-import { getConfigDir, providerConfig } from "./config";
+import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import http from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { writeFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
-import { join } from "node:path";
 
 export interface UniversalServer {
   port: number;
@@ -1020,88 +1018,6 @@ async function handleQwenResponseRequest(
   return Response.json(json);
 }
 
-export function getRawDumpBaseDir(adapterDir: string): string {
-  // Ưu tiên 1: Biến môi trường CODEX_RAW_DUMP_DIR nếu được thiết lập thủ công
-  if (process.env.CODEX_RAW_DUMP_DIR?.trim()) {
-    return join(process.env.CODEX_RAW_DUMP_DIR.trim(), adapterDir);
-  }
-
-  // Ưu tiên 2: Nếu đang ở môi trường dev/workspace (thư mục scratch/ tồn tại trong thư mục dự án)
-  const localScratch = join(process.cwd(), "scratch");
-  if (existsSync(localScratch)) {
-    return join(localScratch, adapterDir);
-  }
-
-  // Ưu tiên 3: Môi trường build production / app đóng gói -> lưu bền vững vào thư mục user home của app
-  // (~/.codex-m365-copilot/scratch/... trên macOS/Linux hoặc C:\Users\<User>\.codex-m365-copilot\scratch\... trên Windows)
-  const configDir = getConfigDir();
-  return join(configDir, "scratch", adapterDir);
-}
-
-export function dumpRawCodexRequest(raw: unknown): void {
-  try {
-    const rawRecord = raw && typeof raw === "object" && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : undefined;
-
-    const requestedModel = typeof rawRecord?.model === "string" ? rawRecord.model : undefined;
-
-    // 1. Phân loại adapter directory: .chatgpt, .m365, .gemini, .qwen
-    let adapterDir = ".chatgpt";
-    if (requestedModel) {
-      if (isM365ModelSlug(requestedModel)) {
-        adapterDir = ".m365";
-      } else if (isGeminiModelSlug(requestedModel)) {
-        adapterDir = ".gemini";
-      } else if (isQwenModelSlug(requestedModel)) {
-        adapterDir = ".qwen";
-      }
-    }
-
-    // 2. Trích xuất threadId của cuộc hội thoại
-    const identity = extractCodexTurnIdentityFromBody(raw);
-    const rawThreadId = identity.threadId?.trim() || "default-thread";
-    // Sanitize ký tự để đảm bảo đường dẫn thư mục an toàn trên macOS, Windows và Linux
-    const safeThreadId = rawThreadId.replace(/[/\\?%*:|"<>]/g, "_");
-
-    // 3. Chuẩn bị đường dẫn thư mục linh hoạt (dev vs production app)
-    const baseDir = getRawDumpBaseDir(adapterDir);
-
-    // Xử lý an toàn nếu baseDir trước đây bị tạo nhầm thành 1 file thường (như scratch/.m365)
-    if (existsSync(baseDir) && !statSync(baseDir).isDirectory()) {
-      const parentDir = join(baseDir, "..");
-      const backupPath = join(parentDir, `${adapterDir.replace(/^\./, "")}-prompt-backup.txt`);
-      renameSync(baseDir, backupPath);
-    }
-
-    const historyDir = join(baseDir, "history", safeThreadId);
-
-    if (!existsSync(historyDir)) {
-      mkdirSync(historyDir, { recursive: true });
-    }
-
-    const payloadJson = JSON.stringify(raw, null, 2);
-
-    // 4. Lưu snapshot lượt mới nhất (để bạn luôn mở nhanh file này trong IDE)
-    writeFileSync(join(baseDir, "codex-raw.txt"), payloadJson, "utf8");
-    if (adapterDir !== ".chatgpt") {
-      const chatgptBaseDir = getRawDumpBaseDir(".chatgpt");
-      if (!existsSync(chatgptBaseDir)) mkdirSync(chatgptBaseDir, { recursive: true });
-      writeFileSync(join(chatgptBaseDir, "codex-raw.txt"), payloadJson, "utf8");
-    }
-
-    // 5. Lưu tự động từng lượt vào file lịch sử riêng biệt theo thread id: turn-<timestamp>.json
-    const timestamp = Date.now();
-    const historyFilename = `turn-${timestamp}.json`;
-    const historyFilePath = join(historyDir, historyFilename);
-
-    writeFileSync(historyFilePath, payloadJson, "utf8");
-    console.log(`[codex-raw-dump] Đã lưu raw message vào ${baseDir}/history/${safeThreadId}/${historyFilename}`);
-  } catch (err) {
-    console.warn(`[codex-raw-dump] Không thể ghi log raw request: ${err}`);
-  }
-}
-
 export async function responseRequest(
   req: Request,
   config: AppConfig,
@@ -1112,7 +1028,6 @@ export async function responseRequest(
   let raw: unknown;
   try {
     raw = await readJsonRequestBody(req);
-    dumpRawCodexRequest(raw);
   } catch (error) {
     return formatErrorResponse(
       400,
