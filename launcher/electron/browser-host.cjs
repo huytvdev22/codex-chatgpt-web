@@ -911,7 +911,28 @@ class BrowserHost {
     try {
       signal?.throwIfAborted();
       await Promise.race([(async () => {
-        await loadCommittedBrowserSurface(tab.view.webContents, tab.url || IDLE_BROWSER_URL);
+        const contents = tab.view.webContents;
+        const targetUrl = tab.url || IDLE_BROWSER_URL;
+        try {
+          await loadCommittedBrowserSurface(contents, targetUrl);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const retryableTimeout = message.includes("Browser idle document did not commit within");
+          if (!retryableTimeout || contents.isDestroyed()) throw error;
+          this.logger.warn("browser.tab_initialization_retry", {
+            tabId: tab.id,
+            traceId: tab.traceId,
+            provider: tab.provider,
+            message,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          signal?.throwIfAborted();
+          await loadCommittedBrowserSurface(
+            contents,
+            targetUrl,
+            PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS * 3,
+          );
+        }
         signal?.throwIfAborted();
         if (tab.provider === "m365") await markM365TurnSurface(tab);
         else if (tab.provider === "qwen") await markQwenTurnSurface(tab);
@@ -3158,14 +3179,6 @@ class BrowserHost {
       && (!tab.connectorIdentity || effectiveConnectorBound)) {
       tab.connectorBound = effectiveConnectorBound;
       tab.lastHeartbeatAt = Date.now();
-      for (const candidate of [...this.turnTabs.values()]) {
-        if (candidate !== tab
-          && candidate.status === "ready"
-          && candidate.interactionMode !== "manual"
-          && (candidate.provider || "chatgpt") === (tab.provider || "chatgpt")) {
-          this.removeTurnTab(candidate, false);
-        }
-      }
       if (hideAfterTurn && !this.activeTraceId) this.hide();
       else this.syncViewVisibility?.();
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });

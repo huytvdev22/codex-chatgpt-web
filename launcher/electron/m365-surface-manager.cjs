@@ -110,15 +110,10 @@ class M365SurfaceManager {
     const tabs = [...turnTabs.values()].filter(tab => tab.provider === "m365");
     if (tabs.some(tab => tab.conversationKey === conversationKey)) return;
 
-    for (const reclaimable of tabs.filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")) {
-      removeTab(reclaimable);
-      tabs.splice(tabs.indexOf(reclaimable), 1);
-    }
-
     const limit = MAX_M365_SURFACES;
     while (tabs.length >= limit) {
       const reclaimable = tabs
-        .filter(tab => tab.status === "ready")
+        .filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")
         .sort((left, right) => (left.lastHeartbeatAt || 0) - (right.lastHeartbeatAt || 0))[0];
       if (!reclaimable) {
         throw new Error(`M365 Copilot already has ${limit} active conversation surfaces`);

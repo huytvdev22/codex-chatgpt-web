@@ -135,7 +135,7 @@ test("presentTurnView disables device emulation and hides completed ready tabs i
   assert.equal(tab.deviceEmulationDirty, true);
 });
 
-test("endTurn evicts older ready automatic tabs and syncs visibility when retaining a completed turn", async () => {
+test("endTurn preserves older ready automatic tabs and syncs visibility when retaining a completed turn", async () => {
   const removed = [];
   let visibilitySynced = 0;
   const oldReadyTab = {
@@ -205,8 +205,8 @@ test("endTurn evicts older ready automatic tabs and syncs visibility when retain
     true,
   );
 
-  assert.deepEqual(removed, [["tab-old-ready", false]]);
-  assert.equal(fixture.turnTabs.has("tab-old-ready"), false);
+  assert.deepEqual(removed, []);
+  assert.equal(fixture.turnTabs.has("tab-old-ready"), true);
   assert.equal(fixture.turnTabs.has("tab-manual-ready"), true);
   assert.equal(fixture.turnTabs.has("tab-completing"), true);
   assert.equal(completingTab.status, "ready");
@@ -392,7 +392,8 @@ test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab wh
   assert.deepEqual(idleSnap.tabs, []);
   assert.equal(idleSnap.visible, false);
 
-  // Và khi bắt đầu một phiên M365 mới, tab ready cũ (M365 1) được đóng ngay lập tức
+  // Khi bắt đầu một phiên M365 mới dưới giới hạn surface, tab ready cũ được giữ
+  // để tái sử dụng đúng conversationKey thay vì liên tục đóng và tạo renderer mới.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "m365-evict-ready-"));
   try {
     const manager = new M365SurfaceManager({
@@ -406,8 +407,8 @@ test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab wh
       removed.push(tab.id);
       tabs.delete(tab.id);
     });
-    assert.deepEqual(removed, ["m365-1"]);
-    assert.equal(tabs.size, 0);
+    assert.deepEqual(removed, []);
+    assert.equal(tabs.size, 1);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
