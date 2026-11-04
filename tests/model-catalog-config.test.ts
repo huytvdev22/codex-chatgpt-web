@@ -10,7 +10,7 @@ import {
   ensureManagedModelCatalogFile,
   getFallbackNativeCatalog,
   getManagedModelCatalogPath,
-} from "../src/model-catalog";
+} from "../src/models/model-catalog";
 import { defaultConfig } from "../src/config";
 
 test("syncCodexModelCatalogConfig adds model_catalog_json without altering other config lines", () => {

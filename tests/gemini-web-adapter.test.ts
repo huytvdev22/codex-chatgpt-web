@@ -4,14 +4,14 @@ import {
   availableGeminiModelRoutes,
   resolveGeminiCapabilityMode,
   GEMINI_MODEL_ROUTES,
-} from "../src/gemini-models";
+} from "../src/models/gemini-models";
 import { GEMINI_SELECTORS } from "../src/adapters/gemini-web/selectors";
 import {
   buildUnifiedToolProtocol,
   buildShortOutputFormatAnchor,
 } from "../src/adapters/m365-copilot/prompts";
 import { GeminiWebAdapter, createGeminiWebAdapter } from "../src/adapters/gemini-web";
-import { augmentNativeModelCatalog } from "../src/model-catalog";
+import { augmentNativeModelCatalog } from "../src/models/model-catalog";
 
 describe("Google Gemini Web Adapter Base Architecture Tests", () => {
   test("1. isGeminiModelSlug nhận diện chính xác các model của Gemini Web", () => {

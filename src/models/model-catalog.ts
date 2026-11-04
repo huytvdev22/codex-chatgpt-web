@@ -1,6 +1,6 @@
-import type { AppConfig } from "./config";
-import { atomicWriteFile, getConfigDir } from "./config";
-import type { CodexModelContextOverride } from "./codex-integration";
+import type { AppConfig } from "../config";
+import { atomicWriteFile, getConfigDir } from "../config";
+import type { CodexModelContextOverride } from "../codex-integration";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

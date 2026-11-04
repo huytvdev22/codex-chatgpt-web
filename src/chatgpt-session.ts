@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright-core";
-import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import type { ChatGptWebAccountCapabilities } from "./models/chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";

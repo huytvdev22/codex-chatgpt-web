@@ -1,4 +1,4 @@
-import { isM365ModelSlug, availableM365ModelRoutes } from "../src/m365-models.ts";
+import { isM365ModelSlug, availableM365ModelRoutes } from "../src/models/m365-models.ts";
 import { createM365CopilotAdapter } from "../src/adapters/m365-copilot/index.ts";
 
 console.log("=================================================");

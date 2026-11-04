@@ -11,7 +11,7 @@ import {
   CHATGPT_COMPOSER_SELECTOR,
   detectChatGptAccountCapabilities,
 } from "./chatgpt-session";
-import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import type { ChatGptWebAccountCapabilities } from "./models/chatgpt-web-models";
 
 export interface BrowserLoginResult {
   storageStatePath: string;

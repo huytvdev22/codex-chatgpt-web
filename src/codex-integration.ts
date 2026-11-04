@@ -41,7 +41,7 @@ import {
   splitLines,
   textFormat,
 } from "./codex-integration-document";
-import { getManagedModelCatalogPath } from "./model-catalog";
+import { getManagedModelCatalogPath } from "./models/model-catalog";
 import {
   assertBuiltinModelProvider,
   assertPreservedPreviousAssignments,

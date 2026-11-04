@@ -18,7 +18,7 @@ import {
   requireChatGptWebModelRoute,
   resolveChatGptWebContextLimits,
   resolveChatGptWebTransportLimits,
-} from "../src/chatgpt-web-models";
+} from "../src/models/chatgpt-web-models";
 import { defaultConfig } from "../src/config";
 import { routeChatGptWebRequest } from "../src/server";
 import type { CodexParsedRequest } from "../src/types";

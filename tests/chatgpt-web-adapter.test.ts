@@ -3,7 +3,7 @@ import {
   isChatGptWebModelSlug,
   availableChatGptWebModelRoutes,
   CHATGPT_WEB_DEFAULT_ROUTE,
-} from "../src/chatgpt-web-models";
+} from "../src/models/chatgpt-web-models";
 import {
   ChatGptWebAdapter,
   createChatGptWebAdapter,
@@ -11,7 +11,7 @@ import {
   extractConversationIdFromUrl,
   ChatGptConversationStore,
 } from "../src/adapters/chatgpt-web";
-import { augmentNativeModelCatalog } from "../src/model-catalog";
+import { augmentNativeModelCatalog } from "../src/models/model-catalog";
 import { join } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
 

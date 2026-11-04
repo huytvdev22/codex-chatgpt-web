@@ -25,7 +25,7 @@ import { processRunning } from "../src/process";
 import {
   CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
   CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
-} from "../src/chatgpt-web-models";
+} from "../src/models/chatgpt-web-models";
 
 const roots: string[] = [];
 afterEach(() => {

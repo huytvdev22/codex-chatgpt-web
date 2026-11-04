@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "../translation/semantic-detector";
 import { FastPathStreamBuffer } from "./fast-path-stream-buffer";
 import { ensureM365CapabilityMode } from "./capability-picker";
-import { resolveM365CapabilityMode } from "../../../m365-models";
+import { resolveM365CapabilityMode } from "../../../models/m365-models";
 import { emitStructuredEvent } from "../../../observability/emitter";
 import { logDebugPipelineStation } from "../../../observability/debug-logger";
 import type { TraceContext } from "../../../observability/types";

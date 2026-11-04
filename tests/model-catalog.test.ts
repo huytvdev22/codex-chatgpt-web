@@ -12,8 +12,8 @@ import {
   availableChatGptWebModelRoutes,
   chatGptWebRouteEfforts,
   resolveChatGptWebContextLimits,
-} from "../src/chatgpt-web-models";
-import { augmentNativeModelCatalog, buildChatGptWebModel } from "../src/model-catalog";
+} from "../src/models/chatgpt-web-models";
+import { augmentNativeModelCatalog, buildChatGptWebModel } from "../src/models/model-catalog";
 
 function source(): Record<string, unknown> {
   return {

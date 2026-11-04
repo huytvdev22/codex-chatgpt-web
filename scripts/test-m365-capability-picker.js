@@ -4,7 +4,7 @@ import {
   isM365ModelSlug,
   resolveM365CapabilityMode,
   requireM365ModelRoute,
-} from "../src/m365-models.ts";
+} from "../src/models/m365-models.ts";
 import {
   M365_CAPABILITY_SPECS,
   M365CapabilityPicker,

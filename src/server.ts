@@ -68,7 +68,7 @@ import {
   ensureManagedModelCatalogFile,
   getFallbackNativeCatalog,
   syncManagedModelCatalogFile,
-} from "./model-catalog";
+} from "./models/model-catalog";
 import {
   readCodexModelContextOverride,
   readCodexSubagentProtocol,
@@ -80,14 +80,14 @@ import {
   isChatGptWebModelSlug,
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
-} from "./chatgpt-web-models";
-import { isM365ModelSlug } from "./m365-models";
+} from "./models/chatgpt-web-models";
+import { isM365ModelSlug } from "./models/m365-models";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
-import { isGeminiModelSlug } from "./gemini-models";
+import { isGeminiModelSlug } from "./models/gemini-models";
 import { createGeminiWebAdapter } from "./adapters/gemini-web";
-import { isQwenModelSlug } from "./qwen-web-models";
+import { isQwenModelSlug } from "./models/qwen-web-models";
 import { createQwenWebAdapter } from "./adapters/qwen-web";
-import { isGoogleAIStudioModelSlug } from "./google-ai-studio-models";
+import { isGoogleAIStudioModelSlug } from "./models/google-ai-studio-models";
 import { createGoogleAIStudioAdapter } from "./adapters/google-ai-studio";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";

@@ -3,11 +3,11 @@ import {
   isQwenModelSlug,
   availableQwenWebModelRoutes,
   QWEN_WEB_DEFAULT_ROUTE,
-} from "../src/qwen-web-models";
+} from "../src/models/qwen-web-models";
 import { QWEN_SELECTORS, extractConversationIdFromUrl, isValidQwenConversationId } from "../src/adapters/qwen-web/selectors";
 import { createQwenWebAdapter, QwenWebAdapter } from "../src/adapters/qwen-web";
 import { QwenConversationStore } from "../src/adapters/qwen-web/conversation-store";
-import { buildQwenModel } from "../src/model-catalog";
+import { buildQwenModel } from "../src/models/model-catalog";
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
 

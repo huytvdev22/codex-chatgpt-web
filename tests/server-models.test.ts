@@ -4,7 +4,7 @@ import {
   CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
   availableChatGptWebModelRoutes,
   resolveChatGptWebContextLimits,
-} from "../src/chatgpt-web-models";
+} from "../src/models/chatgpt-web-models";
 import { modelsRequest } from "../src/server";
 
 test("catalog diagnostics preserve safe causes without attributing an upstream abort to the client", async () => {

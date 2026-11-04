@@ -4,7 +4,7 @@ import {
   isGoogleAIStudioModelSlug,
   requireGoogleAIStudioModelRoute,
   availableGoogleAIStudioModelRoutes,
-} from "../src/google-ai-studio-models";
+} from "../src/models/google-ai-studio-models";
 import {
   AI_STUDIO_SELECTORS,
   parseGoogleAIStudioPromptId,
@@ -20,7 +20,7 @@ import {
   buildGoogleAIStudioModel,
   augmentNativeModelCatalog,
   getFallbackNativeCatalog,
-} from "../src/model-catalog";
+} from "../src/models/model-catalog";
 import { defaultConfig } from "../src/config";
 import {
   createGoogleAIStudioAdapter,

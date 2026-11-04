@@ -12,7 +12,7 @@ import {
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   requireChatGptWebModelRoute,
   resolveChatGptWebContextLimits,
-} from "../chatgpt-web-models";
+} from "../models/chatgpt-web-models";
 import type { AppConfig } from "../config";
 import { parseRequest } from "../responses/parser";
 import { compactRequest, responseRequest, routeChatGptWebRequest } from "../server";
