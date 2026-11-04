@@ -5,39 +5,31 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import {
-  availableChatGptWebModelRoutes,
-  chatGptWebRouteEfforts,
-  CHATGPT_WEB_MODEL_PREFIX,
-  isChatGptWebModelSlug,
-  resolveChatGptWebContextLimits,
-  type ChatGptWebModelRoute,
-} from "./chatgpt-web-models";
-import {
-  availableM365ModelRoutes,
-  isM365ModelSlug,
-  M365_COPILOT_MODEL_PREFIX,
-  type M365ModelRoute,
-} from "./m365-models";
-import {
-  availableGeminiModelRoutes,
-  isGeminiModelSlug,
-  GEMINI_WEB_MODEL_PREFIX,
-  type GeminiModelRoute,
-} from "./gemini-models";
-import {
-  availableQwenWebModelRoutes,
-  isQwenModelSlug,
-  QWEN_WEB_MODEL_PREFIX,
-  type QwenWebModelRoute,
-} from "./qwen-web-models";
-import {
-  availableGoogleAIStudioModelRoutes,
-  isGoogleAIStudioModelSlug,
-  GOOGLE_AI_STUDIO_DEFAULT_SLUG,
-  type GoogleAIStudioModelRoute,
-} from "./google-ai-studio-models";
+  findModelProvider,
+  isProviderModel,
+  listModelRoutes,
+  MODEL_PROVIDERS,
+  type ModelRouteDefinition,
+} from "./model-registry";
 
 type JsonObject = Record<string, unknown>;
+
+export const CHATGPT_WEB_MODEL_PREFIX = "chatgpt-web/";
+export const M365_COPILOT_MODEL_PREFIX = "m365-copilot/";
+export const GEMINI_WEB_MODEL_PREFIX = "gemini-web/";
+export const QWEN_WEB_MODEL_PREFIX = "qwen-web/";
+export const GOOGLE_AI_STUDIO_DEFAULT_SLUG = "google-ai-studio";
+
+const isChatGptWebModelSlug = (slug: string): boolean =>
+  isProviderModel(slug, "chatgpt-web");
+const isM365ModelSlug = (slug: string): boolean =>
+  isProviderModel(slug, "m365-copilot");
+const isGeminiModelSlug = (slug: string): boolean =>
+  isProviderModel(slug, "gemini-web");
+const isQwenModelSlug = (slug: string): boolean =>
+  isProviderModel(slug, "qwen-web");
+const isGoogleAIStudioModelSlug = (slug: string): boolean =>
+  isProviderModel(slug, "google-ai-studio");
 
 export const DEFAULT_BASE_INSTRUCTIONS =
   "You are Codex, a coding assistant. Answer the user's questions and help them solve tasks.";
@@ -318,17 +310,17 @@ function modelPriority(template: JsonObject): number | undefined {
 
 function routedModelPriority(
   template: JsonObject,
-  route: ChatGptWebModelRoute,
+  route: ModelRouteDefinition,
   config: AppConfig,
 ): number | undefined {
   const priority = modelPriority(template);
   if (priority === undefined
     || config.subagentProtocol !== "compatibility-v1"
-    || !["chatgpt-web/light", "chatgpt-web/gpt-5.6-sol-instant"].includes(route.slug)) return priority;
+    || route.slug !== "chatgpt-web") return priority;
   if (priority === Number.MAX_SAFE_INTEGER) {
     throw new Error("Native Codex model template priority cannot reserve the Compatibility V1 roster");
   }
-  // Preserve the native model and the reasoning/Pro choices in Codex V1's bounded registry.
+  // Preserve the native model and the single ChatGPT Web override in Codex V1's bounded registry.
   return priority + 1;
 }
 
@@ -364,28 +356,15 @@ function routedSubagentVersion(template: JsonObject, config: AppConfig): string 
   return typeof template.multi_agent_version === "string" ? template.multi_agent_version : undefined;
 }
 
-export function buildChatGptWebModel(
+export function buildProviderModel(
   templateValue: unknown,
-  route: ChatGptWebModelRoute,
+  route: ModelRouteDefinition,
   config: AppConfig,
 ): JsonObject {
   const template = object(templateValue, "native Codex model template");
   const templateSlug = slug(template);
-  if (!templateSlug || templateSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) {
-    throw new Error("ChatGPT Web model template must be a native Codex model");
-  }
-  const limits = route.slug === "chatgpt-web"
-    ? resolveChatGptWebContextLimits(route.backendModel, "high", config)
-    : resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
-  const efforts = chatGptWebRouteEfforts(route, config);
-  for (const effort of efforts) {
-    if (route.slug === "chatgpt-web") continue;
-    const adapterEffort = route.supportedCodexEfforts ? effort : route.adapterEffort;
-    if (adapterEffort === "ultra") throw new Error("Ultra is not a browser effort");
-    const candidate = resolveChatGptWebContextLimits(route.backendModel, adapterEffort, config);
-    if (JSON.stringify(candidate) !== JSON.stringify(limits)) {
-      throw new Error(`Cannot group different context budgets under ${route.slug}`);
-    }
+  if (!templateSlug || findModelProvider(templateSlug)) {
+    throw new Error("Provider model template must be a native Codex model");
   }
   const multiAgentVersion = routedSubagentVersion(template, config);
   const priority = routedModelPriority(template, route, config);
@@ -394,124 +373,18 @@ export function buildChatGptWebModel(
     slug: route.slug,
     display_name: route.displayName,
     description: route.description,
-    input_modalities: route.interactionMode === "manual" ? ["text"] : ["text", "image"],
-    visibility: route.legacy ? "hide" : "list",
-    // These slugs are implemented by this local Responses-compatible bridge. Marking them false
-    // makes Codex drop them from spawn_agent whenever openai_base_url points at the bridge.
+    input_modalities: [...route.inputModalities],
+    visibility: "list",
     supported_in_api: true,
-    // Follow the official template's ordering without outranking it. Codex advertises at most five
-    // spawn-agent overrides; forcing every routed row to priority 0 displaced gpt-5.6-sol from that
-    // registry and made an explicit native child model fail validation.
     ...(priority === undefined ? {} : { priority }),
-    // In native mode the routed row follows the official template's protocol surface. Web-origin
-    // V2 collaboration calls carry the protocol's explicit plaintext marker; Compatibility V1
-    // instead pins the entire catalog and Codex feature override to V1.
     ...(multiAgentVersion === undefined
       ? {}
       : { multi_agent_version: multiAgentVersion }),
-    // Code mode collapses the outer registry into an exec gateway; routed models need the regular
-    // Responses tool surface so MCP namespaces, deferred tool_search, and custom tools reach us.
     tool_mode: null,
     upgrade: null,
-    default_reasoning_level: route.codexEffort,
-    supported_reasoning_levels: efforts.map(effort => {
-      let desc = efforts.length === 1 ? route.displayName : `${route.displayName} — ${effort}`;
-      if (route.slug === "chatgpt-web") {
-        desc = effort === "low" ? "Off" : "Think";
-      } else if (route.backendModel === "gpt-5.6-luna") {
-        desc = effort === "low" ? "Ordinary Luna" : "Think";
-      } else if (effort === "xhigh") {
-        desc = `${route.displayName} — Extra High`;
-      }
-      return reasoningLevel(template, effort, desc);
-    }),
-    context_window: limits.contextWindow,
-    max_context_window: limits.contextWindow,
-    effective_context_window_percent: limits.effectiveContextWindowPercent,
-    auto_compact_token_limit: limits.autoCompactTokenLimit,
-    // ChatGPT Web has no Codex service tier. Never inherit the native template's Fast tiers.
-    additional_speed_tiers: [],
-    service_tiers: [],
-    default_service_tier: null,
-  };
-  // A native template's compaction hash describes OpenAI's native model contract, not this routed
-  // browser model. The explicit Web window above is owned by this adapter and never copied back to
-  // native models or the user's top-level model_context_window setting.
-  delete model.comp_hash;
-  delete model.availability_nux;
-  return model;
-}
-
-export function buildM365Model(
-  templateValue: unknown,
-  route: M365ModelRoute,
-  config: AppConfig,
-): JsonObject {
-  const template = object(templateValue, "native Codex model template");
-  const multiAgentVersion = routedSubagentVersion(template, config);
-  const model: JsonObject = {
-    ...structuredClone(template),
-    slug: route.slug,
-    display_name: route.displayName,
-    description: route.description,
-    input_modalities: route.inputModalities ? [...route.inputModalities] : ["text", "image"],
-    visibility: "list",
-    supported_in_api: true,
-    priority: 100,
-    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
-    tool_mode: null,
-    upgrade: null,
-    default_reasoning_level: "low",
-    supported_reasoning_levels: [
-      reasoningLevel(template, "low", "Quick"),
-      reasoningLevel(template, "high", "Deeper"),
-    ],
-    context_window: route.contextWindow,
-    max_context_window: route.contextWindow,
-    effective_context_window_percent: route.effectiveContextWindowPercent,
-    auto_compact_token_limit: route.autoCompactTokenLimit,
-    additional_speed_tiers: [],
-    service_tiers: [],
-    default_service_tier: null,
-    support_verbosity: true,
-  };
-  delete model.comp_hash;
-  delete model.availability_nux;
-  return model;
-}
-
-export function buildGeminiModel(
-  templateValue: unknown,
-  route: GeminiModelRoute,
-  config: AppConfig,
-): JsonObject {
-  const template = object(templateValue, "native Codex model template");
-  const multiAgentVersion = routedSubagentVersion(template, config);
-
-  const defaultEffort = route.defaultReasoningLevel || route.reasoningEffort || "medium";
-  const efforts = route.supportedReasoningLevels || (route.reasoningEffort ? [route.reasoningEffort] : ["low", "medium", "high"]);
-
-  const effortDescriptions: Record<string, string> = {
-    low: "Thấp (Nhanh chóng và hiệu quả)",
-    medium: "Trung bình (Độ sâu cân bằng)",
-    high: "Cao (Cực kỳ kỹ lưỡng)",
-  };
-
-  const model: JsonObject = {
-    ...structuredClone(template),
-    slug: route.slug,
-    display_name: route.displayName,
-    description: route.description,
-    input_modalities: route.inputModalities ? [...route.inputModalities] : ["text", "image"],
-    visibility: "list",
-    supported_in_api: true,
-    priority: 90,
-    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
-    tool_mode: null,
-    upgrade: null,
-    default_reasoning_level: defaultEffort,
-    supported_reasoning_levels: efforts.map(effort =>
-      reasoningLevel(template, effort, effortDescriptions[effort] || effort)
+    default_reasoning_level: route.defaultReasoningLevel,
+    supported_reasoning_levels: route.reasoningLevels.map(level =>
+      reasoningLevel(template, level.effort, level.description)
     ),
     context_window: route.contextWindow,
     max_context_window: route.contextWindow,
@@ -527,89 +400,12 @@ export function buildGeminiModel(
   return model;
 }
 
-export function buildQwenModel(
-  templateValue: unknown,
-  route: QwenWebModelRoute,
-  config: AppConfig,
-): JsonObject {
-  const template = object(templateValue, "native Codex model template");
-  const multiAgentVersion = routedSubagentVersion(template, config);
-  const efforts = route.supportedCodexEfforts || ["low", "high"];
+export const buildChatGptWebModel = buildProviderModel;
 
-  const model: JsonObject = {
-    ...structuredClone(template),
-    slug: route.slug,
-    display_name: route.displayName,
-    description: route.description,
-    input_modalities: ["text", "image"],
-    visibility: "list",
-    supported_in_api: true,
-    priority: 85,
-    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
-    tool_mode: null,
-    upgrade: null,
-    default_reasoning_level: route.defaultEffort || "low",
-    supported_reasoning_levels: efforts.map(effort => {
-      const desc = effort === "high" || effort === "think" ? "Think" : "Off";
-      return reasoningLevel(template, effort, desc);
-    }),
-    context_window: route.contextWindow,
-    max_context_window: route.contextWindow,
-    effective_context_window_percent: 95,
-    auto_compact_token_limit: route.autoCompactTokenLimit,
-    additional_speed_tiers: [],
-    service_tiers: [],
-    default_service_tier: null,
-  };
-  delete model.comp_hash;
-  delete model.availability_nux;
-  return model;
-}
-
-export function buildGoogleAIStudioModel(
-  templateValue: unknown,
-  route: GoogleAIStudioModelRoute,
-  config: AppConfig,
-): JsonObject {
-  const template = object(templateValue, "native Codex model template");
-  const multiAgentVersion = routedSubagentVersion(template, config);
-  const efforts = route.supportedCodexEfforts || ["low", "medium", "high"];
-
-  const effortDescriptions: Record<string, string> = {
-    low: "Thấp",
-    medium: "Trung bình",
-    high: "Cao",
-  };
-
-  const model: JsonObject = {
-    ...structuredClone(template),
-    slug: route.slug,
-    display_name: route.displayName,
-    description: route.description,
-    input_modalities: ["text", "image"],
-    visibility: "list",
-    supported_in_api: true,
-    priority: 88,
-    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
-    tool_mode: null,
-    upgrade: null,
-    default_reasoning_level: route.defaultEffort || "medium",
-    supported_reasoning_levels: efforts.map(effort =>
-      reasoningLevel(template, effort, effortDescriptions[effort] || effort)
-    ),
-    context_window: route.contextWindow,
-    max_context_window: route.contextWindow,
-    effective_context_window_percent: route.effectiveContextWindowPercent,
-    auto_compact_token_limit: route.autoCompactTokenLimit,
-    additional_speed_tiers: [],
-    service_tiers: [],
-    default_service_tier: null,
-    support_verbosity: true,
-  };
-  delete model.comp_hash;
-  delete model.availability_nux;
-  return model;
-}
+export const buildM365Model = buildProviderModel;
+export const buildGeminiModel = buildProviderModel;
+export const buildQwenModel = buildProviderModel;
+export const buildGoogleAIStudioModel = buildProviderModel;
 
 export function augmentNativeModelCatalog(
   value: unknown,
@@ -664,16 +460,8 @@ export function augmentNativeModelCatalog(
       }
     }
   }
-  const webModels = availableChatGptWebModelRoutes(config, true)
-    .map(route => buildChatGptWebModel(template, route, config));
-  const m365Models = availableM365ModelRoutes()
-    .map(route => buildM365Model(template, route, config));
-  const geminiModels = availableGeminiModelRoutes()
-    .map(route => buildGeminiModel(template, route, config));
-  const qwenModels = availableQwenWebModelRoutes()
-    .map(route => buildQwenModel(template, route, config));
-  const googleAIStudioModels = availableGoogleAIStudioModelRoutes()
-    .map(route => buildGoogleAIStudioModel(template, route, config));
+  const providerModels = listModelRoutes()
+    .map(route => buildProviderModel(template, route, config));
 
   const seen = new Set<string>();
   const deduplicatedModels: JsonObject[] = [];
@@ -684,35 +472,7 @@ export function augmentNativeModelCatalog(
       deduplicatedModels.push(model);
     }
   }
-  for (const model of webModels) {
-    const s = slug(model);
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      deduplicatedModels.push(model);
-    }
-  }
-  for (const model of m365Models) {
-    const s = slug(model);
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      deduplicatedModels.push(model);
-    }
-  }
-  for (const model of geminiModels) {
-    const s = slug(model);
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      deduplicatedModels.push(model);
-    }
-  }
-  for (const model of qwenModels) {
-    const s = slug(model);
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      deduplicatedModels.push(model);
-    }
-  }
-  for (const model of googleAIStudioModels) {
+  for (const model of providerModels) {
     const s = slug(model);
     if (s && !seen.has(s)) {
       seen.add(s);

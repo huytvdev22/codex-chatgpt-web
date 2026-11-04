@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  isChatGptWebModelSlug,
-  availableChatGptWebModelRoutes,
-  CHATGPT_WEB_DEFAULT_ROUTE,
-} from "../src/models/chatgpt-web-models";
+  isProviderModel,
+  listModelRoutes,
+} from "../src/models/model-registry";
 import {
   ChatGptWebAdapter,
   createChatGptWebAdapter,
@@ -16,28 +15,29 @@ import { join } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
 
 describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
-  test("1. isChatGptWebModelSlug nhận diện chính xác các model của ChatGPT Web", () => {
-    expect(isChatGptWebModelSlug("chatgpt-web")).toBe(true);
-    expect(isChatGptWebModelSlug("chatgpt-web/pro")).toBe(true);
-    expect(isChatGptWebModelSlug("chatgpt-web/gpt-5.6-sol")).toBe(true);
+  test("1. Registry nhận diện namespace của ChatGPT Web", () => {
+    expect(isProviderModel("chatgpt-web", "chatgpt-web")).toBe(true);
+    expect(isProviderModel("chatgpt-web/pro", "chatgpt-web")).toBe(true);
+    expect(isProviderModel("chatgpt-web/gpt-5.6-sol", "chatgpt-web")).toBe(true);
 
     // Không nhận nhầm các adapter khác
-    expect(isChatGptWebModelSlug("m365-copilot")).toBe(false);
-    expect(isChatGptWebModelSlug("gemini-web")).toBe(false);
-    expect(isChatGptWebModelSlug("gpt-5")).toBe(false);
+    expect(isProviderModel("m365-copilot", "chatgpt-web")).toBe(false);
+    expect(isProviderModel("gemini-web", "chatgpt-web")).toBe(false);
+    expect(isProviderModel("gpt-5", "chatgpt-web")).toBe(false);
   });
 
-  test("2. availableChatGptWebModelRoutes trả về route mặc định với 2 nấc suy nghĩ (Off / Think)", () => {
-    const routes = availableChatGptWebModelRoutes({ solAvailable: true, proAvailable: true });
-    expect(routes.length).toBeGreaterThanOrEqual(1);
-
-    const defaultRoute = routes.find(r => r.slug === "chatgpt-web");
-    expect(defaultRoute).toBeDefined();
-    expect(defaultRoute?.displayName).toBe("ChatGPT (Web)");
-    expect(defaultRoute?.supportedCodexEfforts).toEqual(["low", "high"]);
+  test("2. Registry chỉ trả về một route với Normal và Thinking", () => {
+    const routes = listModelRoutes("chatgpt-web");
+    expect(routes).toHaveLength(1);
+    expect(routes[0]?.slug).toBe("chatgpt-web");
+    expect(routes[0]?.displayName).toBe("ChatGPT (Web)");
+    expect(routes[0]?.reasoningLevels).toEqual([
+      { effort: "low", description: "Normal", mode: "normal" },
+      { effort: "high", description: "Thinking", mode: "thinking" },
+    ]);
   });
 
-  test("3. Model Catalog tạo model chatgpt-web với thanh trượt Off / Think", () => {
+  test("3. Model Catalog tạo model chatgpt-web với Normal và Thinking", () => {
     const dummyCatalog = {
       models: [
         {
@@ -66,8 +66,8 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
     const lowLevel = reasoningLevels?.find((l: any) => l.effort === "low");
     const highLevel = reasoningLevels?.find((l: any) => l.effort === "high");
 
-    expect(lowLevel?.description).toBe("Off");
-    expect(highLevel?.description).toBe("Think");
+    expect(lowLevel?.description).toBe("Normal");
+    expect(highLevel?.description).toBe("Thinking");
   });
 
   test("4. CHATGPT_SELECTORS chứa đầy đủ các bộ chọn DOM thực tế", () => {
@@ -145,4 +145,3 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
     expect(compiled).toContain("xin chào");
   });
 });
-

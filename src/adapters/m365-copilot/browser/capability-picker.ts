@@ -1,8 +1,8 @@
 
 import type { Page } from "playwright-core";
-import type { M365CapabilityMode } from "../../../models/m365-models";
+import type { M365CapabilityMode } from "../../../models/model-registry";
 export type { M365CapabilityMode };
-export { resolveM365CapabilityMode } from "../../../models/m365-models";
+export { resolveM365CapabilityMode } from "../../../models/model-registry";
 
 export interface M365CapabilitySpec {
   readonly mode: M365CapabilityMode;
@@ -357,4 +357,3 @@ export const defaultCapabilityPicker = new M365CapabilityPicker();
 export async function ensureM365CapabilityMode(page: Page, targetMode: M365CapabilityMode): Promise<boolean> {
   return defaultCapabilityPicker.ensureMode(page, targetMode);
 }
-

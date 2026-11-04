@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { CHATGPT_WEB_MODEL_ROUTES, availableChatGptWebModelRoutes, chatGptWebRouteEfforts } from "../src/models/chatgpt-web-models";
+import { listModelRoutes } from "../src/models/model-registry";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/models/model-catalog";
 
@@ -58,9 +58,11 @@ try {
       priority?: number;
     }>;
   };
-  const web = catalog.models?.filter(model => model.slug?.startsWith("chatgpt-web/")) ?? [];
-  const expected = availableChatGptWebModelRoutes(config, true).map(route => ({
-    slug: route.slug, visibility: route.legacy ? "hide" : "list", effort: chatGptWebRouteEfforts(route, config).join(","),
+  const web = catalog.models?.filter(model => model.slug === "chatgpt-web") ?? [];
+  const expected = listModelRoutes("chatgpt-web").map(route => ({
+    slug: route.slug,
+    visibility: "list",
+    effort: route.reasoningLevels.map(level => level.effort).join(","),
   }));
   const actual = web.map(model => ({
     slug: model.slug,
@@ -70,13 +72,13 @@ try {
       : "",
   }));
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(`Codex did not preserve the grouped and legacy ChatGPT Web model contract: ${JSON.stringify(actual)}`);
+    throw new Error(`Codex did not preserve the unified ChatGPT Web model contract: ${JSON.stringify(actual)}`);
   }
   const nativeSol = catalog.models?.find(model => model.slug === "gpt-5.6-sol");
-  const webPro = catalog.models?.find(model => model.slug === "chatgpt-web/pro");
-  if (nativeSol?.multi_agent_version !== "v1" || webPro?.multi_agent_version !== "v1") {
+  const chatGptWeb = catalog.models?.find(model => model.slug === "chatgpt-web");
+  if (nativeSol?.multi_agent_version !== "v1" || chatGptWeb?.multi_agent_version !== "v1") {
     throw new Error(
-      `Codex did not preserve Compatibility V1 catalog metadata: ${JSON.stringify({ nativeSol, webPro })}`,
+      `Codex did not preserve Compatibility V1 catalog metadata: ${JSON.stringify({ nativeSol, chatGptWeb })}`,
     );
   }
   const features = runCodex(["features", "list"], isolatedEnv).stdout;
@@ -93,8 +95,7 @@ try {
     (sourceCatalog.models as Array<{ slug: string; visibility: string; supported_in_api: boolean; priority?: number }>)
       .filter(model => model.supported_in_api && model.visibility === "list")
       .toSorted((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER))[0]?.slug,
-    ...CHATGPT_WEB_MODEL_ROUTES.slice(1).map(route => route.slug),
-    "chatgpt-web/gpt-5.6-sol-instant",
+    "chatgpt-web",
   ];
   if (JSON.stringify(spawnOverrides) !== JSON.stringify(expectedSpawnOverrides)) {
     throw new Error(`Codex did not preserve the bounded V1 subagent roster: ${JSON.stringify(spawnOverrides)}`);

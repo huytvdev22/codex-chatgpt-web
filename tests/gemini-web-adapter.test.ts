@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  isGeminiModelSlug,
-  availableGeminiModelRoutes,
-  resolveGeminiCapabilityMode,
-  GEMINI_MODEL_ROUTES,
-} from "../src/models/gemini-models";
+  isProviderModel,
+  listModelRoutes,
+} from "../src/models/model-registry";
 import { GEMINI_SELECTORS } from "../src/adapters/gemini-web/selectors";
 import {
   buildUnifiedToolProtocol,
@@ -14,35 +12,38 @@ import { GeminiWebAdapter, createGeminiWebAdapter } from "../src/adapters/gemini
 import { augmentNativeModelCatalog } from "../src/models/model-catalog";
 
 describe("Google Gemini Web Adapter Base Architecture Tests", () => {
-  test("1. isGeminiModelSlug nhận diện chính xác các model của Gemini Web", () => {
-    expect(isGeminiModelSlug("gemini-web")).toBe(true);
-    expect(isGeminiModelSlug("gemini-web/gemini-2.0-flash")).toBe(true);
-    expect(isGeminiModelSlug("gemini-web/gemini-2.0-pro")).toBe(true);
-    expect(isGeminiModelSlug("gemini-web/thinking")).toBe(true);
+  test("1. Registry nhận diện chính xác namespace của Gemini Web", () => {
+    expect(isProviderModel("gemini-web", "gemini-web")).toBe(true);
+    expect(isProviderModel("gemini-web/gemini-2.0-flash", "gemini-web")).toBe(true);
+    expect(isProviderModel("gemini-web/gemini-2.0-pro", "gemini-web")).toBe(true);
+    expect(isProviderModel("gemini-web/thinking", "gemini-web")).toBe(true);
 
     // Không nhận nhầm các adapter khác
-    expect(isGeminiModelSlug("m365-copilot")).toBe(false);
-    expect(isGeminiModelSlug("chatgpt-web/pro")).toBe(false);
-    expect(isGeminiModelSlug("gpt-5")).toBe(false);
+    expect(isProviderModel("m365-copilot", "gemini-web")).toBe(false);
+    expect(isProviderModel("chatgpt-web/pro", "gemini-web")).toBe(false);
+    expect(isProviderModel("gpt-5", "gemini-web")).toBe(false);
   });
 
-  test("2. availableGeminiModelRoutes cung cấp đầy đủ thông tin định tuyến model", () => {
-    const routes = availableGeminiModelRoutes();
+  test("2. Registry cung cấp đầy đủ thông tin định tuyến model", () => {
+    const routes = listModelRoutes("gemini-web");
     expect(routes.length).toBeGreaterThanOrEqual(4);
     const flashRoute = routes.find(r => r.slug === "gemini-web/3.8-flash");
     expect(flashRoute).toBeDefined();
-    expect(flashRoute?.capabilityMode).toBe("flash");
-    expect(flashRoute?.targetMenuLabel).toBe("3.8 Flash");
+    expect(flashRoute?.metadata?.capabilityMode).toBe("flash");
+    expect(flashRoute?.metadata?.targetMenuLabel).toBe("3.8 Flash");
     expect(flashRoute?.contextWindow).toBe(128_000);
   });
 
-  test("3. resolveGeminiCapabilityMode phân giải đúng capability", () => {
-    expect(resolveGeminiCapabilityMode("gemini-web/3.8-flash")).toBe("flash");
-    expect(resolveGeminiCapabilityMode("gemini-web/3.1-pro")).toBe("pro");
-    expect(resolveGeminiCapabilityMode("gemini-web/3.5-flash-lite")).toBe("flash-lite");
-    expect(resolveGeminiCapabilityMode("gemini-web/4-argon")).toBe("argon");
-    expect(resolveGeminiCapabilityMode("gemini-web/thinking")).toBe("thinking");
-    expect(resolveGeminiCapabilityMode("gemini-web")).toBe("auto");
+  test("3. Registry lưu capability trong metadata của từng route", () => {
+    const routes = listModelRoutes("gemini-web");
+    const capability = (slug: string) =>
+      routes.find(route => route.slug === slug)?.metadata?.capabilityMode;
+
+    expect(capability("gemini-web/3.8-flash")).toBe("flash");
+    expect(capability("gemini-web/3.1-pro")).toBe("pro");
+    expect(capability("gemini-web/3.5-flash-lite")).toBe("flash-lite");
+    expect(capability("gemini-web/4-argon")).toBe("argon");
+    expect(capability("gemini-web")).toBe("auto");
   });
 
   test("4. Model Catalog tự động bổ sung danh sách model của Gemini", () => {
@@ -188,4 +189,3 @@ Hiện tại mình chưa nhận được thông tin về mã nguồn hay tác v�
     expect(mappedArgs.cmd).toBe("find . -maxdepth 2 -not -path '*/.*' -not -path './node_modules*'");
   });
 });
-

@@ -1,10 +1,9 @@
- import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
-  GOOGLE_AI_STUDIO_DEFAULT_SLUG,
-  isGoogleAIStudioModelSlug,
-  requireGoogleAIStudioModelRoute,
-  availableGoogleAIStudioModelRoutes,
-} from "../src/models/google-ai-studio-models";
+  isProviderModel,
+  listModelRoutes,
+  requireModelRoute,
+} from "../src/models/model-registry";
 import {
   AI_STUDIO_SELECTORS,
   parseGoogleAIStudioPromptId,
@@ -31,26 +30,26 @@ import { parseStrictM365Response } from "../src/adapters/m365-copilot/translatio
 
 describe("Google AI Studio Models & Routes", () => {
   it("nhận diện chính xác slug mặc định của Google AI Studio", () => {
-    expect(isGoogleAIStudioModelSlug("google-ai-studio")).toBe(true);
-    expect(isGoogleAIStudioModelSlug("google-ai-studio/custom")).toBe(true);
-    expect(isGoogleAIStudioModelSlug("gemini-web")).toBe(false);
-    expect(isGoogleAIStudioModelSlug("m365-copilot")).toBe(false);
-    expect(isGoogleAIStudioModelSlug("")).toBe(false);
+    expect(isProviderModel("google-ai-studio", "google-ai-studio")).toBe(true);
+    expect(isProviderModel("google-ai-studio/custom", "google-ai-studio")).toBe(true);
+    expect(isProviderModel("gemini-web", "google-ai-studio")).toBe(false);
+    expect(isProviderModel("m365-copilot", "google-ai-studio")).toBe(false);
+    expect(isProviderModel("", "google-ai-studio")).toBe(false);
   });
 
   it("trả về cấu hình route mặc định với model gemini-flash-latest", () => {
-    const route = requireGoogleAIStudioModelRoute("google-ai-studio");
-    expect(route.slug).toBe(GOOGLE_AI_STUDIO_DEFAULT_SLUG);
+    const route = requireModelRoute("google-ai-studio");
+    expect(route.slug).toBe("google-ai-studio");
     expect(route.backendModel).toBe("gemini-flash-latest");
-    expect(route.urlModelParam).toBe("gemini-flash-latest");
-    expect(route.defaultEffort).toBe("medium");
-    expect(route.supportedCodexEfforts).toEqual(["low", "medium", "high"]);
+    expect(route.metadata?.urlModelParam).toBe("gemini-flash-latest");
+    expect(route.defaultReasoningLevel).toBe("medium");
+    expect(route.reasoningLevels.map(level => level.effort)).toEqual(["low", "medium", "high"]);
   });
 
   it("danh sách available routes chỉ gồm 1 bản mặc định duy nhất", () => {
-    const routes = availableGoogleAIStudioModelRoutes();
+    const routes = listModelRoutes("google-ai-studio");
     expect(routes.length).toBe(1);
-    expect(routes[0].slug).toBe(GOOGLE_AI_STUDIO_DEFAULT_SLUG);
+    expect(routes[0].slug).toBe("google-ai-studio");
   });
 });
 

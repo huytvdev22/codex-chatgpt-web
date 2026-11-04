@@ -76,18 +76,14 @@ import {
   type CodexModelContextOverride,
 } from "./codex-integration";
 import {
-  CHATGPT_WEB_LUNA_BACKEND_MODEL,
-  isChatGptWebModelSlug,
-  requireChatGptWebModelRoute,
-  type ChatGptWebModelRoute,
-} from "./models/chatgpt-web-models";
-import { isM365ModelSlug } from "./models/m365-models";
+  isProviderModel,
+  requireModelRoute,
+  resolveModelReasoning,
+  type ModelRouteDefinition,
+} from "./models/model-registry";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
-import { isGeminiModelSlug } from "./models/gemini-models";
 import { createGeminiWebAdapter } from "./adapters/gemini-web";
-import { isQwenModelSlug } from "./models/qwen-web-models";
 import { createQwenWebAdapter } from "./adapters/qwen-web";
-import { isGoogleAIStudioModelSlug } from "./models/google-ai-studio-models";
 import { createGoogleAIStudioAdapter } from "./adapters/google-ai-studio";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
@@ -419,16 +415,18 @@ export interface ResponseRequestOptions {
   onTurnIdentity?: (identity: NativeCodexTurnIdentity) => void;
 }
 
-export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
-  const route = requireChatGptWebModelRoute(parsed.modelId, config, parsed.options.reasoning);
-  if (route.interactionMode === "automatic" && route.modelFamily) parsed._chatgptModelFamily = route.modelFamily;
-  else delete parsed._chatgptModelFamily;
+export function routeChatGptWebRequest(
+  parsed: CodexParsedRequest,
+  _config: AppConfig,
+): ModelRouteDefinition {
+  const route = requireModelRoute(parsed.modelId);
+  if (!isProviderModel(route.slug, "chatgpt-web")) {
+    throw new Error(`Model không thuộc ChatGPT Web: ${parsed.modelId}`);
+  }
+  const reasoning = resolveModelReasoning(route, parsed.options.reasoning);
+  delete parsed._chatgptModelFamily;
   parsed.modelId = route.backendModel;
-  // Zero Risk preserves a distinct backend identity. Its immutable Codex effort is only a
-  // protocol/catalog value; the manual adapter must never reinterpret it as a ChatGPT selection.
-  parsed.options.reasoning = route.interactionMode === "automatic"
-    ? route.adapterEffort
-    : route.codexEffort;
+  parsed.options.reasoning = reasoning.effort;
   return route;
 }
 
@@ -1129,19 +1127,19 @@ export async function responseRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
-  if (typeof requestedModel === "string" && isM365ModelSlug(requestedModel)) {
+  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "m365-copilot")) {
     return await handleM365ResponseRequest(req, raw, requestedModel, options);
   }
-  if (typeof requestedModel === "string" && isGeminiModelSlug(requestedModel)) {
+  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "gemini-web")) {
     return await handleGeminiResponseRequest(req, raw, requestedModel, options);
   }
-  if (typeof requestedModel === "string" && (isChatGptWebModelSlug(requestedModel) || requestedModel.startsWith("chatgpt-web"))) {
+  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "chatgpt-web")) {
     return await handleChatGptResponseRequest(req, raw, requestedModel, options);
   }
-  if (typeof requestedModel === "string" && (isQwenModelSlug(requestedModel) || requestedModel.startsWith("qwen-web"))) {
+  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "qwen-web")) {
     return await handleQwenResponseRequest(req, raw, requestedModel, options);
   }
-  if (typeof requestedModel === "string" && (isGoogleAIStudioModelSlug(requestedModel) || requestedModel.startsWith("google-ai-studio"))) {
+  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "google-ai-studio")) {
     return await handleGoogleAIStudioResponseRequest(req, raw, requestedModel, options);
   }
   if (typeof requestedModel === "string") {
@@ -1200,7 +1198,13 @@ export async function compactRequest(
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
-  if (isM365ModelSlug(raw.model) || isGeminiModelSlug(raw.model) || isChatGptWebModelSlug(raw.model) || raw.model.startsWith("chatgpt-web") || isQwenModelSlug(raw.model) || isGoogleAIStudioModelSlug(raw.model)) {
+  if (
+    isProviderModel(raw.model, "m365-copilot")
+    || isProviderModel(raw.model, "gemini-web")
+    || isProviderModel(raw.model, "chatgpt-web")
+    || isProviderModel(raw.model, "qwen-web")
+    || isProviderModel(raw.model, "google-ai-studio")
+  ) {
     const input = Array.isArray(raw.input) ? raw.input : [];
     const headers = new Headers(req.headers);
     headers.set("content-type", "application/json");

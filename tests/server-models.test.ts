@@ -1,10 +1,5 @@
 import { expect, test } from "bun:test";
 import { defaultConfig } from "../src/config";
-import {
-  CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
-  availableChatGptWebModelRoutes,
-  resolveChatGptWebContextLimits,
-} from "../src/models/chatgpt-web-models";
 import { modelsRequest } from "../src/server";
 
 test("catalog diagnostics preserve safe causes without attributing an upstream abort to the client", async () => {
@@ -106,8 +101,8 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
   expect(body.models.some(model => model.slug === "qwen-web")).toBe(true);
 });
 
-test("Zero Risk returns one generic Web row without using scanned capabilities", async () => {
-  const config = defaultConfig("full");
+test("legacy account flags still return one unified ChatGPT Web row", async () => {
+  const config = defaultConfig("browser-only");
   config.browserInteractionMode = "manual";
   config.solAvailable = true;
   config.extraHighAvailable = true;
@@ -131,24 +126,30 @@ test("Zero Risk returns one generic Web row without using scanned capabilities",
 
   expect(response.status).toBe(200);
   const body = await response.json() as { models: Array<Record<string, unknown> & { slug: string }> };
-  expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/"))).toEqual([{
-    slug: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.slug,
-    display_name: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.displayName,
-    description: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.description,
+  expect(body.models.filter(model =>
+    model.slug === "chatgpt-web" || model.slug.startsWith("chatgpt-web/")
+  )).toEqual([{
+    slug: "chatgpt-web",
+    display_name: "ChatGPT (Web)",
+    description: "ChatGPT Web với chế độ thường hoặc suy nghĩ.",
     visibility: "list",
     supported_in_api: true,
-    supported_reasoning_levels: [{ effort: "low", description: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.displayName }],
+    supported_reasoning_levels: [
+      { effort: "low", description: "Normal" },
+      { effort: "high", description: "Thinking" },
+    ],
     tool_mode: null,
     upgrade: null,
     default_reasoning_level: "low",
-    input_modalities: ["text"],
-    context_window: 123_000,
-    max_context_window: 123_000,
-    effective_context_window_percent: 78,
-    auto_compact_token_limit: 96_000,
+    input_modalities: ["text", "image"],
+    context_window: 100_000,
+    max_context_window: 100_000,
+    effective_context_window_percent: 90,
+    auto_compact_token_limit: 90_000,
     additional_speed_tiers: [],
     service_tiers: [],
     default_service_tier: null,
+    support_verbosity: true,
     multi_agent_version: "v1",
   }]);
 });
@@ -201,4 +202,3 @@ test("API Key auth returns augmented model catalog with M365 models without call
   expect(slugs).toContain("m365-copilot/gpt-5.6");
   expect(slugs).toContain("gpt-5.6-sol");
 });
-

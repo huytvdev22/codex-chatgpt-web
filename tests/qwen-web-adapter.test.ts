@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  isQwenModelSlug,
-  availableQwenWebModelRoutes,
-  QWEN_WEB_DEFAULT_ROUTE,
-} from "../src/models/qwen-web-models";
+  isProviderModel,
+  listModelRoutes,
+  requireModelRoute,
+} from "../src/models/model-registry";
 import { QWEN_SELECTORS, extractConversationIdFromUrl, isValidQwenConversationId } from "../src/adapters/qwen-web/selectors";
 import { createQwenWebAdapter, QwenWebAdapter } from "../src/adapters/qwen-web";
 import { QwenConversationStore } from "../src/adapters/qwen-web/conversation-store";
@@ -12,16 +12,16 @@ import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
 
 describe("Qwen Web Adapter Architecture & Integration Tests", () => {
-  test("1. isQwenModelSlug nhận diện chính xác các model của Qwen Web", () => {
-    expect(isQwenModelSlug("qwen-web")).toBe(true);
-    expect(isQwenModelSlug("qwen-web/think")).toBe(true);
-    expect(isQwenModelSlug("chatgpt-web")).toBe(false);
-    expect(isQwenModelSlug("m365-copilot/general")).toBe(false);
-    expect(isQwenModelSlug("")).toBe(false);
+  test("1. Registry nhận diện chính xác namespace của Qwen Web", () => {
+    expect(isProviderModel("qwen-web", "qwen-web")).toBe(true);
+    expect(isProviderModel("qwen-web/think", "qwen-web")).toBe(true);
+    expect(isProviderModel("chatgpt-web", "qwen-web")).toBe(false);
+    expect(isProviderModel("m365-copilot/general", "qwen-web")).toBe(false);
+    expect(isProviderModel("", "qwen-web")).toBe(false);
   });
 
-  test("2. availableQwenWebModelRoutes trả về route mặc định với chế độ Think", () => {
-    const routes = availableQwenWebModelRoutes();
+  test("2. Registry trả về route Qwen mặc định với chế độ Think", () => {
+    const routes = listModelRoutes("qwen-web");
     expect(routes.length).toBeGreaterThan(0);
     expect(routes[0].slug).toBe("qwen-web");
     expect(routes[0].displayName).toBe("Qwen (Web)");
@@ -36,7 +36,7 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
       context_window: 100_000,
     };
     const mockConfig: any = {};
-    const model = buildQwenModel(mockTemplate, QWEN_WEB_DEFAULT_ROUTE, mockConfig);
+    const model = buildQwenModel(mockTemplate, requireModelRoute("qwen-web"), mockConfig);
 
     expect(model.slug).toBe("qwen-web");
     expect(model.display_name).toBe("Qwen (Web)");

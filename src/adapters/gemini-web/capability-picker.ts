@@ -1,6 +1,6 @@
 import type { Page } from "playwright-core";
 import { GEMINI_SELECTORS, type GeminiDomSelectors } from "./selectors";
-import { resolveGeminiTargetMenuLabel } from "../../models/gemini-models";
+import { resolveGeminiTargetMenuLabel } from "../../models/model-registry";
 
 export interface EnsureGeminiCapabilityOptions {
   modelSlug?: string;

@@ -10,7 +10,7 @@ import {
   buildM365FormatRetryPrompt,
   M365PromptCompiler,
 } from "../m365-copilot/prompts";
-import { resolveGeminiReasoningEffort } from "../../models/gemini-models";
+import { resolveGeminiReasoningEffort } from "../../models/model-registry";
 import {
   parseStrictM365Response,
   type StrictM365ResponseResult,

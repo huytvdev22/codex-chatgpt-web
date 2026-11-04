@@ -3,10 +3,6 @@ import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFil
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-  CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
-} from "./models/chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 
@@ -539,21 +535,9 @@ export function saveConfig(config: AppConfig): void {
 }
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {
-  const manual = config.browserInteractionMode === "manual";
-  const model = manual
-    ? CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL
-    : config.solAvailable ? "gpt-5.6-sol" : "gpt-5.6-luna";
-  const models = manual
-    ? [
-      CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-      ...(config.zeroRiskProEnabled ? [CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL] : []),
-    ]
-    : [model];
-  const efforts = manual
-    ? ["low"]
-    : config.solAvailable
-    ? ["low", "medium", "high", ...(config.extraHighAvailable === true ? ["xhigh"] : []), ...(config.proAvailable ? ["max"] : [])]
-    : ["low", "medium"];
+  const model = "chatgpt-web";
+  const models = [model];
+  const efforts = ["low", "high"];
   return {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
@@ -561,15 +545,19 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
     liveModels: false,
     defaultModel: model,
     contextWindow: config.contextWindow,
-    modelInputModalities: Object.fromEntries(models.map(model => [model, manual ? ["text"] : ["text", "image"]])),
-    modelReasoningEfforts: Object.fromEntries(models.map(modelId => [modelId, efforts])),
-    modelDefaultReasoningEfforts: Object.fromEntries(
-      models.map(modelId => [modelId, manual ? "low" : config.solAvailable ? "high" : "low"]),
-    ),
+    modelInputModalities: {
+      "chatgpt-web": ["text", "image"],
+    },
+    modelReasoningEfforts: {
+      "chatgpt-web": efforts,
+    },
+    modelDefaultReasoningEfforts: {
+      "chatgpt-web": "low",
+    },
     noReasoningModels: [],
     chatgptWeb: {
-      appName: manual ? config.manualAppName : config.automaticAppName,
-      browserInteractionMode: config.browserInteractionMode,
+      appName: config.automaticAppName,
+      browserInteractionMode: "automatic",
       browserHost: config.browserHost,
       browserHostDescriptorPath: config.browserHostDescriptorPath,
       storageStatePath: config.storageStatePath,
@@ -579,15 +567,15 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
       headed: config.headed,
       localToolsEnabled: false,
-      solAvailable: manual ? false : config.solAvailable,
-      extraHighAvailable: !manual && config.extraHighAvailable === true,
-      proAvailable: manual ? false : config.proAvailable,
-      experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
-      experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
-      experimentalFreshConversationPerTurn: !manual && config.experimentalFreshConversationPerTurn === true,
+      solAvailable: true,
+      extraHighAvailable: false,
+      proAvailable: false,
+      experimentalBiggerContext: false,
+      experimentalSkillAttachments: config.experimentalSkillAttachments,
+      experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,
       useSavedChats: config.useSavedChats === true,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
-      autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
+      autoApproveToolCalls: config.autoApproveToolCalls,
     },
   };
 }
