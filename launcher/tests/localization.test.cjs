@@ -119,8 +119,7 @@ test("runtime message localization preserves other languages and unknown backend
   );
 });
 
-test("launcher UI localizes MCP verification progress and doctor check messages", () => {
-  assert.match(appSource, /localizeRuntimeMessage\(copy, operation\.message, undefined, language\)/);
+test("launcher UI localizes doctor check messages", () => {
   assert.match(
     appSource,
     /check\.status === "ok"\s*\?\s*localizeRuntimeMessage\(copy, check\.message, check\.id, language\)\s*:\s*check\.message/,
@@ -150,11 +149,6 @@ test("all locales translate known doctor success checks without changing literal
   const fixturePath = "C:\\sample $&\\config.toml";
   const checks = [
     [undefined, "Checking local runtime", "checkingLocalRuntime"],
-    [undefined, "Checking ChatGPT connector", "checkingChatGptConnector"],
-    ["tunnel-binary", "Pinned openai/tunnel-client binary is installed", "doctorTunnelBinaryInstalled"],
-    ["tunnel-key", "Tunnel runtime key is stored privately", "doctorTunnelKeyStored"],
-    ["tunnel-service", "Launcher owns the tunnel runtime", "doctorTunnelRuntimeOwned"],
-    ["tunnel-runtime", "Tunnel runtime reports healthy and ready", "doctorTunnelRuntimeReady"],
     ["config", `Configuration is valid (${fixturePath})`, "doctorConfigValid", "{path}", fixturePath],
     ["browser-host", "Embedded launcher browser is authenticated and reachable (pid 345)", "doctorBrowserReady", "{pid}", "345"],
     ["browser-host", "Embedded launcher browser is reachable for Zero Risk (pid 678)", "doctorManualBrowserReady", "{pid}", "678"],
@@ -163,7 +157,6 @@ test("all locales translate known doctor success checks without changing literal
     ["chrome", `Chrome executable found: ${fixturePath}`, "doctorChromeFound", "{path}", fixturePath],
     ["login", "ChatGPT login state has authenticated browser evidence", "doctorLoginVerified"],
     ["service", "macOS background service is loaded", "doctorMacServiceLoaded"],
-    ["tunnel-service", "macOS tunnel service is installed, loaded, and running", "doctorMacTunnelRunning"],
   ];
   for (const language of Object.keys(languages)) {
     const copy = copyFor(language);
@@ -180,7 +173,6 @@ test("all locales translate known doctor success checks without changing literal
   }
   for (const language of Object.keys(languages)) {
     const copy = copyFor(language);
-    assert.equal(localizeRuntimeMessage(copy, "Tunnel runtime is not ready", "tunnel-runtime", language), "Tunnel runtime is not ready");
     assert.equal(localizeRuntimeMessage(copy, "Unexpected connector diagnostic", "connector", language), "Unexpected connector diagnostic");
   }
   assert.equal(copyFor("ko").install, "모델 설치");

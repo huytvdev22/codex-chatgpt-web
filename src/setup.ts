@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import { join } from "node:path";
 import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
 import {
   currentRuntimeCommand,
@@ -11,7 +10,6 @@ import {
   loadConfigForSetup,
   resolveInteractionConnectorIdentities,
   saveConfig,
-  tunnelConfigForInteractionMode,
 } from "./config";
 import {
   browserLoginStateExists,
@@ -28,7 +26,6 @@ import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   DEV_CONFIG_PURPOSE,
   DEV_LAUNCHER_PROFILE,
-  DEV_TUNNEL_BASE_NAME,
 } from "./dev-chat/constants";
 import {
   assertServiceIdle,
@@ -38,8 +35,6 @@ import {
   restartService,
   uninstallService,
 } from "./service";
-import { connectTunnel, createTunnelConfig, installRuntimeKey, installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, stopTunnel, waitForTunnelReady } from "./tunnel";
-import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
 
 export interface SetupOptions {
@@ -61,9 +56,6 @@ export interface SetupOptions {
   replaceCodexRoute?: boolean;
   restartService?: boolean;
   acknowledgedUnofficial?: boolean;
-  tunnelId?: string;
-  runtimeKeyFile?: string;
-  runtimeKeyValue?: string;
 }
 
 export interface SetupResult {
@@ -71,9 +63,7 @@ export interface SetupResult {
   configPath: string;
   loginCreated: boolean;
   serviceLoaded: boolean;
-  tunnelReady: boolean | null;
   codexRestartRequired: true;
-  connectorSetupRequired: boolean;
 }
 
 interface PreparedSetup {
@@ -85,13 +75,6 @@ interface PreparedSetup {
 export interface DevProfileSetupResult {
   mode: RuntimeMode;
   configPath: string;
-  tunnelReady: boolean | null;
-  connectorSetupRequired: boolean;
-}
-
-export interface ExistingFullSetupCredentials {
-  tunnelId: boolean;
-  runtimeKey: boolean;
 }
 
 export function launcherCapabilityProbeRequired(
@@ -106,19 +89,6 @@ export function launcherCapabilityProbeRequired(
     || typeof existing.solAvailable !== "boolean"
     || typeof existing.extraHighAvailable !== "boolean"
     || typeof existing.proAvailable !== "boolean";
-}
-
-export function existingFullSetupCredentials(
-  existing: AppConfig | undefined,
-  interactionMode: BrowserInteractionMode = existing?.browserInteractionMode ?? "automatic",
-): ExistingFullSetupCredentials {
-  const tunnel = existing?.mode === "full"
-    ? tunnelConfigForInteractionMode(existing, interactionMode)
-    : undefined;
-  return {
-    tunnelId: Boolean(tunnel?.tunnelId),
-    runtimeKey: Boolean(tunnel?.runtimeKeyFile && existsSync(tunnel.runtimeKeyFile)),
-  };
 }
 
 function loadExistingConfig(): AppConfig | undefined {
@@ -155,9 +125,6 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
     runtimeCommand: before.runtimeCommand,
-    tunnel: before.tunnel,
-    automaticTunnel: before.automaticTunnel,
-    manualTunnel: before.manualTunnel,
   }) !== JSON.stringify({
     mode: after.mode,
     subagentProtocol: after.subagentProtocol,
@@ -186,19 +153,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
     runtimeCommand: after.runtimeCommand,
-    tunnel: after.tunnel,
-    automaticTunnel: after.automaticTunnel,
-    manualTunnel: after.manualTunnel,
   });
-}
-
-export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after: AppConfig): boolean {
-  if (!before || before.mode !== "full" || after.mode !== "full") return false;
-  return before.releaseVersion !== after.releaseVersion
-    || JSON.stringify(before.runtimeCommand) !== JSON.stringify(after.runtimeCommand)
-    || before.brokerSocketPath !== after.brokerSocketPath
-    || before.browserInteractionMode !== after.browserInteractionMode
-    || JSON.stringify(before.tunnel) !== JSON.stringify(after.tunnel);
 }
 
 async function assertPortAvailable(host: string, port: number): Promise<void> {
@@ -311,11 +266,8 @@ function baseConfig(
     if (options.experimentalBiggerContext === true) {
       throw new Error("Zero Risk does not support Bigger Context");
     }
-    if (config.mode !== "full") {
-      throw new Error("Zero Risk requires --full so Codex Zero Risk can signal start, tools, and completion");
-    }
     if (config.browserHost !== "launcher") {
-      throw new Error("Zero Risk requires the Launcher; pass --browser-host-descriptor from the running Launcher");
+      throw new Error("Manual browser interaction requires the Launcher; pass --browser-host-descriptor from the running Launcher");
     }
     config.experimentalBiggerContext = false;
     config.experimentalSkillAttachments = false;
@@ -349,92 +301,6 @@ async function inspectLauncherCapabilities(
   };
 }
 
-async function configureTunnel(config: AppConfig, existing: AppConfig | undefined, options: SetupOptions): Promise<void> {
-  if (config.mode === "browser-only") {
-    delete config.tunnel;
-    delete config.automaticTunnel;
-    delete config.manualTunnel;
-    return;
-  }
-  const interactionMode = config.browserInteractionMode;
-  const legacyTunnel = existing?.mode === "full"
-    && !existing.automaticTunnel
-    && !existing.manualTunnel
-    ? existing.tunnel
-    : undefined;
-  let automaticTunnel = existing?.automaticTunnel
-    ?? legacyTunnel;
-  let manualTunnel = existing?.manualTunnel;
-  const existingTunnel = interactionMode === "manual" ? manualTunnel : automaticTunnel;
-  const tunnelId = options.tunnelId ?? existingTunnel?.tunnelId;
-  if (!tunnelId) {
-    throw new Error(`${interactionMode === "manual" ? "Zero Risk" : "Automatic"} mode requires its own Tunnel ID`);
-  }
-  let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
-  const managedKeyFile = managedRuntimeKeyPath(interactionMode);
-  if ((!runtimeKeyFile || !existsSync(runtimeKeyFile)) && existsSync(managedKeyFile)) {
-    runtimeKeyFile = managedKeyFile;
-  }
-  if (options.runtimeKeyFile) runtimeKeyFile = installRuntimeKey(options.runtimeKeyFile, interactionMode);
-  if (options.runtimeKeyValue) runtimeKeyFile = installRuntimeKeyBytes(options.runtimeKeyValue, interactionMode);
-  if (runtimeKeyFile && runtimeKeyFile !== managedKeyFile && existsSync(runtimeKeyFile)) {
-    runtimeKeyFile = installRuntimeKey(runtimeKeyFile, interactionMode);
-  }
-  if (!runtimeKeyFile || !existsSync(runtimeKeyFile)) {
-    throw new Error(`${interactionMode === "manual" ? "Zero Risk" : "Automatic"} mode requires its own runtime key`);
-  }
-  const installedBinary = await installTunnelClient();
-  const productionProfileName = interactionMode === "manual"
-    ? "codex-chatgpt-web-zero-risk"
-    : "codex-chatgpt-web";
-  const profileName = config.purpose === DEV_CONFIG_PURPOSE
-    ? interactionMode === "manual" ? `${DEV_TUNNEL_BASE_NAME}-zero-risk` : DEV_TUNNEL_BASE_NAME
-    : productionProfileName;
-  const configuredTunnel = createTunnelConfig({
-    binaryPath: installedBinary,
-    tunnelId,
-    runtimeKeyFile,
-    profileName,
-    alias: profileName,
-  });
-  const otherTunnel = interactionMode === "manual" ? automaticTunnel : manualTunnel;
-  if (otherTunnel?.tunnelId === configuredTunnel.tunnelId) {
-    throw new Error("Automatic and Zero Risk require different Tunnel IDs and separate ChatGPT connectors");
-  }
-  if (interactionMode === "manual") manualTunnel = configuredTunnel;
-  else automaticTunnel = configuredTunnel;
-  config.tunnel = configuredTunnel;
-  if (automaticTunnel) config.automaticTunnel = automaticTunnel;
-  else delete config.automaticTunnel;
-  if (manualTunnel) config.manualTunnel = manualTunnel;
-  else delete config.manualTunnel;
-}
-
-async function bootstrapTunnelProfile(config: AppConfig): Promise<void> {
-  let bootstrapError: unknown;
-  try {
-    // `runtimes connect` writes the native profile and returns once its managed runtime is healthy.
-    // Readiness follows after a successful control-plane poll, so setup proves it separately before
-    // stopping the validation runtime and handing the profile to the external service.
-    connectTunnel(config);
-    const status = await waitForTunnelReady(config);
-    if (!status.ok) throw new Error(`Tunnel runtime did not become healthy and ready: ${status.detail}`);
-  } catch (error) {
-    bootstrapError = error;
-  }
-  try {
-    stopTunnel(config);
-  } catch (stopError) {
-    if (bootstrapError) {
-      const primary = bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError);
-      const cleanup = stopError instanceof Error ? stopError.message : String(stopError);
-      throw new Error(`${primary}; temporary tunnel cleanup also failed: ${cleanup}`);
-    }
-    throw stopError;
-  }
-  if (bootstrapError) throw bootstrapError;
-}
-
 function prepareSetup(options: SetupOptions): PreparedSetup {
   const existing = loadExistingConfig();
   if (existing?.purpose === DEV_CONFIG_PURPOSE) {
@@ -457,38 +323,7 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
 }
 
 export function preflightSetup(options: SetupOptions): void {
-  const { existing, config } = prepareSetup(options);
-  if (config.mode === "full") {
-    const saved = existing?.mode === "full"
-      ? tunnelConfigForInteractionMode(existing, config.browserInteractionMode)
-      : undefined;
-    const tunnelId = options.tunnelId ?? saved?.tunnelId;
-    if (!tunnelId) {
-      throw new Error(
-        `${config.browserInteractionMode === "manual" ? "Zero Risk" : "Automatic"} mode needs its own MCP Tunnel ID`,
-      );
-    }
-    const savedKey = saved?.runtimeKeyFile;
-    const managedKey = managedRuntimeKeyPath(config.browserInteractionMode);
-    const hasRuntimeKey = Boolean(
-      options.runtimeKeyValue
-      || (options.runtimeKeyFile && existsSync(options.runtimeKeyFile))
-      || (savedKey && existsSync(savedKey))
-      || existsSync(managedKey),
-    );
-    if (!hasRuntimeKey) {
-      throw new Error(
-        `${config.browserInteractionMode === "manual" ? "Zero Risk" : "Automatic"} mode needs its own MCP runtime key`,
-      );
-    }
-    const otherMode = config.browserInteractionMode === "manual" ? "automatic" : "manual";
-    const other = existing?.mode === "full"
-      ? tunnelConfigForInteractionMode(existing, otherMode)
-      : undefined;
-    if (other?.tunnelId === tunnelId) {
-      throw new Error("Automatic and Zero Risk require different Tunnel IDs and separate ChatGPT connectors");
-    }
-  }
+  const { config } = prepareSetup(options);
   preflightCodexIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
@@ -499,7 +334,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   preflightCodexIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
-  const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();
   if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
@@ -570,8 +404,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   config.solAvailable = solAvailable === true;
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
-  const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
-  const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
+  const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || options.forceLogin));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
     throw new Error(
       "The daemon is currently serving a Codex task and setup would change its runtime. "
@@ -579,7 +412,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     );
   }
   if (beforeService.loaded && preliminaryChange && existing) await assertServiceIdle(existing);
-  await configureTunnel(config, existing, options);
 
   const changedWhileLoaded = Boolean(existing && beforeService.loaded && meaningfulRuntimeChange(existing, config));
   if (changedWhileLoaded && !options.restartService) {
@@ -598,36 +430,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     await waitForProxy(config);
   }
 
-  let tunnelReady: boolean | null = null;
-  if (config.mode === "browser-only" && existing?.mode === "full") {
-    const previousTunnelService = getTunnelServiceStatus();
-    if (previousTunnelService.installed || previousTunnelService.loaded) await uninstallTunnelService();
-    stopTunnel(existing);
-  }
-  if (config.mode === "full") {
-    const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
-    const tunnelService = getTunnelServiceStatus();
-    const needsProfile = !existsSync(profilePath);
-    if (launcherOwned) {
-      if (tunnelService.installed || tunnelService.loaded) await uninstallTunnelService();
-      // Commit the inputs before acquiring a runtime. The launcher supervisor creates the
-      // profile, proves readiness/MCP health, and cleans up failed startup under one owner.
-    } else {
-      const needsOwnershipMigration = !tunnelService.installed || !tunnelService.loaded || !tunnelServiceDefinitionMatches(config);
-      if (needsOwnershipMigration || needsProfile) {
-        await assertServiceIdle(config);
-        if (tunnelService.loaded) await stopTunnelService();
-        await bootstrapTunnelProfile(config);
-        installTunnelService(config);
-      } else if (refreshTunnelWorker) {
-        await assertServiceIdle(config);
-        await restartTunnelService();
-      }
-      const status = await waitForTunnelReady(config);
-      if (!status.ok) throw new Error(`Tunnel runtime did not become healthy and ready: ${status.detail}`);
-      tunnelReady = true;
-    }
-  }
   if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
     await uninstallService(existing!);
   }
@@ -647,16 +449,13 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     configPath: getConfigPath(),
     loginCreated,
     serviceLoaded: launcherOwned ? false : getServiceStatus().loaded,
-    tunnelReady,
     codexRestartRequired: true,
-    connectorSetupRequired: config.mode === "full",
   };
 }
 
 /**
- * Configure the isolated launcher/browser/tunnel inputs used by the repository DEV harness.
- * This deliberately has no Codex integration, Responses listener, or system service; the DEV
- * launcher supervises only the isolated MCP tunnel after this transaction commits.
+ * Configure the isolated launcher/browser inputs used by the repository DEV harness.
+ * This deliberately has no Codex integration, Responses listener, or system service.
  */
 export async function setupDevProfile(options: SetupOptions): Promise<DevProfileSetupResult> {
   const existing = loadExistingConfig();
@@ -683,14 +482,9 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
   }
 
-  await configureTunnel(config, existing, options);
-  // DEV uses the same supervisor-owned startup after this configuration is committed.
-  const tunnelReady = config.mode === "full" ? false : null;
   saveConfig(config);
   return {
     mode: config.mode,
     configPath: getConfigPath(),
-    tunnelReady,
-    connectorSetupRequired: config.mode === "full",
   };
 }

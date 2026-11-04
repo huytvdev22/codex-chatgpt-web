@@ -18,14 +18,8 @@ const { windowsTrustEnvironment } = require("./windows-trust.cjs");
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
 const MAX_RUNTIME_LOG_LINE_CHARS = 10 * 1024 * 1024;
-const MAX_CONTROL_OUTPUT_BYTES = 1024 * 1024;
 const DRAIN_IDLE_TIMEOUT_MS = 15_000;
 const DRAIN_POLL_INTERVAL_MS = 100;
-const TUNNEL_START_TIMEOUT_MS = 120_000;
-const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
-const TUNNEL_MONITOR_INTERVAL_MS = 10_000;
-const TUNNEL_MONITOR_FAILURE_THRESHOLD = 3;
-const TUNNEL_MCP_FAILURE_RECENCY_MS = 2 * 60_000;
 const BOOT_TIME_CLOCK_TOLERANCE_MS = 5_000;
 const CURRENT_BOOT_STARTED_AT_MS = Date.now() - (os.uptime() * 1_000);
 
@@ -54,19 +48,6 @@ function collectLines(stream, onLine, onError) {
   stream.on("error", (error) => onError?.(error));
 }
 
-function loopbackHealthBaseURL(value) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:"
-      || !["127.0.0.1", "[::1]", "::1"].includes(parsed.hostname)
-      || !parsed.port) return null;
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return null;
-  }
-}
-
 function readJson(pathname) {
   return JSON.parse(fs.readFileSync(pathname, "utf8"));
 }
@@ -92,17 +73,6 @@ function windowsPipeEndpoint(value) {
   return /^\\\\\.\\pipe\\[A-Za-z0-9._-]+$/.test(value);
 }
 
-function tunnelRuntimeAbsent(value) {
-  return /not found|not running|unknown alias|\balias\b[^\r\n]{0,160}\bis not known\b/i.test(
-    String(value || ""),
-  );
-}
-
-function tunnelRuntimeStopped(health) {
-  return health?.absent === true
-    || (health?.state === "stopped" && health?.processRunning === false);
-}
-
 function runtimeOwnershipPredatesCurrentBoot(state) {
   return Boolean(
     state
@@ -112,82 +82,8 @@ function runtimeOwnershipPredatesCurrentBoot(state) {
 
 function runtimeOwnershipMayBeLive(state) {
   if (!state || runtimeOwnershipPredatesCurrentBoot(state)) return false;
-  if (processRunning(state.daemonPid) || processRunning(state.tunnelPid)) return true;
+  if (processRunning(state.daemonPid)) return true;
   return ["starting", "ready", "degraded", "stopping"].includes(state.status);
-}
-
-function conciseTunnelLog(value) {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const tail = value.trim().split(/\r?\n/).slice(-3).join(" | ");
-  const redacted = redactText(tail);
-  return redacted.length > 800 ? `…${redacted.slice(-800)}` : redacted;
-}
-
-function tunnelControlDiagnostic(result) {
-  const stdout = typeof result?.stdout === "string" ? result.stdout.trim() : "";
-  const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
-  if (stdout) {
-    try {
-      const parsed = JSON.parse(stdout);
-      const logTail = conciseTunnelLog(
-        typeof parsed.launch_diagnostics?.log_tail === "string"
-          ? parsed.launch_diagnostics.log_tail
-          : typeof parsed.local?.log?.tail === "string"
-            ? parsed.local.log.tail
-            : undefined,
-      );
-      const error = [parsed.error, parsed.remote_error, parsed.stop_error]
-        .find(value => typeof value === "string" && value.trim());
-      const state = parsed.runtime_state ?? parsed.state ?? parsed.status;
-      const parts = [
-        ...(state !== undefined ? [`state=${String(state)}`] : []),
-        ...(parsed.process_running !== undefined ? [`process_running=${String(parsed.process_running)}`] : []),
-        ...(parsed.healthy !== undefined ? [`healthy=${String(parsed.healthy)}`] : []),
-        ...(parsed.ready !== undefined ? [`ready=${String(parsed.ready)}`] : []),
-        ...(typeof error === "string" ? [error.trim()] : []),
-        ...(logTail ? [`runtime_log=${logTail}`] : []),
-      ];
-      if (parts.length > 0) return redactText(parts.join("; ")).slice(0, 1_200);
-    } catch {
-      // Fall through to bounded plain-text diagnostics.
-    }
-  }
-  return redactText([stderr, stdout].filter(Boolean).join("\n") || result?.output || "[no tunnel diagnostic]")
-    .slice(0, 1_200);
-}
-
-function tunnelCommandQuoted(value) {
-  if (typeof value !== "string" || !value || /[\r\n]/.test(value)) {
-    throw new Error("Tunnel MCP command values must be non-empty single-line strings");
-  }
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
-function managedTunnelMcpCommand(invocation) {
-  if (!invocation
-    || typeof invocation.executable !== "string"
-    || !Array.isArray(invocation.args)) {
-    throw new Error("Launcher tunnel MCP command requires an explicit runtime invocation");
-  }
-  return [invocation.executable, ...invocation.args]
-    .map(tunnelCommandQuoted)
-    .join(" ");
-}
-
-function managedTunnelConnectArgs(config, invocation) {
-  const tunnel = config.tunnel;
-  if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
-  return [
-    "runtimes", "connect",
-    "--alias", tunnel.alias,
-    "--profile", tunnel.profileName,
-    "--profile-dir", tunnel.profileDir,
-    "--tunnel-client-bin", tunnel.binaryPath,
-    "--tunnel-id", tunnel.tunnelId,
-    "--runtime-api-key", `file:${tunnel.runtimeKeyFile}`,
-    "--mcp-command", managedTunnelMcpCommand(invocation),
-    "--json",
-  ];
 }
 
 function validateConfig(config, descriptorPath, platform = process.platform, launcherProfile = "production") {
@@ -203,7 +99,13 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   if (config.browserInteractionMode === undefined) {
     config.browserInteractionMode = "automatic";
   }
-  if (config.mode !== "browser-only" && config.mode !== "full") {
+  if (config.mode === "full") {
+    config = { ...config, mode: "browser-only" };
+    delete config.tunnel;
+    delete config.automaticTunnel;
+    delete config.manualTunnel;
+  }
+  if (config.mode !== "browser-only") {
     throw new Error("Runtime configuration has an invalid mode");
   }
   if (config.browserInteractionMode !== "automatic" && config.browserInteractionMode !== "manual") {
@@ -279,47 +181,6 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     || config.runtimeCommand.length === 0
     || config.runtimeCommand.some(part => typeof part !== "string" || !part.trim())) {
     throw new Error("Runtime configuration has an invalid runtime command");
-  }
-  const validateTunnel = (tunnel, label) => {
-    if (!tunnel || typeof tunnel !== "object") {
-      throw new Error(`Full mode is missing ${label}`);
-    }
-    for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"]) {
-      if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
-        throw new Error(`Full mode is missing ${label}.${key}`);
-      }
-    }
-    if (!/^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)) {
-      throw new Error(`Full mode has an invalid ${label} id`);
-    }
-    for (const key of ["profileName", "alias"]) {
-      if (!/^[A-Za-z0-9._-]+$/.test(tunnel[key])) {
-        throw new Error(`Full mode has an invalid ${label}.${key}`);
-      }
-    }
-    for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"]) {
-      if (!absolutePath(tunnel[key], platform)) {
-        throw new Error(`Full mode requires an absolute ${label}.${key}`);
-      }
-    }
-  };
-  if (config.mode === "full") {
-    validateTunnel(config.tunnel, "tunnel");
-    if (config.automaticTunnel !== undefined) validateTunnel(config.automaticTunnel, "automaticTunnel");
-    if (config.manualTunnel !== undefined) validateTunnel(config.manualTunnel, "manualTunnel");
-    if (config.automaticTunnel && config.manualTunnel
-      && config.automaticTunnel.tunnelId === config.manualTunnel.tunnelId) {
-      throw new Error("Automatic and Zero Risk tunnel IDs must differ");
-    }
-    const activeTunnel = config.browserInteractionMode === "manual"
-      ? config.manualTunnel
-      : config.automaticTunnel;
-    if ((config.automaticTunnel || config.manualTunnel) && !activeTunnel) {
-      throw new Error("Active browser interaction mode has no tunnel configuration");
-    }
-    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(config.tunnel)) {
-      throw new Error("Active browser interaction mode does not match the active tunnel");
-    }
   }
   return config;
 }
@@ -439,23 +300,16 @@ class RuntimeSupervisor {
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
-    this.tunnel = null;
     this.stopping = false;
     this.startPromise = null;
     this.stopPromise = null;
-    this.restartHistory = { daemon: [], tunnel: [] };
-    this.restartTimers = { daemon: null, tunnel: null };
-    this.tunnelMonitorTimer = null;
-    this.tunnelMonitorInFlight = false;
-    this.tunnelMonitorFailures = 0;
-    this.tunnelMonitorObservationUnavailable = false;
-    this.tunnelMonitorGeneration = 0;
-    this.tunnelHealthBaseUrl = null;
+    this.restartHistory = { daemon: [] };
+    this.restartTimers = { daemon: null };
     this.recoveryTasks = new Set();
     this.expectedExits = new WeakSet();
     this.restartableChildren = new WeakSet();
-    this.lastChildFailure = { daemon: null, tunnel: null };
-    this.lastChildOutput = { daemon: null, tunnel: null };
+    this.lastChildFailure = { daemon: null };
+    this.lastChildOutput = { daemon: null };
   }
 
   readConfig() {
@@ -483,11 +337,17 @@ class RuntimeSupervisor {
     } else if (config.purpose !== undefined) {
       throw new Error("Production launcher refuses a DEV harness configuration");
     }
-    const mode = config.mode === "pro-only" ? "browser-only" : config.mode;
-    if (mode !== "browser-only" && mode !== "full") {
+    const mode = config.mode === "pro-only" || config.mode === "full"
+      ? "browser-only"
+      : config.mode;
+    if (mode !== "browser-only") {
       throw new Error("Runtime configuration has an invalid setup mode");
     }
-    return { ...config, mode };
+    const normalized = { ...config, mode };
+    delete normalized.tunnel;
+    delete normalized.automaticTunnel;
+    delete normalized.manualTunnel;
+    return normalized;
   }
 
   readState() {
@@ -500,7 +360,6 @@ class RuntimeSupervisor {
         || !Number.isInteger(state.ownerPid)
         || state.ownerPid < 1
         || !validPid(state.daemonPid)
-        || !validPid(state.tunnelPid)
         || typeof state.status !== "string"
         || typeof state.updatedAt !== "string"
         || Number.isNaN(Date.parse(state.updatedAt))) {
@@ -517,7 +376,6 @@ class RuntimeSupervisor {
       version: 1,
       ownerPid: process.pid,
       daemonPid: this.daemon?.pid ?? null,
-      tunnelPid: this.tunnel?.pid ?? null,
       status,
       ...(detail ? { detail } : {}),
       updatedAt: new Date().toISOString(),
@@ -537,11 +395,9 @@ class RuntimeSupervisor {
     } catch (error) {
       const message = `Could not persist launcher runtime ownership: ${errorMessage(error)}`;
       this.stopping = true;
-      for (const name of ["daemon", "tunnel"]) {
-        if (this.restartTimers[name]) {
-          clearTimeout(this.restartTimers[name]);
-          this.restartTimers[name] = null;
-        }
+      if (this.restartTimers.daemon) {
+        clearTimeout(this.restartTimers.daemon);
+        this.restartTimers.daemon = null;
       }
       this.logger.error("runtime.state_write_failed", { status, message });
       this.publishOperation?.({ name: "runtime-supervisor", status: "failed", message });
@@ -554,14 +410,13 @@ class RuntimeSupervisor {
   }
 
   prepareExternalMigration() {
-    if (this.daemon || this.tunnel) {
-      throw new Error("Launcher-owned runtime children exist while an external installation is configured");
+    if (this.daemon) {
+      throw new Error("Launcher-owned runtime child exists while an external installation is configured");
     }
     const state = this.readState();
     if (state && !runtimeOwnershipPredatesCurrentBoot(state) && (
       processRunning(state.ownerPid)
       || processRunning(state.daemonPid)
-      || processRunning(state.tunnelPid)
     )) {
       throw new Error("Launcher ownership processes are still alive while an external installation is configured");
     }
@@ -573,7 +428,6 @@ class RuntimeSupervisor {
     const preservesLiveOwnership = existing && !runtimeOwnershipPredatesCurrentBoot(existing) && (
       processRunning(existing.ownerPid)
       || processRunning(existing.daemonPid)
-      || processRunning(existing.tunnelPid)
     );
     if (!preservesLiveOwnership) this.writeState("external", detail);
   }
@@ -669,18 +523,6 @@ class RuntimeSupervisor {
     });
   }
 
-  assertTunnelClientReady(config) {
-    const tunnel = config.tunnel;
-    if (!tunnel || !fs.existsSync(tunnel.binaryPath)) {
-      throw new Error(`Tunnel client is missing: ${tunnel?.binaryPath || "not configured"}`);
-    }
-    if (!fs.existsSync(tunnel.runtimeKeyFile)) {
-      throw new Error(`Tunnel runtime key is missing: ${tunnel.runtimeKeyFile}`);
-    }
-    // First-time setup commits only configuration; all native manager commands run here.
-    fs.mkdirSync(tunnel.profileDir, { recursive: true, mode: 0o700 });
-  }
-
   async proxyHealthPayload(config, timeoutMs = 2_000) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -720,530 +562,6 @@ class RuntimeSupervisor {
       await sleep(200);
     }
     throw new Error(`Responses proxy did not become healthy on 127.0.0.1:${config.port} within ${timeoutMs}ms`);
-  }
-
-  async readTunnelHealth(config) {
-    const tunnel = config.tunnel;
-    // `runtimes status` performs an optional control-plane lookup when the saved runtime key is
-    // available. The cleanup dry run is the official local-only inventory and never removes
-    // entries without `--apply`, so proxy or control-plane failures cannot block supervision.
-    const result = await this.runTunnelCommand(
-      config,
-      ["runtimes", "cleanup", "--json"],
-      5_000,
-      "Local tunnel inventory probe",
-    );
-    if (result.code !== 0) {
-      return {
-        ready: false,
-        pid: null,
-        state: undefined,
-        processRunning: undefined,
-        healthy: undefined,
-        absent: false,
-        statusKnown: false,
-        detail: tunnelControlDiagnostic(result),
-      };
-    }
-    try {
-      const parsed = JSON.parse(result.output);
-      if (!Array.isArray(parsed.entries)) throw new Error("local inventory has no entries array");
-      const entry = parsed.entries.find(candidate => candidate?.alias === tunnel.alias);
-      if (!entry) {
-        return {
-          ready: false,
-          pid: null,
-          state: "stopped",
-          processRunning: false,
-          healthy: false,
-          absent: true,
-          statusKnown: true,
-          detail: `alias=${tunnel.alias}; local_inventory=absent`,
-        };
-      }
-      const runtimeState = entry.runtime_state;
-      if (!["stopped", "starting", "healthy", "ready"].includes(runtimeState)) {
-        throw new Error(`local inventory reported unsupported runtime_state=${String(runtimeState)}`);
-      }
-      const liveRuntime = entry.live_runtime && typeof entry.live_runtime === "object"
-        ? entry.live_runtime
-        : {};
-      const healthBaseUrl = loopbackHealthBaseURL(liveRuntime.base_url);
-      if (healthBaseUrl) this.tunnelHealthBaseUrl = healthBaseUrl;
-      const pid = Number.isInteger(liveRuntime.system?.pid) && liveRuntime.system.pid > 0
-        ? liveRuntime.system.pid
-        : Number.isInteger(liveRuntime.status?.pid) && liveRuntime.status.pid > 0
-          ? liveRuntime.status.pid
-          : null;
-      const processRunning = runtimeState !== "stopped";
-      const healthy = runtimeState === "healthy" || runtimeState === "ready";
-      const ready = runtimeState === "ready";
-      const detail = [
-        ["state", runtimeState],
-        ["process_running", processRunning],
-        ["healthy", healthy],
-        ["ready", ready],
-        ["classification", entry.classification],
-        ["live_admin", liveRuntime.found === true],
-        ["pid", pid ?? "missing"],
-      ]
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => `${key}=${String(value)}`)
-        .join("; ");
-      return {
-        ready,
-        pid,
-        state: runtimeState,
-        processRunning,
-        healthy,
-        absent: false,
-        statusKnown: true,
-        detail: redactText(detail).slice(0, 2_000),
-      };
-    } catch (error) {
-      return {
-        ready: false,
-        pid: null,
-        state: undefined,
-        processRunning: undefined,
-        healthy: undefined,
-        absent: false,
-        statusKnown: false,
-        detail: `local inventory returned invalid JSON: ${errorMessage(error)};`
-          + ` ${redactText(result.output || "[empty]").slice(0, 500)}`,
-      };
-    }
-  }
-
-  async probeTunnelEndpoint(pathname, timeoutMs = 2_000) {
-    if (!this.tunnelHealthBaseUrl) {
-      return { observed: false, ok: false, detail: "local tunnel health URL is not known" };
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(`${this.tunnelHealthBaseUrl}${pathname}`, {
-        method: "GET",
-        signal: controller.signal,
-      });
-      return {
-        observed: true,
-        ok: response.ok,
-        status: response.status,
-        detail: `${pathname} returned HTTP ${response.status}`,
-      };
-    } catch (error) {
-      return {
-        observed: false,
-        ok: false,
-        detail: `${pathname} could not be observed: ${errorMessage(error)}`,
-      };
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async probeTunnelMcpTransport(timeoutMs = 2_000) {
-    if (!this.tunnelHealthBaseUrl) {
-      return { observed: false, ok: false, fatal: false, detail: "local tunnel MCP diagnostics URL is not known" };
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(`${this.tunnelHealthBaseUrl}/api/logs?limit=100`, {
-        method: "GET",
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        return {
-          observed: false,
-          ok: false,
-          fatal: false,
-          detail: `MCP transport diagnostics returned HTTP ${response.status}`,
-        };
-      }
-      const body = await response.json();
-      if (!body || typeof body !== "object" || !Array.isArray(body.events)) {
-        throw new Error("response has no events array");
-      }
-      const cutoff = Date.now() - TUNNEL_MCP_FAILURE_RECENCY_MS;
-      const failure = body.events.findLast(event => {
-        if (!event || typeof event !== "object") return false;
-        const attrs = event.attrs && typeof event.attrs === "object" ? event.attrs : {};
-        const occurredAt = Date.parse(event.time);
-        return Number.isFinite(occurredAt)
-          && occurredAt >= cutoff
-          && event.message === "dispatcher received MCP upstream error; posted error response to control plane"
-          && attrs.failure_source === "client_internal"
-          && attrs.status_code === 502
-          && attrs.upstream_response_received === false
-          && ["initialize", "tools/call"].includes(attrs.rpc_method);
-      });
-      if (!failure) {
-        return { observed: true, ok: true, fatal: false, detail: "MCP transport has no recent internal failures" };
-      }
-      return {
-        observed: true,
-        ok: false,
-        fatal: true,
-        detail: `MCP transport returned internal HTTP 502 for ${failure.attrs.rpc_method} at ${failure.time}`,
-      };
-    } catch (error) {
-      return {
-        observed: false,
-        ok: false,
-        fatal: false,
-        detail: `MCP transport diagnostics could not be observed: ${errorMessage(error)}`,
-      };
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async discoverTunnelHealthBaseUrl(config) {
-    const tunnel = config.tunnel;
-    if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
-    const result = await this.runTunnelCommand(
-      config,
-      ["runtimes", "list", "--json"],
-      5_000,
-      "Local tunnel health discovery",
-    );
-    if (result.code !== 0) {
-      throw new Error(`Local tunnel health discovery failed: ${tunnelControlDiagnostic(result)}`);
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(result.output);
-    } catch (error) {
-      throw new Error(`Local tunnel health discovery returned invalid JSON: ${errorMessage(error)}`);
-    }
-    // Unscoped `list` is local-only. Its exact alias record points to the live health URL file;
-    // `status` waits for an unrelated remote API before returning this same local information.
-    const aliases = Array.isArray(parsed?.aliases)
-      ? parsed.aliases.filter(entry => entry?.alias === tunnel.alias)
-      : [];
-    const healthFile = aliases.length === 1 ? aliases[0].health_url_file : undefined;
-    if (typeof healthFile !== "string" || !path.isAbsolute(healthFile)) {
-      throw new Error("Local tunnel health discovery returned no unique alias health URL file");
-    }
-    const baseUrl = loopbackHealthBaseURL(await fs.promises.readFile(healthFile, "utf8"));
-    if (!baseUrl) {
-      throw new Error("Local tunnel health discovery returned no verified loopback endpoint");
-    }
-    this.tunnelHealthBaseUrl = baseUrl;
-    return baseUrl;
-  }
-
-  async waitForTunnelMcpTransport(config, timeoutMs = 10_000) {
-    if (!this.tunnelHealthBaseUrl) await this.discoverTunnelHealthBaseUrl(config);
-    const deadline = Date.now() + timeoutMs;
-    let health;
-    do {
-      health = await this.probeTunnelMcpTransport();
-      if (health.observed && health.ok) return health;
-      if (health.fatal) {
-        throw new Error(`Tunnel MCP transport is unhealthy: ${health.detail}`);
-      }
-      if (Date.now() >= deadline) break;
-      await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
-    } while (Date.now() < deadline);
-    throw new Error(
-      `Tunnel MCP transport could not be verified within ${timeoutMs}ms:`
-      + ` ${health?.detail || "no diagnostics returned"}`,
-    );
-  }
-
-  async readLocalTunnelHealth() {
-    const [healthz, readyz, mcp] = await Promise.all([
-      this.probeTunnelEndpoint("/healthz"),
-      this.probeTunnelEndpoint("/readyz"),
-      this.probeTunnelMcpTransport(),
-    ]);
-    const pid = Number.isInteger(this.tunnel?.pid) ? this.tunnel.pid : null;
-    if (pid && !processRunning(pid)) {
-      return {
-        ready: false,
-        pid,
-        state: "stopped",
-        processRunning: false,
-        healthy: false,
-        absent: false,
-        statusKnown: true,
-        detail: `managed tunnel process ${pid} is no longer running`,
-      };
-    }
-    const explicitlyUnhealthy = (healthz.observed && !healthz.ok)
-      || (readyz.observed && !readyz.ok)
-      || (mcp.observed && !mcp.ok);
-    const completelyObserved = healthz.observed && readyz.observed && mcp.observed;
-    if (!explicitlyUnhealthy && !completelyObserved) {
-      return {
-        ready: false,
-        pid,
-        state: undefined,
-        processRunning: pid ? true : undefined,
-        healthy: undefined,
-        absent: false,
-        statusKnown: false,
-        fatal: mcp.fatal === true,
-        detail: `${healthz.detail}; ${readyz.detail}; ${mcp.detail}`,
-      };
-    }
-    const mcpReady = mcp.observed && mcp.ok;
-    return {
-      ready: healthz.ok && readyz.ok && mcpReady,
-      pid,
-      state: healthz.ok && readyz.ok && mcpReady ? "ready" : "degraded",
-      processRunning: pid ? true : undefined,
-      healthy: healthz.ok && mcpReady,
-      absent: false,
-      statusKnown: true,
-      fatal: mcp.fatal === true,
-      detail: `${healthz.detail}; ${readyz.detail}; ${mcp.detail}`,
-    };
-  }
-
-  async observeTunnelForMonitor(config) {
-    const local = await this.readLocalTunnelHealth();
-    if (local.statusKnown) return local;
-    try {
-      const previousEndpoint = this.tunnelHealthBaseUrl;
-      const inventory = await this.readTunnelHealth(config);
-      if (tunnelRuntimeStopped(inventory)) return inventory;
-      if (this.tunnelHealthBaseUrl && this.tunnelHealthBaseUrl !== previousEndpoint) {
-        return await this.readLocalTunnelHealth();
-      }
-      // Inventory can prove that the alias stopped, but its ready flag does not prove MCP health.
-      // Unknown observations must not hide failures or trigger a restart without failure evidence.
-      return { ...local, detail: `${local.detail}; local inventory: ${inventory.detail}` };
-    } catch (error) {
-      return {
-        ...local,
-        detail: `${local.detail}; native status unavailable: ${errorMessage(error)}`,
-      };
-    }
-  }
-
-  async tunnelHealth(config) {
-    return (await this.observeTunnelForMonitor(config)).ready;
-  }
-
-  async waitForKnownTunnelStatus(config, timeoutMs = 10_000) {
-    const deadline = Date.now() + timeoutMs;
-    let health;
-    do {
-      health = await this.readTunnelHealth(config);
-      if (health.statusKnown) return health;
-      await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
-    } while (Date.now() < deadline);
-    throw new Error(
-      `Tunnel runtime status could not be inspected within ${timeoutMs}ms:`
-      + ` ${health?.detail || "no status returned"}`,
-    );
-  }
-
-  async waitForTunnel(
-    config,
-    timeoutMs = TUNNEL_START_TIMEOUT_MS,
-    operationName = "runtime-start",
-  ) {
-    const deadline = Date.now() + timeoutMs;
-    let lastDetail = "tunnel status has not been observed";
-    let lastPublishedDetail;
-    while (Date.now() < deadline) {
-      const health = await this.readTunnelHealth(config);
-      if (health.pid) {
-        this.tunnel = {
-          pid: health.pid,
-          exitCode: null,
-          signalCode: null,
-          managed: true,
-        };
-      }
-      if (health.ready) {
-        if (!this.tunnel) {
-          this.tunnel = {
-            pid: null,
-            exitCode: null,
-            signalCode: null,
-            managed: true,
-          };
-        }
-        return health;
-      }
-      if (tunnelRuntimeStopped(health)) {
-        throw new Error(`Tunnel managed runtime stopped during startup: ${health.detail}`);
-      }
-      lastDetail = health.detail;
-      if (lastDetail !== lastPublishedDetail) {
-        lastPublishedDetail = lastDetail;
-        this.logger.info("runtime.tunnel_waiting", { detail: lastDetail });
-        this.publishOperation?.({
-          name: operationName,
-          status: "running",
-          message: `Waiting for tunnel readiness: ${lastDetail}`,
-        });
-      }
-      await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
-    }
-    throw new Error(
-      `Tunnel runtime did not become healthy and ready within ${timeoutMs}ms: ${lastDetail}`,
-    );
-  }
-
-  async startTunnel(config, operationName = "runtime-start", { forceRestart = false } = {}) {
-    if (config.mode !== "full") return;
-    this.assertTunnelClientReady(config);
-    // Every acquisition binds diagnostics to this runtime, including adoption of an existing alias.
-    this.tunnelHealthBaseUrl = null;
-    try {
-      const existing = await this.waitForKnownTunnelStatus(config);
-      if (existing.ready && !forceRestart) {
-        this.tunnel = {
-          pid: existing.pid,
-          exitCode: null,
-          signalCode: null,
-          managed: true,
-        };
-        await this.waitForTunnelMcpTransport(config);
-        this.startTunnelMonitor(config);
-        this.logger.info("runtime.tunnel_adopted", { pid: existing.pid });
-        return;
-      }
-      this.tunnel = null;
-      const stopped = await this.runTunnelStopCommand(config);
-      if (stopped.code !== 0
-        && !tunnelRuntimeAbsent(stopped.output)) {
-        throw new Error(
-          `tunnel runtime refused pre-start cleanup: ${tunnelControlDiagnostic(stopped)}`,
-        );
-      }
-      if (stopped.code === 0) await this.waitForTunnelStopped(config);
-      this.tunnelHealthBaseUrl = null;
-      const connected = await this.runTunnelConnectCommand(config);
-      if (connected.code !== 0) {
-        throw new Error(
-          `tunnel runtime refused managed startup: ${tunnelControlDiagnostic(connected)}`,
-        );
-      }
-      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, operationName);
-      if (!this.tunnel) throw new Error("Tunnel runtime became ready without a managed process identity");
-      await this.waitForTunnelMcpTransport(config);
-      this.startTunnelMonitor(config);
-    } catch (error) {
-      let cleanupError;
-      try {
-        this.stopTunnelMonitor();
-        const managed = this.tunnel;
-        const stopped = await this.runTunnelStopCommand(config);
-        if (stopped.code !== 0
-          && (!tunnelRuntimeAbsent(stopped.output)
-            || (managed?.pid && processRunning(managed.pid)))) {
-          throw new Error(tunnelControlDiagnostic(stopped));
-        }
-        if (stopped.code === 0) await this.waitForTunnelStopped(config);
-        this.tunnel = null;
-      } catch (caught) {
-        cleanupError = caught;
-      }
-      if (cleanupError) {
-        throw new Error(appendFailure(errorMessage(error), "tunnel startup cleanup failed", cleanupError));
-      }
-      throw error;
-    }
-  }
-
-  async runTunnelConnectCommand(config) {
-    const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
-    const invocation = this.runtimeCommand([
-      "mcp",
-      "--contract",
-      contract,
-      "--broker-socket",
-      config.brokerSocketPath,
-    ]);
-    return await this.runTunnelCommand(
-      config,
-      managedTunnelConnectArgs(config, invocation),
-      TUNNEL_START_TIMEOUT_MS,
-      "Tunnel managed startup",
-    );
-  }
-
-  startTunnelMonitor(config) {
-    this.stopTunnelMonitor();
-    this.tunnelMonitorFailures = 0;
-    this.tunnelMonitorObservationUnavailable = false;
-    const generation = this.tunnelMonitorGeneration;
-    const recordFailure = (message, immediate = false) => {
-      if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
-      if (immediate) this.tunnelMonitorFailures = TUNNEL_MONITOR_FAILURE_THRESHOLD - 1;
-      this.tunnelMonitorFailures += 1;
-      this.logger.warn("runtime.tunnel_monitor_unhealthy", {
-        consecutiveFailures: this.tunnelMonitorFailures,
-        message,
-      });
-      if (this.tunnelMonitorFailures < TUNNEL_MONITOR_FAILURE_THRESHOLD) return;
-      this.lastChildFailure.tunnel = message;
-      this.tunnel = null;
-      this.stopTunnelMonitor();
-      if (!this.tryWriteState("degraded", message)) return;
-      this.publishOperation?.({ name: "runtime-recovery", status: "running", message });
-      this.scheduleRecovery("tunnel");
-    };
-    this.tunnelMonitorTimer = setInterval(() => {
-      if (this.stopping
-        || generation !== this.tunnelMonitorGeneration
-        || this.tunnelMonitorInFlight
-        || this.restartTimers.tunnel) return;
-      this.tunnelMonitorInFlight = true;
-      void this.observeTunnelForMonitor(config).then((health) => {
-        if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
-        if (!health.statusKnown) {
-          if (!this.tunnelMonitorObservationUnavailable) {
-            this.tunnelMonitorObservationUnavailable = true;
-            this.logger.warn("runtime.tunnel_monitor_observation_unavailable", {
-              message: health.detail,
-            });
-          }
-          return;
-        }
-        if (this.tunnelMonitorObservationUnavailable) {
-          this.tunnelMonitorObservationUnavailable = false;
-          this.logger.info("runtime.tunnel_monitor_observation_restored", {
-            message: health.detail,
-          });
-        }
-        if (health.ready) {
-          this.tunnelMonitorFailures = 0;
-          if (this.tunnel?.pid !== health.pid) {
-            this.tunnel = {
-              pid: health.pid,
-              exitCode: null,
-              signalCode: null,
-              managed: true,
-            };
-            this.tryWriteState("ready");
-          }
-          return;
-        }
-        recordFailure(`Tunnel runtime lost readiness: ${health.detail}`, health.fatal === true);
-      }).catch((error) => {
-        recordFailure(`Tunnel health probe failed: ${errorMessage(error)}`);
-      }).finally(() => {
-        this.tunnelMonitorInFlight = false;
-      });
-    }, TUNNEL_MONITOR_INTERVAL_MS);
-    this.tunnelMonitorTimer.unref?.();
-  }
-
-  stopTunnelMonitor() {
-    if (this.tunnelMonitorTimer) clearInterval(this.tunnelMonitorTimer);
-    this.tunnelMonitorTimer = null;
-    this.tunnelMonitorFailures = 0;
-    this.tunnelMonitorObservationUnavailable = false;
-    this.tunnelMonitorGeneration += 1;
   }
 
   async startDaemon(config) {
@@ -1304,10 +622,8 @@ class RuntimeSupervisor {
     }
     if (!config) {
       const ownershipState = this.readState();
-      if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
-        processRunning(ownershipState.daemonPid)
-        || processRunning(ownershipState.tunnelPid)
-      )) {
+      if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState)
+        && processRunning(ownershipState.daemonPid)) {
         const detail = "Runtime configuration is missing while launcher ownership processes are still alive";
         this.logger.warn("runtime.external_owner_detected", { detail });
         return { status: "external", detail };
@@ -1315,20 +631,9 @@ class RuntimeSupervisor {
       this.clearState();
       return { status: "not-configured" };
     }
-    const tunnelOnly = this.launcherProfile === "development";
-    if (tunnelOnly && config.mode !== "full") {
+    if (config.releaseVersion !== this.app.getVersion()) {
       const ownershipState = this.readState();
-      if (runtimeOwnershipMayBeLive(ownershipState)) {
-        const detail = "A DEV MCP runtime is still owned while the profile is configured as browser-only";
-        this.writeExternalState(detail);
-        return { status: "external", detail };
-      }
-      this.clearState();
-      return { status: "ready", daemonPid: null, tunnelPid: null };
-    }
-    if (!tunnelOnly && config.releaseVersion !== this.app.getVersion()) {
-      const ownershipState = this.readState();
-      if ((!tunnelOnly && await this.proxyHealth(config)) || runtimeOwnershipMayBeLive(ownershipState)) {
+      if (await this.proxyHealth(config) || runtimeOwnershipMayBeLive(ownershipState)) {
         try {
           const recovered = await this.stopStaleOwnedRuntime(config);
           if (!recovered) {
@@ -1349,8 +654,8 @@ class RuntimeSupervisor {
       this.logger.warn("runtime.setup_required", { detail });
       return { status: "needs-setup", detail };
     }
-    if (!this.daemon && !this.tunnel) {
-      const healthyRuntime = tunnelOnly ? false : await this.proxyHealth(config);
+    if (!this.daemon) {
+      const healthyRuntime = await this.proxyHealth(config);
       const ownershipState = this.readState();
       if (healthyRuntime || runtimeOwnershipMayBeLive(ownershipState)) {
         try {
@@ -1376,20 +681,22 @@ class RuntimeSupervisor {
     this.publishOperation?.({
       name: "runtime-start",
       status: "running",
-      message: tunnelOnly ? "Starting isolated DEV MCP runtime" : "Starting local runtime",
+      message: this.launcherProfile === "development"
+        ? "Starting isolated DEV browser runtime"
+        : "Starting local browser runtime",
     });
     try {
-      await this.startTunnel(config, "runtime-start");
-      if (!tunnelOnly) await this.startDaemon(config);
+      await this.startDaemon(config);
       this.restartHistory.daemon = [];
-      this.restartHistory.tunnel = [];
       this.writeState("ready");
       this.publishOperation?.({
         name: "runtime-start",
         status: "completed",
-        message: tunnelOnly ? "Isolated DEV MCP runtime is ready" : "Local runtime is ready",
+        message: this.launcherProfile === "development"
+          ? "Isolated DEV browser runtime is ready"
+          : "Local browser runtime is ready",
       });
-      return { status: "ready", daemonPid: this.daemon?.pid, tunnelPid: this.tunnel?.pid };
+      return { status: "ready", daemonPid: this.daemon?.pid };
     } catch (error) {
       this.stopping = true;
       let cleanupError;
@@ -1445,23 +752,13 @@ class RuntimeSupervisor {
 
   async recover(name) {
     if (this.stopping) return;
+    if (name !== "daemon") throw new Error(`Unsupported runtime recovery target: ${name}`);
     const config = this.readConfig();
     if (!config) return;
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
-    const tunnelOnly = this.launcherProfile === "development";
-    if (name === "tunnel") {
-      await this.startTunnel(config, "runtime-recovery", { forceRestart: true });
-    }
-    else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
-    else await this.startDaemon(config);
-    if (!tunnelOnly && !this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");
-    if (config.mode === "full" && !this.tunnel) {
-      throw new Error("Tunnel runtime is unavailable after runtime recovery");
-    }
-    if (!tunnelOnly) await this.waitForProxy(config);
-    if (config.mode === "full") {
-      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery");
-    }
+    await this.startDaemon(config);
+    if (!this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");
+    await this.waitForProxy(config);
     if (!this.tryWriteState("ready")) {
       let cleanupError;
       try {
@@ -1504,9 +801,6 @@ class RuntimeSupervisor {
         await this.stopChild("daemon");
       }
     }
-    if (this.tunnel) {
-      await this.stopTunnelGracefully(config);
-    }
   }
 
   async restoreDrainedDaemon(config) {
@@ -1533,9 +827,6 @@ class RuntimeSupervisor {
   }
 
   async ownedRuntimeReady(config) {
-    if (this.launcherProfile === "development") {
-      return config.mode !== "full" || Boolean(this.tunnel && await this.tunnelHealth(config));
-    }
     const daemon = this.daemon;
     if (!daemon
       || !Number.isInteger(daemon.pid)
@@ -1544,8 +835,7 @@ class RuntimeSupervisor {
       || !await this.proxyHealth(config, 2_000, daemon.pid, true)) {
       return false;
     }
-    if (config.mode !== "full") return true;
-    return Boolean(this.tunnel && await this.tunnelHealth(config));
+    return true;
   }
 
   async control(config, action, options = {}) {
@@ -1593,20 +883,6 @@ class RuntimeSupervisor {
     if (processRunning(pid)) throw new Error(`${name} process ${pid} did not stop within ${timeoutMs}ms`);
   }
 
-  async waitForTunnelStopped(config, timeoutMs = 10_000) {
-    const deadline = Date.now() + timeoutMs;
-    let lastDetail = "tunnel stop status has not been observed";
-    while (Date.now() < deadline) {
-      const health = await this.readTunnelHealth(config);
-      if (tunnelRuntimeStopped(health)) {
-        return health;
-      }
-      lastDetail = health.detail;
-      await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
-    }
-    throw new Error(`Tunnel runtime did not confirm a stopped state within ${timeoutMs}ms: ${lastDetail}`);
-  }
-
   async waitForPortRelease(config, timeoutMs = 15_000) {
     const deadline = Date.now() + timeoutMs;
     let lastError = "port is still occupied";
@@ -1644,188 +920,6 @@ class RuntimeSupervisor {
     this.daemon = null;
   }
 
-  async stopTunnelGracefully(config, timeoutMs = 10_000) {
-    const managed = this.tunnel;
-    if (!managed) {
-      this.stopTunnelMonitor();
-      this.tunnel = null;
-      return;
-    }
-    const tunnel = config.tunnel;
-    if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
-    this.stopTunnelMonitor();
-    let result;
-    try {
-      result = await this.runTunnelStopCommand(config);
-    } catch (error) {
-      this.startTunnelMonitor(config);
-      throw error;
-    }
-    if (result.code !== 0) {
-      this.startTunnelMonitor(config);
-      throw new Error(`tunnel runtime refused graceful shutdown: ${tunnelControlDiagnostic(result)}`);
-    }
-    try {
-      await this.waitForTunnelStopped(config, timeoutMs);
-    } catch (error) {
-      // The native manager accepted the stop request but did not prove the terminal state.
-      // Keep supervising the alias until the caller either recovers or retries the transaction.
-      this.startTunnelMonitor(config);
-      throw error;
-    }
-    this.tunnel = null;
-  }
-
-  async adoptConfiguredTunnelForStop(config) {
-    if (config.mode !== "full" || this.tunnel) return;
-    const health = await this.waitForKnownTunnelStatus(config);
-    if (tunnelRuntimeStopped(health)) {
-      return;
-    }
-    if (health.state === undefined
-      && health.processRunning !== true
-      && health.pid === null) {
-      throw new Error(`Tunnel runtime state is ambiguous before shutdown: ${health.detail}`);
-    }
-    this.tunnel = {
-      pid: health.pid,
-      exitCode: null,
-      signalCode: null,
-      managed: true,
-    };
-    this.logger.info("runtime.tunnel_adopted_for_stop", {
-      pid: health.pid,
-      state: health.state,
-    });
-  }
-
-  async runTunnelStopCommand(config) {
-    const tunnel = config.tunnel;
-    if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
-    return await this.runTunnelCommand(
-      config,
-      ["runtimes", "stop", tunnel.alias, "--json"],
-      10_000,
-      "Tunnel shutdown",
-    );
-  }
-
-  async runTunnelCommand(config, args, timeoutMs, label) {
-    const tunnel = config.tunnel;
-    if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
-    return await new Promise((resolve, reject) => {
-      const child = spawn(tunnel.binaryPath, args, {
-        cwd: tunnel.profileDir,
-        detached: DETACH_OWNED_CHILD,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      const stdout = [];
-      const stderr = [];
-      let stdoutBytes = 0;
-      let stderrBytes = 0;
-      const capture = (chunks, chunk, stream) => {
-        const used = stream === "stdout" ? stdoutBytes : stderrBytes;
-        const remaining = MAX_CONTROL_OUTPUT_BYTES - used;
-        if (remaining <= 0) return;
-        const captured = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
-        chunks.push(captured);
-        if (stream === "stdout") stdoutBytes += captured.length;
-        else stderrBytes += captured.length;
-      };
-      let settled = false;
-      let timeoutError = null;
-      let terminationTimeout = null;
-      let forceTimeout = null;
-      const clearTimers = () => {
-        clearTimeout(timeout);
-        if (terminationTimeout) clearTimeout(terminationTimeout);
-        if (forceTimeout) clearTimeout(forceTimeout);
-      };
-      const timeout = setTimeout(() => {
-        if (settled) return;
-        timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
-        try {
-          terminateOwnedProcessTree(child);
-        } catch (error) {
-          settled = true;
-          clearTimers();
-          reject(new Error(
-            `${timeoutError.message}; control process tree termination failed: ${errorMessage(error)}`,
-          ));
-          return;
-        }
-        terminationTimeout = setTimeout(() => {
-          if (settled) return;
-          try {
-            terminateOwnedProcessTree(child, "SIGKILL");
-          } catch (error) {
-            settled = true;
-            clearTimers();
-            reject(new Error(
-              `${timeoutError.message}; forced control process tree termination failed: ${errorMessage(error)}`,
-            ));
-            return;
-          }
-          forceTimeout = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            clearTimers();
-            reject(new Error(`${timeoutError.message}; the control process did not exit after forced termination`));
-          }, 2_000);
-        }, 5_000);
-      }, timeoutMs);
-      child.stdout.on("data", (chunk) => capture(stdout, chunk, "stdout"));
-      child.stderr.on("data", (chunk) => capture(stderr, chunk, "stderr"));
-      const onOutputError = (stream) => (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimers();
-        try {
-          terminateOwnedProcessTree(child);
-        } catch {}
-        reject(new Error(`${label} ${stream} pipe failed: ${errorMessage(error)}`));
-      };
-      child.stdout.once("error", onOutputError("stdout"));
-      child.stderr.once("error", onOutputError("stderr"));
-      child.once("error", (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimers();
-        reject(timeoutError
-          ? new Error(`${timeoutError.message}; termination failed: ${error.message}`)
-          : error);
-      });
-      child.once("exit", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimers();
-        if (timeoutError) {
-          try {
-            terminateOwnedProcessTree(child, "SIGKILL");
-            reject(timeoutError);
-          } catch (error) {
-            reject(new Error(
-              `${timeoutError.message}; final control process-group cleanup failed: ${errorMessage(error)}`,
-            ));
-          }
-          return;
-        }
-        const exitCode = code ?? 1;
-        const stdoutText = Buffer.concat(stdout).toString("utf8").trim();
-        const stderrText = Buffer.concat(stderr).toString("utf8").trim();
-        resolve({
-          code: exitCode,
-          stdout: stdoutText,
-          stderr: stderrText,
-          output: exitCode === 0
-            ? (stdoutText || stderrText)
-            : [stderrText, stdoutText].filter(Boolean).join("\n"),
-        });
-      });
-    });
-  }
-
   async stopStaleOwnedRuntime(config) {
     const state = this.readState();
     if (!state) return false;
@@ -1833,11 +927,7 @@ class RuntimeSupervisor {
       this.clearState();
       return false;
     }
-    const tunnelOnly = this.launcherProfile === "development";
-    if (tunnelOnly && processRunning(state.daemonPid)) {
-      throw new Error("DEV launcher ownership unexpectedly contains a Responses daemon");
-    }
-    const health = tunnelOnly ? null : await this.proxyHealthPayload(config);
+    const health = await this.proxyHealthPayload(config);
     const daemonRunning = health?.service === "codex-chatgpt-web"
       && health?.mode === config.mode
       && health?.version === config.releaseVersion;
@@ -1849,29 +939,7 @@ class RuntimeSupervisor {
         `The stale daemon PID ${state.daemonPid} is still alive but did not provide matching health evidence`,
       );
     }
-    let managedTunnelRunning = false;
-    if (config.mode === "full") {
-      const tunnelHealth = await this.waitForKnownTunnelStatus(config);
-      managedTunnelRunning = !tunnelRuntimeStopped(tunnelHealth);
-      if (managedTunnelRunning
-        && tunnelHealth.processRunning !== true
-        && tunnelHealth.pid === null
-        && typeof tunnelHealth.state !== "string") {
-        throw new Error(`The stale tunnel runtime state is ambiguous: ${tunnelHealth.detail}`);
-      }
-      if (!managedTunnelRunning && processRunning(state.tunnelPid)) {
-        throw new Error(
-          `The stale tunnel PID ${state.tunnelPid} is still alive but the native runtime manager`
-          + " does not recognize it; refusing to terminate an unverified process",
-        );
-      }
-    } else if (processRunning(state.tunnelPid)) {
-      throw new Error(
-        `The stale tunnel PID ${state.tunnelPid} is still alive but browser-only configuration`
-        + " has no tunnel identity with which to verify it",
-      );
-    }
-    if (!daemonRunning && !managedTunnelRunning) {
+    if (!daemonRunning) {
       this.clearState();
       return true;
     }
@@ -1882,7 +950,6 @@ class RuntimeSupervisor {
     this.logger.warn("runtime.stale_owner_recovery_started", {
       ownerPid: state.ownerPid,
       daemonPid: daemonRunning ? state.daemonPid : null,
-      tunnelPid: managedTunnelRunning ? state.tunnelPid : null,
     });
     if (daemonRunning) {
       let drained = false;
@@ -1902,13 +969,6 @@ class RuntimeSupervisor {
         }
         throw error;
       }
-    }
-    if (managedTunnelRunning) {
-      const stopped = await this.runTunnelStopCommand(config);
-      if (stopped.code !== 0) {
-        throw new Error(`stale tunnel refused graceful shutdown: ${tunnelControlDiagnostic(stopped)}`);
-      }
-      await this.waitForTunnelStopped(config, 10_000);
     }
     this.clearState();
     this.logger.info("runtime.stale_owner_recovered");
@@ -2056,35 +1116,22 @@ class RuntimeSupervisor {
     }
     const config = this.readConfig();
     this.stopping = true;
-    this.stopTunnelMonitor();
-    for (const name of ["daemon", "tunnel"]) {
-      if (this.restartTimers[name]) {
-        clearTimeout(this.restartTimers[name]);
-        this.restartTimers[name] = null;
-      }
+    if (this.restartTimers.daemon) {
+      clearTimeout(this.restartTimers.daemon);
+      this.restartTimers.daemon = null;
     }
     if (this.recoveryTasks.size > 0) {
       await Promise.allSettled([...this.recoveryTasks]);
     }
     let drained = false;
-    let tunnelStopped = false;
     try {
       const ownershipState = this.readState();
-      const healthyRuntime = config && this.launcherProfile !== "development"
-        ? await this.proxyHealth(config)
-        : false;
+      const healthyRuntime = config ? await this.proxyHealth(config) : false;
       const runtimeMayBeLive = healthyRuntime || runtimeOwnershipMayBeLive(ownershipState);
-      if (config?.mode === "full"
-        && !this.tunnel
-        && (runtimeMayBeLive || !ownershipState)) {
-        await this.adoptConfiguredTunnelForStop(config);
-      }
-      if (!this.daemon && !this.tunnel) {
+      if (!this.daemon) {
         if (!config) {
-          if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
-            processRunning(ownershipState.daemonPid)
-            || processRunning(ownershipState.tunnelPid)
-          )) {
+          if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState)
+            && processRunning(ownershipState.daemonPid)) {
             throw new Error("runtime configuration is missing while launcher ownership processes are still alive");
           }
         } else if (runtimeMayBeLive) {
@@ -2104,11 +1151,6 @@ class RuntimeSupervisor {
         }
         drained = await this.acquireDrain(config);
       }
-      if (this.tunnel) {
-        if (!config) throw new Error("launcher-owned tunnel cannot be stopped without a valid configuration");
-        await this.stopTunnelGracefully(config);
-        tunnelStopped = true;
-      }
       if (this.daemon) {
         if (!config || !drained) {
           throw new Error("launcher-owned daemon cannot be stopped without a verified idle drain");
@@ -2119,13 +1161,6 @@ class RuntimeSupervisor {
       return { status: "stopped" };
     } catch (error) {
       const compensationErrors = [];
-      if (tunnelStopped && config?.mode === "full" && !this.tunnel) {
-        try {
-          await this.startTunnel(config);
-        } catch (caught) {
-          compensationErrors.push(["tunnel restart compensation failed", caught]);
-        }
-      }
       if (drained && config) {
         try {
           await this.restoreDrainedDaemon(config);
@@ -2160,28 +1195,13 @@ class RuntimeSupervisor {
   async forceStopOwnedRuntime(reason) {
     this.logger.warn("runtime.forced_shutdown_started", { message: errorMessage(reason) });
     this.stopping = true;
-    this.stopTunnelMonitor();
-    for (const name of ["daemon", "tunnel"]) {
-      if (this.restartTimers[name]) {
-        clearTimeout(this.restartTimers[name]);
-        this.restartTimers[name] = null;
-      }
+    if (this.restartTimers.daemon) {
+      clearTimeout(this.restartTimers.daemon);
+      this.restartTimers.daemon = null;
     }
     try {
       if (this.recoveryTasks.size > 0) await Promise.allSettled([...this.recoveryTasks]);
       const failures = [];
-      if (this.tunnel) {
-        try {
-          const config = this.readConfig();
-          if (!config) throw new Error("runtime configuration is unavailable");
-          const stopped = await this.runTunnelStopCommand(config);
-          if (stopped.code !== 0) throw new Error(tunnelControlDiagnostic(stopped));
-          await this.waitForTunnelStopped(config, 5_000);
-          this.tunnel = null;
-        } catch (error) {
-          failures.push(`tunnel: ${errorMessage(error)}`);
-        }
-      }
       try {
         await this.stopChild("daemon");
       } catch (error) {
@@ -2217,13 +1237,8 @@ class RuntimeSupervisor {
 module.exports = {
   MAX_RESTARTS_PER_WINDOW,
   RESTART_WINDOW_MS,
-  TUNNEL_HEALTH_POLL_INTERVAL_MS,
-  TUNNEL_MONITOR_FAILURE_THRESHOLD,
-  TUNNEL_MONITOR_INTERVAL_MS,
-  TUNNEL_START_TIMEOUT_MS,
   RuntimeSupervisor,
   tryParseStructuredEnvelope,
   dispatchStructuredLog,
-  managedTunnelConnectArgs,
   validateConfig,
 };

@@ -513,7 +513,7 @@ export class DevChatDriver {
     const usage: DevChatUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let finalText = "";
     for (let round = 0; round < 64; round += 1) {
-      const body = requestBody(state, this.cwd, turnId, workingInput, false, this.config.mode === "full");
+      const body = requestBody(state, this.cwd, turnId, workingInput, false, false);
       const response = await responseRequest(new Request("http://codex-web-gpt.dev/v1/responses", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -592,11 +592,11 @@ export class DevChatDriver {
       turnId,
       input,
       false,
-      this.config.mode === "full",
+      false,
     ));
     const route = routeChatGptWebRequest(parsed, this.config);
     const inputTokens = estimateChatGptWebInputTokens(parsed, {
-      localToolsEnabled: this.config.mode === "full",
+      localToolsEnabled: false,
       solAvailable: this.config.solAvailable,
       extraHighAvailable: this.config.extraHighAvailable === true,
       proAvailable: this.config.proAvailable,

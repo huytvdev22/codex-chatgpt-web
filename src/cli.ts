@@ -21,23 +21,19 @@ import {
   uninstallCodexIntegration,
 } from "./codex-integration";
 import { formatDoctorReport, runDoctor } from "./doctor";
-import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
 import { startServer } from "./server";
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
-import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
-import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
-import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
+import { preflightSetup, setup, type SetupOptions } from "./setup";
 import { VERSION } from "./version";
 import { runDevCommand } from "./dev-chat/cli";
 
 const HELP = `codex-chatgpt-web ${VERSION}
 
-Focused ChatGPT web-backed models for the native Codex harness.
+Multi-provider browser-backed models for the native Codex harness.
 
 Usage:
-  codex-chatgpt-web setup --browser-only [options]
-  codex-chatgpt-web setup --full --tunnel-id ID --runtime-key-file PATH [options]
+  codex-chatgpt-web setup [options]
   codex-chatgpt-web login
   codex-chatgpt-web doctor [--json]
   codex-chatgpt-web route <status|connect|disconnect>
@@ -45,33 +41,26 @@ Usage:
   codex-chatgpt-web browser check
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
-  codex-chatgpt-web dev setup <--browser-only|--full> [options]
+  codex-chatgpt-web dev setup [options]
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
   codex-chatgpt-web serve
-  codex-chatgpt-web mcp [--broker-socket PATH]
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
-  codex-chatgpt-web tunnel <status|start|restart|stop|key-import>
-  codex-chatgpt-web open <tunnels|runtime-keys|connectors>
+  codex-chatgpt-web open connectors
   codex-chatgpt-web uninstall --yes
 
 Setup options:
-  --browser-only               Account-eligible Web models, full context/images, no local tools or tunnel
-  --full                       Account-eligible Web models with tools through the configured connector
+  --browser-only               Browser-backed multi-provider runtime (default)
   --automatic-browser-interaction
-                               Send prompts and read ChatGPT state through browser automation (default)
-  --zero-risk-browser-interaction
-                               Full mode: select, paste, and send in the launcher yourself
-  --zero-risk-pro              Zero Risk: also install the explicit Pro-sized model row
-  --zero-risk-default          Zero Risk: install only the default model row
+                               Send prompts and read provider state through browser automation (default)
+  --manual-browser-interaction
+                               Select, paste, and send through the launcher manually
   --port NUMBER                Loopback Responses port (default: 17841)
   --chrome PATH                Google Chrome/Chromium executable used for account login
   --browser-host-descriptor PATH
                                Use the embedded launcher browser described by this owner-only file
   --refresh-account-capabilities
                                Re-read the authenticated account's available Web models
-  --tunnel-id ID               Existing OpenAI tunnel id (full mode)
-  --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
   --replace-codex-route        Reversibly replace existing Responses or Voice route settings
   --subagent-protocol MODE     compatibility-v1 (default) or native (advanced)
   --restart-service            Explicitly restart this project's daemon after an update
@@ -266,24 +255,32 @@ async function loginCommand(args: string[]): Promise<void> {
 
 async function setupCommand(args: string[]): Promise<void> {
   const preflightOnly = takeFlag(args, "--preflight-only");
-  const browserOnly = takeFlag(args, "--browser-only");
+  takeFlag(args, "--browser-only");
   const full = takeFlag(args, "--full");
-  if (browserOnly === full) throw new Error("Choose exactly one setup mode: --browser-only or --full");
+  if (full) {
+    stdout.write("Ignoring deprecated --full: the legacy MCP/Tunnel harness has been removed.\n");
+  }
   const portRaw = takeOption(args, "--port");
   let acknowledged = takeFlag(args, "--acknowledge-unofficial");
   const options: SetupOptions = {
-    mode: full ? "full" : "browser-only",
+    mode: "browser-only",
     ...(portRaw ? { port: Number(portRaw) } : {}),
   };
   const automaticBrowserInteraction = takeFlag(args, "--automatic-browser-interaction");
-  const manualBrowserInteraction = takeFlag(args, "--zero-risk-browser-interaction");
-  if (automaticBrowserInteraction && manualBrowserInteraction) {
+  const manualBrowserInteraction = takeFlag(args, "--manual-browser-interaction");
+  const legacyManualBrowserInteraction = takeFlag(args, "--zero-risk-browser-interaction");
+  if (automaticBrowserInteraction && (manualBrowserInteraction || legacyManualBrowserInteraction)) {
     throw new Error(
-      "Choose at most one browser interaction mode: --automatic-browser-interaction or --zero-risk-browser-interaction",
+      "Choose at most one browser interaction mode: --automatic-browser-interaction or --manual-browser-interaction",
     );
   }
-  if (automaticBrowserInteraction || manualBrowserInteraction) {
-    options.browserInteractionMode = manualBrowserInteraction ? "manual" : "automatic";
+  if (legacyManualBrowserInteraction) {
+    stdout.write("Treating deprecated --zero-risk-browser-interaction as --manual-browser-interaction.\n");
+  }
+  if (automaticBrowserInteraction || manualBrowserInteraction || legacyManualBrowserInteraction) {
+    options.browserInteractionMode = manualBrowserInteraction || legacyManualBrowserInteraction
+      ? "manual"
+      : "automatic";
   }
   const connectorNameSuffix = takeOption(args, "--connector-name-suffix");
   if (connectorNameSuffix !== undefined) options.connectorNameSuffix = connectorNameSuffix;
@@ -294,15 +291,11 @@ async function setupCommand(args: string[]): Promise<void> {
     }
     options.subagentProtocol = subagentProtocol;
   }
-  const tunnelId = takeOption(args, "--tunnel-id");
-  const runtimeKeyFile = takeOption(args, "--runtime-key-file");
   const chrome = takeOption(args, "--chrome");
   const browserHostDescriptorPath = takeOption(args, "--browser-host-descriptor");
   if (chrome) options.chromeExecutablePath = chrome;
   if (browserHostDescriptorPath) options.browserHostDescriptorPath = browserHostDescriptorPath;
   options.refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
-  if (tunnelId) options.tunnelId = tunnelId;
-  if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
   const skillAttachments = takeFlag(args, "--skill-attachments");
@@ -325,12 +318,6 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   if (biggerContext || standardContext) options.experimentalBiggerContext = biggerContext;
   if (skillAttachments || inlineSkills) options.experimentalSkillAttachments = skillAttachments;
-  const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
-  const zeroRiskDefault = takeFlag(args, "--zero-risk-default");
-  if (zeroRiskPro && zeroRiskDefault) {
-    throw new Error("Choose at most one Zero Risk model profile: --zero-risk-pro or --zero-risk-default");
-  }
-  if (zeroRiskPro || zeroRiskDefault) options.zeroRiskProEnabled = zeroRiskPro;
   options.replaceCodexRoute = takeFlag(args, "--replace-codex-route");
   options.restartService = takeFlag(args, "--restart-service");
   assertNoArgs(args);
@@ -351,24 +338,6 @@ async function setupCommand(args: string[]): Promise<void> {
     return;
   }
 
-  const existing = existsSync(getConfigPath()) ? loadConfigForSetup() : undefined;
-  const interactionMode = options.browserInteractionMode ?? existing?.browserInteractionMode ?? "automatic";
-  const reusableCredentials = existingFullSetupCredentials(existing, interactionMode);
-  const needsTunnelId = !options.tunnelId && !reusableCredentials.tunnelId;
-  const needsRuntimeKey = !options.runtimeKeyFile
-    && !reusableCredentials.runtimeKey
-    && !existsSync(managedRuntimeKeyPath(interactionMode));
-
-  if (full && (needsTunnelId || needsRuntimeKey) && stdin.isTTY) {
-    stdout.write("Full mode needs an OpenAI tunnel and a runtime key with Tunnels Read + Use.\n");
-    stdout.write("Tunnels: https://platform.openai.com/settings/organization/tunnels\n");
-    stdout.write("Runtime keys: https://platform.openai.com/settings/organization/api-keys\n");
-    if (needsTunnelId) options.tunnelId = await prompt("Tunnel id: ");
-    if (needsRuntimeKey) {
-      options.runtimeKeyValue = await secretPrompt("Runtime key (hidden): ");
-    }
-  }
-
   if (options.useSavedChats === undefined && stdin.isTTY && stdout.isTTY) {
     options.useSavedChats = await confirm("Bật lưu cuộc trò chuyện trong lịch sử ChatGPT (Saved Chats) để map đúng đoạn chat cũ thay vì cuộc trò chuyện tạm thời?");
   }
@@ -377,10 +346,6 @@ async function setupCommand(args: string[]): Promise<void> {
   stdout.write(`Setup complete: ${result.mode}\n`);
   stdout.write(`Config: ${result.configPath}\n`);
   stdout.write(`Chat mode: ${options.useSavedChats ? "Saved chats (lưu lịch sử và map đúng đoạn chat cũ)" : "Temporary chats (cuộc trò chuyện tạm thời)"}\n`);
-  if (result.connectorSetupRequired) {
-    stdout.write("One account-level step remains: attach the tunnel to the ChatGPT connector named in config.\n");
-    stdout.write("Open: https://chatgpt.com/#settings/Plugins\n");
-  }
   stdout.write("Restart the Codex app once so its native model catalog refreshes through the installed route.\n");
 }
 
@@ -488,46 +453,14 @@ async function interruptHookCommand(args: string[]): Promise<void> {
   await interruptActiveTurn(loadConfig(), { threadId, turnId });
 }
 
-async function tunnelCommand(args: string[]): Promise<void> {
-  const action = args.shift() ?? "status";
-  assertNoArgs(args);
-  if (action === "key-import") {
-    const key = await secretPrompt("Runtime key (hidden): ");
-    if (!key) throw new Error("A non-empty runtime key is required");
-    installRuntimeKeyBytes(key);
-    stdout.write(`Runtime key stored privately at ${managedRuntimeKeyPath()}\n`);
-    return;
-  }
-  const config = loadConfig();
-  if (action === "start") startTunnelService();
-  else if (action === "restart") {
-    await assertServiceIdle(config);
-    await restartTunnelService();
-  }
-  else if (action === "stop") {
-    await assertServiceIdle(config);
-    await stopTunnelService();
-    stopTunnel(config);
-  }
-  else if (action !== "status") throw new Error(`Unknown tunnel action: ${action}`);
-  const status = action === "start" || action === "restart"
-    ? await waitForTunnelReady(config)
-    : tunnelStatus(config);
-  const service = getTunnelServiceStatus();
-  stdout.write(`${JSON.stringify({ service, runtime: status }, null, 2)}\n`);
-  if (action !== "stop" && (!service.running || !status.ok)) process.exitCode = 1;
-}
-
 async function openCommand(args: string[]): Promise<void> {
   const target = args.shift();
   assertNoArgs(args);
   const urls: Record<string, string> = {
-    tunnels: "https://platform.openai.com/settings/organization/tunnels",
-    "runtime-keys": "https://platform.openai.com/settings/organization/api-keys",
     connectors: "https://chatgpt.com/#settings/Plugins",
   };
   const url = target ? urls[target] : undefined;
-  if (!url) throw new Error("Choose one of: tunnels, runtime-keys, connectors");
+  if (!url) throw new Error("Open target must be: connectors");
   if (process.platform === "darwin") {
     const result = runCommand("open", [url]);
     if (result.status !== 0) throw new Error(result.stderr.trim() || `Could not open ${url}`);
@@ -556,10 +489,6 @@ async function uninstallCommand(args: string[]): Promise<void> {
   }
   const launcherRuntimeStopped = config?.browserHost === "launcher" && launcherControl;
   if (config && process.platform === "darwin" && !launcherRuntimeStopped) await assertServiceIdle(config);
-  if (config?.mode === "full" && !launcherRuntimeStopped) {
-    if (process.platform === "darwin") await uninstallTunnelService();
-    stopTunnel(config);
-  }
   if (config && process.platform === "darwin" && !launcherRuntimeStopped) await uninstallService(config);
   uninstallCodexIntegration();
   if (!keepData) rmSync(getConfigDir(), { recursive: true, force: true });
@@ -612,14 +541,12 @@ async function main(): Promise<void> {
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});
   } else if (command === "dev") await runDevCommand(args);
-  else if (command === "mcp") await runChatGptMcpMain(args);
   else if (command === "service") await serviceCommand(args);
   else if (command === "hook") {
     const action = args.shift();
     if (action !== "interrupt") throw new Error("Hook command must be: hook interrupt");
     await interruptHookCommand(args);
   }
-  else if (command === "tunnel") await tunnelCommand(args);
   else if (command === "open") await openCommand(args);
   else if (command === "uninstall") await uninstallCommand(args);
   else throw new Error(`Unknown command: ${command}\n\n${HELP}`);

@@ -19,13 +19,11 @@ const DEFAULT_STATE = Object.freeze({
   experimentalSkillAttachments: false,
   experimentalFreshConversationPerTurn: false,
   useSavedChats: false,
-  zeroRiskProEnabled: false,
   browserSmokePassed: false,
   googleAIStudioSmokePassed: false,
   browserSmokeVersion: null,
   sidebarOpen: true,
   sidebarWidth: 252,
-  mcpGuideStep: 0,
   sessionRefreshReminderAt: null,
   selectedProvider: "m365",
 });
@@ -58,7 +56,6 @@ function readState(filePath) {
       "experimentalSkillAttachments",
       "experimentalFreshConversationPerTurn",
       "useSavedChats",
-      "zeroRiskProEnabled",
       "browserSmokePassed",
       "googleAIStudioSmokePassed",
       "sidebarOpen",
@@ -70,7 +67,6 @@ function readState(filePath) {
     }
     if (state.coreSetupComplete !== true) {
       if (state.onboardingComplete !== true) state.browserInteractionMode = "automatic";
-      state.zeroRiskProEnabled = false;
     }
     if (state.browserSmokeVersion !== null
       && (typeof state.browserSmokeVersion !== "string" || state.browserSmokeVersion.length > 128)) {
@@ -81,19 +77,18 @@ function readState(filePath) {
       || state.sidebarWidth > SIDEBAR_MAX_WIDTH) {
       state.sidebarWidth = DEFAULT_STATE.sidebarWidth;
     }
-    if (!Number.isInteger(state.mcpGuideStep) || state.mcpGuideStep < 0 || state.mcpGuideStep > 2) {
-      state.mcpGuideStep = DEFAULT_STATE.mcpGuideStep;
-    }
     if (state.sessionRefreshReminderAt !== null
       && (typeof state.sessionRefreshReminderAt !== "string"
         || !Number.isFinite(Date.parse(state.sessionRefreshReminderAt)))) {
       state.sessionRefreshReminderAt = DEFAULT_STATE.sessionRefreshReminderAt;
     }
+    delete state.mcpGuideStep;
+    delete state.mcpSetupComplete;
+    delete state.mcpRuntimeInstalled;
+    delete state.zeroRiskProEnabled;
     for (const key of [
       "coreSetupComplete",
       "codexCatalogVerified",
-      "mcpSetupComplete",
-      "mcpRuntimeInstalled",
       "codexRestartRequired",
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];

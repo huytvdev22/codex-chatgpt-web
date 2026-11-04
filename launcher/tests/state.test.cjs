@@ -29,12 +29,11 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
       useSavedChats: false,
-      zeroRiskProEnabled: false,
       browserSmokePassed: false,
+      googleAIStudioSmokePassed: false,
       browserSmokeVersion: null,
       sidebarOpen: true,
       sidebarWidth: 252,
-      mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
       selectedProvider: "m365",
     });
@@ -59,12 +58,11 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
       useSavedChats: false,
-      zeroRiskProEnabled: false,
       browserSmokePassed: true,
+      googleAIStudioSmokePassed: false,
       browserSmokeVersion: "0.2.0",
       sidebarOpen: true,
       sidebarWidth: 252,
-      mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
       selectedProvider: "m365",
     });
@@ -122,7 +120,6 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       browserSmokeVersion: { invalid: true },
       sidebarOpen: "yes",
       sidebarWidth: 900,
-      mcpGuideStep: 99,
       sessionRefreshReminderAt: "not-a-date",
       coreSetupComplete: "yes",
     }));
@@ -140,12 +137,11 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
       useSavedChats: false,
-      zeroRiskProEnabled: false,
       browserSmokePassed: false,
+      googleAIStudioSmokePassed: false,
       browserSmokeVersion: null,
       sidebarOpen: true,
       sidebarWidth: 252,
-      mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
       selectedProvider: "m365",
     });
@@ -162,9 +158,7 @@ test("browser interaction defaults to Automatic and preserves a completed onboar
     assert.equal(store.read().browserInteractionMode, "automatic");
     store.update({ browserInteractionMode: "manual", onboardingComplete: true });
     assert.equal(createStateStore(file).read().browserInteractionMode, "manual");
-    assert.equal(createStateStore(file).read().zeroRiskProEnabled, false);
-    store.update({ coreSetupComplete: true, zeroRiskProEnabled: true, experimentalFreshConversationPerTurn: true });
-    assert.equal(createStateStore(file).read().zeroRiskProEnabled, true);
+    store.update({ coreSetupComplete: true, experimentalFreshConversationPerTurn: true });
     assert.equal(createStateStore(file).read().experimentalFreshConversationPerTurn, true);
     store.update({ browserInteractionMode: "automatic" });
     assert.equal(createStateStore(file).read().experimentalFreshConversationPerTurn, true);
@@ -174,7 +168,7 @@ test("browser interaction defaults to Automatic and preserves a completed onboar
       zeroRiskProEnabled: true,
     }));
     assert.equal(createStateStore(file).read().browserInteractionMode, "automatic");
-    assert.equal(createStateStore(file).read().zeroRiskProEnabled, false);
+    assert.equal("zeroRiskProEnabled" in createStateStore(file).read(), false);
     fs.writeFileSync(file, JSON.stringify({
       version: 1,
       onboardingComplete: true,

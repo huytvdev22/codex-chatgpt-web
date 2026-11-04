@@ -346,16 +346,11 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   return !requireTools || (typeof model.tool_mode === "string" && model.tool_mode.length > 0);
 }
 
-function selectNativeTemplate(models: unknown[], config: AppConfig): JsonObject {
-  const requireTools = config.mode === "full";
-  const candidates = models.filter(model => nativeTemplateCandidate(model, requireTools)) as JsonObject[];
+function selectNativeTemplate(models: unknown[], _config: AppConfig): JsonObject {
+  const candidates = models.filter(model => nativeTemplateCandidate(model, false)) as JsonObject[];
   const template = candidates[0];
   if (template) return template;
-  throw new Error(
-    requireTools
-      ? "Native Codex models response has no list-visible, tool-capable model with reasoning metadata"
-      : "Native Codex models response has no list-visible model with reasoning metadata",
-  );
+  throw new Error("Native Codex models response has no list-visible model with reasoning metadata");
 }
 
 function useCompatibilityV1SubagentSurface(model: JsonObject): void {

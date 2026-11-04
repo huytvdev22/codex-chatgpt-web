@@ -524,7 +524,7 @@ function registerIpc({ logger, stateStore }) {
   const runtimeChannels = new Set([
     "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
     "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
-    "launcher:use-saved-chats", "launcher:zero-risk-pro", "launcher:browser-interaction-mode",
+    "launcher:use-saved-chats", "launcher:browser-interaction-mode",
     "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
     "launcher:browser-passkey-login", "launcher:browser-logout", "launcher:browser-smoke",
     "launcher:limits-setup", "launcher:update-install", "launcher:complete-onboarding",
@@ -552,9 +552,8 @@ function registerIpc({ logger, stateStore }) {
       automatic: runtimeHost ? runtimeHost.setupConnectorName() : "Codex Native2",
       manual: runtimeHost ? runtimeHost.setupConnectorName("manual") : "Codex Zero Risk",
     },
-    mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
-    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
+    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL },
     platform: process.platform,
     packaged: app.isPackaged,
     version: app.getVersion(),
@@ -664,93 +663,6 @@ function registerIpc({ logger, stateStore }) {
     smokePassedThisSession = true;
     return result;
   });
-  handle("launcher:mcp-verify", async (event) => {
-    const operationName = "mcp-verification";
-    const activeTraceId = browserHost.activeTraceId;
-    logger.info("mcp.verification_requested", {
-      activeTraceId,
-      launcherFocused: mainWindow?.isFocused() === true,
-      rendererFocused: event.sender.isFocused(),
-    });
-    if (activeTraceId) {
-      const report = {
-        ok: false,
-        checks: [{
-          id: "connector",
-          status: "error",
-          message: "Finish the active Codex task before verifying the ChatGPT connector",
-          detail: `Active browser turn: ${activeTraceId}`,
-        }],
-      };
-      const state = stateStore.update({ mcpSetupComplete: false });
-      send("launcher:state-changed", state);
-      publishOperation({ name: operationName, status: "failed", message: report.checks[0].message });
-      return report;
-    }
-    publishOperation({ name: operationName, status: "running", message: "Checking local runtime" });
-    const report = IS_DEV_PROFILE ? await runtimeHost.devDoctor() : await runtimeHost.doctor();
-    if (!report.ok) {
-      const message = report.checks
-        .filter((check) => check.status === "error")
-        .map((check) => check.message)
-        .filter(Boolean)
-        .join("; ") || "The local MCP runtime is not healthy";
-      const state = stateStore.update({ mcpSetupComplete: false });
-      send("launcher:state-changed", state);
-      publishOperation({ name: operationName, status: "failed", message });
-      return report;
-    }
-    if (stateStore.read().browserInteractionMode === "manual") {
-      const state = stateStore.update({ mcpSetupComplete: true });
-      send("launcher:state-changed", state);
-      const successMessage = "Local Zero Risk runtime is healthy; connector selection remains a manual turn step";
-      publishOperation({ name: operationName, status: "completed", message: successMessage });
-      return {
-        ...report,
-        checks: [
-          ...report.checks.filter((check) => check.id !== "connector"),
-          {
-            id: "connector",
-            status: "warning",
-            message: `Select ChatGPT connector ${JSON.stringify(runtimeHost.mcpConnectorName())} manually for every Zero Risk turn`,
-          },
-        ],
-      };
-    }
-    try {
-      publishOperation({ name: operationName, status: "running", message: "Checking ChatGPT connector" });
-      await browserHost.verifyConnector(runtimeHost.mcpConnectorName());
-      const state = stateStore.update({ mcpSetupComplete: true });
-      send("launcher:state-changed", state);
-      const successMessage = IS_DEV_PROFILE
-        ? "DEV harness and connector verified"
-        : "Runtime and connector verified";
-      publishOperation({ name: operationName, status: "completed", message: successMessage });
-      return {
-        ...report,
-        checks: report.checks.map((check) => check.id === "connector"
-          ? {
-              id: "connector",
-              status: "ok",
-              message: `ChatGPT connector ${JSON.stringify(runtimeHost.mcpConnectorName())} is available`,
-            }
-          : check),
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const state = stateStore.update({ mcpSetupComplete: false });
-      send("launcher:state-changed", state);
-      publishOperation({ name: operationName, status: "failed", message });
-      return {
-        ...report,
-        ok: false,
-        checks: [
-          ...report.checks.filter((check) => check.id !== "connector"),
-          { id: "connector", status: "error", message },
-        ],
-      };
-    }
-  });
 
   handle("launcher:doctor", () => IS_DEV_PROFILE ? runtimeHost.devDoctor() : runtimeHost.doctor());
   handle("launcher:cancel-turns", () => {
@@ -779,16 +691,12 @@ function registerIpc({ logger, stateStore }) {
     const state = stateStore.update({
       coreSetupComplete: false,
       codexCatalogVerified: false,
-      mcpSetupComplete: false,
-      mcpRuntimeInstalled: false,
-      mcpGuideStep: 0,
       codexRestartRequired: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
       useSavedChats: false,
-      zeroRiskProEnabled: false,
     });
     send("launcher:state-changed", state);
     stopCatalogVerificationMonitor();
@@ -823,18 +731,8 @@ function registerIpc({ logger, stateStore }) {
       coreSetupComplete: true,
       codexCatalogVerified: IS_DEV_PROFILE ? true : false,
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
-      zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
       useSavedChats: runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
-      ...(result.mode === "full" ? {
-        mcpRuntimeInstalled: true,
-        mcpSetupComplete: false,
-        mcpGuideStep: 2,
-      } : {
-        mcpSetupComplete: false,
-        mcpRuntimeInstalled: false,
-        mcpGuideStep: 0,
-      }),
     });
     await browserHost.returnToIdle().catch((error) => {
       logger.warn("browser.idle_cleanup_failed", {
@@ -844,60 +742,19 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout, restartRequired: !IS_DEV_PROFILE };
   });
-  handle("launcher:setup-mcp", async (_event, input) => {
-    const currentMode = stateStore.read().browserInteractionMode;
-    const interactionMode = input?.interactionMode === undefined
-      ? currentMode
-      : validateBrowserInteractionMode(input.interactionMode);
-    const interactionModeChange = interactionMode !== currentMode;
-    const setup = IS_DEV_PROFILE
-      ? runtimeHost.setupDevMcp.bind(runtimeHost)
-      : runtimeHost.setupMcp.bind(runtimeHost);
-    const runSetup = afterRuntimeReady => setup({
-      tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
-      runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
-      replace: input?.replace === true,
-      interactionMode,
-    }, afterRuntimeReady);
-    if (!interactionModeChange && interactionMode === "automatic") await browserHost.reveal();
-    const result = interactionModeChange
-      ? await browserHost.withInteractionModeChange(interactionMode, runSetup)
-      : await runSetup();
-    const state = stateStore.update({
-      browserInteractionMode: interactionMode,
-      ...(interactionMode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false } : {}),
-      zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
-      experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
-      useSavedChats: runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
-      coreSetupComplete: true,
-      codexCatalogVerified: IS_DEV_PROFILE,
-      mcpRuntimeInstalled: true,
-      mcpSetupComplete: false,
-      mcpGuideStep: 2,
-      codexRestartRequired: IS_DEV_PROFILE ? false : true,
-    });
-    send("launcher:state-changed", state);
-    if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
-    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
-    return { ok: true, stdout: result.stdout };
-  });
   handle("launcher:connector-name", async (_event, suffix) => {
     if (browserHost.activeTraceId || browserHost.currentOperation()) {
       throw new Error("Finish active ChatGPT turns before changing the plugin name");
     }
     const result = await runtimeHost.setConnectorNameSuffix(suffix);
     if (!result.changed) return stateStore.read();
-    const state = stateStore.update({ mcpSetupComplete: false, mcpGuideStep: 2 });
+    const state = stateStore.read();
     send("launcher:connector-names-changed", {
       connectorName: runtimeHost.browserConnectorName(),
       connectorNames: { automatic: runtimeHost.setupConnectorName(), manual: runtimeHost.setupConnectorName("manual") },
     });
     send("launcher:state-changed", state);
     return state;
-  });
-  handle("launcher:set-mcp-step", (_event, step) => {
-    if (!Number.isInteger(step) || step < 0 || step > 2) throw new Error("Invalid MCP guide step");
-    return stateStore.update({ mcpGuideStep: step });
   });
 
   handle("launcher:autostart", (_event, enabled) => {
@@ -943,25 +800,6 @@ function registerIpc({ logger, stateStore }) {
     await runtimeHost.setUseSavedChats(enabled);
     return syncFreshConversationPreference(stateStore, runtimeHost.runtimeConfigSnapshot().config);
   });
-  handle("launcher:zero-risk-pro", async (_event, enabled) => {
-    const browserOperation = browserHost.currentOperation();
-    if (browserHost.activeTraceId || browserOperation) {
-      throw new Error(
-        browserHost.activeTraceId
-          ? "Finish or cancel active ChatGPT turns before changing Zero Risk model profiles"
-          : `Finish ${browserOperation} before changing Zero Risk model profiles`,
-      );
-    }
-    const result = await runtimeHost.setZeroRiskPro(enabled === true);
-    const state = stateStore.update({
-      zeroRiskProEnabled: result.enabled,
-      codexCatalogVerified: IS_DEV_PROFILE,
-      codexRestartRequired: !IS_DEV_PROFILE,
-    });
-    send("launcher:state-changed", state);
-    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
-    return state;
-  });
   handle("launcher:browser-interaction-mode", async (_event, rawMode) => {
     const mode = validateBrowserInteractionMode(rawMode);
     const current = stateStore.read();
@@ -975,9 +813,6 @@ function registerIpc({ logger, stateStore }) {
           ? "Finish or cancel active ChatGPT turns before changing browser interaction mode"
           : `Finish ${browserOperation} before changing browser interaction mode`,
       );
-    }
-    if (!runtimeHost.mcpCredentialsConfigured(mode)) {
-      return { state: current, credentialsRequired: true, targetMode: mode };
     }
     const result = await browserHost.withInteractionModeChange(
       mode,
@@ -1341,15 +1176,12 @@ async function start() {
     const state = stateStore.update({
       coreSetupComplete: Boolean(config),
       codexCatalogVerified: Boolean(config),
-      mcpRuntimeInstalled: config?.mode === "full",
-      ...(config?.mode !== "full" ? { mcpSetupComplete: false, mcpGuideStep: 0 } : {}),
       codexRestartRequired: false,
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
       experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
       experimentalFreshConversationPerTurn: config?.experimentalFreshConversationPerTurn === true,
       useSavedChats: config?.useSavedChats === true,
-      zeroRiskProEnabled: config?.zeroRiskProEnabled === true,
     });
     send("launcher:state-changed", state);
     logger.info("dev_profile.ready", {
@@ -1367,8 +1199,6 @@ async function start() {
       }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         logger.error("dev_profile.runtime_start_failed", { message });
-        const failed = stateStore.update({ mcpSetupComplete: false });
-        send("launcher:state-changed", failed);
         publishOperation({ name: "dev-profile", status: "failed", message });
       }).finally(finishRuntimeStartup);
     } else {
@@ -1388,16 +1218,6 @@ async function start() {
         experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
         experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
         useSavedChats: runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
-        zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
-        ...(upgrade.mode === "full" ? {
-          mcpRuntimeInstalled: true,
-          mcpSetupComplete: false,
-          mcpGuideStep: 2,
-        } : {
-          mcpRuntimeInstalled: false,
-          mcpSetupComplete: false,
-          mcpGuideStep: 0,
-        }),
       });
       send("launcher:state-changed", state);
       logger.info("runtime.release_upgraded", {
@@ -1413,14 +1233,12 @@ async function start() {
       const experimentalSkillAttachments = configuredRuntime.config?.experimentalSkillAttachments === true;
       const experimentalFreshConversationPerTurn = configuredRuntime.config?.experimentalFreshConversationPerTurn === true;
       const useSavedChats = configuredRuntime.config?.useSavedChats === true;
-      const zeroRiskProEnabled = configuredRuntime.config?.zeroRiskProEnabled === true;
       const saved = stateStore.read();
       if (saved.experimentalSkillAttachments !== experimentalSkillAttachments
         || saved.experimentalFreshConversationPerTurn !== experimentalFreshConversationPerTurn
         || saved.useSavedChats !== useSavedChats
-        || saved.experimentalBiggerContext !== enabled
-        || saved.zeroRiskProEnabled !== zeroRiskProEnabled) {
-        const state = stateStore.update({ experimentalBiggerContext: enabled, experimentalSkillAttachments, experimentalFreshConversationPerTurn, useSavedChats, zeroRiskProEnabled });
+        || saved.experimentalBiggerContext !== enabled) {
+        const state = stateStore.update({ experimentalBiggerContext: enabled, experimentalSkillAttachments, experimentalFreshConversationPerTurn, useSavedChats });
         send("launcher:state-changed", state);
       }
     }
@@ -1435,19 +1253,13 @@ async function start() {
       const current = stateStore.read();
       const patch = {
         coreSetupComplete: true,
-        mcpRuntimeInstalled: config.mode === "full",
         experimentalBiggerContext: config.experimentalBiggerContext === true,
         experimentalSkillAttachments: config.experimentalSkillAttachments === true,
         experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,
         useSavedChats: config.useSavedChats === true,
-        zeroRiskProEnabled: config.zeroRiskProEnabled === true,
         ...(runtime.bridgeRouteChanged ? {
           codexCatalogVerified: false,
           codexRestartRequired: true,
-        } : {}),
-        ...(config.mode === "browser-only" ? {
-          mcpSetupComplete: false,
-          mcpGuideStep: 0,
         } : {}),
       };
       if (Object.entries(patch).some(([key, value]) => current[key] !== value)) {
@@ -1460,13 +1272,10 @@ async function start() {
     if (runtime.status === "not-configured") {
       const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
       const current = stateStore.read();
-      if (current.coreSetupComplete || current.mcpRuntimeInstalled || current.mcpSetupComplete) {
+      if (current.coreSetupComplete) {
         const state = stateStore.update({
           coreSetupComplete: false,
           codexCatalogVerified: false,
-          mcpRuntimeInstalled: false,
-          mcpSetupComplete: false,
-          mcpGuideStep: 0,
         });
         send("launcher:state-changed", state);
       }

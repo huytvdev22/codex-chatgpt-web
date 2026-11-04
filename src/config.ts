@@ -10,7 +10,7 @@ import {
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 
-export type RuntimeMode = "browser-only" | "full";
+export type RuntimeMode = "browser-only";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
@@ -86,15 +86,6 @@ export function resolveInteractionConnectorIdentities(
   };
 }
 
-export interface TunnelConfig {
-  binaryPath: string;
-  tunnelId: string;
-  runtimeKeyFile: string;
-  profileDir: string;
-  profileName: string;
-  alias: string;
-}
-
 export interface AppConfig {
   version: 3;
   purpose?: "dev-harness";
@@ -129,21 +120,6 @@ export interface AppConfig {
   controlToken: string;
   runtimeCommand: string[];
   acknowledgedUnofficialAt?: string;
-  tunnel?: TunnelConfig;
-  automaticTunnel?: TunnelConfig;
-  manualTunnel?: TunnelConfig;
-}
-
-export function tunnelConfigForInteractionMode(
-  config: Pick<AppConfig, "browserInteractionMode" | "tunnel" | "automaticTunnel" | "manualTunnel">,
-  mode: BrowserInteractionMode = config.browserInteractionMode,
-): TunnelConfig | undefined {
-  const configured = mode === "manual" ? config.manualTunnel : config.automaticTunnel;
-  if (configured) return configured;
-  if (config.automaticTunnel || config.manualTunnel) return undefined;
-  // The single tunnel field predates Zero Risk. Released 4.x configurations therefore always
-  // belong to Automatic mode; Zero Risk is populated only by an explicit setup or migration.
-  return mode === "automatic" ? config.tunnel : undefined;
 }
 
 export function expandUserPath(value: string): string {
@@ -394,6 +370,10 @@ export function loadConfigForSetup(): AppConfig {
     raw.version = 3;
     raw.browserHost = "managed-chrome";
   }
+  if (raw.mode === "full") raw.mode = "browser-only";
+  delete raw.tunnel;
+  delete raw.automaticTunnel;
+  delete raw.manualTunnel;
   const interactionMode = raw.browserInteractionMode ?? "automatic";
   const automaticName = raw.automaticAppName
     ?? (interactionMode === "automatic" ? raw.appName : CHATGPT_CONNECTOR_NAME);
@@ -407,13 +387,18 @@ export function loadConfigForSetup(): AppConfig {
 
 function parseConfig(value: unknown, path: string): AppConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid configuration object in ${path}`);
+  const legacy = value as Record<string, unknown>;
+  if (legacy.mode === "full") legacy.mode = "browser-only";
+  delete legacy.tunnel;
+  delete legacy.automaticTunnel;
+  delete legacy.manualTunnel;
   const parsed = value as Partial<AppConfig>;
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
     throw new Error(`Invalid configuration purpose in ${path}`);
   }
   if (typeof parsed.releaseVersion !== "string" || !parsed.releaseVersion.trim()) throw new Error(`Missing releaseVersion in ${path}`);
-  if (parsed.mode !== "browser-only" && parsed.mode !== "full") throw new Error(`Invalid runtime mode in ${path}`);
+  if (parsed.mode !== "browser-only") throw new Error(`Invalid runtime mode in ${path}`);
   const subagentProtocol = parsed.subagentProtocol ?? "compatibility-v1";
   if (subagentProtocol !== "compatibility-v1" && subagentProtocol !== "native") {
     throw new Error(`Invalid subagentProtocol in ${path}`);
@@ -426,11 +411,8 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (browserInteractionMode !== "automatic" && browserInteractionMode !== "manual") {
     throw new Error(`Invalid browserInteractionMode in ${path}`);
   }
-  if (browserInteractionMode === "manual" && parsed.mode !== "full") {
-    throw new Error(`Zero Risk requires full mode in ${path}`);
-  }
   if (browserInteractionMode === "manual" && parsed.browserHost !== "launcher") {
-    throw new Error(`Zero Risk requires the launcher browser host in ${path}`);
+    throw new Error(`Manual browser interaction requires the launcher browser host in ${path}`);
   }
   if (!Number.isInteger(parsed.port) || parsed.port! < 1 || parsed.port! > 65_535) throw new Error(`Invalid port in ${path}`);
   if (!Number.isSafeInteger(parsed.contextWindow) || parsed.contextWindow! <= 0) {
@@ -479,43 +461,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`brokerSocketPath must be an absolute Unix socket path in ${path}`);
   }
   if (!/^[A-Za-z0-9_-]{40,}$/.test(parsed.controlToken!)) throw new Error(`Invalid controlToken in ${path}`);
-  const validateTunnel = (tunnel: TunnelConfig | undefined, label: string): void => {
-    if (!tunnel || typeof tunnel !== "object") throw new Error(`${label} is missing in ${path}`);
-    for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"] as const) {
-      if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
-        throw new Error(`Missing ${label}.${key} in ${path}`);
-      }
-    }
-    if (!/^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)) {
-      throw new Error(`Invalid ${label}.tunnelId in ${path}`);
-    }
-    for (const key of ["profileName", "alias"] as const) {
-      if (!/^[A-Za-z0-9._-]+$/.test(tunnel[key])) {
-        throw new Error(`Invalid ${label}.${key} in ${path}`);
-      }
-    }
-    for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"] as const) {
-      if (!isAbsolute(expandUserPath(tunnel[key]))) {
-        throw new Error(`${label}.${key} must be absolute in ${path}`);
-      }
-    }
-  };
-  if (parsed.mode === "full") {
-    validateTunnel(parsed.tunnel, "tunnel");
-    if (parsed.automaticTunnel !== undefined) validateTunnel(parsed.automaticTunnel, "automaticTunnel");
-    if (parsed.manualTunnel !== undefined) validateTunnel(parsed.manualTunnel, "manualTunnel");
-    if (parsed.automaticTunnel && parsed.manualTunnel
-      && parsed.automaticTunnel.tunnelId === parsed.manualTunnel.tunnelId) {
-      throw new Error(`Automatic and Zero Risk must use different Tunnel IDs in ${path}`);
-    }
-    const activeTunnel = browserInteractionMode === "manual" ? parsed.manualTunnel : parsed.automaticTunnel;
-    if ((parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
-      throw new Error(`Active browser interaction mode has no tunnel configuration in ${path}`);
-    }
-    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(parsed.tunnel)) {
-      throw new Error(`Active tunnel does not match browserInteractionMode in ${path}; rerun MCP setup`);
-    }
-  }
   if (!Array.isArray(parsed.runtimeCommand) || parsed.runtimeCommand.length === 0
     || parsed.runtimeCommand.some(part => typeof part !== "string" || !part.trim())) {
     throw new Error(`Invalid runtimeCommand in ${path}`);
@@ -633,7 +578,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       threadEnvironmentStatePath: join(getConfigDir(), "runtime", "thread-environments.json"),
       lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
       headed: config.headed,
-      localToolsEnabled: config.mode === "full",
+      localToolsEnabled: false,
       solAvailable: manual ? false : config.solAvailable,
       extraHighAvailable: !manual && config.extraHighAvailable === true,
       proAvailable: manual ? false : config.proAvailable,

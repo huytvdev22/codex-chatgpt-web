@@ -158,6 +158,7 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     let launcherConnection: LauncherBrowserConnection | null = null;
     let surfaceId: string | undefined;
     let leasePromptId: string | undefined;
+    let launcherConversationReused = false;
     const turnTraceId = randomBytes(16).toString("hex");
     let launcherError: Error | null = null;
 
@@ -184,6 +185,7 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
 
           surfaceId = lease.surfaceId || descriptor.surfaceId;
           leasePromptId = lease.conversationId;
+          launcherConversationReused = lease.reused === true;
           launcherConnection = await connectLauncherBrowserHost(
             descriptorPath,
             20_000,
@@ -209,7 +211,7 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     const storedPromptId = conversationKey ? defaultGoogleAIStudioConversationStore.get(conversationKey) : undefined;
     const existingPromptId = leasePromptId || storedPromptId;
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
-    const isNewConversation = !launcherConnection?.reused && !hasPriorAssistantReply && !existingPromptId;
+    const isNewConversation = !launcherConversationReused && !hasPriorAssistantReply && !existingPromptId;
 
     // Biên dịch prompt chuẩn M365 (Tool Protocol)
     const normalized = CodexPayloadNormalizer.normalize(rawPayload);
@@ -224,10 +226,10 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     console.log(`[ai-studio-adapter] Bắt đầu lượt gửi (thread=${threadId || "n/a"}, promptId=${existingPromptId || "mới"}, isNew=${isNewConversation})`);
 
     let finalPromptId = existingPromptId;
+    let protocolResult: StrictM365ResponseResult | null = null;
     try {
       const maxRetries = this.options.maxFormatRetries ?? 2;
       let attemptPrompt = initialPrompt;
-      let protocolResult: StrictM365ResponseResult | null = null;
       let lastRaw = "";
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {

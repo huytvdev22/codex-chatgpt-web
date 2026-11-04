@@ -33,12 +33,6 @@ import type {
 const api = window.codexWebLauncher;
 const PANEL_TRANSITION = { duration: 0.3, ease: [0.16, 1, 0.3, 1] } as const;
 const COMPACT_SIDEBAR_QUERY = "(max-width: 820px)";
-const MCP_GUIDE_MEDIA = [
-  new URL("./assets/mcp-create-tunnel.mp4", import.meta.url).href,
-  new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
-  new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
-] as const;
-
 export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
@@ -60,7 +54,7 @@ export function App() {
       setBrowser(next.browser);
       setLogs(next.logs);
       setOperation(next.operation);
-      if (next.operation?.status === "failed" && next.operation.name !== "mcp-verification") {
+      if (next.operation?.status === "failed") {
         setError(next.operation.message);
       }
     }).catch((cause) => setError(messageOf(cause)));
@@ -80,7 +74,7 @@ export function App() {
     const unsubscribeBrowser = api.onBrowserState(setBrowser);
     const unsubscribeOperation = api.onOperation((next) => {
       setOperation(next);
-      if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
+      if (next.status === "failed") setError(next.message);
     });
     const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-4999), record]));
     const unsubscribeLogsCleared = api.onLogsCleared?.(() => setLogs([]));
@@ -320,10 +314,8 @@ function LauncherShell({
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
     && (snapshot.state.browserInteractionMode === "manual"
       || snapshot.state.codexCatalogVerified === true);
-  const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
-    && snapshot.state.coreSetupComplete !== true;
   const [surface, setSurface] = useState<Surface>(
-    firstRunZeroRiskSetup ? "mcp" : interactionSetupComplete ? "browser" : "setup",
+    interactionSetupComplete ? "browser" : "setup",
   );
   const devProfile = snapshot.profile === "development";
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
@@ -332,7 +324,6 @@ function LauncherShell({
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
-  const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
   const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(
     snapshot.state.browserInteractionMode === "automatic"
       && snapshot.state.coreSetupComplete === true
@@ -349,9 +340,6 @@ function LauncherShell({
   const needsBrowser = snapshot.state.browserInteractionMode === "automatic"
     && browser?.authenticated !== true;
   const needsSetup = !needsBrowser && !interactionSetupComplete;
-  const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
-    && snapshot.state.codexCatalogVerified === true
-    && snapshot.state.mcpSetupComplete !== true;
   const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
@@ -581,16 +569,6 @@ function LauncherShell({
                   label={copy.setup}
                   onClick={() => navigateSurface("setup")}
                 />
-                <SidebarItem
-                  active={surface === "mcp"}
-                  badge={mcpOptional ? <ActionDot tone="optional" /> : null}
-                  icon="mcp"
-                  label="MCP"
-                  onClick={() => {
-                    setMcpTargetMode(null);
-                    navigateSurface("mcp");
-                  }}
-                />
               </SidebarGroup>
               <SidebarGroup label={copy.runtime}>
                 <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
@@ -659,26 +637,6 @@ function LauncherShell({
                 devProfile={devProfile}
                 operation={operation}
                 setError={setError}
-                showMcp={() => {
-                  setMcpTargetMode(null);
-                  setSurface("mcp");
-                }}
-                snapshot={snapshot}
-                updateState={updateState}
-              />
-            ) : null}
-            {surface === "mcp" ? (
-              <McpSurface
-                copy={copy}
-                devProfile={devProfile}
-                interactionMode={mcpTargetMode ?? snapshot.state.browserInteractionMode}
-                language={language}
-                onDone={() => {
-                  setMcpTargetMode(null);
-                  setSurface("browser");
-                }}
-                operation={operation}
-                setError={setError}
                 snapshot={snapshot}
                 updateState={updateState}
               />
@@ -701,10 +659,7 @@ function LauncherShell({
             ) : null}
             {surface === "settings" ? (
               <SettingsSurface
-                configureInteractionMode={(mode) => {
-                  setMcpTargetMode(mode);
-                  setSurface("mcp");
-                }}
+                configureInteractionMode={() => setSurface("setup")}
                 copy={copy}
                 devProfile={devProfile}
                 language={language}
@@ -922,7 +877,7 @@ function BrowserSurface({
             aria-selected={tab.active}
           >
             <BrandMark small />
-            <span title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
+            <span title={tab.traceId ? `${tab.title} Â· ${tab.traceId}` : tab.title}>
               {browserTabTitleFromTitle(tab.title, copy)}
             </span>
             {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}
@@ -1096,7 +1051,6 @@ function SetupSurface({
   devProfile,
   operation,
   setError,
-  showMcp,
   snapshot,
   updateState,
 }: {
@@ -1106,7 +1060,6 @@ function SetupSurface({
   devProfile: boolean;
   operation: OperationState | null;
   setError: (error: string | null) => void;
-  showMcp: () => void;
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
 }) {
@@ -1157,9 +1110,6 @@ function SetupSurface({
     await api!.setupCore();
     updateState((await api!.snapshot()).state);
   });
-  const setZeroRiskPro = (enabled: boolean) => run(async () => {
-    updateState(await api!.setZeroRiskPro(enabled));
-  });
 
   return (
     <ContentSurface
@@ -1171,7 +1121,7 @@ function SetupSurface({
           : "Configure Microsoft 365 Copilot, Google Gemini and ChatGPT Web to work with Codex."}
       title={devProfile ? copy.devSetupTitle : "Set up Codex Copilot"}
     >
-      {/* ── M365 Copilot Setup Section ── */}
+      {/* â”€â”€ M365 Copilot Setup Section â”€â”€ */}
       {!manualInteraction ? <>
         <SectionHeading label="M365 Copilot Setup" />
         <div className="setup-list">
@@ -1208,7 +1158,7 @@ function SetupSurface({
           />
         </div>
 
-        {/* ── Google Gemini Setup Section ── */}
+        {/* â”€â”€ Google Gemini Setup Section â”€â”€ */}
         <SectionHeading label="Google Gemini Setup" spaced />
         <div className="setup-list">
           <SetupRow
@@ -1244,7 +1194,7 @@ function SetupSurface({
           />
         </div>
 
-        {/* ── Google AI Studio Setup Section ── */}
+        {/* â”€â”€ Google AI Studio Setup Section â”€â”€ */}
         <SectionHeading label="Google AI Studio Setup" spaced />
         <div className="setup-list">
           <SetupRow
@@ -1280,7 +1230,7 @@ function SetupSurface({
           />
         </div>
 
-        {/* ── Qwen Setup Section ── */}
+        {/* â”€â”€ Qwen Setup Section â”€â”€ */}
         <SectionHeading label="Qwen Setup" spaced />
         <div className="setup-list">
           <SetupRow
@@ -1316,7 +1266,7 @@ function SetupSurface({
           />
         </div>
 
-        {/* ── ChatGPT Setup Section ── */}
+        {/* â”€â”€ ChatGPT Setup Section â”€â”€ */}
         <SectionHeading label="ChatGPT Setup" spaced />
         <div className="setup-list">
           <SetupRow
@@ -1353,7 +1303,7 @@ function SetupSurface({
         </div>
       </> : null}
 
-      {/* ── Install Section ── */}
+      {/* â”€â”€ Install Section â”€â”€ */}
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} spaced />
       <div className="setup-list">
         <SetupRow
@@ -1369,14 +1319,6 @@ function SetupSurface({
           onAction={install}
           repeatable
           title={devProfile ? copy.devStepInstall : copy.stepInstall}
-          titleAction={manualInteraction ? (
-            <ZeroRiskModelMenu
-              busy={globalActionDisabled || snapshot.state.coreSetupComplete !== true}
-              copy={copy}
-              proEnabled={snapshot.state.zeroRiskProEnabled}
-              onChange={(enabled) => void setZeroRiskPro(enabled)}
-            />
-          ) : undefined}
         />
       </div>
 
@@ -1385,329 +1327,6 @@ function SetupSurface({
           {copy.restartCodex}
         </NoticeRow>
       ) : null}
-
-      <SectionHeading label="MCP" meta={manualInteraction ? copy.required : copy.optional} spaced />
-      <button
-        className="next-surface-row"
-        disabled={!manualInteraction && !snapshot.state.codexCatalogVerified}
-        onClick={showMcp}
-        type="button"
-      >
-        <McpMark />
-        <span>
-          <strong>{devProfile ? copy.devMcpTitle : copy.mcpTitle}</strong>
-          <small>{devProfile ? copy.devMcpBody : copy.mcpBody}</small>
-        </span>
-        <em>{snapshot.state.mcpSetupComplete ? copy.mcpReady : copy.configureMcp}</em>
-        <Icon name="chevron" />
-      </button>
-    </ContentSurface>
-  );
-}
-
-function McpSurface({
-  copy,
-  devProfile,
-  interactionMode,
-  language,
-  onDone,
-  operation,
-  setError,
-  snapshot,
-  updateState,
-}: {
-  copy: Copy;
-  devProfile: boolean;
-  interactionMode: BrowserInteractionMode;
-  language: Language;
-  onDone: () => void;
-  operation: OperationState | null;
-  setError: (error: string | null) => void;
-  snapshot: LauncherSnapshot;
-  updateState: (state: LauncherState) => void;
-}) {
-  const configuringInactiveMode = interactionMode !== snapshot.state.browserInteractionMode;
-  const [step, setStep] = useState(
-    configuringInactiveMode ? 1 : Math.min(2, Math.max(0, snapshot.state.mcpGuideStep || 0)),
-  );
-  const [tunnelId, setTunnelId] = useState("");
-  const [runtimeKey, setRuntimeKey] = useState("");
-  const [credentialsConfigured, setCredentialsConfigured] = useState(
-    interactionMode === snapshot.state.browserInteractionMode
-      ? snapshot.mcpCredentialsConfigured
-      : false,
-  );
-  const [replacingCredentials, setReplacingCredentials] = useState(false);
-  const [localBusy, setLocalBusy] = useState(false);
-  const busy = localBusy || operation?.status === "running";
-  const [doctor, setDoctor] = useState<DoctorReport | null>(null);
-  const verified = !configuringInactiveMode && snapshot.state.mcpSetupComplete === true;
-  const manualInteraction = interactionMode === "manual";
-  const steps = useMemo(() => [
-    { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
-    { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
-    {
-      title: copy.mcpStepThree,
-      body: manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
-    },
-  ], [copy, manualInteraction]);
-  const guideMedia = MCP_GUIDE_MEDIA[step];
-
-  const move = async (next: number) => {
-    setStep(next);
-    updateState(await api!.setMcpStep(next));
-  };
-  const safeMove = async (next: number) => {
-    if (busy) return;
-    setError(null);
-    try {
-      await move(next);
-    } catch (cause) {
-      setError(messageOf(cause));
-    }
-  };
-  const openExternal = async (url: string) => {
-    setError(null);
-    try {
-      await api!.openExternal(url);
-    } catch (cause) {
-      setError(messageOf(cause));
-    }
-  };
-  const install = async () => {
-    if (busy) return;
-    setLocalBusy(true);
-    setError(null);
-    try {
-      await api!.setupMcp({
-        interactionMode,
-        ...(credentialsConfigured && !replacingCredentials
-          ? { replace: false }
-          : { tunnelId, runtimeKey, replace: true }),
-      });
-      setRuntimeKey("");
-      setTunnelId("");
-      setCredentialsConfigured(true);
-      setReplacingCredentials(false);
-      updateState((await api!.snapshot()).state);
-      await move(2);
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-  const verify = async () => {
-    if (busy) return;
-    setLocalBusy(true);
-    setError(null);
-    setDoctor(null);
-    try {
-      setDoctor(await api!.verifyMcp());
-      updateState((await api!.snapshot()).state);
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  return (
-    <ContentSurface
-      fit
-      subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
-      title={devProfile ? copy.devMcpTitle : "MCP"}
-    >
-      {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
-        <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
-      ) : null}
-
-      <div className="wizard-stepper" aria-label={`${step + 1} / 3`}>
-        {steps.map((item, index) => (
-          <button
-            className={`${index === step ? "is-active" : ""}${index < step || (index === 2 && verified) ? " is-complete" : ""}`}
-            disabled={busy || index > step}
-            key={item.title}
-            onClick={() => void safeMove(index)}
-            type="button"
-          >
-            <span>{index < step || (index === 2 && verified) ? <Icon name="check" /> : index + 1}</span>
-            <em>{item.title}</em>
-          </button>
-        ))}
-      </div>
-
-      <div className="mcp-stage">
-        {guideMedia ? (
-          <TutorialVideo
-            copy={copy}
-            label={`${copy.guideVideo}: ${steps[step]!.title}`}
-            src={guideMedia}
-          />
-        ) : null}
-
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.section
-            animate={{ opacity: 1, x: 0 }}
-            className="wizard-content"
-            exit={{ opacity: 0, x: -8 }}
-            initial={{ opacity: 0, x: 8 }}
-            key={step}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <header>
-              <span>0{step + 1}</span>
-              <div>
-                <h2>{steps[step]!.title}</h2>
-                <p>{steps[step]!.body}</p>
-              </div>
-            </header>
-
-            {step === 0 ? (
-              <div className="inline-actions">
-                <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>
-                  {copy.openTunnels}
-                </SecondaryButton>
-                <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.keys)}>
-                  {copy.openKeys}
-                </SecondaryButton>
-              </div>
-            ) : null}
-            {step === 1 ? (
-              credentialsConfigured && !replacingCredentials ? (
-                <div className="saved-credentials">
-                  <NoticeRow icon="check" tone="success">
-                    <span>
-                      <strong>{copy.credentialsConfigured}</strong>
-                      <small>{copy.credentialsConfiguredBody}</small>
-                    </span>
-                  </NoticeRow>
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => setReplacingCredentials(true)}
-                    type="button"
-                  >
-                    {copy.replaceCredentials}
-                  </button>
-                </div>
-              ) : (
-                <div className="field-list">
-                  <FieldRow label={copy.tunnelId}>
-                    <input
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      onChange={(event) => setTunnelId(event.target.value)}
-                      placeholder="tunnel_…"
-                      spellCheck={false}
-                      value={tunnelId}
-                    />
-                  </FieldRow>
-                  <FieldRow label={copy.runtimeKey}>
-                    <input
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      onChange={(event) => setRuntimeKey(event.target.value)}
-                      placeholder="sk-…"
-                      spellCheck={false}
-                      type="password"
-                      value={runtimeKey}
-                    />
-                  </FieldRow>
-                  {credentialsConfigured ? (
-                    <button
-                      className="text-button keep-credentials"
-                      disabled={busy}
-                      onClick={() => {
-                        setTunnelId("");
-                        setRuntimeKey("");
-                        setReplacingCredentials(false);
-                      }}
-                      type="button"
-                    >
-                      {copy.keepCredentials}
-                    </button>
-                  ) : null}
-                </div>
-              )
-            ) : null}
-            {step === 1 ? (
-              <p className="mcp-step-two-hint">
-                {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
-                  ? copy.mcpStepTwoHint
-                  : copy.mcpCatalogRequired}
-              </p>
-            ) : null}
-            {step === 2 ? (
-              <div className="connector-actions">
-                <NoticeRow icon="alert" tone="warning">
-                  {manualInteraction
-                    ? copy.manualConnectorNotice
-                    : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
-                </NoticeRow>
-                <div className="connector-name">
-                  <span>{copy.connectorName}</span>
-                  <code>{snapshot.connectorNames[interactionMode]}</code>
-                </div>
-                <div className="inline-actions">
-                  <SecondaryButton
-                    icon="external"
-                    onClick={() => void (async () => {
-                      setError(null);
-                      try {
-                        await api!.openExternal(snapshot.urls.connectors);
-                      } catch (cause) {
-                        setError(messageOf(cause));
-                      }
-                    })()}
-                  >
-                    {copy.openConnectors}
-                  </SecondaryButton>
-                </div>
-                {doctor ? <DoctorSummary copy={copy} language={language} report={doctor} /> : null}
-              </div>
-            ) : null}
-          </motion.section>
-        </AnimatePresence>
-      </div>
-
-      <div className="wizard-footer">
-        <button className="text-button" disabled={step === 0 || busy} onClick={() => void safeMove(step - 1)} type="button">
-          {copy.previous}
-        </button>
-        {step === 0 ? <PrimaryButton disabled={busy} onClick={() => void safeMove(1)}>{copy.next}</PrimaryButton> : null}
-        {step === 1 ? (
-          <PrimaryButton
-            disabled={
-              busy
-              || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
-              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
-            }
-            onClick={() => void install()}
-          >
-            {busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
-          </PrimaryButton>
-        ) : null}
-        {step === 2 ? (
-          <>
-            {verified ? (
-              <SecondaryButton disabled={busy} onClick={() => void verify()}>
-                {copy.verifyRuntime}
-              </SecondaryButton>
-            ) : null}
-            <PrimaryButton
-              disabled={busy}
-              onClick={() => void (verified ? onDone() : verify())}
-            >
-              {busy
-                ? operation?.name === "mcp-verification" && operation.status === "running"
-                  ? localizeRuntimeMessage(copy, operation.message, undefined, language)
-                  : copy.running
-                : verified ? copy.done : copy.verifyRuntime}
-            </PrimaryButton>
-          </>
-        ) : null}
-      </div>
     </ContentSurface>
   );
 }
@@ -2086,8 +1705,8 @@ function SettingsSurface({
         <span>
           <strong>{copy.product}</strong>
           <small>
-            {devProfile ? `${copy.devBadge} · ${snapshot.profilePaths.coreHome} · ` : ""}
-            {platformLabel(snapshot.platform)} · v{snapshot.version}
+            {devProfile ? `${copy.devBadge} Â· ${snapshot.profilePaths.coreHome} Â· ` : ""}
+            {platformLabel(snapshot.platform)} Â· v{snapshot.version}
           </small>
         </span>
       </div>
@@ -2173,104 +1792,6 @@ function SetupRow({
           {action}
         </SecondaryButton>
       </div>
-    </div>
-  );
-}
-
-function ZeroRiskModelMenu({
-  busy,
-  copy,
-  onChange,
-  proEnabled,
-}: {
-  busy: boolean;
-  copy: Copy;
-  onChange: (enabled: boolean) => void;
-  proEnabled: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const choose = (enabled: boolean) => {
-    setOpen(false);
-    if (enabled !== proEnabled) onChange(enabled);
-  };
-
-  return (
-    <div
-      className={`zero-risk-model-menu${open ? " is-open" : ""}`}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") setOpen(false);
-      }}
-    >
-      <button
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-label={copy.zeroRiskModelSettings}
-        className="zero-risk-model-trigger"
-        disabled={busy}
-        onClick={() => setOpen((current) => !current)}
-        title={copy.zeroRiskModelSettings}
-        type="button"
-      >
-        <Icon name="settings" />
-      </button>
-      {open ? (
-        <>
-          <button
-            aria-label={`${copy.close}: ${copy.zeroRiskModelSettings}`}
-            className="zero-risk-model-scrim"
-            onClick={() => setOpen(false)}
-            type="button"
-          />
-          <div
-            aria-label={copy.zeroRiskModelSettings}
-            className="zero-risk-model-panel"
-            role="radiogroup"
-          >
-            <p>{copy.zeroRiskModelSettingsBody}</p>
-            <div className="zero-risk-model-option-row">
-              <button
-                aria-checked={!proEnabled}
-                className={!proEnabled ? "is-selected" : ""}
-                onClick={() => choose(false)}
-                role="radio"
-                type="button"
-              >
-                {!proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
-                <span>
-                  <strong>{copy.zeroRiskDefaultProfile}</strong>
-                  <small>{copy.zeroRiskDefaultProfileBody}</small>
-                </span>
-              </button>
-            </div>
-            <div className="zero-risk-model-option-row has-info">
-              <button
-                aria-checked={proEnabled}
-                className={proEnabled ? "is-selected" : ""}
-                onClick={() => choose(true)}
-                role="radio"
-                type="button"
-              >
-                {proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
-                <span>
-                  <strong>{copy.zeroRiskProProfile}</strong>
-                  <small>{copy.zeroRiskProProfileBody}</small>
-                </span>
-              </button>
-              <span
-                aria-label={copy.zeroRiskProProfileInfo}
-                className="zero-risk-model-info"
-                role="img"
-                tabIndex={0}
-              >
-                <Icon name="info" />
-                <span className="zero-risk-model-tooltip" role="tooltip">
-                  {copy.zeroRiskProProfileInfo}
-                </span>
-              </span>
-            </div>
-          </div>
-        </>
-      ) : null}
     </div>
   );
 }
@@ -2985,7 +2506,7 @@ function FatalMessage({ message }: { message: string }) {
 function browserTabTitleFromTitle(value: string | undefined, copy: Copy): string {
   const title = value?.trim();
   if (!title || title === "about:blank" || title.includes("codex-web-gpt-browser-host")) return copy.temporaryChat;
-  return title.replace(/\s*[|–-]\s*(ChatGPT|Microsoft Copilot|Copilot)\s*$/i, "") || copy.temporaryChat;
+  return title.replace(/\s*[|â€“-]\s*(ChatGPT|Microsoft Copilot|Copilot)\s*$/i, "") || copy.temporaryChat;
 }
 
 function browserTabTone(status: BrowserState["tabs"][number]["status"]): "idle" | "ready" | "busy" | "error" {
@@ -3017,7 +2538,7 @@ function platformLabel(value: string): string {
 }
 
 function humanEvent(value: string): string {
-  return value.split(".").map((part) => part.replaceAll("_", " ")).join(" · ");
+  return value.split(".").map((part) => part.replaceAll("_", " ")).join(" Â· ");
 }
 
 function logDetail(detail: Record<string, unknown>): string {
@@ -3026,7 +2547,7 @@ function logDetail(detail: Record<string, unknown>): string {
   return entries
     .slice(0, 3)
     .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
-    .join(" · ");
+    .join(" Â· ");
 }
 
 function formatTime(value: string, language: Language): string {

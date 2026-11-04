@@ -4,7 +4,7 @@ import type { LimitsSnapshot } from "./limits-types";
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
-export type Surface = "browser" | "setup" | "mcp" | "activity" | "limits" | "settings";
+export type Surface = "browser" | "setup" | "activity" | "limits" | "settings";
 
 export interface LauncherState {
   version: 1;
@@ -20,17 +20,13 @@ export interface LauncherState {
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
-  zeroRiskProEnabled: boolean;
   sidebarOpen: boolean;
   sidebarWidth: number;
   browserSmokePassed?: boolean;
   browserSmokeVersion?: string | null;
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
-  mcpSetupComplete?: boolean;
-  mcpRuntimeInstalled?: boolean;
   codexRestartRequired?: boolean;
-  mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
   selectedProvider: "m365" | "chatgpt" | "gemini" | "qwen" | "google-ai-studio";
 }
@@ -157,14 +153,11 @@ export interface LauncherSnapshot {
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
-  mcpCredentialsConfigured: boolean;
   logs: LogRecord[];
   urls: {
     github: string;
     x: string;
     connectors: string;
-    tunnels: string;
-    keys: string;
   };
   platform: string;
   packaged: boolean;
@@ -203,25 +196,16 @@ export interface LauncherApi {
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
   dismissSessionReminder(): Promise<LauncherState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
-  verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
   cancelTurns(): Promise<{ stdout: string }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
-  setupMcp(input: {
-    tunnelId?: string;
-    runtimeKey?: string;
-    replace?: boolean;
-    interactionMode?: BrowserInteractionMode;
-  }): Promise<{ ok: boolean; stdout: string }>;
   setConnectorNameSuffix(suffix: string): Promise<LauncherState>;
-  setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setUseSavedChats(enabled: boolean): Promise<LauncherState>;
-  setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;
     credentialsRequired: boolean;
