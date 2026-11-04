@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
-const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
+const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell, session } = require("electron");
+const CHROME_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
   runBrowserHelperOperation,
@@ -421,6 +422,12 @@ class BrowserHost {
     this.qwenSurfaceManager = new QwenSurfaceManager({ descriptorPath });
     this.geminiSurfaceManager = new GeminiSurfaceManager({ descriptorPath });
     this.googleAIStudioSurfaceManager = new GoogleAIStudioSurfaceManager({ descriptorPath });
+    try {
+      if (session && typeof session.fromPartition === "function") {
+        session.fromPartition("persist:codex-google-ai-studio").setUserAgent(CHROME_USER_AGENT);
+        session.fromPartition("persist:codex-google-ai-studio-dev").setUserAgent(CHROME_USER_AGENT);
+      }
+    } catch {}
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -497,24 +504,30 @@ class BrowserHost {
     this.primaryViewManager = new ViewLifecycleManager({
       window,
       logger: this.logger,
-      createView: (providerName) => new WebContentsView({
-        webPreferences: {
-          partition: providerName === "google-ai-studio"
-            ? "persist:codex-google-ai-studio"
-            : providerName === "qwen"
-              ? "persist:codex-web-gpt-qwen"
-              : providerName === "gemini"
-                ? "persist:codex-gemini-web"
-                : providerName === "m365"
-                  ? "persist:codex-m365-copilot"
-                  : "persist:codex-web-gpt-chatgpt",
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          spellcheck: true,
-          backgroundThrottling: true,
-        },
-      }),
+      createView: (providerName) => {
+        const view = new WebContentsView({
+          webPreferences: {
+            partition: providerName === "google-ai-studio"
+              ? "persist:codex-google-ai-studio"
+              : providerName === "qwen"
+                ? "persist:codex-web-gpt-qwen"
+                : providerName === "gemini"
+                  ? "persist:codex-gemini-web"
+                  : providerName === "m365"
+                    ? "persist:codex-m365-copilot"
+                    : "persist:codex-web-gpt-chatgpt",
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            spellcheck: true,
+            backgroundThrottling: true,
+          },
+        });
+        if (providerName === "google-ai-studio" || providerName === "gemini") {
+          view.webContents.setUserAgent(CHROME_USER_AGENT);
+        }
+        return view;
+      },
       onCreate: (providerName, view) => {
         if (providerName === "google-ai-studio") this.googleAIStudioView = view;
         else if (providerName === "qwen") this.qwenView = view;
@@ -913,6 +926,9 @@ class BrowserHost {
         backgroundThrottling: false,
       },
     });
+    if (isGoogleAIStudio || isGemini) {
+      view.webContents.setUserAgent(CHROME_USER_AGENT);
+    }
     const tab = {
       id,
       surfaceId,

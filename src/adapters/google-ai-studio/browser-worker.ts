@@ -24,6 +24,15 @@ export interface GoogleAIStudioTurnResult {
 }
 
 /**
+ * Chuẩn hóa các đường link URL trong prompt để tránh kích hoạt tính năng "URL Context tool"
+ * của Google AI Studio (tính năng này yêu cầu quyền bổ sung trên GCP Project và có thể gây lỗi Permission Denied).
+ * LLM vẫn đọc hiểu ngữ nghĩa của đường link hoàn toàn chính xác.
+ */
+function sanitizePromptUrlsForAIStudio(prompt: string): string {
+  return prompt.replace(/\b(https?):\/\//gi, "$1 ://");
+}
+
+/**
  * Worker điều khiển trình duyệt Playwright tương tác với Google AI Studio (aistudio.google.com).
  * Bám sát cấu trúc của Browser Worker trong M365 Copilot và Qwen Web.
  */
@@ -94,7 +103,8 @@ export class GoogleAIStudioBrowserWorker {
     await page.keyboard.press(selectAllKey);
     await page.keyboard.press("Backspace");
 
-    // 2. Ghi prompt vào Clipboard
+    // 2. Ghi prompt vào Clipboard (đã chuẩn hóa link URL để tránh lỗi URL Context của AI Studio)
+    const sanitizedText = sanitizePromptUrlsForAIStudio(promptText);
     let clipboardSuccess = false;
     try {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
@@ -103,7 +113,7 @@ export class GoogleAIStudioBrowserWorker {
           return navigator.clipboard.writeText(text);
         }
         return Promise.reject(new Error("Clipboard API không khả dụng"));
-      }, promptText);
+      }, sanitizedText);
       clipboardSuccess = true;
     } catch {
       clipboardSuccess = false;
@@ -126,7 +136,7 @@ export class GoogleAIStudioBrowserWorker {
             ta.dispatchEvent(new Event("change", { bubbles: true }));
           }
         },
-        { sel: this.selectors.composer, text: promptText }
+        { sel: this.selectors.composer, text: sanitizedText }
       );
     }
 
@@ -138,6 +148,14 @@ export class GoogleAIStudioBrowserWorker {
       if (ta) {
         ta.dispatchEvent(new Event("input", { bubbles: true }));
         ta.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      // Tự động đóng popup Enable URL Context nếu xuất hiện
+      const dialogs = Array.from(document.querySelectorAll('.cdk-overlay-pane, div.enable-url-context-dialog, [role="dialog"]'));
+      for (const d of dialogs) {
+        if ((d.textContent || '').includes('URL Context')) {
+          const closeBtn = d.querySelector('button[aria-label*="Close" i], button.close-button') as HTMLButtonElement | null;
+          if (closeBtn) closeBtn.click();
+        }
       }
     }, this.selectors.composer);
   }
@@ -273,6 +291,26 @@ export class GoogleAIStudioBrowserWorker {
         const btn = document.querySelector('ms-run-button button');
         return btn ? (btn.classList.contains('stoppable') || (btn.textContent || '').includes('Stop')) : false;
       });
+
+      // Kiểm tra xem có thông báo lỗi từ Google AI Studio trong DOM không
+      const pageError = await page.evaluate(() => {
+        const errorNodes = document.querySelectorAll(
+          'ms-chat-turn .error-container, .error-message, ms-alert, [role="alert"]'
+        );
+        for (const node of errorNodes) {
+          const text = (node.textContent || '').trim();
+          if (text) return text;
+        }
+        const bodyText = document.body ? document.body.innerText || '' : '';
+        if (bodyText.includes('Permission denied')) {
+          return 'Permission denied. Please check your account permissions and project settings.';
+        }
+        return null;
+      });
+
+      if (pageError && !isGenerating && fullResponse.length === 0) {
+        throw new Error(`[AI_STUDIO_ERROR] Google AI Studio từ chối yêu cầu: ${pageError}`);
+      }
 
       // Đọc văn bản sạch hiện tại
       const currentText = await this.readLatestCleanResponse(page);

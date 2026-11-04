@@ -5,9 +5,9 @@
 > **Keywords:** `google-ai-studio`, `aistudio.google.com`, `gemini-flash-latest`, `thinking-level`, `smoke-test`
 
 ## ⚡ TL;DR (AI Đọc Nhanh 5 Giây)
-- **Triệu chứng:** Khi gửi prompt từ Codex chọn model "Google AI Studio", Launcher lại mở tab Gemini và báo "Reconnecting 3/5".
-- **Nguyên nhân:** Adapter `GoogleAIStudioAdapter.runTurn` khi gọi `notifyLauncherTurn` (ở cả phase "start" và phase "end") đang truyền nhầm `provider: "gemini" as any` thay vì `"google-ai-studio"`.
-- **Cách sửa:** Sửa giá trị `provider` thành `"google-ai-studio"` trong `src/adapters/google-ai-studio/index.ts`, đồng thời cập nhật type và interface trong `src/launcher-browser-host.ts`. Build lại runtime bundle.
+- **Triệu chứng:** Khi gửi prompt từ Codex qua Launcher, Google AI Studio hiện cảnh báo "Enable URL Context" và báo lỗi "Permission denied. Please check your account permissions and project settings".
+- **Nguyên nhân:** 1) Prompt dài chứa URL kích hoạt tính năng URL Context tool của AI Studio đòi hỏi quyền truy cập ngoài; 2) User-Agent của Electron bị backend Google AI Studio nhận diện và chặn; 3) Quản lý Project GCP trong profile mới của AI Studio chưa liên kết đúng dự án có billing/quyền.
+- **Cách sửa:** Đặt User-Agent Chrome chuẩn cho WebContentsView; sanitize/mask các URL trong prompt để không trigger URL Context tool; tự động bắt và ném lỗi DOM thay vì chờ timeout 180s. Build lại runtime bundle và Launcher.
 
 ## 🛠️ File Đã Triển Khai & Cập Nhật
 1. **Core Models & Selectors:**
