@@ -47,6 +47,34 @@ export interface GoogleAIStudioAdapterOptions {
   maxFormatRetries?: number;
 }
 
+/**
+ * Làm sạch chuỗi raw response từ Google AI Studio:
+ * 1. Cắt bỏ bất kỳ ký tự rác nào dẫn trước <webResponse> (ví dụ: button text, icons 'code Codedownloadcontent_copyexpand_lessless').
+ * 2. Cắt bỏ bất kỳ ký tự rác nào kéo theo sau </webResponse>.
+ * 3. Nếu không có <webResponse>, dọn sạch khoảng trắng thừa.
+ */
+export function sanitizeAIStudioResponse(raw: string): string {
+  if (typeof raw !== "string") return "";
+  let cleaned = raw.trim();
+
+  // 1. Cắt bỏ tiền tố rác trước <webResponse>
+  const rootOpenIdx = cleaned.indexOf("<webResponse>");
+  if (rootOpenIdx > 0) {
+    cleaned = cleaned.slice(rootOpenIdx).trim();
+  }
+
+  // 2. Cắt bỏ hậu tố rác sau </webResponse>
+  const rootCloseIdx = cleaned.lastIndexOf("</webResponse>");
+  if (rootCloseIdx !== -1) {
+    const endPos = rootCloseIdx + "</webResponse>".length;
+    if (endPos < cleaned.length) {
+      cleaned = cleaned.slice(0, endPos).trim();
+    }
+  }
+
+  return cleaned;
+}
+
 function resolveDescriptorPath(customPath?: string): string | null {
   if (customPath && existsSync(customPath)) return customPath;
   const envPath = process.env.CODEX_CHATGPT_WEB_HOME || getConfigDir();
@@ -215,8 +243,8 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
           reasoningEffort,
           promptId: existingPromptId,
           isNewConversation: attempt === 0 ? isNewConversation : false,
-          onChunk: (delta) => {
-            emit({ type: "text_delta", text: delta });
+          onChunk: () => {
+            // Quarantine: Browser vẫn thu thập stream, nhưng adapter TUYỆT ĐỐI không emit thô trước validation
           },
         });
 
@@ -228,7 +256,8 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
           }
         }
 
-        lastRaw = result.rawResponse;
+        // Làm sạch toàn bộ tiền tố rác và hậu tố rác trước khi parse
+        lastRaw = sanitizeAIStudioResponse(result.rawResponse);
         console.log(`[ai-studio-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Đang phân tích strict response...`);
 
         protocolResult = parseStrictM365Response(lastRaw);
@@ -304,8 +333,9 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
         return;
       }
 
-      // Fallback nếu không khớp envelope
-      emit({ type: "text_delta", text: lastRaw });
+      // Fallback nếu không khớp envelope: dọn sạch thẻ <webResponse> nếu có trước khi emit
+      const cleanFallback = lastRaw.replace(/<\/?webResponse>/gi, "").trim();
+      emit({ type: "text_delta", text: cleanFallback });
       emit({ type: "done", stopReason: "stop", endTurn: true, usage });
     } finally {
       if (descriptorPath && surfaceId) {

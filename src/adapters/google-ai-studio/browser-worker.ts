@@ -213,31 +213,72 @@ export class GoogleAIStudioBrowserWorker {
   }
 
   /**
-   * Đọc phản hồi mới nhất từ DOM, loại bỏ toàn bộ ms-thought-chunk (đúng chuẩn M365)
+   * Đọc phản hồi mới nhất từ DOM của Google AI Studio:
+   * 1. Chỉ nhắm vào turn của model MỚI NHẤT (turn cuối cùng không có data-codex-turn-baseline).
+   * 2. Lọc bỏ hoàn toàn ms-thought-chunk (Thinking chunk).
+   * 3. Xóa bỏ toàn bộ rác giao diện Angular / Material (mat-expansion-panel-header, buttons, icons, actions-container).
+   * 4. Trích xuất text sạch nguyên bản từ code block (pre code) và các đoạn văn bản.
    */
   private async readLatestCleanResponse(page: Page): Promise<string> {
-    return await page.evaluate(
-      ({ textChunkSel, thoughtChunkSel, fallbackSel }) => {
-        const textElements = Array.from(document.querySelectorAll(textChunkSel));
-        if (textElements.length > 0) {
-          // Lọc bỏ toàn bộ chunk nằm bên trong ms-thought-chunk
-          const clean = textElements.filter((el) => !el.closest(thoughtChunkSel));
-          return clean.map((el) => el.textContent || "").join("\n").trim();
-        }
+    return await page.evaluate(() => {
+      // 1. Tìm tất cả các ms-chat-turn
+      const allTurns = Array.from(document.querySelectorAll("ms-chat-turn"));
+      // Lọc các turn mới không thuộc baseline cũ
+      const freshTurns = allTurns.filter((t) => !t.hasAttribute("data-codex-turn-baseline"));
+      const candidateTurns = freshTurns.length > 0 ? freshTurns : allTurns;
 
-        const fallbackElements = Array.from(document.querySelectorAll(fallbackSel));
-        if (fallbackElements.length > 0) {
-          return fallbackElements.map((el) => el.textContent || "").join("\n").trim();
-        }
-
-        return "";
-      },
-      {
-        textChunkSel: this.selectors.textChunk,
-        thoughtChunkSel: this.selectors.thoughtChunk,
-        fallbackSel: this.selectors.outputChunkFallback,
+      // Lọc turn của model (chứa .model-prompt-container hoặc không chứa user input/editor)
+      let modelTurns = candidateTurns.filter(
+        (t) => t.querySelector(".model-prompt-container") || !t.querySelector(".user-prompt-container, ms-prompt-editor, textarea")
+      );
+      if (modelTurns.length === 0) {
+        modelTurns = candidateTurns;
       }
-    );
+      if (modelTurns.length === 0) {
+        const standaloneContainer = document.querySelector(".model-prompt-container");
+        if (!standaloneContainer) return "";
+        modelTurns = [standaloneContainer as HTMLElement];
+      }
+
+      // Lấy turn model cuối cùng
+      const targetTurn = modelTurns[modelTurns.length - 1];
+      if (!targetTurn) return "";
+
+      // 2. Clone turn để bóc tách rác mà không làm ảnh hưởng DOM trang thật
+      const clone = targetTurn.cloneNode(true) as HTMLElement;
+
+      // 3. Xóa bỏ hoàn toàn các thành phần rác của Angular / Material / AI Studio:
+      // - ms-thought-chunk: Suy nghĩ nội tâm của model
+      // - mat-expansion-panel-header: Header của code block chứa các nút download, copy, icons
+      // - buttons & actions-container: Nút tải về, copy, toggle mở/đóng
+      // - icons: Material symbols icon rác
+      // - footer: Nút feedback, share
+      const junkSelectors = [
+        "ms-thought-chunk",
+        "mat-expansion-panel-header",
+        ".mat-expansion-panel-header",
+        ".actions-container",
+        ".projected-actions-wrapper",
+        ".header-content",
+        "button",
+        ".mat-expansion-indicator",
+        ".title-icon",
+        "mat-icon",
+        ".material-symbols-outlined",
+        "ms-chat-turn-footer",
+        ".turn-footer",
+        ".error-container",
+        "ms-alert",
+      ];
+
+      for (const sel of junkSelectors) {
+        const junkNodes = clone.querySelectorAll(sel);
+        junkNodes.forEach((node) => node.remove());
+      }
+
+      // 4. Lấy nội dung text sạch
+      return (clone.textContent || "").trim();
+    });
   }
 
   /**
@@ -270,6 +311,14 @@ export class GoogleAIStudioBrowserWorker {
     // 3. Nhập prompt an toàn
     await this.insertPromptSafely(page, prompt);
 
+    // Trước khi submit: Đánh dấu tất cả turn hiện có là baseline để không bao giờ đọc nhầm lượt cũ
+    await page.evaluate(() => {
+      const existingTurns = document.querySelectorAll("ms-chat-turn");
+      existingTurns.forEach((turn) => {
+        turn.setAttribute("data-codex-turn-baseline", "true");
+      });
+    });
+
     // 4. Bấm Run / Gửi prompt
     await this.submitPrompt(page, signal);
 
@@ -295,7 +344,7 @@ export class GoogleAIStudioBrowserWorker {
       // Kiểm tra xem có thông báo lỗi từ Google AI Studio trong DOM không
       const pageError = await page.evaluate(() => {
         const errorNodes = document.querySelectorAll(
-          'ms-chat-turn .error-container, .error-message, ms-alert, [role="alert"]'
+          'ms-chat-turn:not([data-codex-turn-baseline]) .error-container, ms-chat-turn:not([data-codex-turn-baseline]) .error-message, ms-alert, [role="alert"]'
         );
         for (const node of errorNodes) {
           const text = (node.textContent || '').trim();

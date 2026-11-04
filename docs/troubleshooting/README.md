@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **018** | Google AI Studio trả về khối code block dính tiền tố rác và lộ thẻ XML trực tiếp | `google-ai-studio`, `playwright`, `m365-copilot-protocol` | ⏳ Chờ User Test & Confirm | [018-google-ai-studio-raw-xml-codeblock-and-quarantine-leak.md](./018-google-ai-studio-raw-xml-codeblock-and-quarantine-leak.md) |
 | **017** | Triển khai adapter mới Google AI Studio kế thừa chuẩn M365 Copilot | `google-ai-studio`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [017-google-ai-studio-adapter-integration.md](./017-google-ai-studio-adapter-integration.md) |
 | **016** | Tự động lưu raw request vào thư mục `scratch` | `server`, `privacy`, `filesystem` | ⏳ Chờ User Test & Confirm | ./016-remove-raw-request-scratch-dump.md |
 | **015** | M365 đóng/mở tab liên tục gây bootstrap timeout `Browser idle document did not commit within 10000ms` | `launcher`, `m365-copilot`, `electron` | ✅ Đã Confirm | ./015-m365-tab-churn-bootstrap-timeout.md |

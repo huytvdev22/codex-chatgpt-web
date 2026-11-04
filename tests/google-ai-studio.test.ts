@@ -22,7 +22,12 @@ import {
   getFallbackNativeCatalog,
 } from "../src/model-catalog";
 import { defaultConfig } from "../src/config";
-import { createGoogleAIStudioAdapter, GoogleAIStudioAdapter } from "../src/adapters/google-ai-studio";
+import {
+  createGoogleAIStudioAdapter,
+  GoogleAIStudioAdapter,
+  sanitizeAIStudioResponse,
+} from "../src/adapters/google-ai-studio";
+import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation/strict-response-parser";
 
 describe("Google AI Studio Models & Routes", () => {
   it("nhận diện chính xác slug mặc định của Google AI Studio", () => {
@@ -123,5 +128,47 @@ describe("Model Catalog Integration", () => {
     expect(adapter).toBeInstanceOf(GoogleAIStudioAdapter);
     expect(adapter.name).toBe("google-ai-studio");
     expect(typeof adapter.runTurn).toBe("function");
+  });
+});
+
+describe("Google AI Studio Response Sanitizer & Strict Parser Integration", () => {
+  it("bóc sạch tiền tố rác của Angular/Material buttons và phân tích đúng final_answer", () => {
+    const rawDirtySample =
+      "code Codedownloadcontent_copyexpand_lessless<webResponse>\nChào bạn! Mình đã sẵn sàng hỗ trợ bạn.\n</webResponse>";
+
+    const sanitized = sanitizeAIStudioResponse(rawDirtySample);
+    expect(sanitized.startsWith("<webResponse>")).toBe(true);
+    expect(sanitized.endsWith("</webResponse>")).toBe(true);
+    expect(sanitized).not.toContain("downloadcontent_copy");
+
+    const parsed = parseStrictM365Response(sanitized);
+    expect(parsed.kind).toBe("final_answer");
+    if (parsed.kind === "final_answer") {
+      expect(parsed.content).toBe("Chào bạn! Mình đã sẵn sàng hỗ trợ bạn.");
+      expect(parsed.content).not.toContain("<webResponse>");
+      expect(parsed.content).not.toContain("</webResponse>");
+    }
+  });
+
+  it("bóc sạch tiền tố và hậu tố rác khi Gemini gọi công cụ tool_call", () => {
+    const rawToolSample =
+      "code Markdown download copy <webResponse>\n<tool_call>\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"ls\"}}\n</tool_call>\n</webResponse>\nfooter thumbs_up";
+
+    const sanitized = sanitizeAIStudioResponse(rawToolSample);
+    expect(sanitized.startsWith("<webResponse>")).toBe(true);
+    expect(sanitized.endsWith("</webResponse>")).toBe(true);
+
+    const parsed = parseStrictM365Response(sanitized);
+    expect(parsed.kind).toBe("tool_calls");
+    if (parsed.kind === "tool_calls") {
+      expect(parsed.calls.length).toBe(1);
+      expect(parsed.calls[0].name).toBe("exec_command");
+      expect(parsed.calls[0].arguments).toEqual({ cmd: "ls" });
+    }
+  });
+
+  it("giữ nguyên chuỗi hợp lệ không bị dính rác", () => {
+    const cleanSample = "<webResponse>\nToàn bộ nội dung sạch sẽ\n</webResponse>";
+    expect(sanitizeAIStudioResponse(cleanSample)).toBe(cleanSample);
   });
 });

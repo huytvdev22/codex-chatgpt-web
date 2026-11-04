@@ -257,7 +257,7 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
 
   BrowserHost.prototype.releaseInactivePrimaryViews.call(fixture, "chatgpt");
 
-  assert.deepEqual(destroyedProviders, ["m365", "gemini", "qwen"]);
+  assert.deepEqual(destroyedProviders, ["m365", "gemini", "qwen", "google-ai-studio"]);
   assert.equal(fixture.m365View, null);
   assert.notEqual(fixture.chatGptView, null);
   assert.deepEqual(removedTabs, []);
