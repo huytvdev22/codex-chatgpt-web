@@ -5,9 +5,9 @@
 > **Keywords:** `google-ai-studio`, `aistudio.google.com`, `gemini-flash-latest`, `thinking-level`, `smoke-test`
 
 ## ⚡ TL;DR (AI Đọc Nhanh 5 Giây)
-- **Triệu chứng:** Khi click nút "Sign in" hoặc chuyển provider sang `google-ai-studio`, app báo lỗi `Error invoking remote method 'launcher:set-provider': Error: Invalid provider`.
-- **Nguyên nhân:** Whitelist provider trong handler IPC `launcher:set-provider` tại `launcher/electron/main.cjs` chỉ kiểm tra `m365`, `chatgpt`, `gemini`, `qwen`, thiếu `google-ai-studio`.
-- **Cách sửa:** Thêm `&& provider !== "google-ai-studio"` vào handler `launcher:set-provider` trong `launcher/electron/main.cjs`.
+- **Triệu chứng:** Khi gửi prompt từ Codex chọn model "Google AI Studio", Launcher lại mở tab Gemini và báo "Reconnecting 3/5".
+- **Nguyên nhân:** Adapter `GoogleAIStudioAdapter.runTurn` khi gọi `notifyLauncherTurn` (ở cả phase "start" và phase "end") đang truyền nhầm `provider: "gemini" as any` thay vì `"google-ai-studio"`.
+- **Cách sửa:** Sửa giá trị `provider` thành `"google-ai-studio"` trong `src/adapters/google-ai-studio/index.ts`, đồng thời cập nhật type và interface trong `src/launcher-browser-host.ts`. Build lại runtime bundle.
 
 ## 🛠️ File Đã Triển Khai & Cập Nhật
 1. **Core Models & Selectors:**
