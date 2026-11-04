@@ -72,13 +72,25 @@ export class GoogleAIStudioBrowserWorker {
       }
     }
 
-    // 2. Hội thoại mới: Mở URL New Chat với model mặc định
-    if (!currentUrl.includes("aistudio.google.com") || (!options.promptId && currentPromptId)) {
-      console.log(`[ai-studio-worker] Điều hướng đến phiên tạo mới: ${GOOGLE_AI_STUDIO_NEW_CHAT_URL}`);
+    // 2. Hội thoại mới: Đảm bảo trang sạch sẽ 100%, không còn turn cũ hoặc thông báo lỗi từ phiên trước
+    const hasOldTurns = await page.evaluate(() => {
+      return document.querySelectorAll("ms-chat-turn").length > 0;
+    }).catch(() => false);
+
+    if (!currentUrl.includes("aistudio.google.com") || hasOldTurns || currentPromptId) {
+      console.log(`[ai-studio-worker] Điều hướng / Reset về New Chat sạch sẽ: ${GOOGLE_AI_STUDIO_NEW_CHAT_URL}`);
       await page.goto(GOOGLE_AI_STUDIO_NEW_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
       // Chờ trang khởi tạo và Angular render hoàn tất
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(2000);
     }
+
+    // Đóng bất kỳ banner lỗi hoặc dialog cũ còn sót lại trên giao diện
+    await page.evaluate(() => {
+      const closeButtons = document.querySelectorAll(
+        '.cdk-overlay-pane button[aria-label*="Close" i], ms-alert button, [role="alert"] button, button[aria-label="Dismiss"]'
+      );
+      closeButtons.forEach((btn) => (btn as HTMLElement).click());
+    }).catch(() => {});
   }
 
   /**

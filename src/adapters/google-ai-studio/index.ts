@@ -262,6 +262,27 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
 
         protocolResult = parseStrictM365Response(lastRaw);
 
+        // Tolerant Answers: Nếu phản hồi là văn bản tự nhiên hợp lệ (chỉ thiếu transport fence 4-backtick hoặc webResponse)
+        // và không chứa bất kỳ hành vi gọi công cụ nào, chấp nhận ngay là final_answer
+        if (protocolResult.kind === "protocol_error") {
+          const isWrapperError =
+            protocolResult.code === "MISSING_TRANSPORT_FENCE" ||
+            protocolResult.code === "MISSING_RESPONSE_ENVELOPE";
+          const hasActionMarkers =
+            lastRaw.includes("<tool_call>") ||
+            lastRaw.includes("<custom_tool_call") ||
+            lastRaw.includes("*** Begin Patch");
+
+          if (isWrapperError && !hasActionMarkers && lastRaw.trim().length > 0) {
+            console.log(`[ai-studio-adapter] Tolerant Answers: Chấp nhận phản hồi văn bản tự nhiên (${lastRaw.length} ký tự) làm final_answer.`);
+            protocolResult = {
+              kind: "final_answer",
+              content: lastRaw.replace(/<\/?webResponse>/gi, "").trim(),
+              rawResponse: lastRaw,
+            };
+          }
+        }
+
         if (protocolResult.kind === "tool_calls") {
           const clientTools = parsed.context.tools || [];
           for (const call of protocolResult.calls) {

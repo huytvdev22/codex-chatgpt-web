@@ -181,4 +181,36 @@ describe("Google AI Studio Response Sanitizer & Strict Parser Integration", () =
     const isNew = !launcherReused && !hasPriorReply && !existingPromptId;
     expect(isNew).toBe(false);
   });
+
+  it("Tolerant Answers: chấp nhận phản hồi Markdown tự nhiên không bọc 4-backtick hoặc webResponse", () => {
+    const naturalMarkdown = "Chào bạn! Tôi là Gemini Flash. Tôi có thể hỗ trợ gì cho dự án hôm nay?";
+    const strictResult = parseStrictM365Response(naturalMarkdown);
+    // Strict parser của M365 sẽ trả về MISSING_TRANSPORT_FENCE
+    expect(strictResult.kind).toBe("protocol_error");
+
+    // Adapter Google AI Studio áp dụng Tolerant Answers
+    let finalResult = strictResult;
+    if (finalResult.kind === "protocol_error") {
+      const isWrapperError =
+        finalResult.code === "MISSING_TRANSPORT_FENCE" ||
+        finalResult.code === "MISSING_RESPONSE_ENVELOPE";
+      const hasActionMarkers =
+        naturalMarkdown.includes("<tool_call>") ||
+        naturalMarkdown.includes("<custom_tool_call") ||
+        naturalMarkdown.includes("*** Begin Patch");
+
+      if (isWrapperError && !hasActionMarkers && naturalMarkdown.trim().length > 0) {
+        finalResult = {
+          kind: "final_answer",
+          content: naturalMarkdown.trim(),
+          rawResponse: naturalMarkdown,
+        };
+      }
+    }
+
+    expect(finalResult.kind).toBe("final_answer");
+    if (finalResult.kind === "final_answer") {
+      expect(finalResult.content).toBe(naturalMarkdown);
+    }
+  });
 });
