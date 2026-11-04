@@ -30,6 +30,12 @@ import {
   QWEN_WEB_MODEL_PREFIX,
   type QwenWebModelRoute,
 } from "./qwen-web-models";
+import {
+  availableGoogleAIStudioModelRoutes,
+  isGoogleAIStudioModelSlug,
+  GOOGLE_AI_STUDIO_DEFAULT_SLUG,
+  type GoogleAIStudioModelRoute,
+} from "./google-ai-studio-models";
 
 type JsonObject = Record<string, unknown>;
 
@@ -221,12 +227,12 @@ export function ensureManagedModelCatalogFile(
         const allM365SupportImages = hasM365 && !raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX) && (!Array.isArray(m.input_modalities) || !m.input_modalities.includes("image")));
         const visibleM365Slugs = Array.isArray(raw.models)
           ? raw.models
-              .filter((m: any) =>
-                typeof m?.slug === "string"
-                && isM365ModelSlug(m.slug)
-                && m.visibility !== "hide")
-              .map((m: any) => m.slug)
-              .sort()
+            .filter((m: any) =>
+              typeof m?.slug === "string"
+              && isM365ModelSlug(m.slug)
+              && m.visibility !== "hide")
+            .map((m: any) => m.slug)
+            .sort()
           : [];
         const expectedVisibleM365Slugs = [
           "m365-copilot",
@@ -260,8 +266,9 @@ export function ensureManagedModelCatalogFile(
           : [];
         const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
         const hasQwen = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === "qwen-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2 && m.default_reasoning_level === "low");
+        const hasGoogleAIStudio = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === GOOGLE_AI_STUDIO_DEFAULT_SLUG);
 
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasQwen) {
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasQwen || !hasGoogleAIStudio) {
           shouldWrite = true;
         }
       } catch {
@@ -564,6 +571,51 @@ export function buildQwenModel(
   return model;
 }
 
+export function buildGoogleAIStudioModel(
+  templateValue: unknown,
+  route: GoogleAIStudioModelRoute,
+  config: AppConfig,
+): JsonObject {
+  const template = object(templateValue, "native Codex model template");
+  const multiAgentVersion = routedSubagentVersion(template, config);
+  const efforts = route.supportedCodexEfforts || ["low", "medium", "high"];
+
+  const effortDescriptions: Record<string, string> = {
+    low: "Thấp",
+    medium: "Trung bình",
+    high: "Cao",
+  };
+
+  const model: JsonObject = {
+    ...structuredClone(template),
+    slug: route.slug,
+    display_name: route.displayName,
+    description: route.description,
+    input_modalities: ["text", "image"],
+    visibility: "list",
+    supported_in_api: true,
+    priority: 88,
+    ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
+    tool_mode: null,
+    upgrade: null,
+    default_reasoning_level: route.defaultEffort || "medium",
+    supported_reasoning_levels: efforts.map(effort =>
+      reasoningLevel(template, effort, effortDescriptions[effort] || effort)
+    ),
+    context_window: route.contextWindow,
+    max_context_window: route.contextWindow,
+    effective_context_window_percent: route.effectiveContextWindowPercent,
+    auto_compact_token_limit: route.autoCompactTokenLimit,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    default_service_tier: null,
+    support_verbosity: true,
+  };
+  delete model.comp_hash;
+  delete model.availability_nux;
+  return model;
+}
+
 export function augmentNativeModelCatalog(
   value: unknown,
   config: AppConfig,
@@ -583,7 +635,8 @@ export function augmentNativeModelCatalog(
         !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) &&
         !s?.startsWith(M365_COPILOT_MODEL_PREFIX) &&
         !isGeminiModelSlug(s ?? "") &&
-        !isQwenModelSlug(s ?? "")
+        !isQwenModelSlug(s ?? "") &&
+        !isGoogleAIStudioModelSlug(s ?? "")
       );
     }),
   );
@@ -624,6 +677,8 @@ export function augmentNativeModelCatalog(
     .map(route => buildGeminiModel(template, route, config));
   const qwenModels = availableQwenWebModelRoutes()
     .map(route => buildQwenModel(template, route, config));
+  const googleAIStudioModels = availableGoogleAIStudioModelRoutes()
+    .map(route => buildGoogleAIStudioModel(template, route, config));
 
   const seen = new Set<string>();
   const deduplicatedModels: JsonObject[] = [];
@@ -656,6 +711,13 @@ export function augmentNativeModelCatalog(
     }
   }
   for (const model of qwenModels) {
+    const s = slug(model);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      deduplicatedModels.push(model);
+    }
+  }
+  for (const model of googleAIStudioModels) {
     const s = slug(model);
     if (s && !seen.has(s)) {
       seen.add(s);

@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **017** | Triển khai adapter mới Google AI Studio kế thừa chuẩn M365 Copilot | `google-ai-studio`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [017-google-ai-studio-adapter-integration.md](./017-google-ai-studio-adapter-integration.md) |
 | **016** | Tự động lưu raw request vào thư mục `scratch` | `server`, `privacy`, `filesystem` | ⏳ Chờ User Test & Confirm | ./016-remove-raw-request-scratch-dump.md |
 | **015** | M365 đóng/mở tab liên tục gây bootstrap timeout `Browser idle document did not commit within 10000ms` | `launcher`, `m365-copilot`, `electron` | ✅ Đã Confirm | ./015-m365-tab-churn-bootstrap-timeout.md |
 | **014** | GitHub Actions release thất bại do lỗ hổng bảo mật mới trong vite và minimatch | `launcher`, `ci/cd` | ⏳ Chờ User Test & Confirm | [014-launcher-audit-vite-and-minimatch-vulnerability.md](./014-launcher-audit-vite-and-minimatch-vulnerability.md) |

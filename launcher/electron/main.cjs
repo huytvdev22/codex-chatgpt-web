@@ -561,6 +561,7 @@ function registerIpc({ logger, stateStore }) {
     smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()),
     chatgptSmokePassed: stateStore.read().chatgptSmokePassed === true,
     m365SmokePassed: stateStore.read().m365SmokePassed === true,
+    googleAIStudioSmokePassed: stateStore.read().googleAIStudioSmokePassed === true,
     operation: lastOperation,
     update: updateController?.getState() ?? { status: "disabled" },
   }));
@@ -648,9 +649,12 @@ function registerIpc({ logger, stateStore }) {
       throw new Error("Browser smoke testing is disabled in Zero Risk mode");
     }
     const result = await browserHost.smokeTest();
+    const isGoogleAIStudio = browserHost.provider === "google-ai-studio";
     const isGemini = browserHost.provider === "gemini";
     const isM365 = browserHost.provider === "m365";
-    if (isGemini) {
+    if (isGoogleAIStudio) {
+      stateStore.update({ googleAIStudioSmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
+    } else if (isGemini) {
       stateStore.update({ geminiSmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
     } else if (isM365) {
       stateStore.update({ m365SmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
@@ -796,7 +800,7 @@ function registerIpc({ logger, stateStore }) {
       const browser = await browserHost.probeAuthentication();
       if (!browser.authenticated) {
         if (browser.status === "error") throw new Error(browser.message);
-        const providerLabel = browserHost.provider === "gemini" ? "Google Gemini" : (browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT");
+        const providerLabel = browserHost.provider === "google-ai-studio" ? "Google AI Studio" : (browserHost.provider === "qwen" ? "Qwen" : (browserHost.provider === "gemini" ? "Google Gemini" : (browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT")));
         throw new Error(
           IS_DEV_PROFILE
             ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
@@ -807,7 +811,7 @@ function registerIpc({ logger, stateStore }) {
     if (setupState.browserInteractionMode === "automatic"
       && !setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
-      const testLabel = (browserHost.provider === "m365" || browserHost.provider === "gemini") ? "connection verification" : "browser smoke test";
+      const testLabel = (browserHost.provider === "m365" || browserHost.provider === "gemini" || browserHost.provider === "google-ai-studio") ? "connection verification" : "browser smoke test";
       throw new Error(
         IS_DEV_PROFILE
           ? "Run the browser smoke test before configuring the DEV harness"
@@ -995,7 +999,7 @@ function registerIpc({ logger, stateStore }) {
     return { state, credentialsRequired: false, targetMode: mode };
   });
   handle("launcher:set-provider", async (_event, provider) => {
-    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen") throw new Error("Invalid provider");
+    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen" && provider !== "google-ai-studio") throw new Error("Invalid provider");
     const nextState = stateStore.update({ selectedProvider: provider });
     if (browserHost) {
       await browserHost.switchProvider(provider);

@@ -122,6 +122,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
         "persist:codex-web-gpt-dev-chatgpt",
         "persist:codex-gemini-web-dev",
         "persist:codex-web-gpt-qwen-dev",
+        "persist:codex-google-ai-studio-dev",
       ]
     : [
         "persist:codex-web-gpt-chatgpt",
@@ -130,6 +131,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
         "persist:codex-web-gpt-m365",
         "persist:codex-gemini-web",
         "persist:codex-web-gpt-qwen",
+        "persist:codex-google-ai-studio",
       ];
   if (typeof descriptor.partition !== "string" || !allowedPartitions.includes(descriptor.partition)) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
