@@ -44,11 +44,9 @@ work went into it.
    broaden selectors speculatively.
 5. Keep Terms and trademark claims factual. Do not market the project as a quota or rate-limit
    bypass.
-6. Manually test the affected behavior. DEV mode is sufficient only when the change does not affect
-   local-tool execution, MCP execution, or the outer Codex agent loop. Execution changes require a
-   real installed Codex integration; DEV simulation is not end-to-end acceptance evidence.
+6. Manually test the affected behavior. Changes to local-tool execution, MCP execution, or the
+   outer Codex agent loop require a real installed Codex integration and end-to-end validation.
 
 Launcher changes must preserve native packaging on macOS, Windows, and Linux. Platform packages
-must be built on their matching operating system. See [DEV chat mode](docs/dev-chat.md) for isolated
-browser and MCP development, and [release validation](docs/release-validation.md) for the required
-account-bound release checks.
+must be built on their matching operating system. See docs/release-validation.md
+for the required account-bound release checks.

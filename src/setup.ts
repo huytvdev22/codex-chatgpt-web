@@ -24,10 +24,6 @@ import {
 } from "./codex-integration";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
-  DEV_CONFIG_PURPOSE,
-  DEV_LAUNCHER_PROFILE,
-} from "./dev-chat/constants";
-import {
   assertServiceIdle,
   getServiceStatus,
   installService,
@@ -70,11 +66,6 @@ interface PreparedSetup {
   existing: AppConfig | undefined;
   config: AppConfig;
   launcherOwned: boolean;
-}
-
-export interface DevProfileSetupResult {
-  mode: RuntimeMode;
-  configPath: string;
 }
 
 export function launcherCapabilityProbeRequired(
@@ -206,14 +197,13 @@ async function waitForProxy(config: AppConfig, timeoutMs = 10_000): Promise<void
 function baseConfig(
   existing: AppConfig | undefined,
   options: SetupOptions,
-  profile: "production" | "development" = "production",
 ): AppConfig {
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
   if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
   Object.assign(config, resolveInteractionConnectorIdentities(
     config.browserInteractionMode,
-    profile,
+    "production",
     existing,
     options.connectorNameSuffix,
   ));
@@ -283,7 +273,6 @@ async function inspectLauncherCapabilities(
   config: AppConfig,
   existing: AppConfig | undefined,
   refreshAccountCapabilities: boolean,
-  expectedProfile: "production" | "development",
 ): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }> {
   const detectCapabilities = launcherCapabilityProbeRequired(
     existing,
@@ -292,7 +281,7 @@ async function inspectLauncherCapabilities(
   );
   const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
     detectCapabilities,
-    expectedProfile,
+    expectedProfile: "production",
   });
   return {
     solAvailable: detectCapabilities ? inspected.solAvailable === true : existing!.solAvailable,
@@ -303,15 +292,11 @@ async function inspectLauncherCapabilities(
 
 function prepareSetup(options: SetupOptions): PreparedSetup {
   const existing = loadExistingConfig();
-  if (existing?.purpose === DEV_CONFIG_PURPOSE) {
-    throw new Error("A DEV harness configuration cannot be installed into Codex");
-  }
   const config = baseConfig(existing, {
     ...options,
     subagentProtocol: options.subagentProtocol
       ?? readCodexSubagentProtocol(existing?.subagentProtocol ?? "compatibility-v1"),
   });
-  delete config.purpose;
   const launcherOwned = config.browserHost === "launcher";
   if (!launcherOwned && process.platform !== "darwin") {
     throw new Error(
@@ -364,7 +349,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       config,
       existing,
       options.refreshAccountCapabilities === true,
-      "production",
     );
     solAvailable = capabilities.solAvailable;
     extraHighAvailable = capabilities.extraHighAvailable;
@@ -450,41 +434,5 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     loginCreated,
     serviceLoaded: launcherOwned ? false : getServiceStatus().loaded,
     codexRestartRequired: true,
-  };
-}
-
-/**
- * Configure the isolated launcher/browser inputs used by the repository DEV harness.
- * This deliberately has no Codex integration, Responses listener, or system service.
- */
-export async function setupDevProfile(options: SetupOptions): Promise<DevProfileSetupResult> {
-  const existing = loadExistingConfig();
-  if (existing && existing.purpose !== DEV_CONFIG_PURPOSE) {
-    throw new Error("DEV profile home contains a non-DEV configuration; refusing to repurpose it");
-  }
-  if (!options.browserHostDescriptorPath) {
-    throw new Error("DEV profile setup requires the isolated launcher browser descriptor");
-  }
-  const config = baseConfig(existing, options, DEV_LAUNCHER_PROFILE);
-  if (config.browserHost !== "launcher") {
-    throw new Error("DEV profile setup requires the desktop launcher browser host");
-  }
-  config.purpose = DEV_CONFIG_PURPOSE;
-  if (config.browserInteractionMode === "automatic") {
-    const capabilities = await inspectLauncherCapabilities(
-      config,
-      existing,
-      options.refreshAccountCapabilities === true,
-      DEV_LAUNCHER_PROFILE,
-    );
-    config.solAvailable = capabilities.solAvailable;
-    config.extraHighAvailable = capabilities.solAvailable && capabilities.extraHighAvailable;
-    config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
-  }
-
-  saveConfig(config);
-  return {
-    mode: config.mode,
-    configPath: getConfigPath(),
   };
 }

@@ -25,7 +25,6 @@ Tài liệu kiến trúc không được tự nhận là nguồn sự thật cao
 | [Kiến trúc tổng thể](architecture.md) | Boundary và runtime chính | Review required | Đối chiếu source trước khi cập nhật |
 | [Mô hình bảo mật](security-model.md) | Trust boundary và invariant | Review required | Đối chiếu tests bảo mật |
 | [Release validation](release-validation.md) | Quality gate phát hành | Review required | Đồng bộ với `package.json` và CI |
-| [DEV chat](dev-chat.md) | Môi trường development cô lập | Review required | Đồng bộ với `src/dev-chat/` |
 | [Hướng dẫn Web adapter](adding-new-web-adapter-guide.md) | Mở rộng provider | Current, verify | Kiểm tra bằng contract hiện tại |
 | [Build Windows](build-windows.md) | Build launcher trên Windows | Review required | Chạy lại trên môi trường sạch |
 | troubleshooting/README.md | Chỉ mục lỗi đã xử lý | Current | Cập nhật sau mỗi bug fix |
@@ -92,4 +91,3 @@ Source of truth: <source/test paths>
 3. Đồng bộ `security-model.md` với approval, launcher authorization và MCP lifecycle.
 4. Đồng bộ `release-validation.md` với quality gates thực tế.
 5. Archive các plan/report sau khi đã tách thông tin còn hiệu lực.
-

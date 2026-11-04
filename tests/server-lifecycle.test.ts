@@ -11,11 +11,6 @@ import { defaultBrokerEndpoint, defaultConfig, providerConfig } from "../src/con
 import { parseRequest } from "../src/responses/parser";
 import { compactRequest, HttpTurnCounter, responseRequest, routeChatGptWebRequest, startServer } from "../src/server";
 
-test("DEV harness configuration cannot bind a Responses listener", () => {
-  const config = { ...defaultConfig("browser-only"), purpose: "dev-harness" as const, port: 0 };
-  expect(() => startServer(config)).toThrow("cannot start a Responses listener");
-});
-
 async function waitForTurnCount(turns: HttpTurnCounter, expected: number): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (turns.count() !== expected && Date.now() < deadline) await Bun.sleep(5);

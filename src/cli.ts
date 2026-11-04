@@ -26,7 +26,6 @@ import { startServer } from "./server";
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { preflightSetup, setup, type SetupOptions } from "./setup";
 import { VERSION } from "./version";
-import { runDevCommand } from "./dev-chat/cli";
 
 const HELP = `codex-chatgpt-web ${VERSION}
 
@@ -39,11 +38,6 @@ Usage:
   codex-chatgpt-web route <status|connect|disconnect>
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web browser check
-  codex-chatgpt-web dev launcher
-  codex-chatgpt-web dev status [--json]
-  codex-chatgpt-web dev setup [options]
-  codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
-  codex-chatgpt-web dev list
   codex-chatgpt-web serve
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
   codex-chatgpt-web open connectors
@@ -386,9 +380,6 @@ async function subagentsCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
   assertNoArgs(args);
   const config = loadConfig();
-  if (config.purpose === "dev-harness") {
-    throw new Error("The isolated DEV harness has no Codex subagent protocol to configure");
-  }
   if (action === "status") {
     const integration = inspectCodexIntegration();
     stdout.write(`${JSON.stringify({
@@ -508,9 +499,6 @@ async function main(): Promise<void> {
     return;
   }
   const command = args.shift() ?? "help";
-  if (command === "dev" && home) {
-    throw new Error("--home does not apply to DEV mode; use CODEX_WEB_GPT_DEV_HOME for an explicit isolated DEV profile");
-  }
   if (command === "help") stdout.write(HELP);
   else if (command === "setup") await setupCommand(args);
   else if (command === "login") await loginCommand(args);
@@ -540,8 +528,7 @@ async function main(): Promise<void> {
     const server = startServer(config);
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});
-  } else if (command === "dev") await runDevCommand(args);
-  else if (command === "service") await serviceCommand(args);
+  } else if (command === "service") await serviceCommand(args);
   else if (command === "hook") {
     const action = args.shift();
     if (action !== "interrupt") throw new Error("Hook command must be: hook interrupt");

@@ -1227,9 +1227,6 @@ export function startServer(
   config: AppConfig,
   dependencies: { fetchUpstream?: NativeFetch; adapterFactory?: ChatGptWebAdapterFactory } = {},
 ): UniversalServer {
-  if (config.purpose === "dev-harness") {
-    throw new Error("DEV harness configuration cannot start a Responses listener");
-  }
   try {
     ensureManagedModelCatalogFile(config);
     syncCodexModelCatalogConfig();
