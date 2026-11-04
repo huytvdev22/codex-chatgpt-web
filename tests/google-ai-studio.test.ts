@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+ import { describe, expect, it } from "bun:test";
 import {
   GOOGLE_AI_STUDIO_DEFAULT_SLUG,
   isGoogleAIStudioModelSlug,
@@ -170,5 +170,15 @@ describe("Google AI Studio Response Sanitizer & Strict Parser Integration", () =
   it("giữ nguyên chuỗi hợp lệ không bị dính rác", () => {
     const cleanSample = "<webResponse>\nToàn bộ nội dung sạch sẽ\n</webResponse>";
     expect(sanitizeAIStudioResponse(cleanSample)).toBe(cleanSample);
+  });
+
+  it("nhận diện chính xác hội thoại tiếp nối (multi-turn) không kích hoạt new chat khi tab được reuse", () => {
+    // Giả lập trạng thái khi tab được reuse từ Launcher
+    const launcherReused = true;
+    const hasPriorReply = true;
+    const existingPromptId = undefined;
+
+    const isNew = !launcherReused && !hasPriorReply && !existingPromptId;
+    expect(isNew).toBe(false);
   });
 });

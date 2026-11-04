@@ -43,3 +43,4 @@
   - `sanitizeAIStudioResponse` bóc sạch tiền tố `code Codedownloadcontent_copyexpand_lessless` và parse thành công `final_answer`.
   - `sanitizeAIStudioResponse` bóc sạch rác khi có `tool_call`.
   - Giữ nguyên chuỗi hợp lệ.
+

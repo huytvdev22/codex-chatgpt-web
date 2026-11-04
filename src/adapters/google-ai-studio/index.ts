@@ -209,7 +209,7 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     const storedPromptId = conversationKey ? defaultGoogleAIStudioConversationStore.get(conversationKey) : undefined;
     const existingPromptId = leasePromptId || storedPromptId;
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
-    const isNewConversation = !hasPriorAssistantReply && !existingPromptId;
+    const isNewConversation = !launcherConnection?.reused && !hasPriorAssistantReply && !existingPromptId;
 
     // Biên dịch prompt chuẩn M365 (Tool Protocol)
     const normalized = CodexPayloadNormalizer.normalize(rawPayload);
@@ -340,15 +340,18 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     } finally {
       if (descriptorPath && surfaceId) {
         try {
+          const finalStatus = protocolResult && protocolResult.kind !== "protocol_error" ? "completed" : "failed";
           await notifyLauncherTurn(
             descriptorPath,
             {
               phase: "end",
               traceId: turnTraceId,
               helperPid: process.pid,
-              status: "completed",
-              conversationId: finalPromptId,
+              status: finalStatus,
+              conversationId: finalPromptId || conversationKey,
               provider: "google-ai-studio",
+              retain: true,
+              connectorBound: true,
             },
             undefined,
             incoming.abortSignal,

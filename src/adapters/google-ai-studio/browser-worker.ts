@@ -53,21 +53,31 @@ export class GoogleAIStudioBrowserWorker {
     const currentUrl = page.url();
     const currentPromptId = parseGoogleAIStudioPromptId(currentUrl);
 
-    if (!options.isNewConversation && options.promptId) {
-      if (currentPromptId === options.promptId) {
+    // 1. Nếu không phải là hội thoại mới (multi-turn tiếp nối)
+    if (!options.isNewConversation) {
+      if (options.promptId && currentPromptId === options.promptId) {
         console.log(`[ai-studio-worker] Đang ở sẵn trang hội thoại promptId: ${options.promptId}`);
         return;
       }
-      const targetUrl = buildGoogleAIStudioPromptUrl(options.promptId);
-      console.log(`[ai-studio-worker] Điều hướng đến hội thoại cũ: ${targetUrl}`);
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      return;
+      // Khi tab được reuse cho multi-turn, giữ nguyên tab hiện tại, KHÔNG chuyển hướng hoặc reload
+      if (currentUrl.includes("aistudio.google.com")) {
+        console.log(`[ai-studio-worker] Giữ nguyên tab hiện tại cho multi-turn (${currentUrl})`);
+        return;
+      }
+      if (options.promptId) {
+        const targetUrl = buildGoogleAIStudioPromptUrl(options.promptId);
+        console.log(`[ai-studio-worker] Điều hướng đến hội thoại cũ: ${targetUrl}`);
+        await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        return;
+      }
     }
 
-    // Hội thoại mới: Mở URL New Chat với model mặc định
+    // 2. Hội thoại mới: Mở URL New Chat với model mặc định
     if (!currentUrl.includes("aistudio.google.com") || (!options.promptId && currentPromptId)) {
       console.log(`[ai-studio-worker] Điều hướng đến phiên tạo mới: ${GOOGLE_AI_STUDIO_NEW_CHAT_URL}`);
       await page.goto(GOOGLE_AI_STUDIO_NEW_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      // Chờ trang khởi tạo và Angular render hoàn tất
+      await page.waitForTimeout(1500);
     }
   }
 
@@ -344,15 +354,18 @@ export class GoogleAIStudioBrowserWorker {
       // Kiểm tra xem có thông báo lỗi từ Google AI Studio trong DOM không
       const pageError = await page.evaluate(() => {
         const errorNodes = document.querySelectorAll(
-          'ms-chat-turn:not([data-codex-turn-baseline]) .error-container, ms-chat-turn:not([data-codex-turn-baseline]) .error-message, ms-alert, [role="alert"]'
+          'ms-chat-turn:not([data-codex-turn-baseline]) .error-container, ms-chat-turn:not([data-codex-turn-baseline]) .error-message, ms-chat-turn:not([data-codex-turn-baseline]) ms-alert, ms-chat-turn:not([data-codex-turn-baseline]) [role="alert"]'
         );
         for (const node of errorNodes) {
           const text = (node.textContent || '').trim();
           if (text) return text;
         }
-        const bodyText = document.body ? document.body.innerText || '' : '';
-        if (bodyText.includes('Permission denied')) {
-          return 'Permission denied. Please check your account permissions and project settings.';
+        const activeTurns = document.querySelectorAll('ms-chat-turn:not([data-codex-turn-baseline])');
+        for (const turn of activeTurns) {
+          const t = turn.textContent || '';
+          if (t.includes('Permission denied')) {
+            return 'Permission denied. Please check your account permissions and project settings.';
+          }
         }
         return null;
       });

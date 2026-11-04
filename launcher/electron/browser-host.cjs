@@ -3223,10 +3223,16 @@ class BrowserHost {
     let effectiveConnectorBound = connectorBound === true;
     if (tab.provider === "google-ai-studio" && status === "completed") {
       const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
-      const rawId = conversationId || parseGoogleAIStudioPromptId(liveUrl) || tab.conversationId;
-      const normalizedConversationId = normalizeGoogleAIStudioPromptId(rawId);
-      if (normalizedConversationId && tab.conversationKey && this.googleAIStudioSurfaceManager) {
-        tab.conversationId = this.googleAIStudioSurfaceManager.bind(tab.conversationKey, normalizedConversationId);
+      const parsedId = parseGoogleAIStudioPromptId(liveUrl);
+      const rawId = conversationId || parsedId || tab.conversationId || tab.conversationKey;
+      const normalizedConversationId = normalizeGoogleAIStudioPromptId(rawId) || tab.conversationKey;
+      if (tab.conversationKey && this.googleAIStudioSurfaceManager) {
+        tab.conversationId = normalizedConversationId;
+        if (parsedId) {
+          try {
+            this.googleAIStudioSurfaceManager.bind(tab.conversationKey, parsedId);
+          } catch {}
+        }
         effectiveConnectorBound = true;
       }
     } else if (tab.provider === "m365" && status === "completed") {

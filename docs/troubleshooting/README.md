@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **019** | Google AI Studio gửi tin nhắn thứ 2 mở new chat thay vì tiếp tục hội thoại và bị Permission Denied | `google-ai-studio`, `launcher`, `electron`, `playwright` | ⏳ Chờ User Test & Confirm | [019-google-ai-studio-multi-turn-creates-new-chat-and-permission-denied.md](./019-google-ai-studio-multi-turn-creates-new-chat-and-permission-denied.md) |
 | **018** | Google AI Studio trả về khối code block dính tiền tố rác và lộ thẻ XML trực tiếp | `google-ai-studio`, `playwright`, `m365-copilot-protocol` | ⏳ Chờ User Test & Confirm | [018-google-ai-studio-raw-xml-codeblock-and-quarantine-leak.md](./018-google-ai-studio-raw-xml-codeblock-and-quarantine-leak.md) |
 | **017** | Triển khai adapter mới Google AI Studio kế thừa chuẩn M365 Copilot | `google-ai-studio`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [017-google-ai-studio-adapter-integration.md](./017-google-ai-studio-adapter-integration.md) |
 | **016** | Tự động lưu raw request vào thư mục `scratch` | `server`, `privacy`, `filesystem` | ⏳ Chờ User Test & Confirm | ./016-remove-raw-request-scratch-dump.md |

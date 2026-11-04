@@ -123,7 +123,11 @@ class GoogleAIStudioSurfaceManager {
   }
 
   initialUrl(conversationKey) {
-    return this.get(conversationKey)?.url || GOOGLE_AI_STUDIO_HOME_URL;
+    const record = this.get(conversationKey);
+    if (record && record.conversationId && parseGoogleAIStudioPromptId(record.url)) {
+      return record.url;
+    }
+    return GOOGLE_AI_STUDIO_HOME_URL;
   }
 
   bind(conversationKey, conversationId) {
