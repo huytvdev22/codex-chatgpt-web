@@ -1,7 +1,7 @@
 import type { ProviderAdapter } from "../base";
 import { promptCompiler } from "../web/prompt/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
-import { executeM365Turn, m365ConversationKey } from "./browser";
+import { M365BrowserWorker, m365ConversationKey } from "./browser";
 import { type ToolValidationFailure } from "../web/tools";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
 
@@ -29,8 +29,10 @@ function resolveM365MaxFormatRetries(): number {
  */
 export class M365CopilotAdapter extends WebProviderAdapter {
   override readonly name = "m365-copilot";
+  private readonly worker: M365BrowserWorker;
 
   constructor() {
+    const worker = new M365BrowserWorker();
     super({
       id: "m365-copilot",
       assistantName: "M365",
@@ -46,7 +48,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         }).finalPrompt;
       },
       policies: {
-        manageLauncherLeaseInEngine: false,
+        launcherFailureMode: "fail-closed",
         enableEarlyExitOnFinalAnswer: true,
         enableToolLoopGuard: true,
         emitErrorEventOnFailure: true,
@@ -64,6 +66,23 @@ export class M365CopilotAdapter extends WebProviderAdapter {
             undefined;
           return m365ConversationKey(parsed, rawConversationKey);
         },
+        resolveState: ({
+          leaseConversationId,
+          launcherReused,
+          hasPriorAssistantReply,
+        }) => ({
+          existingConversationId: leaseConversationId,
+          isNewConversation:
+            !launcherReused &&
+            !hasPriorAssistantReply &&
+            !leaseConversationId,
+        }),
+        onConversationUpdated: ({ conversationId }) => conversationId,
+        resolveEndTurnBinding: ({ finalStatus, activeConversationId }) => ({
+          connectorBound:
+            finalStatus === "completed" && Boolean(activeConversationId),
+          conversationId: activeConversationId,
+        }),
       },
       attachments: {
         extractAttachments: ({ parsed, attempt }) => {
@@ -75,27 +94,40 @@ export class M365CopilotAdapter extends WebProviderAdapter {
       browser: {
         launcherProviderId: "m365",
         connectorIdentity: "m365-copilot",
+        resolveSurfaceId: (descriptor, leaseSurfaceId) =>
+          leaseSurfaceId || descriptor.m365SurfaceId || descriptor.surfaceId,
         executeTurn: async ({
+          page,
           prompt,
           attempt,
           parsed,
           incoming,
           conversationKey,
+          existingConversationId,
+          launcherReused,
           isNewConversation,
           attachments,
+          heartbeat,
         }) => {
-          const rawResponse = await executeM365Turn(prompt, {
+          if (!page) {
+            throw new Error(
+              "[m365-adapter] Không có trình duyệt khả dụng để thực thi lượt.",
+            );
+          }
+          return worker.executeTurn(prompt, {
+            page,
             // Quarantine: browser vẫn thu thập stream nhưng adapter không emit trước validation.
             onChunk: () => {},
             signal: incoming.abortSignal,
-            traceId: incoming.headers.get("x-codex-trace-id") || undefined,
             conversationKey,
+            existingConversationId,
+            launcherReused,
             isNewConversation: attempt === 0 ? isNewConversation : false,
+            heartbeat,
             modelSlug: parsed.modelId,
             reasoning: parsed.options.reasoning,
             images: attachments,
           });
-          return { rawResponse };
         },
       },
       response: {
@@ -122,6 +154,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         },
       },
     });
+    this.worker = worker;
   }
 }
 

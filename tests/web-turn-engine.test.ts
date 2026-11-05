@@ -431,7 +431,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     });
   });
 
-  test("10. Lifecycle: manageLauncherLeaseInEngine=false (M365) bỏ qua startTurn, endTurn và closeTurn ở tầng engine", async () => {
+  test("10. Lifecycle: manageLauncherLeaseInEngine=false hỗ trợ compatibility provider tự quản lý lease", async () => {
     let startCalled = false;
     let endCalled = false;
     let closeCalled = false;
@@ -458,7 +458,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       conversation: { resolveConversationKey: () => "key-lc-4" },
       browser: {
         launcherProviderId: "m365",
-        connectorIdentity: "m365-copilot",
+        connectorIdentity: "legacy-self-managed-provider",
         executeTurn: async ({ page }) => {
           expect(page).toBeNull();
           return {
@@ -479,6 +479,65 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(startCalled).toBe(false);
     expect(endCalled).toBe(false);
     expect(closeCalled).toBe(false);
+  });
+
+  test("10.1. Lifecycle: shared engine cấp heartbeat callback cho browser driver", async () => {
+    const heartbeatActivities: any[] = [];
+    const fakeConnection = { page: { kind: "m365-page" } } as any;
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/m365-descriptor.json",
+      startTurn: async () => ({
+        connection: fakeConnection,
+        surfaceId: "surface-m365",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+        reused: true,
+        connectorBound: true,
+      }),
+      heartbeatTurn: async ({ activity }) => {
+        heartbeatActivities.push(activity);
+      },
+      endTurn: async () => {},
+      closeTurn: async () => {},
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "m365-copilot",
+      assistantName: "M365",
+      logPrefix: "m365-adapter",
+      conversation: {
+        resolveConversationKey: () => "key-m365-heartbeat",
+      },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
+        executeTurn: async ({ page, heartbeat, launcherReused }) => {
+          expect(page).toBe(fakeConnection.page);
+          expect(launcherReused).toBe(true);
+          expect(heartbeat).toBeDefined();
+          await heartbeat?.();
+          return {
+            rawResponse:
+              "````markdown\n<webResponse>\nHeartbeat OK\n</webResponse>\n````",
+            conversationId: "11111111-1111-4111-8111-111111111111",
+          };
+        },
+      },
+    };
+
+    const engine = new WebTurnEngine(definition, undefined, ops);
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(heartbeatActivities).toHaveLength(1);
+    expect(heartbeatActivities[0]).toMatchObject({
+      phase: "heartbeat",
+      refreshViewport: false,
+    });
+    expect(heartbeatActivities[0]?.traceId).toEqual(expect.any(String));
+    expect(heartbeatActivities[0]?.helperPid).toBe(process.pid);
   });
 
   test("11. Lifecycle: closeLauncherConnectionOnEnd=false (Google AI Studio) gửi phase=end nhưng không đóng kết nối CDP", async () => {
@@ -544,6 +603,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
 
   test("12. Lifecycle: Gửi phase=end với status='completed', 'failed' và 'aborted' chính xác theo kết quả lượt", async () => {
     const recordedStatuses: string[] = [];
+    const recordedEndSignals: Array<AbortSignal | undefined> = [];
     let closedCount = 0;
 
     const createOps = (): Partial<WebRuntimeLifecycleOps> => ({
@@ -555,8 +615,9 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         reused: false,
         connectorBound: false,
       }),
-      endTurn: async ({ activity }) => {
+      endTurn: async ({ activity, signal }) => {
         recordedStatuses.push(activity.status);
+        recordedEndSignals.push(signal);
       },
       closeTurn: async () => {
         closedCount += 1;
@@ -634,6 +695,9 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     ).rejects.toThrow("Turn cancelled");
 
     expect(recordedStatuses).toEqual(["completed", "failed", "aborted"]);
+    expect(recordedEndSignals[0]).toBeUndefined();
+    expect(recordedEndSignals[1]).toBeUndefined();
+    expect(recordedEndSignals[2]).toBeUndefined();
     expect(closedCount).toBe(3);
   });
 

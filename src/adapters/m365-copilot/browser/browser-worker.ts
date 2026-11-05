@@ -1,8 +1,4 @@
-import { randomBytes } from "node:crypto";
-import { connectLauncherBrowserHost, notifyLauncherTurn } from "../../../launcher-browser-host";
-import { getConfigDir } from "../../../config";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+import type { Page } from "playwright-core";
 import {
   m365HtmlToMarkdown,
   M365MarkdownBuffer,
@@ -20,13 +16,15 @@ import {
 } from "./conversation-url";
 
 export interface M365BrowserRunOptions {
+  page: Page;
   onChunk: (text: string) => void;
   signal?: AbortSignal;
-  descriptorPath?: string;
-  traceId?: string;
   conversationKey?: string;
+  existingConversationId?: string;
+  launcherReused?: boolean;
   isNewConversation?: boolean;
   shouldStop?: () => boolean;
+  heartbeat?: () => Promise<void>;
   modelSlug?: string;
   reasoning?: string;
   images?: NormalizedImageAttachment[];
@@ -51,17 +49,10 @@ export const CHAT_SELECTORS = {
 };
 
 export type M365TurnOptions = M365BrowserRunOptions;
-export type M365TurnResult = { rawMarkdown: string; blocks: M365MarkdownBlock[] };
-
-/**
- * Xác định đường dẫn file descriptor của Launcher Browser Host từ tham số hoặc thư mục cấu hình.
- */
-function resolveDescriptorPath(customPath?: string): string {
-
-  if (customPath && existsSync(customPath)) return customPath;
-  const home = process.env.CODEX_CHATGPT_WEB_HOME || getConfigDir();
-  return join(home, "runtime", "launcher-browser.json");
-}
+export type M365TurnResult = {
+  rawResponse: string;
+  conversationId: string;
+};
 
 /**
  * Thử trích xuất toàn bộ mã nguồn/văn bản từ khối Scriptor Code Block thông qua nút Copy Code.
@@ -479,58 +470,30 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
 
 /**
  * Thực thi một lượt hội thoại với Microsoft 365 Copilot nhúng trong Launcher Desktop
- * Cơ chế: Kết nối Playwright CDP trực tiếp vào WebContentsView của Launcher (không mở tab ngoài, không AppleScript)
+ * thông qua Page do WebTurnEngine cấp, đồng nhất contract với các Web Adapter khác.
  */
-export async function executeM365Turn(
-  promptText: string,
-  options: M365BrowserRunOptions
-): Promise<string> {
+export class M365BrowserWorker {
+  public async executeTurn(
+    promptText: string,
+    options: M365BrowserRunOptions
+  ): Promise<M365TurnResult> {
+    if (!options.conversationKey) {
+      throw new Error("M365 multi-surface requires a stable conversation key");
+    }
+    const page = options.page;
+    let conversationId = options.existingConversationId;
 
-  const descriptorPath = resolveDescriptorPath(options.descriptorPath);
-  if (!existsSync(descriptorPath)) {
-    throw new Error(
-      `Không tìm thấy runtime descriptor của Launcher tại: ${descriptorPath}. Vui lòng đảm bảo ứng dụng Codex M365 Copilot Desktop đang mở!`
-    );
-  }
-
-  if (!options.conversationKey) {
-    throw new Error("M365 multi-surface requires a stable conversation key");
-  }
-  const turnTraceId = options.traceId || randomBytes(12).toString("base64url");
-  const lease = await notifyLauncherTurn(descriptorPath, {
-    phase: "start",
-    traceId: turnTraceId,
-    helperPid: process.pid,
-    conversationKey: options.conversationKey,
-    connectorIdentity: "m365-copilot",
-    provider: "m365",
-    requireRetainedConversation: false,
-  }, undefined, options.signal);
-  if (!lease.surfaceId) {
-    throw new Error("Launcher did not allocate an M365 conversation surface");
-  }
-
-  const connection = await connectLauncherBrowserHost(
-    descriptorPath,
-    20_000,
-    lease.surfaceId,
-    options.signal,
-  );
-  const { browser, page } = connection;
-  let finalStatus: "completed" | "failed" | "aborted" = "failed";
-  let conversationId: string | undefined;
-
-  try {
+    try {
     // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
     const currentConversationId = parseM365ConversationId(page.url());
-    if (lease.conversationId) {
-      if (currentConversationId !== lease.conversationId.toLowerCase()) {
+    if (options.existingConversationId) {
+      if (currentConversationId !== options.existingConversationId.toLowerCase()) {
         throw new Error(
-          `M365 retained conversation mismatch: expected ${lease.conversationId}, current URL is ${page.url()}`,
+          `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
         );
       }
       conversationId = currentConversationId;
-    } else if (lease.reused && currentConversationId) {
+    } else if (options.launcherReused && currentConversationId) {
       throw new Error("Launcher reused an unbound M365 surface that already contains a conversation");
     } else if (page.url() !== M365_CHAT_URL) {
       await page.goto(M365_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
@@ -1197,12 +1160,7 @@ export async function executeM365Turn(
       }
 
       if (attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat tới launcher
-        notifyLauncherTurn(descriptorPath, {
-          phase: "heartbeat",
-          traceId: turnTraceId,
-          helperPid: process.pid,
-          refreshViewport: false,
-        }, undefined, options.signal).catch(() => { });
+        options.heartbeat?.().catch(() => { });
       }
 
       // Định kỳ cuộn trang và các container Code Preview xuống để kích thích Monaco render các dòng tiếp theo
@@ -1421,56 +1379,19 @@ export async function executeM365Turn(
     if (!conversationId) {
       throw new Error(`M365 did not expose a persistent /chat/conversation/{id} URL after completing the turn`);
     }
-    finalStatus = "completed";
-    console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus} timedOut=${timedOut}`);
+    console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=completed timedOut=${timedOut}`);
 
-    return fullMarkdown;
-  } catch (err) {
-    if (options.signal?.aborted) {
-      finalStatus = "aborted";
-      console.log(`[m365-worker] [aborted] turn aborted by client`);
-    } else {
-      finalStatus = "failed";
-      console.error(`[m365-worker] [error]`, err);
-    }
-    throw err;
-  } finally {
-    let releaseError: unknown;
-    {
-      try {
-        await notifyLauncherTurn(descriptorPath, {
-          phase: "end",
-          traceId: turnTraceId,
-          helperPid: process.pid,
-          status: finalStatus,
-          retain: true,
-          connectorBound: finalStatus === "completed" && Boolean(conversationId),
-          ...(conversationId ? { conversationId } : {}),
-        });
-      } catch (error) {
-        releaseError = error;
+      return {
+        rawResponse: fullMarkdown,
+        conversationId,
+      };
+    } catch (err) {
+      if (options.signal?.aborted) {
+        console.log(`[m365-worker] [aborted] turn aborted by client`);
+      } else {
+        console.error(`[m365-worker] [error]`, err);
       }
-    }
-    console.log(`[m365-worker] [cleanup] closing browser connection (timeout 3000ms)...`);
-    await withTimeout(browser.close().catch(() => { }), 3000, undefined);
-    console.log(`[m365-worker] [cleanup] browser closed`);
-    if (releaseError) {
-      if (finalStatus === "completed") throw releaseError;
-      console.warn("[m365-worker] Failed to release launcher turn:", releaseError);
+      throw err;
     }
   }
-}
-
-/**
- * Bọc một Promise với giới hạn thời gian chờ (timeout), trả về giá trị fallback nếu quá thời gian.
- */
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-
-  let timer: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<T>((resolve) => {
-    timer = setTimeout(() => resolve(fallback), timeoutMs);
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
 }

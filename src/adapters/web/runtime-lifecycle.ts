@@ -3,6 +3,7 @@ import type { LauncherBrowserConnection } from "../../launcher-browser-host";
 import {
   closeLauncherBrowserTurn,
   endLauncherBrowserTurn,
+  heartbeatLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
   startLauncherBrowserTurn,
 } from "./launcher-runtime";
@@ -16,6 +17,7 @@ export interface WebRuntimeLifecycleOps {
   resolveDescriptorPath: typeof resolveLauncherDescriptorPath;
   startTurn: typeof startLauncherBrowserTurn;
   endTurn: typeof endLauncherBrowserTurn;
+  heartbeatTurn: typeof heartbeatLauncherBrowserTurn;
   closeTurn: typeof closeLauncherBrowserTurn;
 }
 
@@ -23,6 +25,7 @@ const defaultLifecycleOps: WebRuntimeLifecycleOps = {
   resolveDescriptorPath: resolveLauncherDescriptorPath,
   startTurn: startLauncherBrowserTurn,
   endTurn: endLauncherBrowserTurn,
+  heartbeatTurn: heartbeatLauncherBrowserTurn,
   closeTurn: closeLauncherBrowserTurn,
 };
 
@@ -34,6 +37,7 @@ export interface AcquiredWebTurnSurface {
   leaseConversationId?: string;
   launcherReused: boolean;
   leaseStarted: boolean;
+  heartbeat?: () => Promise<void>;
 }
 
 export async function acquireWebTurnSurface(options: {
@@ -142,6 +146,26 @@ export async function acquireWebTurnSurface(options: {
     leaseConversationId,
     launcherReused,
     leaseStarted,
+    heartbeat:
+      descriptorPath && leaseStarted
+        ? () =>
+            ops.heartbeatTurn({
+              descriptorPath,
+              activity: {
+                phase: "heartbeat",
+                traceId: turnTraceId,
+                helperPid: process.pid,
+                refreshViewport: false,
+              },
+              signal: abortSignal,
+              onError: heartbeatError => {
+                console.warn(
+                  `[${definition.logPrefix}] Không thể gửi heartbeat tới launcher:`,
+                  heartbeatError,
+                );
+              },
+            })
+        : undefined,
   };
 }
 
@@ -199,7 +223,11 @@ export async function releaseWebTurnSurface(options: {
           ? { conversationId: binding.conversationId }
           : {}),
       },
-      signal: abortSignal,
+      // Request cancellation must stop browser work, but must not cancel the
+      // terminal phase=end cleanup. Reusing an already-aborted signal here
+      // prevents Launcher from releasing the running surface, so the next
+      // turn cannot match a ready retained conversation and opens a new tab.
+      signal: abortSignal?.aborted ? undefined : abortSignal,
       onError: releaseErr => {
         console.warn(
           `[${definition.logPrefix}] Không thể gửi phase=end tới launcher:`,

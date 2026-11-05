@@ -80,9 +80,15 @@ export interface WebBrowserTurnExecutionInput {
   reasoningEffort?: string;
   conversationKey?: string;
   existingConversationId?: string;
+  launcherReused: boolean;
   isNewConversation: boolean;
   attachments: NormalizedImageAttachment[];
   turnTraceId: string;
+  /**
+   * Gia hạn quyền sử dụng Launcher surface cho các lượt browser kéo dài.
+   * Provider chỉ gọi callback này, không tự gửi lifecycle activity tới Launcher.
+   */
+  heartbeat?: () => Promise<void>;
 }
 
 export interface WebBrowserTurnExecutionOutput {

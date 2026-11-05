@@ -1,5 +1,5 @@
 export {
-  executeM365Turn,
+  M365BrowserWorker,
   type M365TurnOptions,
   type M365TurnResult,
 } from "./browser-worker";

@@ -43,6 +43,10 @@ type LauncherEndActivity = Extract<
   LauncherTurnActivity,
   { phase: "end" }
 >;
+type LauncherHeartbeatActivity = Extract<
+  LauncherTurnActivity,
+  { phase: "heartbeat" }
+>;
 
 export interface StartLauncherBrowserTurnOptions {
   descriptorPath: string;
@@ -119,6 +123,32 @@ export interface EndLauncherBrowserTurnOptions {
  */
 export async function endLauncherBrowserTurn(
   options: EndLauncherBrowserTurnOptions,
+): Promise<void> {
+  try {
+    await notifyLauncherTurn(
+      options.descriptorPath,
+      options.activity,
+      undefined,
+      options.signal,
+    );
+  } catch (error) {
+    options.onError?.(error);
+  }
+}
+
+export interface HeartbeatLauncherBrowserTurnOptions {
+  descriptorPath: string;
+  activity: LauncherHeartbeatActivity;
+  signal?: AbortSignal;
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * Gia hạn Launcher lease cho browser turn kéo dài mà không để provider worker
+ * phụ thuộc trực tiếp vào control channel của Launcher.
+ */
+export async function heartbeatLauncherBrowserTurn(
+  options: HeartbeatLauncherBrowserTurnOptions,
 ): Promise<void> {
   try {
     await notifyLauncherTurn(

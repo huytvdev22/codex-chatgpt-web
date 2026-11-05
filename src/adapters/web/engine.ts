@@ -167,9 +167,11 @@ export class WebTurnEngine {
             reasoningEffort,
             conversationKey,
             existingConversationId: activeConversationId,
+            launcherReused: acquired.launcherReused,
             isNewConversation: attempt === 0 ? isNewConversation : false,
             attachments,
             turnTraceId,
+            heartbeat: acquired.heartbeat,
           });
 
           if (this.definition.conversation.onConversationUpdated) {
