@@ -9,7 +9,7 @@ import { validateM365ToolCall } from "../../web/tools/tool-validator";
 import type { CodexTool } from "../../../types";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 /**
  * Giao diện thực thi Tool
@@ -119,8 +119,11 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
         case "grep_code": {
       const query = String(args.query || args.pattern || "");
       const targetPath = String(args.path || args.dir || ".");
+      if (!query.trim()) {
+        return "Lỗi: Từ khóa tìm kiếm không được để trống.";
+      }
       try {
-        const out = execSync(`grep -rnI "${query.replace(/"/g, '\\"')}" ${targetPath}`, {
+        const out = execFileSync("grep", ["-rnI", "--", query, targetPath], {
           cwd: this.workingDir,
           encoding: "utf8",
           maxBuffer: 2 * 1024 * 1024,
@@ -133,7 +136,7 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
 
         case "git_status": {
       try {
-        const out = execSync("git status --short --branch", {
+        const out = execFileSync("git", ["status", "--short", "--branch"], {
           cwd: this.workingDir,
           encoding: "utf8",
         });
@@ -145,8 +148,11 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
 
         case "git_diff": {
       try {
-        const fileArg = args.path || args.file ? ` "${args.path || args.file}"` : "";
-        const out = execSync(`git diff${fileArg}`, {
+        const rawPath = args.path || args.file;
+        const gitArgs = rawPath
+          ? ["diff", "--", String(rawPath)]
+          : ["diff"];
+        const out = execFileSync("git", gitArgs, {
           cwd: this.workingDir,
           encoding: "utf8",
         });
