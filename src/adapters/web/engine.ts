@@ -29,6 +29,7 @@ import type {
 import {
   acquireWebTurnSurface,
   releaseWebTurnSurface,
+  type WebRuntimeLifecycleOps,
 } from "./runtime-lifecycle";
 
 /**
@@ -39,6 +40,7 @@ export class WebTurnEngine {
   constructor(
     private readonly definition: WebProviderDefinition,
     private readonly localBrowser?: LocalBrowserRuntime,
+    private readonly lifecycleOps?: Partial<WebRuntimeLifecycleOps>,
   ) {}
 
   async runTurn(
@@ -100,6 +102,7 @@ export class WebTurnEngine {
       turnTraceId,
       conversationKey,
       abortSignal: incoming.abortSignal,
+      ops: this.lifecycleOps,
     });
 
     const stateResolution = this.definition.conversation.resolveState
@@ -163,8 +166,8 @@ export class WebTurnEngine {
             incoming,
             reasoningEffort,
             conversationKey,
-            existingConversationId,
-            isNewConversation,
+            existingConversationId: activeConversationId,
+            isNewConversation: attempt === 0 ? isNewConversation : false,
             attachments,
             turnTraceId,
           });
@@ -373,6 +376,7 @@ export class WebTurnEngine {
         activeConversationId,
         conversationKey,
         abortSignal: incoming.abortSignal,
+        ops: this.lifecycleOps,
       });
     }
   }

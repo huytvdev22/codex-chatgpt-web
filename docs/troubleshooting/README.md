@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **035** | Mở rộng bộ test `WebTurnEngine` (22 kịch bản Lifecycle/Error/Conversation/Retry) và cổng kiểm tra Facade | `core`, `web`, `all-providers` | ⏳ Chờ User Test & Confirm | [035-expand-web-turn-engine-lifecycle-and-architecture-tests.md](./035-expand-web-turn-engine-lifecycle-and-architecture-tests.md) |
 | **034** | Làm sạch ranh giới DOM và chuẩn hóa tên trung lập (`Web*`) tại `src/adapters/web/` | `core`, `web`, `all-providers` | ⏳ Chờ User Test & Confirm | [034-clean-shared-web-boundary-and-neutralize-naming.md](./034-clean-shared-web-boundary-and-neutralize-naming.md) |
 | **033** | Tinh gọn `src/adapters/m365-copilot/` về đúng 7 file đặc thù Provider (browser, capability-picker, conversation-url/key, attachments) | `m365-copilot`, `web` | ⏳ Chờ User Test & Confirm | [033-prune-m365-adapter-to-core-provider-files.md](./033-prune-m365-adapter-to-core-provider-files.md) |
 | **032** | Chuyển `FastPathStreamBuffer`, `M365MarkdownBuffer` và `harness` sang `src/adapters/web/` | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [032-extract-web-stream-buffers-and-harness.md](./032-extract-web-stream-buffers-and-harness.md) |

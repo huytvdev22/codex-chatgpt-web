@@ -12,6 +12,20 @@ import type {
   WebTurnFinalStatus,
 } from "./definition";
 
+export interface WebRuntimeLifecycleOps {
+  resolveDescriptorPath: typeof resolveLauncherDescriptorPath;
+  startTurn: typeof startLauncherBrowserTurn;
+  endTurn: typeof endLauncherBrowserTurn;
+  closeTurn: typeof closeLauncherBrowserTurn;
+}
+
+const defaultLifecycleOps: WebRuntimeLifecycleOps = {
+  resolveDescriptorPath: resolveLauncherDescriptorPath,
+  startTurn: startLauncherBrowserTurn,
+  endTurn: endLauncherBrowserTurn,
+  closeTurn: closeLauncherBrowserTurn,
+};
+
 export interface AcquiredWebTurnSurface {
   descriptorPath?: string;
   launcherConnection: LauncherBrowserConnection | null;
@@ -28,6 +42,7 @@ export async function acquireWebTurnSurface(options: {
   turnTraceId: string;
   conversationKey?: string;
   abortSignal?: AbortSignal;
+  ops?: Partial<WebRuntimeLifecycleOps>;
 }): Promise<AcquiredWebTurnSurface> {
   const {
     definition,
@@ -36,6 +51,10 @@ export async function acquireWebTurnSurface(options: {
     conversationKey,
     abortSignal,
   } = options;
+  const ops: WebRuntimeLifecycleOps = {
+    ...defaultLifecycleOps,
+    ...options.ops,
+  };
 
   const manageInEngine =
     definition.policies?.manageLauncherLeaseInEngine ?? true;
@@ -48,7 +67,7 @@ export async function acquireWebTurnSurface(options: {
     };
   }
 
-  const descriptorPath = resolveLauncherDescriptorPath(
+  const descriptorPath = ops.resolveDescriptorPath(
     definition.browser.descriptorPath,
     definition.browser.descriptorSubdirs,
   );
@@ -62,7 +81,7 @@ export async function acquireWebTurnSurface(options: {
 
   if (descriptorPath) {
     try {
-      const session = await startLauncherBrowserTurn({
+      const session = await ops.startTurn({
         descriptorPath,
         activity: {
           phase: "start",
@@ -134,6 +153,7 @@ export async function releaseWebTurnSurface(options: {
   activeConversationId?: string;
   conversationKey?: string;
   abortSignal?: AbortSignal;
+  ops?: Partial<WebRuntimeLifecycleOps>;
 }): Promise<void> {
   const {
     definition,
@@ -144,6 +164,10 @@ export async function releaseWebTurnSurface(options: {
     conversationKey,
     abortSignal,
   } = options;
+  const ops: WebRuntimeLifecycleOps = {
+    ...defaultLifecycleOps,
+    ...options.ops,
+  };
 
   const manageInEngine =
     definition.policies?.manageLauncherLeaseInEngine ?? true;
@@ -161,7 +185,7 @@ export async function releaseWebTurnSurface(options: {
           conversationId: activeConversationId,
         };
 
-    await endLauncherBrowserTurn({
+    await ops.endTurn({
       descriptorPath: acquired.descriptorPath,
       activity: {
         phase: "end",
@@ -186,6 +210,6 @@ export async function releaseWebTurnSurface(options: {
   }
 
   if (definition.policies?.closeLauncherConnectionOnEnd ?? true) {
-    await closeLauncherBrowserTurn(acquired.launcherConnection);
+    await ops.closeTurn(acquired.launcherConnection);
   }
 }

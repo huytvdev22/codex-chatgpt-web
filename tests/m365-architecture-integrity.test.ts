@@ -47,6 +47,37 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       for (const providerSegment of providerSegments) {
         expect(source.includes(providerSegment)).toBe(false);
       }
+      // Không được chứa selector DOM Scriptor đặc thù M365 trong tầng dùng chung
+      expect(source.includes("one-copilot-code-identity")).toBe(false);
+      expect(source.includes("scriptor-component-code-block")).toBe(false);
+    }
+  });
+
+  test("CI GATE: Toàn bộ 5 Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
+    const providerFacades = [
+      "src/adapters/m365-copilot/index.ts",
+      "src/adapters/chatgpt-web/index.ts",
+      "src/adapters/gemini-web/index.ts",
+      "src/adapters/google-ai-studio/index.ts",
+      "src/adapters/qwen-web/index.ts",
+    ];
+    const forbiddenDirectOrchestrationCalls = [
+      "startLauncherBrowserTurn(",
+      "endLauncherBrowserTurn(",
+      "closeLauncherBrowserTurn(",
+      "runWebProtocolRetry(",
+      "emitWebProtocolResponse(",
+      "validateWebProtocolResponse(",
+      "parseStrictM365Response(",
+      "parseStrictWebResponse(",
+    ];
+
+    for (const facadeRelPath of providerFacades) {
+      const source = await Bun.file(path.resolve(process.cwd(), facadeRelPath)).text();
+      expect(source.includes("extends WebProviderAdapter")).toBe(true);
+      for (const forbiddenCall of forbiddenDirectOrchestrationCalls) {
+        expect(source.includes(forbiddenCall)).toBe(false);
+      }
     }
   });
 
@@ -68,6 +99,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
 
     // Native-first Tool Bridge
     expect(rootModule.M365ToolBridge).toBeDefined();
+    expect(rootModule.WebToolBridge).toBeDefined();
     expect(rootModule.AtomicFileWriter).toBeDefined();
     expect("PosixCommandStrategy" in rootModule).toBe(false);
     expect("PowerShellCommandStrategy" in rootModule).toBe(false);
@@ -82,12 +114,16 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.stripShellPrefix).toBeDefined();
     expect(rootModule.normalizePatchEnvelope).toBeDefined();
 
-    // Shared Web Adapter facade
+    // Shared Web Adapter facade (both neutral Web* and M365* compatibility aliases)
     expect(sharedNormalization.CodexPayloadNormalizer).toBeDefined();
     expect(sharedNormalization.CodexRawPayload).toBeDefined();
     expect(sharedPrompt.M365PromptCompiler).toBeDefined();
     expect(sharedPrompt.promptCompiler).toBeDefined();
+    expect(sharedProtocol.parseStrictWebResponse).toBeDefined();
     expect(sharedProtocol.parseStrictM365Response).toBeDefined();
+    expect(sharedProtocol.webHtmlToMarkdown).toBeDefined();
+    expect(sharedProtocol.SemanticMarkdownBuffer).toBeDefined();
+    expect(sharedTools.WebToolBridge).toBeDefined();
     expect(sharedTools.M365ToolBridge).toBeDefined();
     expect(sharedTools.AtomicFileWriter).toBeDefined();
   });

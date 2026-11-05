@@ -3,7 +3,10 @@ import {
   WebProviderAdapter,
   WebTurnEngine,
   conversationGuard,
+  MAX_IDENTICAL_WRITE_TOOL_CALLS,
+  MAX_TOOL_ITERATIONS,
   type WebProviderDefinition,
+  type WebRuntimeLifecycleOps,
 } from "../src/adapters/web";
 import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
 import { ChatGptWebAdapter } from "../src/adapters/chatgpt-web";
@@ -16,7 +19,11 @@ function createParsedRequest(
   messages: Array<{ role: string; content: string }> = [
     { role: "user", content: "Xin chào" },
   ],
-  tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> = [],
+  tools: Array<{
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  }> = [],
 ): CodexParsedRequest {
   return {
     modelId: "test-web/default",
@@ -81,7 +88,8 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         launcherProviderId: "gemini",
         connectorIdentity: "test-web",
         executeTurn: async () => ({
-          rawResponse: "````markdown\n<webResponse>\nXin chào từ WebTurnEngine!\n</webResponse>\n````",
+          rawResponse:
+            "````markdown\n<webResponse>\nXin chào từ WebTurnEngine!\n</webResponse>\n````",
           conversationId: "conv-123",
         }),
       },
@@ -174,13 +182,25 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         launcherProviderId: "google-ai-studio",
         connectorIdentity: "google-ai-studio",
         executeTurn: async () => ({
-          rawResponse: "Phản hồi văn bản tự nhiên không bọc thẻ XML",
+          rawResponse:
+            "code Codedownload <webResponse>Câu trả lời sau khi lọc rác</webResponse> trailing_noise",
         }),
       },
       response: {
+        sanitizeRawResponse: raw => {
+          const start = raw.indexOf("<webResponse>");
+          const end = raw.lastIndexOf("</webResponse>");
+          return start >= 0 && end >= 0
+            ? raw.slice(start, end + "</webResponse>".length)
+            : raw;
+        },
         tolerantNaturalTextFallback: true,
         includeDetailedDoneEvent: true,
-        computeUsage: () => ({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+        computeUsage: () => ({
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        }),
       },
     };
 
@@ -194,7 +214,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(events).toEqual([
       {
         type: "text_delta",
-        text: "Phản hồi văn bản tự nhiên không bọc thẻ XML",
+        text: "Câu trả lời sau khi lọc rác",
       },
       {
         type: "done",
@@ -272,5 +292,881 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       expect(adapter).toBeInstanceOf(WebProviderAdapter);
       expect(typeof adapter.runTurn).toBe("function");
     }
+  });
+
+  // =========================================================================
+  // 4.1. Lifecycle Matrix
+  // =========================================================================
+
+  test("7. Lifecycle: launcherFailureMode='fail-closed' ném lỗi ngay khi có descriptorPath nhưng startTurn ném lỗi", async () => {
+    let localBrowserCalled = false;
+    const localBrowser = {
+      ensurePage: async () => {
+        localBrowserCalled = true;
+        return {} as any;
+      },
+    } as any;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/fake-descriptor.json",
+      startTurn: async () => {
+        throw new Error("CDP connection refused");
+      },
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "chatgpt-web",
+      assistantName: "ChatGPT",
+      logPrefix: "chatgpt-adapter",
+      policies: {
+        launcherFailureMode: "fail-closed",
+        emitErrorEventOnFailure: false,
+        rethrowError: true,
+      },
+      conversation: { resolveConversationKey: () => "key-lc-1" },
+      browser: {
+        launcherProviderId: "chatgpt",
+        connectorIdentity: "chatgpt-web",
+        executeTurn: async () => ({ rawResponse: "" }),
+      },
+    };
+
+    const engine = new WebTurnEngine(definition, localBrowser, ops);
+    await expect(
+      engine.runTurn(createParsedRequest(), { headers: new Headers() }, () => {}),
+    ).rejects.toThrow(
+      "[chatgpt-adapter] Không thể kết nối với Launcher browser tab: CDP connection refused",
+    );
+    expect(localBrowserCalled).toBe(false);
+  });
+
+  test("8. Lifecycle: launcherFailureMode='fail-closed' ném lỗi khi có descriptorPath nhưng startTurn trả về null (Launcher đã dừng)", async () => {
+    let localBrowserCalled = false;
+    const localBrowser = {
+      ensurePage: async () => {
+        localBrowserCalled = true;
+        return {} as any;
+      },
+    } as any;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/fake-descriptor.json",
+      startTurn: async () => null,
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "qwen-web",
+      assistantName: "Qwen",
+      logPrefix: "qwen-adapter",
+      policies: {
+        launcherFailureMode: "fail-closed",
+        emitErrorEventOnFailure: false,
+        rethrowError: true,
+      },
+      conversation: { resolveConversationKey: () => "key-lc-2" },
+      browser: {
+        launcherProviderId: "qwen",
+        connectorIdentity: "qwen-web",
+        executeTurn: async () => ({ rawResponse: "" }),
+      },
+    };
+
+    const engine = new WebTurnEngine(definition, localBrowser, ops);
+    await expect(
+      engine.runTurn(createParsedRequest(), { headers: new Headers() }, () => {}),
+    ).rejects.toThrow(
+      "[qwen-adapter] Không thể kết nối với Launcher browser tab.",
+    );
+    expect(localBrowserCalled).toBe(false);
+  });
+
+  test("9. Lifecycle: launcherFailureMode='fallback-local' (Gemini) tự động chuyển sang LocalBrowserRuntime khi Launcher lỗi", async () => {
+    const fakeLocalPage = { kind: "local-page" } as any;
+    let receivedPage: any = null;
+
+    const localBrowser = {
+      ensurePage: async () => fakeLocalPage,
+    } as any;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/fake-descriptor.json",
+      startTurn: async () => {
+        throw new Error("Launcher offline");
+      },
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "gemini-web",
+      assistantName: "Gemini",
+      logPrefix: "gemini-adapter",
+      policies: {
+        launcherFailureMode: "fallback-local",
+      },
+      conversation: { resolveConversationKey: () => "key-lc-3" },
+      browser: {
+        launcherProviderId: "gemini",
+        connectorIdentity: "gemini-web",
+        executeTurn: async ({ page }) => {
+          receivedPage = page;
+          return {
+            rawResponse:
+              "````markdown\n<webResponse>\nFallback local thành công\n</webResponse>\n````",
+          };
+        },
+      },
+    };
+
+    const events: AdapterEvent[] = [];
+    const engine = new WebTurnEngine(definition, localBrowser, ops);
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      ev => events.push(ev),
+    );
+
+    expect(receivedPage).toBe(fakeLocalPage);
+    expect(events[0]).toEqual({
+      type: "text_delta",
+      text: "Fallback local thành công",
+    });
+  });
+
+  test("10. Lifecycle: manageLauncherLeaseInEngine=false (M365) bỏ qua startTurn, endTurn và closeTurn ở tầng engine", async () => {
+    let startCalled = false;
+    let endCalled = false;
+    let closeCalled = false;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/fake-descriptor.json",
+      startTurn: async () => {
+        startCalled = true;
+        return null;
+      },
+      endTurn: async () => {
+        endCalled = true;
+      },
+      closeTurn: async () => {
+        closeCalled = true;
+      },
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "m365-copilot",
+      assistantName: "M365",
+      logPrefix: "m365-adapter",
+      policies: { manageLauncherLeaseInEngine: false },
+      conversation: { resolveConversationKey: () => "key-lc-4" },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
+        executeTurn: async ({ page }) => {
+          expect(page).toBeNull();
+          return {
+            rawResponse:
+              "````markdown\n<webResponse>\nWorker tự quản lý lease\n</webResponse>\n````",
+          };
+        },
+      },
+    };
+
+    const engine = new WebTurnEngine(definition, undefined, ops);
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(startCalled).toBe(false);
+    expect(endCalled).toBe(false);
+    expect(closeCalled).toBe(false);
+  });
+
+  test("11. Lifecycle: closeLauncherConnectionOnEnd=false (Google AI Studio) gửi phase=end nhưng không đóng kết nối CDP", async () => {
+    let endActivities: any[] = [];
+    let closeCalled = false;
+    const fakeConnection = { page: { kind: "studio-page" } } as any;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/studio-descriptor.json",
+      startTurn: async () => ({
+        connection: fakeConnection,
+        surfaceId: "surface-studio",
+        conversationId: "prompt-111",
+        reused: true,
+        connectorBound: true,
+      }),
+      endTurn: async ({ activity }) => {
+        endActivities.push(activity);
+      },
+      closeTurn: async () => {
+        closeCalled = true;
+      },
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "google-ai-studio",
+      assistantName: "Google AI Studio",
+      logPrefix: "ai-studio-adapter",
+      policies: {
+        closeLauncherConnectionOnEnd: false,
+      },
+      conversation: {
+        resolveConversationKey: () => "key-studio",
+        resolveEndTurnBinding: ({ activeConversationId, conversationKey }) => ({
+          connectorBound: true,
+          conversationId: activeConversationId || conversationKey,
+        }),
+      },
+      browser: {
+        launcherProviderId: "google-ai-studio",
+        connectorIdentity: "google-ai-studio",
+        executeTurn: async () => ({
+          rawResponse:
+            "````markdown\n<webResponse>\nStudio OK\n</webResponse>\n````",
+          conversationId: "prompt-222",
+        }),
+      },
+    };
+
+    const engine = new WebTurnEngine(definition, undefined, ops);
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(endActivities.length).toBe(1);
+    expect(endActivities[0]?.phase).toBe("end");
+    expect(endActivities[0]?.status).toBe("completed");
+    expect(endActivities[0]?.conversationId).toBe("prompt-222");
+    expect(closeCalled).toBe(false);
+  });
+
+  test("12. Lifecycle: Gửi phase=end với status='completed', 'failed' và 'aborted' chính xác theo kết quả lượt", async () => {
+    const recordedStatuses: string[] = [];
+    let closedCount = 0;
+
+    const createOps = (): Partial<WebRuntimeLifecycleOps> => ({
+      resolveDescriptorPath: () => "/tmp/test-descriptor.json",
+      startTurn: async () => ({
+        connection: { page: {} } as any,
+        surfaceId: "surface-1",
+        conversationId: "conv-init",
+        reused: false,
+        connectorBound: false,
+      }),
+      endTurn: async ({ activity }) => {
+        recordedStatuses.push(activity.status);
+      },
+      closeTurn: async () => {
+        closedCount += 1;
+      },
+    });
+
+    // 1. Completed
+    const engineOk = new WebTurnEngine(
+      {
+        id: "test-ok",
+        assistantName: "Test",
+        logPrefix: "test",
+        conversation: { resolveConversationKey: () => "k1" },
+        browser: {
+          launcherProviderId: "chatgpt",
+          connectorIdentity: "chatgpt-web",
+          executeTurn: async () => ({
+            rawResponse: "````markdown\n<webResponse>\nOK\n</webResponse>\n````",
+          }),
+        },
+      },
+      undefined,
+      createOps(),
+    );
+    await engineOk.runTurn(createParsedRequest(), { headers: new Headers() }, () => {});
+
+    // 2. Failed
+    const engineFail = new WebTurnEngine(
+      {
+        id: "test-fail",
+        assistantName: "Test",
+        logPrefix: "test",
+        policies: { rethrowError: false, emitErrorEventOnFailure: false },
+        conversation: { resolveConversationKey: () => "k2" },
+        browser: {
+          launcherProviderId: "chatgpt",
+          connectorIdentity: "chatgpt-web",
+          executeTurn: async () => {
+            throw new Error("Browser crash");
+          },
+        },
+      },
+      undefined,
+      createOps(),
+    );
+    await engineFail.runTurn(createParsedRequest(), { headers: new Headers() }, () => {});
+
+    // 3. Aborted during turn
+    const abortController = new AbortController();
+    const engineAbort = new WebTurnEngine(
+      {
+        id: "test-abort",
+        assistantName: "Test",
+        logPrefix: "test",
+        policies: { rethrowError: true, emitErrorEventOnFailure: false },
+        conversation: { resolveConversationKey: () => "k3" },
+        browser: {
+          launcherProviderId: "chatgpt",
+          connectorIdentity: "chatgpt-web",
+          executeTurn: async () => {
+            abortController.abort();
+            throw new Error("Turn cancelled");
+          },
+        },
+      },
+      undefined,
+      createOps(),
+    );
+    await expect(
+      engineAbort.runTurn(
+        createParsedRequest(),
+        { headers: new Headers(), abortSignal: abortController.signal },
+        () => {},
+      ),
+    ).rejects.toThrow("Turn cancelled");
+
+    expect(recordedStatuses).toEqual(["completed", "failed", "aborted"]);
+    expect(closedCount).toBe(3);
+  });
+
+  test("13. Lifecycle: releaseWebTurnSurface vẫn luôn chạy trong finally ngay cả khi hàm emit ném lỗi", async () => {
+    let endCalled = false;
+    let closeCalled = false;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/test-descriptor.json",
+      startTurn: async () => ({
+        connection: { page: {} } as any,
+        surfaceId: "surface-1",
+        conversationId: "conv-1",
+        reused: true,
+        connectorBound: true,
+      }),
+      endTurn: async () => {
+        endCalled = true;
+      },
+      closeTurn: async () => {
+        closeCalled = true;
+      },
+    };
+
+    const definition: WebProviderDefinition = {
+      id: "test-emit-throw",
+      assistantName: "Test",
+      logPrefix: "test",
+      policies: { emitErrorEventOnFailure: false, rethrowError: true },
+      conversation: { resolveConversationKey: () => "k-emit" },
+      browser: {
+        launcherProviderId: "chatgpt",
+        connectorIdentity: "chatgpt-web",
+        executeTurn: async () => ({
+          rawResponse: "````markdown\n<webResponse>\nHello\n</webResponse>\n````",
+        }),
+      },
+    };
+
+    const engine = new WebTurnEngine(definition, undefined, ops);
+    await expect(
+      engine.runTurn(createParsedRequest(), { headers: new Headers() }, () => {
+        throw new Error("SSE stream broken during emit");
+      }),
+    ).rejects.toThrow("SSE stream broken during emit");
+
+    expect(endCalled).toBe(true);
+    expect(closeCalled).toBe(true);
+  });
+
+  // =========================================================================
+  // 4.2. Error Policy Matrix
+  // =========================================================================
+
+  test("14. Error Policy: emitErrorEventOnFailure=true + rethrowError=true (ChatGPT/Gemini) vừa emit error vừa ném lỗi", async () => {
+    const events: AdapterEvent[] = [];
+    const engine = new WebTurnEngine({
+      id: "chatgpt-web",
+      assistantName: "ChatGPT",
+      logPrefix: "chatgpt-adapter",
+      policies: {
+        manageLauncherLeaseInEngine: false,
+        emitErrorEventOnFailure: true,
+        rethrowError: true,
+      },
+      conversation: { resolveConversationKey: () => "k-err-1" },
+      browser: {
+        launcherProviderId: "chatgpt",
+        connectorIdentity: "chatgpt-web",
+        executeTurn: async () => {
+          throw new Error("DOM selector timeout");
+        },
+      },
+    });
+
+    await expect(
+      engine.runTurn(
+        createParsedRequest(),
+        { headers: new Headers() },
+        ev => events.push(ev),
+      ),
+    ).rejects.toThrow("DOM selector timeout");
+
+    expect(events).toEqual([
+      { type: "error", message: "DOM selector timeout" },
+    ]);
+  });
+
+  test("15. Error Policy: emitErrorEventOnFailure=false + rethrowError=true (Qwen/AI Studio) chỉ ném lỗi mà không emit error trùng lặp", async () => {
+    const events: AdapterEvent[] = [];
+    const engine = new WebTurnEngine({
+      id: "qwen-web",
+      assistantName: "Qwen",
+      logPrefix: "qwen-adapter",
+      policies: {
+        manageLauncherLeaseInEngine: false,
+        emitErrorEventOnFailure: false,
+        rethrowError: true,
+      },
+      conversation: { resolveConversationKey: () => "k-err-2" },
+      browser: {
+        launcherProviderId: "qwen",
+        connectorIdentity: "qwen-web",
+        executeTurn: async () => {
+          throw new Error("Qwen rate limit");
+        },
+      },
+    });
+
+    await expect(
+      engine.runTurn(
+        createParsedRequest(),
+        { headers: new Headers() },
+        ev => events.push(ev),
+      ),
+    ).rejects.toThrow("Qwen rate limit");
+
+    expect(events).toEqual([]);
+  });
+
+  test("16. Error Policy: emitErrorEventOnFailure=true + rethrowError=false + errorMessagePrefix (M365) emit error có tiền tố và nuốt lỗi", async () => {
+    const events: AdapterEvent[] = [];
+    const engine = new WebTurnEngine({
+      id: "m365-copilot",
+      assistantName: "M365",
+      logPrefix: "m365-adapter",
+      policies: {
+        manageLauncherLeaseInEngine: false,
+        emitErrorEventOnFailure: true,
+        errorMessagePrefix: "[M365 Copilot]",
+        rethrowError: false,
+      },
+      conversation: { resolveConversationKey: () => "k-err-3" },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
+        executeTurn: async () => {
+          throw new Error("Không tìm thấy nút Send");
+        },
+      },
+    });
+
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      ev => events.push(ev),
+    );
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        message: "[M365 Copilot] Không tìm thấy nút Send",
+      },
+    ]);
+  });
+
+  test("17. Error Policy: Abort giữa chừng với rethrowError=false (M365) vẫn ném DOMException AbortError và không emit error thường", async () => {
+    const events: AdapterEvent[] = [];
+    const controller = new AbortController();
+
+    const engine = new WebTurnEngine({
+      id: "m365-copilot",
+      assistantName: "M365",
+      logPrefix: "m365-adapter",
+      policies: {
+        manageLauncherLeaseInEngine: false,
+        emitErrorEventOnFailure: true,
+        errorMessagePrefix: "[M365 Copilot]",
+        rethrowError: false,
+        abortedTurnMessage: "M365 Copilot turn aborted",
+      },
+      conversation: { resolveConversationKey: () => "k-err-4" },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
+        executeTurn: async () => {
+          controller.abort();
+          throw new Error("Worker cancelled");
+        },
+      },
+    });
+
+    await expect(
+      engine.runTurn(
+        createParsedRequest(),
+        { headers: new Headers(), abortSignal: controller.signal },
+        ev => events.push(ev),
+      ),
+    ).rejects.toThrow("M365 Copilot turn aborted");
+
+    expect(events).toEqual([]);
+  });
+
+  // =========================================================================
+  // 4.3. Conversation Policy Matrix
+  // =========================================================================
+
+  test("18. Conversation Policy: resolveState ưu tiên leaseConversationId và fallback sang store; onConversationUpdated lọc ID không hợp lệ", async () => {
+    let capturedInput: any = null;
+    let endBindingInput: any = null;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/conv-descriptor.json",
+      startTurn: async () => ({
+        connection: { page: {} } as any,
+        surfaceId: "s1",
+        conversationId: "valid-lease-id",
+        reused: true,
+        connectorBound: true,
+      }),
+      endTurn: async () => {},
+      closeTurn: async () => {},
+    };
+
+    const engine = new WebTurnEngine(
+      {
+        id: "chatgpt-web",
+        assistantName: "ChatGPT",
+        logPrefix: "chatgpt-adapter",
+        conversation: {
+          resolveConversationKey: () => "conv-key-18",
+          resolveState: ({ leaseConversationId }) => ({
+            existingConversationId: leaseConversationId || "stored-id",
+            isNewConversation: false,
+          }),
+          onConversationUpdated: ({ conversationId }) =>
+            conversationId?.startsWith("valid-") ? conversationId : undefined,
+          resolveEndTurnBinding: ctx => {
+            endBindingInput = ctx;
+            return {
+              connectorBound: Boolean(ctx.activeConversationId),
+              conversationId: ctx.activeConversationId,
+            };
+          },
+        },
+        browser: {
+          launcherProviderId: "chatgpt",
+          connectorIdentity: "chatgpt-web",
+          executeTurn: async input => {
+            capturedInput = input;
+            // Trả về conversationId không hợp lệ -> phải bị onConversationUpdated bỏ qua, giữ nguyên valid-lease-id
+            return {
+              rawResponse:
+                "````markdown\n<webResponse>\nDone\n</webResponse>\n````",
+              conversationId: "invalid-temp-id",
+            };
+          },
+        },
+      },
+      undefined,
+      ops,
+    );
+
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(capturedInput?.existingConversationId).toBe("valid-lease-id");
+    expect(capturedInput?.isNewConversation).toBe(false);
+    expect(endBindingInput?.activeConversationId).toBe("valid-lease-id");
+  });
+
+  test("19. Conversation Policy: Gemini hoàn thành không có conversationId vẫn gửi connectorBound=true và không đính kèm conversationId rỗng", async () => {
+    let capturedActivity: any = null;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/gemini-descriptor.json",
+      startTurn: async () => ({
+        connection: { page: {} } as any,
+        surfaceId: "s-gemini",
+        conversationId: undefined,
+        reused: false,
+        connectorBound: false,
+      }),
+      endTurn: async ({ activity }) => {
+        capturedActivity = activity;
+      },
+      closeTurn: async () => {},
+    };
+
+    const engine = new WebTurnEngine(
+      {
+        id: "gemini-web",
+        assistantName: "Gemini",
+        logPrefix: "gemini-adapter",
+        conversation: { resolveConversationKey: () => "gemini-key" },
+        browser: {
+          launcherProviderId: "gemini",
+          connectorIdentity: "gemini-web",
+          executeTurn: async () => ({
+            rawResponse:
+              "````markdown\n<webResponse>\nGemini reply\n</webResponse>\n````",
+          }),
+        },
+      },
+      undefined,
+      ops,
+    );
+
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(capturedActivity?.connectorBound).toBe(true);
+    expect("conversationId" in capturedActivity).toBe(false);
+  });
+
+  test("20. Conversation Policy: Google AI Studio fallback sang conversationKey khi chưa có promptId (activeConversationId)", async () => {
+    let capturedActivity: any = null;
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/studio-descriptor.json",
+      startTurn: async () => ({
+        connection: { page: {} } as any,
+        surfaceId: "s-studio",
+        conversationId: undefined,
+        reused: false,
+        connectorBound: false,
+      }),
+      endTurn: async ({ activity }) => {
+        capturedActivity = activity;
+      },
+      closeTurn: async () => {},
+    };
+
+    const engine = new WebTurnEngine(
+      {
+        id: "google-ai-studio",
+        assistantName: "Google AI Studio",
+        logPrefix: "ai-studio-adapter",
+        conversation: {
+          resolveConversationKey: () => "studio-fallback-key",
+          resolveEndTurnBinding: ({ activeConversationId, conversationKey }) => ({
+            connectorBound: true,
+            conversationId: activeConversationId || conversationKey,
+          }),
+        },
+        browser: {
+          launcherProviderId: "google-ai-studio",
+          connectorIdentity: "google-ai-studio",
+          executeTurn: async () => ({
+            rawResponse:
+              "````markdown\n<webResponse>\nStudio reply\n</webResponse>\n````",
+          }),
+        },
+      },
+      undefined,
+      ops,
+    );
+
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(capturedActivity?.connectorBound).toBe(true);
+    expect(capturedActivity?.conversationId).toBe("studio-fallback-key");
+  });
+
+  // =========================================================================
+  // 4.4. Retry, Attachments, Loop Guard & Usage Matrix
+  // =========================================================================
+
+  test("21. Retry & Attachments: chỉ gửi attachments ở attempt=0, chuyển isNewConversation=false và giữ conversationId mới tạo ở attempt retry", async () => {
+    const attemptInputs: Array<{
+      attempt: number;
+      isNewConversation: boolean;
+      existingConversationId?: string;
+      attachmentCount: number;
+    }> = [];
+    let usageContext: any = null;
+
+    const engine = new WebTurnEngine({
+      id: "m365-copilot",
+      assistantName: "M365",
+      logPrefix: "m365-adapter",
+      policies: {
+        manageLauncherLeaseInEngine: false,
+        maxFormatRetries: 2,
+      },
+      conversation: {
+        resolveConversationKey: () => "key-retry-attach",
+      },
+      attachments: {
+        extractAttachments: ({ attempt }) =>
+          attempt === 0
+            ? [{ mediaType: "image/png", dataUrl: "data:image/png;base64,AAA" } as any]
+            : [],
+      },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
+        executeTurn: async ({
+          attempt,
+          isNewConversation,
+          existingConversationId,
+          attachments,
+        }) => {
+          attemptInputs.push({
+            attempt,
+            isNewConversation,
+            existingConversationId,
+            attachmentCount: attachments.length,
+          });
+          if (attempt === 0) {
+            return {
+              rawResponse: "Phản hồi lỗi format ở attempt 0",
+              conversationId: "conv-created-on-attempt-0",
+            };
+          }
+          return {
+            rawResponse:
+              "````markdown\n<webResponse>\nThành công ở attempt 1\n</webResponse>\n````",
+            conversationId: "conv-created-on-attempt-0",
+          };
+        },
+      },
+      response: {
+        computeUsage: ctx => {
+          usageContext = ctx;
+          return { inputTokens: 10, outputTokens: 10, totalTokens: 20 };
+        },
+      },
+    });
+
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      () => {},
+    );
+
+    expect(attemptInputs).toEqual([
+      {
+        attempt: 0,
+        isNewConversation: true,
+        existingConversationId: undefined,
+        attachmentCount: 1,
+      },
+      {
+        attempt: 1,
+        isNewConversation: false,
+        existingConversationId: "conv-created-on-attempt-0",
+        attachmentCount: 0,
+      },
+    ]);
+    expect(usageContext?.totalPromptChars).toBeGreaterThan(
+      usageContext?.initialPrompt.length,
+    );
+  });
+
+  test("22. Loop Guard: tự động ngắt vòng lặp khi công cụ bị gọi lặp lại quá giới hạn hoặc vượt MAX_TOOL_ITERATIONS", async () => {
+    const loopKey = "key-loop-guard-test";
+    conversationGuard.delete(loopKey);
+
+    const createLoopEngine = () =>
+      new WebTurnEngine({
+        id: "m365-copilot",
+        assistantName: "M365",
+        logPrefix: "m365-adapter",
+        policies: {
+          manageLauncherLeaseInEngine: false,
+          enableToolLoopGuard: true,
+        },
+        conversation: {
+          resolveConversationKey: () => loopKey,
+        },
+        browser: {
+          launcherProviderId: "m365",
+          connectorIdentity: "m365-copilot",
+          executeTurn: async () => ({
+            rawResponse: [
+              "````markdown",
+              "<webResponse>",
+              "<tool_call>",
+              '{"name":"exec_command","arguments":{"cmd":"echo loop"}}',
+              "</tool_call>",
+              "</webResponse>",
+              "````",
+            ].join("\n"),
+          }),
+        },
+      });
+
+    const req = createParsedRequest(
+      [{ role: "user", content: "Chạy lệnh" }],
+      [{ name: "exec_command", description: "Run cmd", parameters: {} }],
+    );
+
+    // Chạy đủ MAX_IDENTICAL_WRITE_TOOL_CALLS - 1 lần hợp lệ, lần thứ MAX_IDENTICAL_WRITE_TOOL_CALLS sẽ bị ngắt
+    const engine = createLoopEngine();
+    for (let i = 1; i < MAX_IDENTICAL_WRITE_TOOL_CALLS; i++) {
+      await engine.runTurn(req, { headers: new Headers() }, () => {});
+    }
+
+    const limitTurnEvents: AdapterEvent[] = [];
+    await engine.runTurn(req, { headers: new Headers() }, ev =>
+      limitTurnEvents.push(ev),
+    );
+
+    expect(limitTurnEvents[0]?.type).toBe("text_delta");
+    expect((limitTurnEvents[0] as any)?.text).toContain(
+      "Phát hiện vòng lặp vô hạn",
+    );
+    expect(limitTurnEvents[1]).toEqual({
+      type: "done",
+      stopReason: "stop",
+      endTurn: true,
+      usage: undefined,
+    });
+    expect(conversationGuard.has(loopKey)).toBe(false);
+
+    // Kiểm tra ngưỡng MAX_TOOL_ITERATIONS
+    conversationGuard.set(loopKey, {
+      toolIterations: MAX_TOOL_ITERATIONS,
+      identicalToolCount: 0,
+      lastToolFingerprint: "other_tool",
+      updatedAt: Date.now(),
+    });
+
+    const maxIterEvents: AdapterEvent[] = [];
+    await engine.runTurn(req, { headers: new Headers() }, ev =>
+      maxIterEvents.push(ev),
+    );
+
+    expect(maxIterEvents[0]?.type).toBe("text_delta");
+    expect((maxIterEvents[0] as any)?.text).toContain(
+      "Max Tool Iterations Exceeded",
+    );
+    expect(conversationGuard.has(loopKey)).toBe(false);
   });
 });
