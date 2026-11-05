@@ -5,6 +5,11 @@ import {
   conversationGuard,
   type WebProviderDefinition,
 } from "../src/adapters/web";
+import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
+import { ChatGptWebAdapter } from "../src/adapters/chatgpt-web";
+import { GeminiWebAdapter } from "../src/adapters/gemini-web";
+import { GoogleAIStudioAdapter } from "../src/adapters/google-ai-studio";
+import { QwenWebAdapter } from "../src/adapters/qwen-web";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 function createParsedRequest(
@@ -252,5 +257,20 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       },
     ]);
+  });
+
+  test("6. Toàn bộ 5 Web Provider Adapters đều kế thừa WebProviderAdapter dùng chung", () => {
+    const adapters = [
+      new M365CopilotAdapter(),
+      new ChatGptWebAdapter(),
+      new GeminiWebAdapter(),
+      new GoogleAIStudioAdapter(),
+      new QwenWebAdapter(),
+    ];
+
+    for (const adapter of adapters) {
+      expect(adapter).toBeInstanceOf(WebProviderAdapter);
+      expect(typeof adapter.runTurn).toBe("function");
+    }
   });
 });

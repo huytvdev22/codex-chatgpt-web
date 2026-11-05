@@ -136,7 +136,11 @@ export class WebTurnEngine {
     let lastRaw = "";
 
     try {
-      const maxRetries = this.definition.policies?.maxFormatRetries ?? 2;
+      const configuredMaxRetries = this.definition.policies?.maxFormatRetries;
+      const maxRetries =
+        typeof configuredMaxRetries === "function"
+          ? configuredMaxRetries()
+          : (configuredMaxRetries ?? 2);
       const protocolResult = await runWebProtocolRetry({
         initialPrompt,
         maxRetries,
@@ -326,6 +330,8 @@ export class WebTurnEngine {
         usage,
         includeDetailedDoneEvent:
           this.definition.response?.includeDetailedDoneEvent,
+        toolCallStopReason: this.definition.response?.toolCallStopReason,
+        toolCallEndTurn: this.definition.response?.toolCallEndTurn,
       });
 
       finalStatus = "completed";
@@ -340,7 +346,8 @@ export class WebTurnEngine {
         !(this.definition.policies?.rethrowError ?? true)
       ) {
         throw new DOMException(
-          `${this.definition.assistantName} turn aborted`,
+          this.definition.policies?.abortedTurnMessage ||
+            `${this.definition.assistantName} turn aborted`,
           "AbortError",
         );
       }

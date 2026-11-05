@@ -112,6 +112,8 @@ export interface WebResponseDriver {
   tolerantNaturalTextFallback?: boolean;
   createCallId?: () => string;
   includeDetailedDoneEvent?: boolean;
+  toolCallStopReason?: string;
+  toolCallEndTurn?: boolean;
   computeUsage?(context: {
     initialPrompt: string;
     totalPromptChars: number;
@@ -156,7 +158,12 @@ export interface WebProviderPolicies {
   /**
    * Số lần thử lại tối đa khi sai định dạng giao thức `<webResponse>` (mặc định 2).
    */
-  maxFormatRetries?: number;
+  maxFormatRetries?: number | (() => number);
+
+  /**
+   * Thông báo lỗi tùy chỉnh khi lượt bị hủy bởi abortSignal trong quá trình chạy.
+   */
+  abortedTurnMessage?: string;
 
   /**
    * Kiểm tra tin nhắn cuối cùng trong context đã là câu trả lời hoàn tất của assistant để ngắt sớm (M365).

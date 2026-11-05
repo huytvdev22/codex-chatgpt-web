@@ -18,6 +18,8 @@ export interface EmitWebProtocolResponseOptions {
   createCallId: () => string;
   usage?: CodexUsage;
   includeDetailedDoneEvent?: boolean;
+  toolCallStopReason?: string;
+  toolCallEndTurn?: boolean;
 }
 
 /**
@@ -36,6 +38,8 @@ export function emitWebProtocolResponse(
     createCallId,
     usage,
     includeDetailedDoneEvent = false,
+    toolCallStopReason = "tool_calls",
+    toolCallEndTurn,
   } = options;
 
   if (result.kind === "final_answer") {
@@ -81,7 +85,8 @@ export function emitWebProtocolResponse(
     type: "done",
     ...(includeDetailedDoneEvent
       ? {
-          stopReason: "tool_calls",
+          stopReason: toolCallStopReason,
+          ...(toolCallEndTurn !== undefined ? { endTurn: toolCallEndTurn } : {}),
           usage,
         }
       : {}),
