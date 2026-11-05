@@ -87,6 +87,20 @@ export class LocalToolExecutor implements IToolExecutor {
   ) {
   }
 
+  private resolveWorkspacePath(rawPath: unknown, fallback = ""): string {
+    const workspaceRoot = path.resolve(this.workingDir);
+    const candidate = path.resolve(workspaceRoot, String(rawPath ?? fallback));
+    const relativePath = path.relative(workspaceRoot, candidate);
+    if (
+      relativePath === ".."
+      || relativePath.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relativePath)
+    ) {
+      throw new Error(`Đường dẫn nằm ngoài thư mục làm việc: ${String(rawPath ?? fallback)}`);
+    }
+    return candidate;
+  }
+
     /**
    * Thực thi công cụ được yêu cầu bởi agent trên môi trường máy cục bộ và trả về kết quả chuẩn hóa.
    */
@@ -95,22 +109,32 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
       try {
         switch(name) {
         case "read_file": {
-      const filePath = path.resolve(this.workingDir, String(args.path || args.file || ""));
+      const filePath = this.resolveWorkspacePath(args.path || args.file);
       if (!fs.existsSync(filePath)) {
         return `Lỗi: File không tồn tại tại đường dẫn: ${filePath}`;
       }
+      if (!fs.statSync(filePath).isFile()) {
+        return `Lỗi: Đường dẫn không phải là file: ${filePath}`;
+      }
       const content = fs.readFileSync(filePath, "utf8");
       const lines = content.split("\n");
-      const startLine = args.start_line ? Math.max(1, parseInt(String(args.start_line), 10)) : 1;
-      const endLine = args.end_line ? Math.min(lines.length, parseInt(String(args.end_line), 10)) : lines.length;
+      const parsedStartLine = Number.parseInt(String(args.start_line ?? "1"), 10);
+      const parsedEndLine = Number.parseInt(String(args.end_line ?? lines.length), 10);
+      const startLine = Number.isFinite(parsedStartLine) ? Math.max(1, parsedStartLine) : 1;
+      const endLine = Number.isFinite(parsedEndLine)
+        ? Math.max(startLine, Math.min(lines.length, parsedEndLine))
+        : lines.length;
       const sliced = lines.slice(startLine - 1, endLine).map((l, i) => `${startLine + i}: ${l}`).join("\n");
       return `[File: ${args.path || args.file} (${startLine}-${endLine}/${lines.length} lines)]\n${sliced}`;
     }
 
         case "list_dir": {
-      const dirPath = path.resolve(this.workingDir, String(args.path || args.dir || "."));
+      const dirPath = this.resolveWorkspacePath(args.path || args.dir, ".");
       if (!fs.existsSync(dirPath)) {
         return `Lỗi: Thư mục không tồn tại: ${dirPath}`;
+      }
+      if (!fs.statSync(dirPath).isDirectory()) {
+        return `Lỗi: Đường dẫn không phải là thư mục: ${dirPath}`;
       }
       const entries = fs.readdirSync(dirPath, { withFileTypes: true });
       const items = entries.map(e => `${e.isDirectory() ? "[DIR] " : "      "}${e.name}`);
@@ -119,7 +143,7 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
 
         case "grep_code": {
       const query = String(args.query || args.pattern || "");
-      const targetPath = String(args.path || args.dir || ".");
+      const targetPath = this.resolveWorkspacePath(args.path || args.dir, ".");
       if (!query.trim()) {
         return "Lỗi: Từ khóa tìm kiếm không được để trống.";
       }
@@ -151,7 +175,10 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
       try {
         const rawPath = args.path || args.file;
         const gitArgs = rawPath
-          ? ["diff", "--", String(rawPath)]
+          ? ["diff", "--", path.relative(
+              path.resolve(this.workingDir),
+              this.resolveWorkspacePath(rawPath),
+            )]
           : ["diff"];
         const out = execFileSync("git", gitArgs, {
           cwd: this.workingDir,
@@ -168,7 +195,7 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
       if (!rawPath.trim()) {
         return `Lỗi: Đường dẫn file không hợp lệ (path bị trống).`;
       }
-      const filePath = path.resolve(this.workingDir, rawPath);
+      const filePath = this.resolveWorkspacePath(rawPath);
       const content = String(args.content ?? "");
       const result = this.fileWriter.writeFile(filePath, content);
       return `Ghi file thành công: ${filePath} (${result.bytesWritten} bytes, sha256: ${result.sha256})`;
