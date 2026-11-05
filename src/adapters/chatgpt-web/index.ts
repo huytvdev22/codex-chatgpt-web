@@ -4,7 +4,7 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptBrowserWorker, isValidChatGptConversationId } from "./chatgpt-browser-worker";
 import { CHATGPT_SELECTORS } from "./selectors";
 import { defaultChatGptConversationStore, chatGptConversationKey } from "./conversation-store";
-import { extractCodexTurnIdentityFromBody } from "./environment";
+import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
 import {
   M365PromptCompiler,
   buildM365FormatRetryPrompt,

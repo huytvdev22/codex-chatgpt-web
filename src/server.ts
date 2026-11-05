@@ -1,6 +1,6 @@
 import { createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { httpStatusFromTerminalError } from "./lib/errors";
-import { extractCodexTurnIdentityFromBody } from "./adapters/chatgpt-web/environment";
+import { extractCodexTurnIdentityFromBody } from "./adapters/web/turn-identity";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";

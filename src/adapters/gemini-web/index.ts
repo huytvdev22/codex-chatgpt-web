@@ -35,7 +35,7 @@ import {
   readLauncherBrowserHostDescriptor,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { extractCodexTurnIdentityFromBody } from "../chatgpt-web/environment";
+import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
 import { getConfigDir } from "../../config";
 import { processRunning } from "../../process";
 

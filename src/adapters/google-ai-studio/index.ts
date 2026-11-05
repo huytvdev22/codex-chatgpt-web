@@ -7,7 +7,7 @@ import {
   defaultGoogleAIStudioConversationStore,
   googleAIStudioConversationKey,
 } from "./conversation-store";
-import { extractCodexTurnIdentityFromBody } from "../chatgpt-web/environment";
+import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
 import {
   promptCompiler,
   buildM365FormatRetryPrompt,

@@ -4,7 +4,7 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { QwenBrowserWorker } from "./qwen-browser-worker";
 import { isValidQwenConversationId, QWEN_SELECTORS } from "./selectors";
 import { defaultQwenConversationStore, qwenConversationKey } from "./conversation-store";
-import { extractCodexTurnIdentityFromBody } from "../chatgpt-web/environment";
+import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
 import {
   M365PromptCompiler,
   buildM365FormatRetryPrompt,
