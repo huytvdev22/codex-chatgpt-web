@@ -89,6 +89,24 @@ Xem chi tiết tại:
 - docs/architecture.md
 - docs/security-model.md
 
+### Sơ đồ luồng request và tool call
+
+Sơ đồ dưới đây minh họa luồng end-to-end từ Codex tới Local Responses API Server, Web Provider,
+Codex Tool Runtime và chiều trả kết quả về Codex:
+
+<p align="center">
+  <a href="docs/assets/system-request-tool-flow.png">
+    <img
+      src="docs/assets/system-request-tool-flow.png"
+      width="960"
+      alt="Sơ đồ tuần tự end-to-end từ Codex qua Local Responses API Server, Web Provider và Codex Tool Runtime"
+    >
+  </a>
+</p>
+
+PlantUML source và phần giải thích chi tiết cho từng bước nằm trong
+docs/system-architecture.md.
+
 ## Provider được hỗ trợ
 
 Provider và model route được khai báo tập trung trong `src/models/model-registry.ts`.

@@ -841,6 +841,18 @@ end
 @enduml
 ```
 
+Ảnh render từ sơ đồ PlantUML:
+
+<p align="center">
+  <a href="assets/system-request-tool-flow.png">
+    <img
+      src="assets/system-request-tool-flow.png"
+      width="960"
+      alt="Sơ đồ tuần tự end-to-end từ Codex qua Local Responses API Server, Web Provider và Codex Tool Runtime"
+    >
+  </a>
+</p>
+
 ### 3.14. Response state được lưu khi nào
 
 Khi response hoàn thành, provider handler có thể gọi `rememberResponseState()` từ callback
