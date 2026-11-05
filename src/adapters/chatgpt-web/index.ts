@@ -4,7 +4,7 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptBrowserWorker, isValidChatGptConversationId } from "./chatgpt-browser-worker";
 import { CHATGPT_SELECTORS } from "./selectors";
 import { defaultChatGptConversationStore, chatGptConversationKey } from "./conversation-store";
-import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
+import { resolveWebThreadId } from "../web/turn-identity";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
@@ -12,9 +12,6 @@ import {
 import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import { runWebProtocolRetry } from "../web/protocol/retry-response";
 import { emitWebProtocolResponse } from "../web/protocol/emit-response";
-import {
-  CodexRawPayload,
-} from "../web/normalization";
 import {
   closeLauncherBrowserTurn,
   endLauncherBrowserTurn,
@@ -81,12 +78,12 @@ export class ChatGptWebAdapter implements ProviderAdapter {
       throw new DOMException("ChatGpt turn aborted before start", "AbortError");
     }
 
-    // 1. Trích xuất threadId chuẩn xác 100% như M365 Copilot
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const threadId =
-      rawPayload.getThreadId() ||
-      incoming.headers.get("x-codex-conversation-key") ||
-      extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
+    // 1. Trích xuất threadId theo thứ tự ưu tiên dùng chung của Web adapters
+    const threadId = resolveWebThreadId(
+      parsed._rawBody,
+      parsed,
+      incoming.headers,
+    );
 
     const conversationKey = chatGptConversationKey(parsed, threadId);
     const turnTraceId = incoming.headers.get("x-codex-trace-id") || randomBytes(12).toString("base64url");

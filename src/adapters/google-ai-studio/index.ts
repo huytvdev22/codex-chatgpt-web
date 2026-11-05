@@ -7,7 +7,7 @@ import {
   defaultGoogleAIStudioConversationStore,
   googleAIStudioConversationKey,
 } from "./conversation-store";
-import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
+import { resolveWebThreadId } from "../web/turn-identity";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
@@ -19,9 +19,6 @@ import {
   type ToolValidationFailure,
 } from "../web/tools";
 import { emitWebProtocolResponse } from "../web/protocol/emit-response";
-import {
-  CodexRawPayload,
-} from "../web/normalization";
 import {
   endLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
@@ -101,10 +98,12 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
       throw new DOMException("Google AI Studio turn aborted before start", "AbortError");
     }
 
-    // 1. Khởi tạo identity và conversation key
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const turnIdentity = extractCodexTurnIdentityFromBody(parsed._rawBody);
-    const threadId = turnIdentity?.threadId || rawPayload.getThreadId() || "";
+    // 1. Khởi tạo identity và conversation key theo thứ tự ưu tiên dùng chung
+    const threadId = resolveWebThreadId(
+      parsed._rawBody,
+      parsed,
+      incoming.headers,
+    ) || "";
     const rawConversationKey = incoming.headers.get("x-codex-conversation-key")
       || threadId
       || undefined;

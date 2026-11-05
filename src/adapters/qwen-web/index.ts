@@ -4,7 +4,7 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { QwenBrowserWorker } from "./qwen-browser-worker";
 import { isValidQwenConversationId, QWEN_SELECTORS } from "./selectors";
 import { defaultQwenConversationStore, qwenConversationKey } from "./conversation-store";
-import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
+import { resolveWebThreadId } from "../web/turn-identity";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
@@ -12,9 +12,6 @@ import {
 import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import { runWebProtocolRetry } from "../web/protocol/retry-response";
 import { emitWebProtocolResponse } from "../web/protocol/emit-response";
-import {
-  CodexRawPayload,
-} from "../web/normalization";
 import {
   closeLauncherBrowserTurn,
   endLauncherBrowserTurn,
@@ -70,12 +67,12 @@ export class QwenWebAdapter implements ProviderAdapter {
       throw new DOMException("Qwen turn aborted before start", "AbortError");
     }
 
-    // 1. Trích xuất threadId
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const threadId =
-      rawPayload.getThreadId() ||
-      incoming.headers.get("x-codex-conversation-key") ||
-      extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
+    // 1. Trích xuất threadId theo thứ tự ưu tiên dùng chung của Web adapters
+    const threadId = resolveWebThreadId(
+      parsed._rawBody,
+      parsed,
+      incoming.headers,
+    );
 
     const conversationKey = qwenConversationKey(parsed, threadId);
     const turnTraceId = incoming.headers.get("x-codex-trace-id") || randomBytes(12).toString("base64url");

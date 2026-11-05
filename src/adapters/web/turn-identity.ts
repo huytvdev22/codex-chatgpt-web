@@ -1,3 +1,5 @@
+import { CodexRawPayload } from "./normalization";
+
 export interface CodexTurnIdentity {
   threadId?: string;
   turnId?: string;
@@ -71,4 +73,21 @@ export function extractCodexTurnIdentityFromBody(value: unknown): CodexTurnIdent
     ...(typeof metadata?.agent_name === "string" ? { agentName: metadata.agent_name } : {}),
     ...(typeof metadata?.subagent_kind === "string" ? { subagentKind: metadata.subagent_kind } : {}),
   };
+}
+
+/**
+ * Resolves the conversation thread shared by Web adapters using the existing
+ * precedence contract: raw Codex metadata, explicit conversation header, then
+ * the broader turn-identity fallbacks such as session_id and prompt_cache_key.
+ */
+export function resolveWebThreadId(
+  rawBody: unknown,
+  parsedFallback: unknown,
+  headers: Headers,
+): string | undefined {
+  const payloadSource = rawBody || parsedFallback;
+  const rawPayload = CodexRawPayload.from(payloadSource);
+  return rawPayload.getThreadId()
+    || headers.get("x-codex-conversation-key")
+    || extractCodexTurnIdentityFromBody(payloadSource).threadId;
 }

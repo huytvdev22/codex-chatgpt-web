@@ -17,9 +17,6 @@ import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import { runWebProtocolRetry } from "../web/protocol/retry-response";
 import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
-  CodexRawPayload,
-} from "../web/normalization";
-import {
   closeLauncherBrowserTurn,
   endLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
@@ -33,7 +30,7 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
+import { resolveWebThreadId } from "../web/turn-identity";
 
 export interface GeminiAdapterOptions {
   userDataDir?: string;
@@ -74,11 +71,11 @@ export class GeminiWebAdapter implements ProviderAdapter {
       throw new DOMException("Gemini turn aborted before start", "AbortError");
     }
 
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const threadId =
-      rawPayload.getThreadId() ||
-      incoming.headers.get("x-codex-conversation-key") ||
-      extractCodexTurnIdentityFromBody(parsed._rawBody || parsed).threadId;
+    const threadId = resolveWebThreadId(
+      parsed._rawBody,
+      parsed,
+      incoming.headers,
+    );
     const conversationKey = createHash("sha256")
       .update(`gemini-web:${threadId || "default-session"}`, "utf8")
       .digest("hex");
