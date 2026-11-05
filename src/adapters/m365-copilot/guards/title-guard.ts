@@ -1,5 +1,31 @@
 import type { CodexParsedRequest } from "../../../types";
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map(part => {
+      if (typeof part === "string") return part;
+      const record = asRecord(part);
+      return typeof record?.text === "string" ? record.text : "";
+    })
+    .join(" ");
+}
+
+function hasLegacyToolInput(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some(item => {
+    const record = asRecord(item);
+    return record?.role === "tool" || record?.type === "tool_result";
+  });
+}
+
 /**
  * Cờ kiểm tra tính năng Title Guard có đang được bật hay không.
  * MẶC ĐỊNH: DISABLED (false) để triệt tiêu hoàn toàn nguy cơ can thiệp nhầm vào luồng chat của Codex.
@@ -37,32 +63,34 @@ export function isTitleRequest(
   }
 
   // 1. Nếu có tool results (kết quả đọc file, chạy lệnh terminal từ IDE) -> Chắc chắn KHÔNG PHẢI Title Request
-  const anyParsed = parsed as any;
+  const parsedRecord = parsed as unknown as Record<string, unknown>;
+  const contextRecord = asRecord(parsedRecord.context);
+  const legacyToolResults = contextRecord?.toolResults;
   if (
-    (anyParsed.context?.toolResults && anyParsed.context.toolResults.length > 0) ||
-    (parsed.context?.messages && parsed.context.messages.some(m => m.role === "toolResult" || (m as any).role === "tool")) ||
-    (anyParsed.input && Array.isArray(anyParsed.input) && anyParsed.input.some((item: any) => item.role === "tool" || item.type === "tool_result"))
+    (Array.isArray(legacyToolResults) && legacyToolResults.length > 0) ||
+    parsed.context.messages.some(message => message.role === "toolResult") ||
+    hasLegacyToolInput(parsedRecord.input)
   ) {
     return false;
   }
 
   // 2. Trích xuất nội dung yêu cầu cụ thể của lượt này từ tin nhắn người dùng hoặc developer
-  const allMessages: any[] = parsed.context?.messages || anyParsed.messages || [];
-  const userMessages = allMessages.filter((m: any) => m.role === "user");
+  const legacyMessages = Array.isArray(parsedRecord.messages)
+    ? parsedRecord.messages
+    : [];
+  const allMessages: unknown[] = parsed.context.messages.length > 0
+    ? parsed.context.messages
+    : legacyMessages;
+  const userMessages = allMessages.filter(message => asRecord(message)?.role === "user");
   const lastUserMsgObj = userMessages.length > 0 ? userMessages[userMessages.length - 1] : undefined;
-  const lastUserMsg = typeof lastUserMsgObj?.content === "string"
-    ? lastUserMsgObj.content.toLowerCase()
-    : Array.isArray(lastUserMsgObj?.content)
-      ? lastUserMsgObj.content.map((c: any) => (typeof c === "string" ? c : c?.text || "")).join(" ").toLowerCase()
-      : "";
+  const lastUserMsg = contentToText(asRecord(lastUserMsgObj)?.content).toLowerCase();
 
-  const devMessages = allMessages.filter((m: any) => m.role === "developer" || m.role === "system");
+  const devMessages = allMessages.filter(message => {
+    const role = asRecord(message)?.role;
+    return role === "developer" || role === "system";
+  });
   const lastDevMsgObj = devMessages.length > 0 ? devMessages[devMessages.length - 1] : undefined;
-  const lastDevMsg = typeof lastDevMsgObj?.content === "string"
-    ? lastDevMsgObj.content.toLowerCase()
-    : Array.isArray(lastDevMsgObj?.content)
-      ? lastDevMsgObj.content.map((c: any) => (typeof c === "string" ? c : c?.text || "")).join(" ").toLowerCase()
-      : "";
+  const lastDevMsg = contentToText(asRecord(lastDevMsgObj)?.content).toLowerCase();
 
   // Chỉ xét nội dung trực tiếp của lượt hiện tại. Không nhập context.systemPrompt
   // vì trường này có thể chứa bootstrap protocol hoặc ví dụ "title:" từ phiên.
