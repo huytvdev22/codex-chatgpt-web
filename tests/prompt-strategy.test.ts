@@ -6,8 +6,6 @@ import {
   promptCompiler,
   calculatePromptMetrics,
   UNIFIED_TOOL_PROTOCOL,
-} from "../src/adapters/m365-copilot/prompt-strategy";
-import {
   isPlanModeRequest,
 } from "../src/adapters/web/prompt/index";
 import type { CodexParsedRequest } from "../src/types";

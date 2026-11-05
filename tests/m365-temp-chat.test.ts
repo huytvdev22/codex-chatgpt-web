@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { stripOuterCodeFence } from "../src/adapters/web/protocol/strip-code-fence";
-import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
-import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
+import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector, M365ToolCallDetector } from "../src/adapters/web/protocol";
 
 describe("M365 4-Backtick Transport Specification Tests", () => {
   const translator = new M365OutputTranslator([new PatchToolCallDetector(), new XmlToolCallDetector()]);

@@ -18,7 +18,15 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     }
 
     expect(cycles.length).toBe(0);
-    expect(Object.keys(graph).length).toBeGreaterThan(10);
+    expect(Object.keys(graph).sort()).toEqual([
+      "browser/attachments.ts",
+      "browser/browser-worker.ts",
+      "browser/capability-picker.ts",
+      "browser/conversation-key.ts",
+      "browser/conversation-url.ts",
+      "browser/index.ts",
+      "index.ts",
+    ]);
   });
 
   test("CI GATE: Shared Web Adapter layer không có cycle hoặc phụ thuộc ngược vào provider", async () => {

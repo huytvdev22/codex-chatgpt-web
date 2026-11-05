@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BashCommandDetector, M365OutputTranslator, XmlToolCallDetector } from "../src/adapters/m365-copilot/output-translator";
-import { compileM365Prompt, TOOL_REMINDER_PROMPT } from "../src/adapters/m365-copilot/prompt";
+import { BashCommandDetector, M365OutputTranslator, XmlToolCallDetector } from "../src/adapters/web/protocol";
+import { compileM365Prompt, TOOL_REMINDER_PROMPT } from "../src/adapters/web/prompt";
 import {
   M365CopilotAdapter,
   conversationGuard,

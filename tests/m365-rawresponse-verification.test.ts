@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation";
+import { parseStrictM365Response } from "../src/adapters/web/protocol";
 import { buildM365FormatRetryPrompt } from "../src/adapters/web/prompt";
 import { validateM365ToolCall } from "../src/adapters/web/tools";
 

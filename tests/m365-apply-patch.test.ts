@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PatchToolCallDetector, normalizePatchEnvelope, M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
-import { M365ToolCallDetector } from "../src/adapters/m365-copilot/markdown";
+import { PatchToolCallDetector, normalizePatchEnvelope, M365OutputTranslator, M365ToolCallDetector } from "../src/adapters/web/protocol";
 import { M365ToolBridge } from "../src/adapters/web/tools/tool-bridge";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent, CodexTool } from "../src/types";

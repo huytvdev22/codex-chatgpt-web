@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation";
+import { parseStrictM365Response } from "../src/adapters/web/protocol";
 
 describe("User reported cases for MIXED_TOOL_AND_TEXT_CONTENT and DISALLOWED_COMMAND", () => {
   // Case 1 nguyên văn

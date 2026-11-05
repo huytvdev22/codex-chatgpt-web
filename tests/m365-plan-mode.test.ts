@@ -7,8 +7,8 @@ import {
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
   SHORT_OUTPUT_FORMAT_ANCHOR,
-} from "../src/adapters/m365-copilot/prompt";
-import { M365OutputTranslator } from "../src/adapters/m365-copilot/output-translator";
+} from "../src/adapters/web/prompt";
+import { M365OutputTranslator } from "../src/adapters/web/protocol";
 import type { CodexParsedRequest } from "../src/types";
 
 describe("M365 Plan Mode Support", () => {
@@ -276,4 +276,3 @@ node math.test.js
     expect(prompt).toContain(SHORT_OUTPUT_FORMAT_ANCHOR);
   });
 });
-

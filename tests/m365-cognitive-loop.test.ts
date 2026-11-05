@@ -5,19 +5,19 @@ import {
   type IM365ModelClient,
   type IToolExecutor,
   type AgentLoopOptions,
-} from "../src/adapters/m365-copilot/harness";
+} from "../src/adapters/web/harness";
 import {
   M365OutputTranslator,
   extractCognitiveBlocks,
   M365ToolCallDetector,
-} from "../src/adapters/m365-copilot/translation";
+} from "../src/adapters/web/protocol";
 import {
   isReadOnlyTool,
   getMaxIdenticalToolCalls,
   MAX_IDENTICAL_READ_TOOL_CALLS,
   MAX_IDENTICAL_WRITE_TOOL_CALLS,
   stableToolFingerprint,
-} from "../src/adapters/m365-copilot/session";
+} from "../src/adapters/web/execution";
 
 describe("M365 Cognitive Loop & Agent Resilience Tests (Sprint 1)", () => {
   // =========================================================================

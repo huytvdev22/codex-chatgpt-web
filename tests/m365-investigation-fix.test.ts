@@ -2,8 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
 import { CodexRawPayload } from "../src/adapters/web/normalization/codex-raw-payload";
 import { M365ToolBridge } from "../src/adapters/web/tools/tool-bridge";
-import { M365OutputTranslator, normalizeToolName } from "../src/adapters/m365-copilot/output-translator";
-import { FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/m365-copilot/browser/fast-path-stream-buffer";
+import { M365OutputTranslator, normalizeToolName, FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/web/protocol";
 import type { CodexTool } from "../src/types";
 
 describe("M365 Investigation & Fix Verification Tests", () => {

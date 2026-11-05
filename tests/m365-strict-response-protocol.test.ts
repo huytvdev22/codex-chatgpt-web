@@ -4,7 +4,7 @@ import {
   M365_RESPONSE_CLOSE_TAG,
   M365_RESPONSE_OPEN_TAG,
   parseStrictM365Response,
-} from "../src/adapters/m365-copilot/translation";
+} from "../src/adapters/web/protocol";
 
 describe("M365 strict response protocol", () => {
   test("default output translator does not infer tools from shell fences or standalone JSON", () => {
@@ -454,4 +454,3 @@ Lời dẫn trước envelope:
     }
   });
 });
-
