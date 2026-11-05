@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { CodexParsedRequest } from "../../../types";
+import { buildWebConversationKey } from "../../web/conversation/conversation-key";
 
 /**
  * Tạo khóa định danh ổn định cho một hội thoại M365 mà không làm lộ thread id
@@ -10,13 +10,11 @@ export function m365ConversationKey(
   parsed: CodexParsedRequest,
   rawConversationKey?: string,
 ): string | undefined {
-  const source = rawConversationKey?.trim();
-  if (!source) return undefined;
-
-  return createHash("sha256").update(JSON.stringify({
+  return buildWebConversationKey({
     provider: "m365-copilot",
-    source,
+    source: rawConversationKey,
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
-  })).digest("hex");
+    includeReasoning: true,
+  });
 }

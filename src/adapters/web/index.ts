@@ -3,6 +3,7 @@ export * from "./prompt";
 export * from "./protocol";
 export * from "./tools";
 export * from "./execution";
+export * from "./conversation";
 export * from "./turn-identity";
 export * from "./launcher-runtime";
 export * from "./compile-prompt";
