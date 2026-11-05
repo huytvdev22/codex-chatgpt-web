@@ -22,7 +22,7 @@ export interface ValidateWebProtocolOptions {
  */
 export function validateWebProtocolResponse(
   result: StrictM365ResponseResult,
-  clientTools: readonly CodexTool[],
+  clientTools: CodexTool[],
   options: ValidateWebProtocolOptions = {},
 ): StrictM365ResponseResult {
   if (result.kind !== "tool_calls") return result;
