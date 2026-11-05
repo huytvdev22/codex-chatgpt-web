@@ -1,8 +1,8 @@
 # Tài liệu dự án
 
 > **Status:** Current
-> **Last verified:** 2026-10-21
-> **Verified against commit:** `059a594`
+> **Last verified:** 2026-11-05
+> **Verified against commit:** `ade242a`
 > **Nguồn sự thật:** Source code, tests và scripts trong `package.json`
 
 ## Nguyên tắc
@@ -29,31 +29,17 @@ Tài liệu kiến trúc không được tự nhận là nguồn sự thật cao
 | [Build Windows](build-windows.md) | Build launcher trên Windows | Review required | Chạy lại trên môi trường sạch |
 | troubleshooting/README.md | Chỉ mục lỗi đã xử lý | Current | Cập nhật sau mỗi bug fix |
 
-## Tài liệu M365 cần phân loại lại
+## Tài liệu lịch sử đã loại bỏ
 
-### `m365-copilot-architecture.md`
+Ngày 2026-11-05, ba tài liệu không còn phản ánh implementation hiện tại đã được xóa:
 
-- **Trạng thái:** Review required.
-- Source hiện vẫn có đầy đủ các phân hệ chính như `browser`, `guards`, `harness`,
-  `normalization`, `prompts`, `session`, `tools` và `translation`.
-- Không được xóa chỉ dựa trên tuổi tài liệu.
-- Cần bỏ tuyên bố tài liệu là nguồn sự thật cao hơn source.
-- Cần đối chiếu từng public API, dependency rule và request lifecycle với source/tests.
-- Sau audit, giữ một bản living architecture ngắn; chuyển nội dung khảo sát dài sang archive.
+- `m365-multi-provider-plan.md`: kế hoạch tích hợp đã hoàn thành và bị thay thế bởi source/tests.
+- `m365-copilot-architecture.md`: mô tả module, dependency và lifecycle cũ.
+- `codex_m365_engineering_control_assessment_report.md`: snapshot kiểm toán chứa observability,
+  Trace Explorer và nhiều đường dẫn đã bị xóa.
 
-### `m365-multi-provider-plan.md`
-
-- **Trạng thái:** Historical candidate.
-- Đây là kế hoạch, không phải contract hiện hành.
-- Nếu nội dung đã triển khai hoặc bị thay thế, chuyển vào `docs/archive/` và ghi commit/ngày.
-- Quyết định còn hiệu lực phải được chuyển thành architecture hoặc ADR.
-
-### `codex_m365_engineering_control_assessment_report.md`
-
-- **Trạng thái:** Historical snapshot.
-- Đây là báo cáo đánh giá tại một thời điểm, không phải tài liệu vận hành.
-- Nên chuyển vào `docs/archive/` với ngày và commit được đánh giá.
-- Technical debt còn hiệu lực nên được quản lý bằng issue hoặc backlog riêng.
+Git history là nơi tra cứu các tài liệu này khi cần rationale lịch sử. Không khôi phục chúng làm
+living documentation nếu chưa đối chiếu lại toàn bộ với implementation hiện hành.
 
 ## Quy tắc trạng thái
 
@@ -86,8 +72,8 @@ Source of truth: <source/test paths>
 
 ## Kế hoạch audit
 
-1. Audit `m365-copilot-architecture.md` theo source và M365 tests.
-2. Audit `architecture.md` theo server, adapters, launcher và Responses bridge.
-3. Đồng bộ `security-model.md` với approval, launcher authorization và MCP lifecycle.
-4. Đồng bộ `release-validation.md` với quality gates thực tế.
-5. Archive các plan/report sau khi đã tách thông tin còn hiệu lực.
+1. Audit `architecture.md` theo server, adapters, launcher và Responses bridge.
+2. Đồng bộ `security-model.md` với approval, launcher authorization và MCP lifecycle.
+3. Đồng bộ `release-validation.md` với quality gates thực tế và local launcher logging.
+4. Chuẩn hóa `build-windows.md`, loại bỏ đường dẫn máy cá nhân và version runtime ghi cứng.
+5. Kiểm tra định kỳ link tương đối, file reference và metadata xác minh của tài liệu hiện hành.

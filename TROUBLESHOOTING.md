@@ -13,11 +13,11 @@ editing Codex configuration, or opening a new issue.
 3. Fully quit Codex, including its background process, and reopen it. Signing out, closing only the
    window, or starting another task does not reload the model catalog. Keep the launcher open.
 4. Select a model ending in **(Web)** from Codex's model picker.
-5. Run **Settings → Run doctor**. If the problem remains, reproduce it once and immediately use
-   **Activity → Export safe log**.
+5. Run **Settings → Run doctor**. If the problem remains, reproduce it once and record the exact
+   error, launcher version, selected model, interaction mode, operating system, and failure time.
 
-Do not repeatedly press setup actions after they report success. The exact error and a fresh safe
-log are more useful than another reinstall.
+Do not repeatedly press setup actions after they report success. The exact error and reproduction
+time are more useful than another reinstall.
 
 ## Models do not appear, or setup remains on step 3
 
@@ -32,7 +32,7 @@ If the models still do not appear:
 - open **Setup → Install into Codex** and click **Reinstall** once;
 - check **Settings → Run doctor**;
 - make sure another Codex wrapper is not replacing the route; and
-- export a safe log after the failed catalog check.
+- record the exact catalog error and failure time after the failed catalog check.
 
 A green step 3 followed by a browser-turn error means installation succeeded. Repeating step 3 will
 not repair an unrelated ChatGPT browser or model-turn failure.
@@ -82,8 +82,8 @@ decrypted or parsed`, check the route owner. The launcher's native route already
 checkpoints into readable context and preserves native encrypted history. An external router that
 sends native requests directly to OpenAI bypasses that conversion.
 
-Use one route owner as described above. If the error persists through the launcher, export a safe log
-and include both model names and whether compaction preceded the switch. Do not delete checkpoints
+Use one route owner as described above. If the error persists through the launcher, include the exact
+error, both model names, failure time, and whether compaction preceded the switch. Do not delete checkpoints
 or strip encrypted history; this can lose task context. External-router composition remains unsupported.
 
 ## ChatGPT sign-in does not complete
@@ -101,9 +101,10 @@ window does not automatically transfer that session.
   If no alternate method exists, follow that issue rather than repeatedly deleting the browser
   profile; there is no safe generic workaround to claim yet.
 
-If an ordinary login still fails, export a safe log immediately after one attempt. Include the OS,
-launcher version, account tier, sign-in provider, and whether the Temporary Chat composer ever
-appeared. Never upload cookies, browser storage, authentication headers, or raw profile files.
+If an ordinary login still fails, capture the exact error immediately after one attempt. Include the
+OS, launcher version, account tier, sign-in provider, failure time, and whether the Temporary Chat
+composer ever appeared. Never upload cookies, browser storage, authentication headers, raw profile
+files, or an unredacted launcher log.
 
 ## The browser smoke test fails
 
@@ -115,8 +116,9 @@ mean that the ChatGPT UI did not expose a structure the bridge can safely prove.
 2. Confirm that a normal Temporary Chat can be opened in the launcher and that the account is not
    showing a login, onboarding, capacity, or rate-limit dialog.
 3. Run the smoke test one more time with the launcher visible.
-4. If the same structural error remains, do not keep retrying. Export a safe log and open a focused
-   bug report; ChatGPT UI drift must be fixed against the observed DOM, not guessed around.
+4. If the same structural error remains, do not keep retrying. Record the exact error, affected
+   selector or page state, and failure time, then open a focused bug report; ChatGPT UI drift must
+   be fixed against the observed DOM, not guessed around.
 
 Free and Go accounts normally expose Luna and Think without the paid-account effort selector. A
 missing paid selector on those accounts is not itself a sign-in failure.
@@ -154,8 +156,8 @@ decide whether the command can run. Ordinary commands do not require these optio
 
 ### ChatGPT refuses a tool call or context compaction
 
-Share the exact failed tool result and an **Activity → Export safe log**. An assistant saying
-"safety block" without a failed tool result does not establish the cause. **Allow all actions**
+Share the exact failed tool result, selected model, interaction mode, and failure time. An assistant
+saying "safety block" without a failed tool result does not establish the cause. **Allow all actions**
 does not override ChatGPT's own safety checks.
 
 After updating, refresh **Codex Native2** in ChatGPT's plugin settings to load its current tool
@@ -176,7 +178,7 @@ task's **completed** browser tab before sending the next message; closing a runn
 
 Also try recreating **Codex Native2** as a new connector with the same Tunnel and **Allow all
 actions**, then run **Verify runtime**. If tools are already missing in a fresh chat, report that
-separately with a safe log and the browser's actual connector/tool state.
+separately with the exact verification error and the browser's actual connector/tool state.
 
 ### Windows: `unable to verify the first certificate` or `SELF_SIGNED_CERT_IN_CHAIN`
 
@@ -196,7 +198,8 @@ Start-Process (Join-Path $install "Codex Web GPT.exe")
 
 For a portable copy, use its executable path instead. Retry **Connect harness** once. This enables
 [Node's system CA support](https://nodejs.org/api/cli.html#node_use_system_ca1); certificate verification
-stays enabled. If it still fails, export a safe log. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+stays enabled. If it still fails, include the exact certificate error, Node/Bun version, operating
+system, and failure time. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
 
 ### ChatGPT will not reuse a deleted plugin's name
 
@@ -238,7 +241,7 @@ its bounded MCP deadline.
   `Reconnecting`.
 - Retry once in a fresh Codex task. State whether the fresh task works and whether the failure is
   consistent.
-- Run **Settings → Run doctor** and export a safe log immediately after the failure.
+- Run **Settings → Run doctor** and record the complete failed check immediately after the failure.
 - Include the exact model, Browser-only or Full harness mode, whether tools ran, and whether the
   ChatGPT page showed a final answer.
 
@@ -254,8 +257,8 @@ Check whether a config layer sets `[features].remote_compaction_v2 = false`. Cur
 V2 by default; remove that override or set the existing key to `true`, then restart Codex and retry
 compaction on the same native model. V2 uses `/responses` with a compaction trigger.
 
-If it still fails, include the effective feature setting, selected model, exact failure time and
-safe log. `native_compaction_upstream_failed` records the route, model, HTTP status and available
+If it still fails, include the effective feature setting, selected model, exact failure time, and
+complete final error. `native_compaction_upstream_failed` records the route, model, HTTP status and available
 request identifiers without prompt contents or credentials. A separate Web context-length error
 still requires its own diagnosis; changing the native protocol does not increase Web input limits.
 
@@ -286,7 +289,8 @@ context and keeps only the newest ten complete images, so seeing an earlier imag
 task is expected. Start a new Codex task when the new request must not carry earlier image context.
 
 Open an issue if the launcher reports that ChatGPT did not accept all attachments, or if images from
-a different Codex task appear. Include a fresh safe log with the failing trace and attachment stage.
+a different Codex task appear. Include the request ID, exact failure time, attachment stage, file
+count, MIME types, and complete final error.
 Do not replace inline images with arbitrary local paths: browser-only and compaction turns
 intentionally do not receive unrestricted filesystem access.
 
@@ -314,8 +318,8 @@ If Update reports that the stable wrapper is missing, quit the app, run the inst
 from the README, and reopen Codex Web GPT from the applications menu. This preserves settings and browser data.
 
 To repair a valid integration, open **Setup → Install into Codex**, click **Reinstall** once,
-and fully restart Codex. Avoid deleting configuration until **Run doctor** and a safe log identify
-which layer failed.
+and fully restart Codex. Avoid deleting configuration until **Run doctor** and the exact failed
+check identify which layer failed.
 
 To remove the integration safely:
 
@@ -330,8 +334,7 @@ exists.
 
 ## Open a useful bug report
 
-Use the repository's bug-report form and attach the privacy-safe export from **Activity → Export
-safe log**. A useful report contains:
+Use the repository's bug-report form. A useful report contains:
 
 - launcher version and installation method;
 - Codex Desktop and/or CLI version;
@@ -340,12 +343,18 @@ safe log**. A useful report contains:
 - Browser-only, Full harness (automatic), or Zero Risk mode and the exact selected model;
 - For Zero Risk, the ChatGPT model/effort and the last completed step: copying, pasting, sending in ChatGPT, confirming Sent, or the first MCP call;
 - exact reproduction steps and complete final error;
-- whether it reproduces in a fresh Codex task; and
-- a safe log captured immediately after that reproduction.
+- whether it reproduces in a fresh Codex task;
+- the exact reproduction time; and
+- the complete final error.
 
-Screenshots are welcome, but a screenshot without the exact error and fresh log is usually not
+Screenshots are welcome, but a screenshot without the exact error and reproduction details is usually not
 enough to distinguish setup, routing, browser DOM, account, and MCP failures.
 
-Before uploading anything, read [SECURITY.md](SECURITY.md). Never publish raw launcher logs, cookies,
-browser storage, API keys, Tunnel IDs, full Codex prompts, tool output containing private data, or
-absolute private paths.
+The launcher no longer provides an Activity screen or a safe-log export workflow. If a maintainer
+requests the local launcher JSONL log, manually remove usernames, local paths, chat titles, prompt
+or response content, URLs beyond their origin, cookies, tunnel IDs, API keys, bearer tokens, and
+other credentials before sharing it.
+
+Before uploading anything, read [SECURITY.md](SECURITY.md). Never publish unredacted launcher logs,
+cookies, browser storage, API keys, Tunnel IDs, full Codex prompts, tool output containing private
+data, or absolute private paths.

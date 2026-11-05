@@ -11,8 +11,11 @@ include isolated bug fixes, regression tests, documentation corrections, and nar
 platform-specific fixes.
 
 Before opening a bug report, work through [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and use the
-structured issue form. Reproduce once on the latest release and attach the privacy-safe export from
-**Activity → Export safe log**; never upload raw browser state, credentials, or unredacted logs.
+structured issue form. Reproduce once on the latest release and include the exact final error,
+operating system, launcher version, interaction mode, selected model, and reproduction time. If a
+maintainer requests the local launcher JSONL log, manually remove usernames, local paths, chat
+titles, prompt or response content, URLs beyond their origin, cookies, tunnel IDs, API keys, bearer
+tokens, and other credentials before sharing it. Never upload raw browser state or unredacted logs.
 
 Large feature branches, broad refactors, rewrites, new providers, and changes to core behavior or
 architecture are generally not accepted. In rare cases they may be considered, but discuss the

@@ -30,8 +30,10 @@ GitHub documents this contract in [Get the latest release](https://docs.github.c
 ## Required evidence
 
 Record the release version, operating-system version, install path (`clean` or `upgrade`), ChatGPT
-plan, Codex version, result of each check, and a redacted Activity log for every failure. Never
-capture cookies, tunnel IDs, API keys, bearer tokens, or prompt contents.
+plan, Codex version, and result of each check. For every failure, preserve the relevant local
+launcher JSONL log after manually removing usernames, local paths, URLs beyond their origin, chat
+titles, prompt or response content, cookies, tunnel IDs, API keys, bearer tokens, and other
+credentials. The launcher no longer provides an Activity screen or an exported safe-log workflow.
 
 ## Windows 11 gate
 
