@@ -26,7 +26,7 @@ export function isTitleGuardEnabled(customFlag?: boolean): boolean {
  */
 export function isTitleRequest(
   parsed: CodexParsedRequest,
-  compiledPrompt: string,
+  _compiledPrompt: string,
   options?: { enableTitleGuard?: boolean }
 ): boolean {
 
@@ -64,10 +64,9 @@ export function isTitleRequest(
       ? lastDevMsgObj.content.map((c: any) => (typeof c === "string" ? c : c?.text || "")).join(" ").toLowerCase()
       : "";
 
-  // Thêm kiểm tra từ context.systemPrompt nếu có
-  const systemPrompts = (parsed.context?.systemPrompt || []).map(s => s.toLowerCase()).join(" ");
-
-  const specificText = `${lastUserMsg} ${lastDevMsg} ${systemPrompts}`.trim();
+  // Chỉ xét nội dung trực tiếp của lượt hiện tại. Không nhập context.systemPrompt
+  // vì trường này có thể chứa bootstrap protocol hoặc ví dụ "title:" từ phiên.
+  const specificText = `${lastUserMsg} ${lastDevMsg}`.trim();
   if (!specificText) return false;
 
   // 3. Chỉ nhận diện là Title Request khi YÊU CẦU CỤ THỂ thực sự là sinh tiêu đề và không có ý định code
