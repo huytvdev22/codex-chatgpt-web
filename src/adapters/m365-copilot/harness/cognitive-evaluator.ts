@@ -26,6 +26,20 @@ export interface CognitiveSessionMetrics {
  * Đo lường mức độ tuân thủ giao thức Cognitive Loop (Thinking -> Narrative -> Tool Action)
  */
 export class CognitiveEvaluator {
+  private hasToolCall(message: AgentMessage): boolean {
+    if (message.toolCallId) return true;
+    if (message.role !== "assistant") return false;
+
+    try {
+      const parsed = JSON.parse(message.content) as {
+        tool_calls?: unknown;
+      };
+      return Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Đánh giá một turn cụ thể trong lịch sử trao đổi của agent
    */
@@ -34,7 +48,7 @@ export class CognitiveEvaluator {
     const hasThought = Boolean(message.thinking && message.thinking.trim().length > 0);
     const thoughtLength = message.thinking ? message.thinking.trim().length : 0;
     const hasNarrative = Boolean(message.narrative && message.narrative.trim().length > 0);
-    const hasToolCall = Boolean(message.toolCallId || (message.role === "assistant" && message.content.includes("tool_calls")));
+    const hasToolCall = this.hasToolCall(message);
     const isError = Boolean(message.isError);
 
     // Tính điểm nhận thức cho turn (0 - 100)
