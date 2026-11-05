@@ -22,10 +22,10 @@ import {
   CodexRawPayload,
 } from "../web/normalization";
 import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
-import { chromium, type BrowserContext, type Page } from "playwright-core";
+import { LocalBrowserRuntime } from "../web/local-browser-runtime";
+import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
   connectLauncherBrowserHost,
@@ -45,8 +45,7 @@ export interface QwenAdapterOptions {
 export class QwenWebAdapter implements ProviderAdapter {
   readonly name = "qwen-web";
   private options: QwenAdapterOptions;
-  private browserContext: BrowserContext | null = null;
-  private activePage: Page | null = null;
+  private localBrowser: LocalBrowserRuntime;
   private worker: QwenBrowserWorker;
 
   constructor(options?: QwenAdapterOptions) {
@@ -56,36 +55,12 @@ export class QwenWebAdapter implements ProviderAdapter {
       maxFormatRetries: options?.maxFormatRetries ?? 2,
       ...options,
     };
-    this.worker = new QwenBrowserWorker();
-  }
-
-  /**
-   * Khởi chạy trình duyệt Google Chrome local nếu không có kết nối Launcher
-   */
-  private async ensureLocalBrowserPage(): Promise<Page> {
-    if (this.activePage && !this.activePage.isClosed()) {
-      return this.activePage;
-    }
-
-    const profileDir = this.options.userDataDir!;
-    if (!existsSync(profileDir)) {
-      mkdirSync(profileDir, { recursive: true });
-    }
-
-    console.log(`[qwen-adapter] Khởi chạy Google Chrome local với profile: ${profileDir}`);
-    this.browserContext = await chromium.launchPersistentContext(profileDir, {
-      channel: "chrome",
+    this.localBrowser = new LocalBrowserRuntime({
+      profileDir: this.options.userDataDir!,
       headless: this.options.headless,
-      viewport: { width: 1280, height: 800 },
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-      ],
+      logPrefix: "qwen-adapter",
     });
-
-    const pages = this.browserContext.pages();
-    this.activePage = pages[0] || (await this.browserContext.newPage());
-    return this.activePage;
+    this.worker = new QwenBrowserWorker();
   }
 
   /**
@@ -163,7 +138,7 @@ export class QwenWebAdapter implements ProviderAdapter {
       if (descriptorPath) {
         throw new Error(`[qwen-adapter] Không thể kết nối với Launcher browser tab: ${launcherError?.message || "không tìm thấy tab"}`);
       }
-      page = await this.ensureLocalBrowserPage();
+      page = await this.localBrowser.ensurePage();
     }
 
     // 3. Xác định trạng thái hội thoại và kịch bản prompt
@@ -322,17 +297,14 @@ export class QwenWebAdapter implements ProviderAdapter {
   }
 
   async abortTurn(): Promise<void> {
-    if (this.activePage && !this.activePage.isClosed()) {
-      await this.activePage.locator(QWEN_SELECTORS.stopButton).first().click().catch(() => {});
+    const activePage = this.localBrowser.getActivePage();
+    if (activePage) {
+      await activePage.locator(QWEN_SELECTORS.stopButton).first().click().catch(() => {});
     }
   }
 
   async cleanup(): Promise<void> {
-    if (this.browserContext) {
-      await this.browserContext.close().catch(() => {});
-      this.browserContext = null;
-      this.activePage = null;
-    }
+    await this.localBrowser.closeSafely();
   }
 }
 

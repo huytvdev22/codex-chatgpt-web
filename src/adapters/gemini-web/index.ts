@@ -24,10 +24,10 @@ import {
   CodexRawPayload,
 } from "../web/normalization";
 import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
-import { chromium, type BrowserContext, type Page } from "playwright-core";
+import { LocalBrowserRuntime } from "../web/local-browser-runtime";
+import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import {
   connectLauncherBrowserHost,
@@ -49,8 +49,7 @@ export interface GeminiAdapterOptions {
 export class GeminiWebAdapter implements ProviderAdapter {
   readonly name = "gemini-web";
   private options: GeminiAdapterOptions;
-  private browserContext: BrowserContext | null = null;
-  private activePage: Page | null = null;
+  private localBrowser: LocalBrowserRuntime;
 
   constructor(options?: GeminiAdapterOptions) {
     this.options = {
@@ -59,35 +58,11 @@ export class GeminiWebAdapter implements ProviderAdapter {
       maxFormatRetries: options?.maxFormatRetries ?? 2,
       ...options,
     };
-  }
-
-  /**
-   * Khởi chạy trình duyệt Google Chrome local nếu không có kết nối Launcher
-   */
-  private async ensureLocalBrowserPage(): Promise<Page> {
-    if (this.activePage && !this.activePage.isClosed()) {
-      return this.activePage;
-    }
-
-    const profileDir = this.options.userDataDir!;
-    if (!existsSync(profileDir)) {
-      mkdirSync(profileDir, { recursive: true });
-    }
-
-    console.log(`[gemini-adapter] Khởi chạy Google Chrome local với profile: ${profileDir}`);
-    this.browserContext = await chromium.launchPersistentContext(profileDir, {
-      channel: "chrome",
+    this.localBrowser = new LocalBrowserRuntime({
+      profileDir: this.options.userDataDir!,
       headless: this.options.headless,
-      viewport: { width: 1280, height: 800 },
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-      ],
+      logPrefix: "gemini-adapter",
     });
-
-    const pages = this.browserContext.pages();
-    this.activePage = pages[0] || (await this.browserContext.newPage());
-    return this.activePage;
   }
 
   /**
@@ -155,7 +130,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
     }
 
     if (!page) {
-      page = await this.ensureLocalBrowserPage();
+      page = await this.localBrowser.ensurePage();
     }
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
@@ -302,11 +277,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
   }
 
   async close(): Promise<void> {
-    if (this.browserContext) {
-      await this.browserContext.close();
-      this.browserContext = null;
-      this.activePage = null;
-    }
+    await this.localBrowser.close();
   }
 }
 

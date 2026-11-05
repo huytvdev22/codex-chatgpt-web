@@ -26,10 +26,10 @@ import {
   CodexRawPayload,
 } from "../web/normalization";
 import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
-import { chromium, type BrowserContext, type Page } from "playwright-core";
+import { LocalBrowserRuntime } from "../web/local-browser-runtime";
+import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
   connectLauncherBrowserHost,
@@ -77,8 +77,7 @@ export function sanitizeAIStudioResponse(raw: string): string {
 export class GoogleAIStudioAdapter implements ProviderAdapter {
   readonly name = "google-ai-studio";
   private options: GoogleAIStudioAdapterOptions;
-  private browserContext: BrowserContext | null = null;
-  private activePage: Page | null = null;
+  private localBrowser: LocalBrowserRuntime;
   private worker: GoogleAIStudioBrowserWorker;
 
   constructor(options?: GoogleAIStudioAdapterOptions) {
@@ -88,36 +87,12 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
       maxFormatRetries: options?.maxFormatRetries ?? 2,
       ...options,
     };
-    this.worker = new GoogleAIStudioBrowserWorker();
-  }
-
-  /**
-   * Khởi chạy trình duyệt Google Chrome local nếu không có kết nối Launcher
-   */
-  private async ensureLocalBrowserPage(): Promise<Page> {
-    if (this.activePage && !this.activePage.isClosed()) {
-      return this.activePage;
-    }
-
-    const profileDir = this.options.userDataDir!;
-    if (!existsSync(profileDir)) {
-      mkdirSync(profileDir, { recursive: true });
-    }
-
-    console.log(`[ai-studio-adapter] Khởi chạy Google Chrome local với profile: ${profileDir}`);
-    this.browserContext = await chromium.launchPersistentContext(profileDir, {
-      channel: "chrome",
+    this.localBrowser = new LocalBrowserRuntime({
+      profileDir: this.options.userDataDir!,
       headless: this.options.headless,
-      viewport: { width: 1280, height: 800 },
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-      ],
+      logPrefix: "ai-studio-adapter",
     });
-
-    const pages = this.browserContext.pages();
-    this.activePage = pages[0] || (await this.browserContext.newPage());
-    return this.activePage;
+    this.worker = new GoogleAIStudioBrowserWorker();
   }
 
   async runTurn(
@@ -192,7 +167,7 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
       if (descriptorPath) {
         throw new Error(`[ai-studio-adapter] Không thể kết nối với Launcher browser tab: ${launcherError?.message || "không tìm thấy tab"}`);
       }
-      page = await this.ensureLocalBrowserPage();
+      page = await this.localBrowser.ensurePage();
     }
 
     // 3. Xác định trạng thái hội thoại và kịch bản prompt
@@ -370,6 +345,10 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
         }
       }
     }
+  }
+
+  async close(): Promise<void> {
+    await this.localBrowser.close();
   }
 }
 
