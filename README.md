@@ -137,12 +137,122 @@ Node.js, Bun hoặc Chromium.
 1. Mở Launcher.
 2. Đăng nhập provider cần sử dụng trong browser surface tương ứng.
 3. Chạy bước kiểm tra provider nếu Launcher cung cấp.
-4. Cài model catalog vào Codex.
+4. Chọn **Install models** hoặc **Reinstall** để Launcher cài route và model catalog vào Codex.
 5. Thoát hoàn toàn rồi mở lại Codex để nạp model catalog mới.
 6. Chọn Web model phù hợp trong model picker của Codex.
 
 Việc đăng nhập browser provider và đăng nhập Codex là hai session riêng. Dữ liệu đăng nhập của
 browser được giữ trong Electron profile do Launcher sở hữu.
+
+### Cách Codex gửi request tới Local Responses API Server
+
+Codex không tự phát hiện Local Responses API Server. Bước **Install models** gọi setup flow của dự
+án, sau đó `installCodexIntegration()` cập nhật route trong file `~/.codex/config.toml`.
+
+Với cấu hình mặc định, route được cài có dạng:
+
+```toml
+# Route do codex-chatgpt-web quản lý
+openai_base_url = "http://127.0.0.1:17841/v1"
+model_provider = "openai"
+model_catalog_json = "/đường/dẫn/tới/model-catalog-do-launcher-quản-lý.json"
+```
+
+Ý nghĩa của từng trường:
+
+- `openai_base_url` đổi đích gửi request của built-in OpenAI provider từ endpoint mặc định sang
+  Local Responses API Server trên `127.0.0.1`.
+- `model_provider = "openai"` giữ Codex sử dụng built-in provider và wire protocol chuẩn của Codex.
+  Dự án không đăng ký một custom model provider mới.
+- `model_catalog_json` trỏ Codex tới catalog đã được bổ sung Web models từ model registry của dự án.
+
+Do đó, từ góc nhìn Codex, request vẫn sử dụng Responses API contract của built-in OpenAI provider,
+nhưng HTTP request được gửi tới:
+
+```text
+http://127.0.0.1:17841/v1
+```
+
+thay vì gửi trực tiếp tới endpoint OpenAI mặc định.
+
+```text
+Codex
+  |
+  | đọc ~/.codex/config.toml
+  | openai_base_url = http://127.0.0.1:17841/v1
+  v
+Local Responses API Server
+  |
+  +-- Web model ID --> Web Adapter tương ứng
+  |
+  +-- Native model ID --> forward tới native Codex/OpenAI endpoint
+```
+
+Local server mặc định bind tại:
+
+```text
+Host: 127.0.0.1
+Port: 17841
+Base URL: http://127.0.0.1:17841/v1
+```
+
+Port có thể thay đổi trong runtime config. Setup dùng đúng `host` và `port` hiện hành để tạo
+`openai_base_url`.
+
+### Trình tự setup thực tế
+
+Setup thực hiện theo thứ tự:
+
+1. Đọc cấu hình runtime hiện có.
+2. Kiểm tra port local có thể sử dụng.
+3. Kiểm tra browser host và capability của tài khoản khi workflow yêu cầu.
+4. Lưu runtime config.
+5. Khởi động hoặc kết nối runtime do Launcher sở hữu.
+6. Kiểm tra health endpoint của Local Responses API Server.
+7. Gọi `installCodexIntegration()` để cập nhật Codex route.
+8. Ghi managed model catalog.
+9. Yêu cầu khởi động lại Codex.
+
+Codex phải được khởi động lại vì process đang chạy giữ model catalog và route đã đọc trước đó.
+
+### Xử lý route đã tồn tại
+
+Setup hoạt động theo nguyên tắc fail closed:
+
+- Nếu `openai_base_url` đã được một công cụ khác cấu hình, setup không tự ghi đè.
+- Nếu `model_provider` đang chọn custom provider, setup từ chối thay đổi.
+- Chỉ built-in `model_provider = "openai"` hoặc trạng thái chưa khai báo provider được chấp nhận.
+- Muốn thay thế một route URL đã tồn tại phải dùng thao tác thay thế route rõ ràng từ Launcher hoặc
+  tùy chọn `--replace-codex-route`.
+- Giá trị trước khi cài được ghi vào integration journal để có thể khôi phục khi disconnect hoặc
+  uninstall.
+- Nếu route bị người dùng hoặc công cụ khác sửa sau setup, dự án từ chối ghi đè giá trị mới đó.
+
+### Kiểm tra route sau setup
+
+Sau khi cài đặt, chạy:
+
+```bash
+bun run doctor
+```
+
+Hoặc khi chạy bản đóng gói, dùng **Settings → Run doctor** trong Launcher.
+
+Có thể kiểm tra thủ công `~/.codex/config.toml` và xác nhận:
+
+```toml
+openai_base_url = "http://127.0.0.1:17841/v1"
+```
+
+Sau đó kiểm tra local server:
+
+```bash
+curl http://127.0.0.1:17841/healthz
+curl http://127.0.0.1:17841/v1/models
+```
+
+Health response hợp lệ phải xác nhận service `codex-chatgpt-web` đang ở trạng thái `ok` và đang
+nhận turn mới. `/v1/models` phải trả catalog mà Codex sẽ sử dụng.
 
 ## Sử dụng
 
