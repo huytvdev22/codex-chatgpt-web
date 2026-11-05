@@ -64,6 +64,17 @@ export class ChatGptWebAdapter implements ProviderAdapter {
   }
 
   /**
+   * Compatibility wrapper retained for existing adapter contract tests and
+   * callers that inspect ChatGPT prompt compilation directly.
+   */
+  private compilePrompt(parsed: CodexParsedRequest, isNewConversation: boolean): string {
+    return compileWebPrompt(parsed, {
+      assistantName: "ChatGPT",
+      isNewConversation,
+    }).finalPrompt;
+  }
+
+  /**
    * Điều phối một lượt tương tác giữa Codex và ChatGPT Web
    */
   async runTurn(
@@ -148,10 +159,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     const isNewConversation = !hasPriorAssistantReply && !existingConversationId;
     activeConversationId = existingConversationId;
 
-    const initialPrompt = compileWebPrompt(parsed, {
-      assistantName: "ChatGPT",
-      isNewConversation,
-    }).finalPrompt;
+    const initialPrompt = this.compilePrompt(parsed, isNewConversation);
 
     const reasoningEffort = parsed.options.reasoning || "low";
     console.log(`[chatgpt-adapter] Bắt đầu lượt gửi (thread=${threadId || "n/a"}, conv=${existingConversationId || "mới"}, isNew=${isNewConversation}, think=${reasoningEffort})`);
