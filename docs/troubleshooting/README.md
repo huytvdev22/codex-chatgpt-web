@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **023** | Xóa bỏ hoàn toàn Title Guard subsystem (`M365_ENABLE_TITLE_GUARD`) không còn sử dụng | `m365-copilot`, `web` | ⏳ Chờ User Test & Confirm | [023-remove-obsolete-title-guard-subsystem.md](./023-remove-obsolete-title-guard-subsystem.md) |
 | **022** | Bóc tách Turn Execution Guard từ M365 sang Shared Web Adapter layer (`src/adapters/web/execution/`) | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [022-extract-web-turn-guard-execution-layer.md](./022-extract-web-turn-guard-execution-layer.md) |
 | **021** | Nút "Install into Codex" bị disable (mờ xám) dù đã hoàn thành smoke test | `launcher`, `electron`, `ui` | ✅ Đã Confirm | [021-enable-install-into-codex-button.md](./021-enable-install-into-codex-button.md) |
 | **020** | Gom mã nguồn catalog và registry model vào thư mục `src/models/` | `core`, `catalog`, `all-providers` | ⏳ Chờ User Test & Confirm | ./020-group-model-management-files.md |

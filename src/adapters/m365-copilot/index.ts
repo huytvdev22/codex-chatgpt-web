@@ -2,7 +2,6 @@
 import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { hasActualPriorAssistantReply } from "../base";
-import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
 import { promptCompiler, buildM365FormatRetryPrompt } from "../web/prompt/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
 import { executeM365Turn, m365ConversationKey } from "./browser";
@@ -22,7 +21,6 @@ import {
 } from "./session";
 
 export * from "./session";
-export * from "./guards";
 export * from "../web/normalization";
 export * from "../web/prompt/index";
 export * from "./translation";
@@ -36,7 +34,7 @@ export * from "./harness";
 export class M365CopilotAdapter implements ProviderAdapter {
   readonly name = "m365-copilot";
 
-  constructor(readonly options?: { enableTitleGuard?: boolean }) { }
+  constructor() { }
 
   /**
  * Điều phối toàn bộ vòng đời của một lượt tương tác (turn): chuẩn hóa request, compile prompt, chạy browser worker và dịch kết quả.
@@ -98,33 +96,7 @@ export class M365CopilotAdapter implements ProviderAdapter {
     const promptToSend = compileResult.finalPrompt;
     const compiledPrompt = promptToSend;
 
-    // 3. Title Guard: Phản hồi tức thì yêu cầu tiêu đề ngầm (5ms)
-    // MẶC ĐỊNH DISABLED. Chỉ kích hoạt khi được cấu hình bật tường minh qua options hoặc env var
-    // TUYỆT ĐỐI không đánh chặn nếu lượt này có tool results từ IDE
-    if (
-      normalized.trailingToolResults.length === 0 &&
-      isTitleRequest(parsed, compiledPrompt, { enableTitleGuard: this.options?.enableTitleGuard })
-    ) {
-      if (!markTurnConsumed()) {
-        return;
-      }
-      const titleText = generateTitleResponse(compiledPrompt);
-      const usage = {
-        inputTokens: Math.ceil(compiledPrompt.length / 4),
-        outputTokens: Math.ceil(titleText.length / 4),
-        totalTokens: Math.ceil((compiledPrompt.length + titleText.length) / 4),
-      };
-      emit({ type: "text_delta", text: titleText });
-      emit({
-        type: "done",
-        stopReason: "stop",
-        endTurn: true,
-        usage,
-      });
-      return;
-    }
-
-    // 4. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
+    // 3. Chuyển giao prompt thực tế cho WebContentsView M365 Copilot qua CDP
     try {
       // Toàn bộ response bị quarantine cho tới khi strict parser xác nhận envelope hoàn chỉnh.
       // Không stream trực tiếp để response lỗi format không thể rò rỉ sang Codex UI.

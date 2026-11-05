@@ -54,11 +54,9 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.M365OutputTranslator).toBeDefined();
     expect(rootModule.executeM365Turn).toBeDefined();
 
-    // Normalization & Guards
+    // Normalization
     expect(rootModule.CodexPayloadNormalizer).toBeDefined();
     expect(rootModule.CodexRawPayload).toBeDefined();
-    expect(rootModule.isTitleRequest).toBeDefined();
-    expect(rootModule.generateTitleResponse).toBeDefined();
 
     // Native-first Tool Bridge
     expect(rootModule.M365ToolBridge).toBeDefined();
