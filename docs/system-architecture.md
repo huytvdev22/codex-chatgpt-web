@@ -328,21 +328,29 @@ Trong đó:
 - `incoming.abortSignal` truyền cancellation từ Codex.
 - `emit` nhận `AdapterEvent` từ adapter.
 
-Luồng adapter tổng quát:
+Luồng adapter tổng quát (tất cả 5 Web Provider đều kế thừa `WebProviderAdapter` và ủy quyền cho `WebTurnEngine`):
 
 ```text
 ProviderAdapter.runTurn()
+  -> WebProviderAdapter.runTurn()
+    -> WebTurnEngine.runTurn()
           |
-          +-- normalize Codex payload
-          +-- xác định model/capability/reasoning
-          +-- compile prompt
-          +-- chuẩn bị image attachments nếu có
-          +-- acquire browser turn surface
-          +-- gửi prompt vào provider
-          +-- chờ và đọc provider response
-          +-- chuyển HTML/DOM thành text hoặc protocol envelope
-          +-- nhận diện final answer hoặc tool call
-          +-- emit AdapterEvent
+          +-- kiểm tra abortSignal trước khi bắt đầu lượt
+          +-- resolve threadId và conversationKey
+          +-- kiểm tra early-exit trên final answer (nếu bật policy)
+          +-- acquireWebTurnSurface() (Launcher CDP lease hoặc LocalBrowserRuntime)
+          +-- resolve conversation state (existingConversationId, isNewConversation)
+          +-- compile prompt (compileWebPrompt hoặc custom compilePrompt)
+          +-- resolve reasoning effort (CapabilityPicker driver)
+          +-- runWebProtocolRetry()
+          |     +-- extract image attachments (chỉ ở attempt 0)
+          |     +-- thực thi browser attempt (BrowserDriver.executeTurn)
+          |     +-- cập nhật conversationId vào store
+          |     +-- sanitize raw response + parseStrictWebResponse()
+          |     +-- validateWebProtocolResponse()
+          +-- kiểm tra tool loop guard (conversationGuard / MAX_TOOL_ITERATIONS)
+          +-- emitWebProtocolResponse() -> phát AdapterEvent
+          +-- releaseWebTurnSurface() trong khối finally (phase=end + đóng kết nối CDP)
 ```
 
 ### 3.6. Browser turn ownership
@@ -379,63 +387,54 @@ adapter/server.
 
 ### 3.7. Trường hợp Microsoft 365 Copilot
 
-Luồng M365 được tách thành các boundary sau:
+Tất cả các mô-đun dùng chung có nguồn gốc từ M365 đã được chuẩn hóa tại `src/adapters/web/`, trong khi `src/adapters/m365-copilot/` chỉ giữ đúng 7 file đặc thù của M365 (`index.ts` và `browser/*`). Luồng M365 đi qua `WebTurnEngine`:
 
 ```text
 handleM365ResponseRequest()
           |
           v
-CodexWireParser / CodexPayloadNormalizer
+M365CopilotAdapter (kế thừa WebProviderAdapter)
           |
           v
-NormalizedCodexRequest
+WebTurnEngine.runTurn()
+          |
+          +-- m365ConversationKey() (src/adapters/m365-copilot/browser/conversation-key.ts)
+          +-- enableEarlyExitOnFinalAnswer (src/adapters/web/execution/turn-guard.ts)
+          +-- CodexRawPayload + CodexPayloadNormalizer (src/adapters/web/normalization/)
+          +-- promptCompiler.compile() (src/adapters/web/prompt/)
+          +-- extractAttachments (attempt === 0)
           |
           v
-Prompt compiler
+executeM365Turn() (src/adapters/m365-copilot/browser/browser-worker.ts)
           |
-          +-- system/developer/user context
-          +-- tool declarations
-          +-- execution policy
-          +-- previous tool results
-          +-- environment metadata
-          |
-          v
-M365AgentLoop
+          +-- acquire/end M365 browser surface theo từng attempt (manageLauncherLeaseInEngine: false)
+          +-- xác thực URL hội thoại (browser/conversation-url.ts)
+          +-- chọn capability mode & model (browser/capability-picker.ts)
+          +-- đính kèm ảnh vào composer (browser/attachments.ts)
+          +-- điền composer, gửi prompt và đọc response DOM (FastPathStreamBuffer / SemanticMarkdownBuffer)
           |
           v
-executeM365Turn()
-          |
-          +-- acquire M365 browser surface
-          +-- chọn capability mode
-          +-- attach images
-          +-- điền composer
-          +-- gửi prompt
-          +-- đọc response DOM
-          +-- chuyển HTML thành Markdown
-          |
-          v
-Strict response parser / Output translator
+parseStrictWebResponse() + validateWebProtocolResponse() (src/adapters/web/protocol/)
           |
           +-- final answer
-          +-- function tool call
-          +-- custom/freeform tool call
-          +-- tool-search call
-          +-- protocol error
+          +-- function tool call / custom_tool_call (apply_patch)
+          +-- protocol error -> runWebProtocolRetry() tự động thử lại trên cùng hội thoại
           |
           v
-M365ToolBridge
+enableToolLoopGuard (src/adapters/web/execution/turn-guard.ts)
           |
-          +-- validate tool name
-          +-- map namespaced tool
-          +-- giữ raw input cho freeform tool
+          v
+emitWebProtocolResponse() + WebToolBridge (src/adapters/web/tools/tool-bridge.ts)
+          |
+          +-- validate tool name & arguments
+          +-- giữ raw input cho freeform tool (apply_patch)
           +-- không thay semantic action bằng shell fallback
           |
           v
 AdapterEvent
 ```
 
-M365 Adapter có thể chạy nhiều vòng provider-side để xử lý protocol và guard, nhưng việc thực thi
-tool thật vẫn thuộc outer Codex runtime.
+M365 Adapter có thể chạy nhiều vòng format-retry ở tầng `WebTurnEngine` và bảo vệ vòng lặp qua `turn-guard`, nhưng việc thực thi tool thật vẫn thuộc outer Codex runtime.
 
 ### 3.8. AdapterEvent quay lại Codex
 
@@ -941,14 +940,15 @@ HTTP `503`.
 | Model catalog | `src/models/model-catalog.ts`, `src/models/model-registry.ts` |
 | Parse Responses request | `src/responses/parser.ts` |
 | Continuation | `src/responses/state.ts` |
-| Adapter contract | `src/adapters/base.ts` |
+| Adapter contract & base | `src/adapters/base.ts`, `src/adapters/web/web-provider-adapter.ts` |
+| Shared Web Turn Engine & Lifecycle | `src/adapters/web/engine.ts`, `src/adapters/web/definition.ts`, `src/adapters/web/runtime-lifecycle.ts` |
 | Provider routing | `src/server.ts`, `src/models/model-registry.ts` |
 | Shared Web normalization | `src/adapters/web/normalization/` |
-| Shared Web prompt compilation | `src/adapters/web/prompt/` |
+| Shared Web prompt compilation | `src/adapters/web/prompt/`, `src/adapters/web/compile-prompt.ts` |
 | Shared Web strict response protocol | `src/adapters/web/protocol/` |
 | Shared Web tool mapping | `src/adapters/web/tools/` |
-| M365 browser turn | `src/adapters/m365-copilot/browser/browser-worker.ts` |
-| M365 DOM translation | `src/adapters/m365-copilot/translation/` |
+| Shared Web conversation & turn guard | `src/adapters/web/conversation/`, `src/adapters/web/execution/` |
+| M365 browser drivers (7 core files) | `src/adapters/m365-copilot/index.ts`, `src/adapters/m365-copilot/browser/` |
 | Adapter events sang Responses API | `src/bridge.ts` |
 | Browser ownership | `src/launcher-browser-host.ts`, `launcher/electron/control-server.cjs` |
 | Browser surfaces | `launcher/electron/*-surface-manager.cjs` |
@@ -1034,6 +1034,8 @@ Responses API.
 
 ## 5. Adapter contract
 
+### 5.1. `ProviderAdapter`
+
 Contract chung nằm tại ../src/adapters/base.ts:
 
 ```ts
@@ -1050,13 +1052,27 @@ interface ProviderAdapter {
 Ý nghĩa:
 
 - Server chịu trách nhiệm parse request, route provider và tạo HTTP response.
-- Adapter chịu trách nhiệm thực hiện một provider turn.
-- Adapter phát `AdapterEvent`.
-- ../src/bridge.ts chuyển `AdapterEvent` thành Responses API events hoặc kết quả
-  JSON không streaming.
+- Adapter chịu trách nhiệm thực hiện một provider turn và phát `AdapterEvent`.
+- ../src/bridge.ts chuyển `AdapterEvent` thành Responses API events hoặc kết quả JSON không streaming.
+- Metadata vào adapter chỉ chứa HTTP headers và optional abort signal.
 
-Metadata vào adapter chỉ chứa HTTP headers và optional abort signal. Trace context hoặc structured
-observability metadata không còn là một phần của contract.
+### 5.2. Kiến trúc phân tầng `WebProviderAdapter` & `WebTurnEngine`
+
+Toàn bộ 5 Web Provider (`m365-copilot`, `chatgpt-web`, `gemini-web`, `google-ai-studio`, `qwen-web`) tuân theo kiến trúc phân tầng thống nhất:
+
+```text
+ProviderAdapter (src/adapters/base.ts)
+    ↓
+WebProviderAdapter (src/adapters/web/web-provider-adapter.ts)
+    ↓
+WebTurnEngine (src/adapters/web/engine.ts)
+    ↓
+WebProviderDefinition (src/adapters/web/definition.ts)
+    ↓
+Provider-specific Drivers & Policies (conversation, capability, attachments, browser, response, policies)
+```
+
+Mỗi provider adapter chỉ khai báo cấu hình `WebProviderDefinition` và các trình điều khiển (drivers) đặc thù trang Web của mình, không tự sao chép vòng lặp điều phối `runTurn()`.
 
 ## 6. Web Adapter
 
@@ -1064,53 +1080,37 @@ observability metadata không còn là một phần của contract.
 
 Thư mục: ../src/adapters/web/
 
-Shared layer chứa các thành phần không phụ thuộc vào hành vi DOM của một provider cụ thể:
+Shared layer sở hữu toàn bộ cơ chế điều phối và giao thức dùng chung cho mọi Web Provider:
 
-- `normalization/`: raw Codex wire payload và canonical request normalization.
-- `prompt/`: prompt compilation, conversation scenarios và format-retry prompt.
-- `protocol/`: strict response envelope parser.
-- `tools/`: tool argument normalization, validation, approval metadata và native-first tool bridge.
+- `web-provider-adapter.ts`: lớp cơ sở `WebProviderAdapter` triển khai `ProviderAdapter` và ủy quyền `runTurn()` cho `WebTurnEngine`.
+- `engine.ts`: `WebTurnEngine` — orchestrator duy nhất điều phối toàn bộ vòng đời một lượt tương tác (abort check, thread/conversation key, early-exit, acquire/release browser surface, prompt compilation, format retry loop, tool loop guard, event emission).
+- `definition.ts`: các hợp đồng trình điều khiển (`WebConversationDriver`, `WebCapabilityPickerDriver`, `WebAttachmentDriver`, `WebBrowserDriver`, `WebResponseDriver`, `WebProviderPolicies`, `WebProviderDefinition`).
+- `runtime-lifecycle.ts`, `launcher-runtime.ts`, `local-browser-runtime.ts`: quản lý kết nối Launcher CDP lease (`startLauncherBrowserTurn`, `endLauncherBrowserTurn`, `closeLauncherBrowserTurn`) và fallback sang `LocalBrowserRuntime`.
+- `conversation/`: dẫn xuất khóa hội thoại ổn định (`deriveStableConversationKey`) và kho lưu trữ hội thoại tổng quát (`GenericConversationStore`).
+- `execution/`: trạng thái và bộ bảo vệ vòng lặp công cụ (`conversationGuard`, `MAX_TOOL_ITERATIONS`, `getMaxIdenticalToolCalls`, `isAssistantFinalAnswer`).
+- `normalization/`: raw Codex wire payload và canonical request normalization (`CodexRawPayload`, `CodexPayloadNormalizer`).
+- `prompt/` & `compile-prompt.ts`: biên dịch prompt theo kịch bản hội thoại và tạo prompt thử lại khi lỗi định dạng.
+- `protocol/`: bộ phân tích cú pháp nghiêm ngặt `<webResponse>` (`parseStrictWebResponse`), xác thực lô công cụ nguyên tử (`validateWebProtocolResponse`), vòng lặp retry (`runWebProtocolRetry`), phát sự kiện (`emitWebProtocolResponse`), cùng bộ đệm stream (`FastPathStreamBuffer`, `SemanticMarkdownBuffer`, `webHtmlToMarkdown`).
+- `tools/`: chuẩn hóa tham số, kiểm tra an toàn lệnh (`SafeCommandGuard`), chính sách phê duyệt và cầu nối công cụ native-first (`WebToolBridge`).
+- `harness/`: hệ thống con tùy chọn phục vụ phát triển/đánh giá cục bộ (`M365AgentLoop`), nằm ngoài đường chạy production của `WebTurnEngine`.
 
-Các Web provider import shared layer theo một chiều. Shared layer không được import ngược
-`m365-copilot`, `chatgpt-web`, `gemini-web`, `google-ai-studio` hoặc `qwen-web`.
+Các Web provider import shared layer theo một chiều. Shared layer tuyệt đối không import ngược `m365-copilot`, `chatgpt-web`, `gemini-web`, `google-ai-studio` hoặc `qwen-web`.
 
-Giai đoạn này chỉ thay đổi ownership của module. Browser orchestration, provider lifecycle,
-selectors, capability picker, conversation URLs, attachments và DOM extraction vẫn thuộc từng
-provider và không thay đổi hành vi runtime.
-
-### 6.2. ChatGPT Web
-
-Thư mục: ../src/adapters/chatgpt-web/
-
-Các trách nhiệm chính:
-
-- Browser worker và browser helper.
-- Model/capability selection.
-- Conversation binding.
-- Input token và usage accounting.
-- MCP entry point cho tool-enabled mode.
-- Chuyển ChatGPT DOM response thành adapter events.
-
-### 6.3. Microsoft 365 Copilot
+### 6.2. Microsoft 365 Copilot
 
 Thư mục: ../src/adapters/m365-copilot/
 
-Các boundary được architectural test xác nhận:
+Adapter M365 đã được tinh gọn về đúng **7 file đặc thù của provider** (được khóa cứng bởi cổng kiểm tra kiến trúc):
 
-- Root adapter facade.
-- Shared payload normalization.
-- Shared prompt compilation.
-- Browser execution.
-- Shared strict response parsing.
-- Tool-call translation.
-- Shared native-first tool bridge.
-- Loop prevention.
+- `index.ts`: `M365CopilotAdapter` kế thừa `WebProviderAdapter` và re-export các facade tương thích ngược từ `src/adapters/web/`.
+- `browser/index.ts`: điểm xuất các trình điều khiển trình duyệt M365.
+- `browser/browser-worker.ts`: điều khiển trang M365 Copilot (`executeM365Turn`), gửi heartbeat, trích xuất DOM Scriptor/Semantic và quản lý lease theo từng attempt.
+- `browser/capability-picker.ts`: chọn mode/model và mức suy luận trên UI M365.
+- `browser/attachments.ts`: đính kèm hình ảnh vào khung soạn thảo M365.
+- `browser/conversation-url.ts`: nhận diện và kiểm tra URL hội thoại M365 hợp lệ.
+- `browser/conversation-key.ts`: hàm tạo khóa hội thoại M365 (`m365ConversationKey`).
 
-CI kiểm tra:
-
-- Không có circular dependency trong adapter.
-- Root facade giữ các public API bắt buộc.
-- OS-specific command strategy không bị export qua root facade.
+> **Lưu ý kiến trúc về vòng đời Lease của M365:** Khác với 4 provider còn lại quản lý lease theo phạm vi toàn lượt trong `runtime-lifecycle.ts`, M365 hiện cấu hình `manageLauncherLeaseInEngine: false` để `executeM365Turn` trong `browser/browser-worker.ts` trực tiếp quản lý lease theo từng attempt kèm cơ chế khôi phục tab.
 
 Architectural gate:
 
@@ -1118,39 +1118,59 @@ Architectural gate:
 bun run check:architecture
 ```
 
+Cổng kiểm tra xác nhận:
+
+- `0` circular dependency trong `src/adapters/m365-copilot` (đúng 7 modules) và `src/adapters/web`.
+- Shared Web layer không import ngược bất kỳ provider nào và không chứa selector DOM Scriptor đặc thù M365.
+- Toàn bộ 5 provider facade (`src/adapters/<provider>/index.ts`) kế thừa `WebProviderAdapter` và không tự gọi trực tiếp các hàm điều phối cấp thấp.
+- Root facade bảo toàn đầy đủ các API công khai.
+
+### 6.3. ChatGPT Web
+
+Thư mục: ../src/adapters/chatgpt-web/
+
+`ChatGptWebAdapter` kế thừa `WebProviderAdapter`, chỉ chứa:
+
+- `index.ts`: khai báo `WebProviderDefinition` cho ChatGPT (`launcherFailureMode: "fail-closed"`, `emitErrorEventOnFailure: true`, `rethrowError: true`).
+- `chatgpt-browser-worker.ts`: điều khiển DOM ChatGPT và kiểm tra `isValidChatGptConversationId`.
+- `capability-picker.ts`: chọn model và chế độ suy luận (Think/Effort) trên giao diện ChatGPT.
+- `conversation-store.ts`: ủy quyền lưu trữ hội thoại qua `GenericConversationStore`.
+- `selectors.ts`: bộ selector DOM của ChatGPT.
+- `markdown.ts`: bộ chuyển đổi HTML sang Markdown.
+
 ### 6.4. Gemini Web
 
 Thư mục: ../src/adapters/gemini-web/
 
-Adapter gồm:
+`GeminiWebAdapter` kế thừa `WebProviderAdapter`, chỉ chứa:
 
-- Capability picker.
-- Browser worker.
-- Provider facade.
-- DOM selectors.
+- `index.ts`: khai báo `WebProviderDefinition` cho Gemini với chính sách `launcherFailureMode: "fallback-local"` (tự động chuyển sang `LocalBrowserRuntime` khi không kết nối được Launcher).
+- `gemini-browser-worker.ts`: điều khiển trang Gemini và trích xuất phản hồi.
+- `capability-picker.ts`: chọn mode suy luận trên UI Gemini.
+- `selectors.ts`: bộ selector DOM của Gemini.
 
-### 6.4. Google AI Studio
+### 6.5. Google AI Studio
 
 Thư mục: ../src/adapters/google-ai-studio/
 
-Adapter gồm:
+`GoogleAIStudioAdapter` kế thừa `WebProviderAdapter`, chỉ chứa:
 
-- Browser worker.
-- Capability picker.
-- Conversation store.
-- Provider facade.
-- DOM selectors.
+- `index.ts`: khai báo `WebProviderDefinition` cho Google AI Studio (`closeLauncherConnectionOnEnd: false`, `emitErrorEventOnFailure: false`, `tolerantNaturalTextFallback: true`, `sanitizeAIStudioResponse`, và fallback `conversationId` sang `conversationKey` khi kết thúc lượt).
+- `browser-worker.ts`: điều khiển trang Google AI Studio và đồng bộ `promptId`.
+- `capability-picker.ts`: chọn model và cấu hình thinking budget trên UI AI Studio.
+- `conversation-store.ts`: ủy quyền lưu trữ `promptId` qua `GenericConversationStore`.
+- `selectors.ts`: bộ selector DOM của Google AI Studio.
 
-### 6.5. Qwen Web
+### 6.6. Qwen Web
 
 Thư mục: ../src/adapters/qwen-web/
 
-Adapter gồm:
+`QwenWebAdapter` kế thừa `WebProviderAdapter`, chỉ chứa:
 
-- Browser worker.
-- Conversation store.
-- Provider facade.
-- DOM selectors.
+- `index.ts`: khai báo `WebProviderDefinition` cho Qwen (`launcherFailureMode: "fail-closed"`, `emitErrorEventOnFailure: false`, `rethrowError: true`), cùng phương thức `abortTurn()` và `cleanup()`.
+- `qwen-browser-worker.ts`: điều khiển trang Qwen và trích xuất phản hồi.
+- `conversation-store.ts`: ủy quyền lưu trữ hội thoại qua `GenericConversationStore`.
+- `selectors.ts`: bộ selector DOM và hàm kiểm tra `isValidQwenConversationId`.
 
 ## 7. Responses lifecycle
 
