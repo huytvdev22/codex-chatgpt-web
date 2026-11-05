@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **025** | Chuyển Conversation Store của Qwen, Google AI Studio và ChatGPT sang dùng `GenericConversationStore` | `qwen-web`, `google-ai-studio`, `chatgpt-web` | ⏳ Chờ User Test & Confirm | [025-unify-provider-conversation-stores-on-generic-store.md](./025-unify-provider-conversation-stores-on-generic-store.md) |
 | **024** | Bóc tách hạ tầng Conversation Key & Generic Conversation Store sang `src/adapters/web/conversation/` | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [024-extract-shared-web-conversation-infrastructure.md](./024-extract-shared-web-conversation-infrastructure.md) |
 | **023** | Xóa bỏ hoàn toàn Title Guard subsystem (`M365_ENABLE_TITLE_GUARD`) không còn sử dụng | `m365-copilot`, `web` | ⏳ Chờ User Test & Confirm | [023-remove-obsolete-title-guard-subsystem.md](./023-remove-obsolete-title-guard-subsystem.md) |
 | **022** | Bóc tách Turn Execution Guard từ M365 sang Shared Web Adapter layer (`src/adapters/web/execution/`) | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [022-extract-web-turn-guard-execution-layer.md](./022-extract-web-turn-guard-execution-layer.md) |
