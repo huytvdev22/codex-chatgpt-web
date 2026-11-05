@@ -4510,25 +4510,6 @@ class BrowserHost {
     return inspected;
   }
 
-  async inspectLimitsPlan() {
-    requireAutomaticBrowserInspection(this, "Limits plan detection");
-    return this.withManualOperation("Limits plan detection", async () => {
-      const result = await this.runBrowserHelperOperation({
-        helper: this.helper,
-        descriptorPath: this.descriptorPath,
-        appName: this.connectorName(),
-        operation: "limits",
-        logger: this.logger,
-      });
-      const plan = result?.value;
-      if (!plan || !/^[a-f0-9]{64}$/.test(plan.accountKey)
-        || !["pro_100", "pro_200", "unsupported"].includes(plan.plan)) {
-        throw new Error("Browser helper returned invalid Limits plan evidence");
-      }
-      return plan;
-    });
-  }
-
   async withManualOperation(name, action) {
     await this.ready();
     if (this.activeTraceId) {

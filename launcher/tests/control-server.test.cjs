@@ -63,53 +63,6 @@ test("disconnect cancels pending browser initialization and destroys only its ow
   }
 });
 
-test("Limits receipts require the active automatic owner and survive reconnect without duplicate usage", async () => {
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const { LimitsController } = require("../electron/limits-controller.cjs");
-  const directory = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "limits-control-"));
-  const file = path.join(directory, "limits.json");
-  const accountKey = "a".repeat(64);
-  let mode = "automatic";
-  const limits = new LimitsController(file, { getInteractionMode: () => mode });
-  await limits.setup(async () => ({ accountKey, plan: "pro_200" }));
-  const host = {
-    browserInteractionMode: () => mode,
-    turnTabs: new Map([["tab", { traceId: "limits-turn", helperPid: process.pid, status: "running" }]]),
-    heartbeatTurn: BrowserHost.prototype.heartbeatTurn,
-    snapshot: () => ({}),
-    beginTurn: () => ({ surfaceId: "a".repeat(32), reused: false, connectorBound: false }),
-  };
-  const server = await new BrowserControlServer({
-    logger: { info() {}, warn() {}, error() {} },
-    getBrowserHost: () => host, getPreferences: () => ({}), limits,
-  }).start();
-  const { endpoint, token } = server.descriptor();
-  const send = (body, auth = token, route = "usage") => fetch(`${endpoint}/v1/turn/${route}`, {
-    method: "POST", headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const owner = { traceId: "limits-turn", helperPid: process.pid };
-  const body = { ...owner, receipt: { id: "one-accepted-send", accountKey, model: "gpt-6-pro", at: Date.now() } };
-  try {
-    assert.equal((await (await send(owner, token, "start")).json()).trackUsage, true);
-    assert.equal((await send(body, "wrong-token")).status, 401);
-    assert.equal((await send({ ...body, helperPid: process.pid + 1 })).status, 400);
-    assert.equal(limits.snapshot().totalMessages, 0);
-    assert.equal((await (await send(body)).json()).recorded, true);
-    assert.equal((await (await send(body)).json()).recorded, false);
-    const restored = new LimitsController(file, { getInteractionMode: () => mode });
-    assert.equal(restored.snapshot().windows.find(window => window.model === "gpt-6-pro").used, 1);
-    mode = "manual";
-    assert.equal((await send({ ...body, receipt: { ...body.receipt, id: "manual-send" } })).status, 400);
-    assert.equal(limits.snapshot().disabledReason, "zero-risk");
-    assert.equal(limits.snapshot().totalMessages, 1);
-  } finally {
-    await server.close();
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
 test("native proxy resolution requires owner auth, restricts targets, and works without browser automation", async () => {
   const resolved = [];
   const server = await new BrowserControlServer({

@@ -161,22 +161,6 @@ every later tool action in the same turn continues to present the current turn c
 ChatGPT status rows become reasoning summaries, while stable prose between rows becomes native
 Codex commentary.
 
-## Local ChatGPT Limits
-
-The launcher Limits page is an opt-in estimate of its own accepted browser submissions. Setup
-reads the current personal ChatGPT account and the Billing panel's Pro tier; a model-picker Pro
-badge alone cannot distinguish Pro $100 from Pro $200. The private store keeps account hashes,
-submission receipt IDs, timestamps, and model families, never prompts or authentication tokens.
-Every physical Send is counted once after semantic acceptance, including Bigger Context stages;
-native tool rounds and stream reconnects do not create receipts. The selected slider's accessibility
-announcement identifies GPT-6 Pro versus GPT-5.6 Pro. Unidentified Pro sends are visibly uncertain.
-
-The page compares rolling 24-hour and seven-day local counts with the published Chat allowances.
-It does not claim OpenAI's reset time, include messages sent elsewhere, or enforce a model limit.
-Writes are drained before the browser lease is released; accounting failure cannot replay an
-accepted Send. Account changes require another plan check, and Zero Risk performs no inspection
-or tracking. Production and DEV keep separate stores in their own launcher profiles.
-
 ## Installation and service lifecycle
 
 Each native desktop package contains Electron, a platform-matched pinned Bun executable, the

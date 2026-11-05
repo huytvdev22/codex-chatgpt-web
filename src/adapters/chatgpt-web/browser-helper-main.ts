@@ -58,15 +58,6 @@ async function handleMessage(line: string): Promise<void> {
           proAvailable: true,
         },
       });
-    } else if (message.type === "limits") {
-      writeProtocol({
-        type: "result",
-        id,
-        value: {
-          accountKey: "0".repeat(64),
-          plan: "pro_100",
-        },
-      });
     } else {
       writeProtocol({
         type: "error",

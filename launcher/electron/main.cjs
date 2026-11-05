@@ -21,8 +21,6 @@ const {
 } = require("electron");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
-const { LimitsController } = require("./limits-controller.cjs");
-const { SOURCE_URL: LIMITS_SOURCE_URL } = require("./limits-store.cjs");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
@@ -61,7 +59,7 @@ const X_URL = "https://x.com/miu21590";
 const CONNECTORS_URL = "https://chatgpt.com/#settings/Plugins";
 const TUNNELS_URL = "https://platform.openai.com/settings/organization/tunnels";
 const KEYS_URL = "https://platform.openai.com/settings/organization/api-keys";
-const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNELS_URL, KEYS_URL, LIMITS_SOURCE_URL]);
+const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNELS_URL, KEYS_URL]);
 const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
@@ -106,7 +104,6 @@ let lastOperation = null;
 let catalogVerificationTimer = null;
 let catalogVerificationInFlight = false;
 let updateController = null;
-let limitsController = null;
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -526,16 +523,11 @@ function registerIpc({ logger, stateStore }) {
     "launcher:use-saved-chats", "launcher:browser-interaction-mode",
     "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
     "launcher:browser-passkey-login", "launcher:browser-logout", "launcher:browser-smoke",
-    "launcher:limits-setup", "launcher:update-install", "launcher:complete-onboarding",
+    "launcher:update-install", "launcher:complete-onboarding",
   ]);
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
     if (runtimeChannels.has(channel)) await runtimeStartup;
     return handler(...args);
-  });
-  handle("launcher:limits", () => limitsController.snapshot());
-  handle("launcher:limits-setup", async () => {
-    if (runtimeHost.currentOperation()) throw new Error("Finish the current launcher operation before checking Limits.");
-    return limitsController.setup(() => browserHost.inspectLimitsPlan());
   });
   handle("launcher:snapshot", async () => ({
     profile: LAUNCHER_PROFILE.kind,
@@ -926,9 +918,6 @@ async function start() {
   await app.whenReady();
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
-  limitsController = new LimitsController(path.join(app.getPath("userData"), "limits.json"), {
-    getInteractionMode: () => stateStore.read().browserInteractionMode,
-  });
   if (IS_DEV_PROFILE && !stateStore.read().onboardingComplete) {
     stateStore.update({
       language: stateStore.read().language || "en",
@@ -1008,7 +997,6 @@ async function start() {
     getBrowserHost: () => browserHost,
     getPreferences: () => syncFreshConversationPreference(stateStore, runtimeHost.runtimeConfigSnapshot().config),
     resolveProxy: url => session.fromPartition(LAUNCHER_PROFILE.browserPartition).resolveProxy(url),
-    limits: limitsController,
   }).start();
   runtimeSupervisor = new RuntimeSupervisor({
     app,

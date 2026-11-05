@@ -1251,7 +1251,6 @@ Renderer nằm tại ../launcher/src/:
 
 - ../launcher/src/App.tsx: top-level product flow và settings surfaces.
 - ../launcher/src/types.ts: typed preload contract và renderer state.
-- ../launcher/src/LimitsSurface.tsx: local usage estimate UI.
 - ../launcher/src/i18n.ts: localized UI copy.
 
 Renderer không truy cập trực tiếp filesystem, child process hoặc browser internals. Các hành động

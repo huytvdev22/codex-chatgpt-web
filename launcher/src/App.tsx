@@ -14,9 +14,6 @@ import {
 import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
-import { LimitsSurface } from "./LimitsSurface";
-import { limitsCopyFor } from "./limits-copy";
-import { useLimits } from "./useLimits";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -333,8 +330,6 @@ function LauncherShell({
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
-  const limits = useLimits(api!, snapshot.state.browserInteractionMode === "manual");
-  const limitsCopy = limitsCopyFor(language);
 
   useEffect(() => {
     if (snapshot.state.browserInteractionMode === "manual") {
@@ -559,19 +554,6 @@ function LauncherShell({
                   onClick={() => navigateSurface("setup")}
                 />
               </SidebarGroup>
-              <SidebarGroup label={copy.runtime}>
-                <SidebarItem
-                  active={surface === "limits"}
-                  badge={limits.needsAttention ? (
-                    <span role="img" aria-label={limitsCopy.nearLimit} title={limitsCopy.nearLimit}>
-                      <ActionDot tone="optional" />
-                    </span>
-                  ) : null}
-                  icon="logs"
-                  label={limitsCopy.title}
-                  onClick={() => navigateSurface("limits")}
-                />
-              </SidebarGroup>
             </nav>
 
             <div className="sidebar-footer">
@@ -627,19 +609,6 @@ function LauncherShell({
                 setError={setError}
                 snapshot={snapshot}
                 updateState={updateState}
-              />
-            ) : null}
-            {surface === "limits" ? (
-              <LimitsSurface
-                api={api!}
-                tracker={limits}
-                language={language}
-                manualMode={snapshot.state.browserInteractionMode === "manual"}
-                runtimeBusy={operation?.status === "running"
-                  || browser?.status === "running" || browser?.status === "testing" || browser?.status === "loading"
-                  || browser?.loading === true
-                  || browser?.tabs.some((tab) => tab.status === "running" || tab.status === "testing" || tab.loading) === true}
-                setError={setError}
               />
             ) : null}
             {surface === "settings" ? (

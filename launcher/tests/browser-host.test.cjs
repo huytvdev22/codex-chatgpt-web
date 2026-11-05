@@ -3593,7 +3593,6 @@ test("Zero Risk fails closed at every primary-surface inspection boundary", asyn
   await assert.rejects(fixture.configureAnnouncementDismissal(true), /disabled in Zero Risk mode/);
   await assert.rejects(fixture.probeAuthentication(), /disabled in Zero Risk mode/);
   await assert.rejects(fixture.inspectSession(true), /disabled in Zero Risk mode/);
-  await assert.rejects(fixture.inspectLimitsPlan(), /disabled in Zero Risk mode/);
   assert.equal(domOperations, 0);
 });
 

@@ -32,8 +32,7 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
     },
     prepareChatSurface: async () => {},
     selectModelAndEffort: async (_page: unknown, model: string, effort: string, _capabilities: unknown,
-      _diagnostic: unknown, trackUsage: boolean, family: string) => {
-      expect(trackUsage).toBe(false);
+      _diagnostic: unknown, _legacyTracking: boolean, family: string) => {
       expect(family).toBe("5.6");
       actions.push(`effort:${effort}`);
       return resolveChatGptWebModelMode(model, effort, capabilities);
