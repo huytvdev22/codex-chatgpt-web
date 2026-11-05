@@ -26,11 +26,14 @@ import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { resolveWebThreadId } from "../web/turn-identity";
+import {
+  resolveWebThreadId,
+  resolveWebTurnTraceId,
+} from "../web/turn-identity";
 
 export interface GeminiAdapterOptions {
   userDataDir?: string;
@@ -79,7 +82,9 @@ export class GeminiWebAdapter implements ProviderAdapter {
     const conversationKey = createHash("sha256")
       .update(`gemini-web:${threadId || "default-session"}`, "utf8")
       .digest("hex");
-    const turnTraceId = incoming.headers.get("x-codex-trace-id") || randomBytes(12).toString("base64url");
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+    });
 
     const descriptorPath = resolveLauncherDescriptorPath(this.options.descriptorPath);
     let launcherConnection: LauncherBrowserConnection | null = null;

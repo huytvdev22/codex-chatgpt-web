@@ -7,7 +7,10 @@ import {
   defaultGoogleAIStudioConversationStore,
   googleAIStudioConversationKey,
 } from "./conversation-store";
-import { resolveWebThreadId } from "../web/turn-identity";
+import {
+  resolveWebThreadId,
+  resolveWebTurnTraceId,
+} from "../web/turn-identity";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
@@ -118,7 +121,11 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     let surfaceId: string | undefined;
     let leasePromptId: string | undefined;
     let launcherConversationReused = false;
-    const turnTraceId = randomBytes(16).toString("hex");
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+      byteLength: 16,
+      encoding: "hex",
+    });
     let launcherError: Error | null = null;
 
     // 2. Kết nối Launcher Surface nếu có

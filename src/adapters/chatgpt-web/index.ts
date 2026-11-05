@@ -4,7 +4,10 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptBrowserWorker, isValidChatGptConversationId } from "./chatgpt-browser-worker";
 import { CHATGPT_SELECTORS } from "./selectors";
 import { defaultChatGptConversationStore, chatGptConversationKey } from "./conversation-store";
-import { resolveWebThreadId } from "../web/turn-identity";
+import {
+  resolveWebThreadId,
+  resolveWebTurnTraceId,
+} from "../web/turn-identity";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
@@ -22,7 +25,6 @@ import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import {
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
@@ -86,7 +88,9 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     );
 
     const conversationKey = chatGptConversationKey(parsed, threadId);
-    const turnTraceId = incoming.headers.get("x-codex-trace-id") || randomBytes(12).toString("base64url");
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+    });
 
     const descriptorPath = resolveLauncherDescriptorPath(this.options.descriptorPath);
     let launcherConnection: LauncherBrowserConnection | null = null;

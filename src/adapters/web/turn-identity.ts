@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { CodexRawPayload } from "./normalization";
 
 export interface CodexTurnIdentity {
@@ -90,4 +91,23 @@ export function resolveWebThreadId(
   return rawPayload.getThreadId()
     || headers.get("x-codex-conversation-key")
     || extractCodexTurnIdentityFromBody(payloadSource).threadId;
+}
+
+export interface ResolveWebTurnTraceIdOptions {
+  headers: Headers;
+  byteLength?: number;
+  encoding?: "base64url" | "hex";
+}
+
+/**
+ * Preserves a caller-supplied Codex trace identity when available and creates
+ * a cryptographically random provider trace otherwise.
+ */
+export function resolveWebTurnTraceId(
+  options: ResolveWebTurnTraceIdOptions,
+): string {
+  return options.headers.get("x-codex-trace-id")
+    || randomBytes(options.byteLength ?? 12).toString(
+      options.encoding ?? "base64url",
+    );
 }
