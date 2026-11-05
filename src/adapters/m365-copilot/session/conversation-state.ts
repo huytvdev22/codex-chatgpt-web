@@ -1,6 +1,1 @@
-export interface ConversationGuardState {
-  toolIterations: number;
-  lastToolFingerprint?: string;
-  identicalToolCount: number;
-  updatedAt: number;
-}
+export type { ConversationGuardState } from "../../web/execution/conversation-state";
