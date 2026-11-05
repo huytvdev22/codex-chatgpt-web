@@ -39,6 +39,10 @@ type LauncherStartActivity = Extract<
   LauncherTurnActivity,
   { phase: "start" }
 >;
+type LauncherEndActivity = Extract<
+  LauncherTurnActivity,
+  { phase: "end" }
+>;
 
 export interface StartLauncherBrowserTurnOptions {
   descriptorPath: string;
@@ -100,4 +104,30 @@ export async function closeLauncherBrowserTurn(
 ): Promise<void> {
   if (!connection) return;
   await connection.browser.close().catch(() => {});
+}
+
+export interface EndLauncherBrowserTurnOptions {
+  descriptorPath: string;
+  activity: LauncherEndActivity;
+  signal?: AbortSignal;
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * Releases a Launcher turn without allowing control-channel cleanup failures
+ * to replace the provider turn's primary result.
+ */
+export async function endLauncherBrowserTurn(
+  options: EndLauncherBrowserTurnOptions,
+): Promise<void> {
+  try {
+    await notifyLauncherTurn(
+      options.descriptorPath,
+      options.activity,
+      undefined,
+      options.signal,
+    );
+  } catch (error) {
+    options.onError?.(error);
+  }
 }

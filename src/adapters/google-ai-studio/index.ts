@@ -23,6 +23,7 @@ import {
   CodexRawPayload,
 } from "../web/normalization";
 import {
+  endLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
   startLauncherBrowserTurn,
 } from "../web/launcher-runtime";
@@ -32,7 +33,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 
@@ -277,11 +277,10 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
       emit({ type: "done", stopReason: "stop", endTurn: true, usage });
     } finally {
       if (descriptorPath && surfaceId) {
-        try {
-          const finalStatus = protocolResult ? "completed" : "failed";
-          await notifyLauncherTurn(
-            descriptorPath,
-            {
+        const finalStatus = protocolResult ? "completed" : "failed";
+        await endLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
               phase: "end",
               traceId: turnTraceId,
               helperPid: process.pid,
@@ -291,12 +290,8 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
               retain: true,
               connectorBound: true,
             },
-            undefined,
-            incoming.abortSignal,
-          );
-        } catch {
-          // Bỏ qua lỗi notify launcher lúc kết thúc
-        }
+          signal: incoming.abortSignal,
+        });
       }
     }
   }

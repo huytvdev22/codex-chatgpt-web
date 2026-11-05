@@ -21,6 +21,7 @@ import {
 } from "../web/normalization";
 import {
   closeLauncherBrowserTurn,
+  endLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
   startLauncherBrowserTurn,
 } from "../web/launcher-runtime";
@@ -30,7 +31,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
@@ -192,8 +192,9 @@ export class GeminiWebAdapter implements ProviderAdapter {
       throw error;
     } finally {
       if (descriptorPath && leaseStarted) {
-        try {
-          await notifyLauncherTurn(descriptorPath, {
+        await endLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
             phase: "end",
             traceId: turnTraceId,
             helperPid: process.pid,
@@ -201,10 +202,11 @@ export class GeminiWebAdapter implements ProviderAdapter {
             status: finalStatus,
             retain: true,
             connectorBound: finalStatus === "completed",
-          });
-        } catch (releaseErr) {
-          console.warn("[gemini-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
-        }
+          },
+          onError: releaseErr => {
+            console.warn("[gemini-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
+          },
+        });
       }
       await closeLauncherBrowserTurn(launcherConnection);
     }

@@ -17,6 +17,7 @@ import {
 } from "../web/normalization";
 import {
   closeLauncherBrowserTurn,
+  endLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
   startLauncherBrowserTurn,
 } from "../web/launcher-runtime";
@@ -26,7 +27,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 
@@ -217,10 +217,11 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     } finally {
       // 5. Giải phóng lượt và YÊU CẦU LAUNCHER GIỮ LẠI (RETAIN) TAB HỘI THOẠI
       if (descriptorPath) {
-        try {
-          const isConvValid = isValidChatGptConversationId(activeConversationId);
-          console.log(`[chatgpt-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${isConvValid ? activeConversationId : 'none'})...`);
-          await notifyLauncherTurn(descriptorPath, {
+        const isConvValid = isValidChatGptConversationId(activeConversationId);
+        console.log(`[chatgpt-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${isConvValid ? activeConversationId : 'none'})...`);
+        await endLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
             phase: "end",
             traceId: turnTraceId,
             helperPid: process.pid,
@@ -229,10 +230,11 @@ export class ChatGptWebAdapter implements ProviderAdapter {
             retain: true,
             connectorBound: finalStatus === "completed" && isConvValid,
             ...(isConvValid ? { conversationId: activeConversationId } : {}),
-          });
-        } catch (releaseErr) {
-          console.warn("[chatgpt-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
-        }
+          },
+          onError: releaseErr => {
+            console.warn("[chatgpt-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
+          },
+        });
       }
 
       await closeLauncherBrowserTurn(launcherConnection);

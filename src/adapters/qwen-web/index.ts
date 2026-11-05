@@ -17,6 +17,7 @@ import {
 } from "../web/normalization";
 import {
   closeLauncherBrowserTurn,
+  endLauncherBrowserTurn,
   resolveLauncherDescriptorPath,
   startLauncherBrowserTurn,
 } from "../web/launcher-runtime";
@@ -26,7 +27,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 
@@ -207,22 +207,24 @@ export class QwenWebAdapter implements ProviderAdapter {
     } finally {
       // 5. Thông báo kết thúc turn với Launcher
       if (descriptorPath && launcherConnection) {
-        try {
-          const isConvValid = isValidQwenConversationId(activeConversationId || "");
-          console.log(`[qwen-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${isConvValid ? activeConversationId : 'none'})...`);
-          await notifyLauncherTurn(descriptorPath, {
+        const isConvValid = isValidQwenConversationId(activeConversationId || "");
+        console.log(`[qwen-adapter] Báo cáo Launcher kết thúc lượt (phase=end, status=${finalStatus}, retain=true, convId=${isConvValid ? activeConversationId : 'none'})...`);
+        await endLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
             phase: "end",
             traceId: turnTraceId,
             helperPid: process.pid,
-            provider: "qwen" as any,
+            provider: "qwen",
             status: finalStatus,
             retain: true,
             connectorBound: finalStatus === "completed" && isConvValid,
             ...(isConvValid ? { conversationId: activeConversationId } : {}),
-          });
-        } catch (releaseErr) {
-          console.warn("[qwen-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
-        }
+          },
+          onError: releaseErr => {
+            console.warn("[qwen-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
+          },
+        });
       }
 
       await closeLauncherBrowserTurn(launcherConnection);
