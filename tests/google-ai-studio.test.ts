@@ -26,7 +26,7 @@ import {
   GoogleAIStudioAdapter,
   sanitizeAIStudioResponse,
 } from "../src/adapters/google-ai-studio";
-import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation/strict-response-parser";
+import { parseStrictM365Response } from "../src/adapters/web/protocol/strict-response-parser";
 
 describe("Google AI Studio Models & Routes", () => {
   it("nhận diện chính xác slug mặc định của Google AI Studio", () => {

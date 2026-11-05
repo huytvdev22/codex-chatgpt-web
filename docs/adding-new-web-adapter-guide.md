@@ -83,12 +83,12 @@ Quy trình tự động hóa thao tác trên giao diện:
 ---
 
 ## 4. Tái sử dụng Prompt Pipeline & Kịch bản Hội thoại
-**TUYỆT ĐỐI KHÔNG VIẾT LẠI PROMPT TỪ ĐẦU!** Tất cả các adapter đều dùng chung hệ thống Prompt của M365 Copilot.
+**TUYỆT ĐỐI KHÔNG VIẾT LẠI PROMPT TỪ ĐẦU!** Tất cả Web adapter dùng chung Web Adapter layer tại `src/adapters/web/`.
 
 Trong `src/adapters/<adapter-name>/index.ts`:
 ```typescript
-import { CodexRawPayload, CodexPayloadNormalizer } from "../m365-copilot/normalization";
-import { M365PromptCompiler } from "../m365-copilot/prompts";
+import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
+import { M365PromptCompiler } from "../web/prompt";
 
 private compilePrompt(parsed: CodexParsedRequest, isNewConversation: boolean): string {
   const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
@@ -158,6 +158,7 @@ File quản lý: `src/adapters/<adapter-name>/index.ts`.
 1. **Quarantine (Cách ly)**:
    Không emit text trực tiếp ra Codex trong lúc AI đang gõ để tránh rò rỉ thẻ `<webResponse>` hoặc thẻ suy nghĩ `<thought>`.
 2. **Strict Parser (`parseStrictM365Response`)**:
+   - Import từ `src/adapters/web/protocol/strict-response-parser.ts`.
    - Nếu là câu trả lời (`final_answer`): Bóc sạch thẻ `<webResponse>`, gửi text thuần sạch đẹp sang Codex.
    - Nếu là gọi công cụ (`tool_calls`): Trích xuất các thẻ `<tool_call>` hoặc `<custom_tool_call name="apply_patch">`.
 3. **Format Retry (Tự sửa lỗi định dạng)**:
@@ -166,7 +167,7 @@ File quản lý: `src/adapters/<adapter-name>/index.ts`.
 ---
 
 ## 7. Chuẩn hóa Tên Công cụ & Tham số (Tool Normalizer & Bridge)
-File quản lý: `src/adapters/m365-copilot/tools/argument-normalizer.ts` & `tool-bridge.ts`.
+File quản lý: `src/adapters/web/tools/argument-normalizer.ts` và `src/adapters/web/tools/tool-bridge.ts`.
 
 1. **Bổ sung Alias Tên Công cụ**:
    Các mô hình AI thường gọi tên công cụ theo thói quen (`execute_command`, `bash`, `shell`, `terminal` thay vì `exec_command`).

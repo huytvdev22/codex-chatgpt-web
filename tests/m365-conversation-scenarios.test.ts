@@ -3,8 +3,8 @@ import {
   conversationScenarioBuilder,
   detectConversationScenario,
   type ConversationScenario,
-} from "../src/adapters/m365-copilot/prompts/conversation-scenario-builder";
-import { promptCompiler } from "../src/adapters/m365-copilot/prompts/compiler";
+} from "../src/adapters/web/prompt/conversation-scenario-builder";
+import { promptCompiler } from "../src/adapters/web/prompt/compiler";
 import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
@@ -12,8 +12,8 @@ import {
   TOOL_REMINDER_PROMPT,
   TOOL_ERROR_FEEDBACK_PROMPT,
   PURE_CONVERSATION_ANCHOR,
-} from "../src/adapters/m365-copilot/prompts/templates";
-import { sanitizeCodexInstructions } from "../src/adapters/m365-copilot/prompts/compiler";
+} from "../src/adapters/web/prompt/templates";
+import { sanitizeCodexInstructions } from "../src/adapters/web/prompt/compiler";
 
 describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () => {
   const baseNormalized: any = {

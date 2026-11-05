@@ -1,2 +1,2 @@
-export * from "./prompts/templates";
-export * from "./prompts/compiler";
+export * from "../web/prompt/templates";
+export * from "../web/prompt/compiler";

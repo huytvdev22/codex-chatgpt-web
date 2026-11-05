@@ -7,7 +7,7 @@ import { GEMINI_SELECTORS } from "../src/adapters/gemini-web/selectors";
 import {
   buildUnifiedToolProtocol,
   buildShortOutputFormatAnchor,
-} from "../src/adapters/m365-copilot/prompts";
+} from "../src/adapters/web/prompt";
 import { GeminiWebAdapter, createGeminiWebAdapter } from "../src/adapters/gemini-web";
 import { augmentNativeModelCatalog } from "../src/models/model-catalog";
 
@@ -125,7 +125,7 @@ describe("Google Gemini Web Adapter Base Architecture Tests", () => {
 
   test("8. Bóc tách và phân tích strict response từ khối Markdown của Gemini Web", () => {
     const { ensureMarkdownTransportFence } = require("../src/adapters/gemini-web/gemini-browser-worker");
-    const { parseStrictM365Response } = require("../src/adapters/m365-copilot/translation/strict-response-parser");
+    const { parseStrictM365Response } = require("../src/adapters/web/protocol/strict-response-parser");
 
     // Giả lập raw text trích xuất từ thẻ code của Gemini Web
     const geminiCodeBlockContent = `<webResponse>
@@ -165,9 +165,9 @@ Hiện tại mình chưa nhận được thông tin về mã nguồn hay tác v�
   });
 
   test("9. Chuẩn hóa alias execute_command sang exec_command và map tool thành công", () => {
-    const { normalizeM365ToolArguments } = require("../src/adapters/m365-copilot/tools/argument-normalizer");
-    const { validateM365ToolCall } = require("../src/adapters/m365-copilot/tools/tool-validator");
-    const { M365ToolBridge } = require("../src/adapters/m365-copilot/tools/tool-bridge");
+    const { normalizeM365ToolArguments } = require("../src/adapters/web/tools/argument-normalizer");
+    const { validateM365ToolCall } = require("../src/adapters/web/tools/tool-validator");
+    const { M365ToolBridge } = require("../src/adapters/web/tools/tool-bridge");
 
     // Case người dùng báo: Gemini gọi execute_command với argument command
     const rawCall = {

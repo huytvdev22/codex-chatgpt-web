@@ -1,11 +1,11 @@
 
 import { randomUUID } from "node:crypto";
 import type { OpenAIToolCall } from "../translation/detectors/types";
-import { parseStrictM365Response, type M365ProtocolErrorCode } from "../translation/strict-response-parser";
-import { truncateToolResult } from "../prompts/assembler";
-import { buildM365FormatRetryPrompt } from "../prompts/format-retry";
-import { normalizeM365ToolArguments } from "../tools/argument-normalizer";
-import { validateM365ToolCall } from "../tools/tool-validator";
+import { parseStrictM365Response, type M365ProtocolErrorCode } from "../../web/protocol/strict-response-parser";
+import { truncateToolResult } from "../../web/prompt/assembler";
+import { buildM365FormatRetryPrompt } from "../../web/prompt/format-retry";
+import { normalizeM365ToolArguments } from "../../web/tools/argument-normalizer";
+import { validateM365ToolCall } from "../../web/tools/tool-validator";
 import type { CodexTool } from "../../../types";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -71,7 +71,7 @@ type HarnessTranslationResult =
   | { type: "final_answer"; content: string; rawResponse: string }
   | { type: "tool_call"; tool_calls: OpenAIToolCall[]; rawResponse: string };
 
-import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../tools/atomic-file-writer";
+import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../../web/tools/atomic-file-writer";
 
 /**
  * Tool Executor mặc định hỗ trợ chạy các công cụ read_file, list_dir, grep_code, git_status, git_diff, run_command, write_file

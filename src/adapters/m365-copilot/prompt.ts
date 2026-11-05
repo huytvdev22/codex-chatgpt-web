@@ -1,1 +1,1 @@
-export * from "./prompts/index";
+export * from "../web/prompt/index";

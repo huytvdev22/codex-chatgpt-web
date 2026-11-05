@@ -8,7 +8,7 @@ import { FastPathStreamBuffer } from "./fast-path-stream-buffer";
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../../models/model-registry";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
-import type { NormalizedImageAttachment } from "../normalization/canonical-types";
+import type { NormalizedImageAttachment } from "../../web/normalization/canonical-types";
 import {
   M365_CHAT_URL,
   parseM365ConversationId,

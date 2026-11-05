@@ -11,21 +11,21 @@ import { extractCodexTurnIdentityFromBody } from "../chatgpt-web/environment";
 import {
   promptCompiler,
   buildM365FormatRetryPrompt,
-} from "../m365-copilot/prompts";
+} from "../web/prompt";
 import {
   parseStrictM365Response,
   type StrictM365ResponseResult,
-} from "../m365-copilot/translation/strict-response-parser";
+} from "../web/protocol/strict-response-parser";
 import {
   normalizeM365ToolArguments,
   validateM365ToolCall,
   M365ToolBridge,
   type ToolValidationFailure,
-} from "../m365-copilot/tools";
+} from "../web/tools";
 import {
   CodexRawPayload,
   CodexPayloadNormalizer,
-} from "../m365-copilot/normalization";
+} from "../web/normalization";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";

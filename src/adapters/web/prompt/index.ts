@@ -32,6 +32,7 @@ export {
   renderCompactDynamicToolDeclarations,
   calculatePromptMetrics,
   sanitizeCodexInstructions,
+  M365PromptCompiler,
   promptCompiler,
   type PromptSectionMetrics,
   type PromptAuditData,

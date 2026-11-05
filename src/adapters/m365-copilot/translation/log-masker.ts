@@ -1,5 +1,5 @@
 
-import { AtomicFileWriter } from "../tools/atomic-file-writer";
+import { AtomicFileWriter } from "../../web/tools/atomic-file-writer";
 import type { OpenAIToolCall } from "./detectors/types";
 
 /**

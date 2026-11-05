@@ -24,7 +24,7 @@ export {
   type M365ProtocolErrorCode,
   type StrictM365ToolCall,
   type StrictM365ResponseResult,
-} from "./strict-response-parser";
+} from "../../web/protocol/strict-response-parser";
 
 export {
   BashCommandTranslator,

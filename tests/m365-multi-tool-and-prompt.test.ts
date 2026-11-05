@@ -6,13 +6,13 @@ import {
   renderDynamicToolDeclarations,
   renderCompactDynamicToolDeclarations,
   promptCompiler,
-} from "../src/adapters/m365-copilot/prompts/compiler";
+} from "../src/adapters/web/prompt/compiler";
 import {
   TOOL_REMINDER_PROMPT,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
-} from "../src/adapters/m365-copilot/prompts/templates";
-import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/m365-copilot/tools/tool-bridge";
+} from "../src/adapters/web/prompt/templates";
+import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/web/tools/tool-bridge";
 
 describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   test("1. UNIFIED_TOOL_PROTOCOL đã loại bỏ hoàn toàn khối suy luận nội tâm và hướng dẫn xuất trực tiếp", () => {

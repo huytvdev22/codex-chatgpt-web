@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalization/codex-normalizer";
-import { CodexRawPayload } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
-import { promptCompiler } from "../src/adapters/m365-copilot/prompts/compiler";
+import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
+import { CodexRawPayload } from "../src/adapters/web/normalization/codex-raw-payload";
+import { promptCompiler } from "../src/adapters/web/prompt/compiler";
 
 describe("M365 & ChatGPT Web AGENTS.md Instructions Extraction Tests", () => {
   test("Trích xuất thành công AGENTS.md khi Codex gửi role user kèm environment_context", () => {

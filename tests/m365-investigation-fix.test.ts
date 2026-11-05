@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalization/codex-normalizer";
-import { CodexRawPayload } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
-import { M365ToolBridge } from "../src/adapters/m365-copilot/tools/tool-bridge";
+import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
+import { CodexRawPayload } from "../src/adapters/web/normalization/codex-raw-payload";
+import { M365ToolBridge } from "../src/adapters/web/tools/tool-bridge";
 import { M365OutputTranslator, normalizeToolName } from "../src/adapters/m365-copilot/output-translator";
 import { FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/m365-copilot/browser/fast-path-stream-buffer";
 import type { CodexTool } from "../src/types";

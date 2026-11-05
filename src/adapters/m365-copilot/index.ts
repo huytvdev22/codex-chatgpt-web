@@ -3,11 +3,11 @@ import type { AdapterEvent, CodexMessage, CodexParsedRequest } from "../../types
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { hasActualPriorAssistantReply } from "../base";
 import { isTitleRequest, generateTitleResponse, isTitleGuardEnabled } from "./guards";
-import { promptCompiler, buildM365FormatRetryPrompt } from "./prompts/index";
-import { CodexRawPayload, CodexPayloadNormalizer } from "./normalization";
+import { promptCompiler, buildM365FormatRetryPrompt } from "../web/prompt/index";
+import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
 import { executeM365Turn, m365ConversationKey } from "./browser";
 import { parseStrictM365Response, maskArgumentsForLog, type StrictM365ResponseResult } from "./translation";
-import { M365ToolBridge, normalizeM365ToolArguments, validateM365ToolCall } from "./tools";
+import { M365ToolBridge, normalizeM365ToolArguments, validateM365ToolCall } from "../web/tools";
 import {
   conversationGuard,
   cleanExpiredConversationGuards,
@@ -23,10 +23,10 @@ import {
 
 export * from "./session";
 export * from "./guards";
-export * from "./normalization";
-export * from "./prompts/index";
+export * from "../web/normalization";
+export * from "../web/prompt/index";
 export * from "./translation";
-export * from "./tools";
+export * from "../web/tools";
 export * from "./browser";
 export * from "./harness";
 

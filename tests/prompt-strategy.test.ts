@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/m365-copilot/normalization/codex-raw-payload";
-import { CodexPayloadNormalizer } from "../src/adapters/m365-copilot/normalization/codex-normalizer";
+import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/web/normalization/codex-raw-payload";
+import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
 import {
   renderDynamicToolDeclarations,
   promptCompiler,
@@ -9,7 +9,7 @@ import {
 } from "../src/adapters/m365-copilot/prompt-strategy";
 import {
   isPlanModeRequest,
-} from "../src/adapters/m365-copilot/prompts/index";
+} from "../src/adapters/web/prompt/index";
 import type { CodexParsedRequest } from "../src/types";
 
 function compileStatefulPrompt(parsed: CodexParsedRequest, rawBody?: unknown) {

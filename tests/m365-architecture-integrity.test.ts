@@ -5,6 +5,7 @@ import { findCircularDependencies } from "../scripts/check-circular-deps.js";
 
 describe("M365 Copilot Architecture Integrity & CI Gate", () => {
   const m365Dir = path.resolve(process.cwd(), "src/adapters/m365-copilot");
+  const sharedWebDir = path.resolve(process.cwd(), "src/adapters/web");
 
   test("CI GATE: Tuyệt đối không có Circular Dependency trong m365-copilot (Cycles = 0)", () => {
     const { graph, cycles } = findCircularDependencies(m365Dir);
@@ -20,8 +21,33 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(Object.keys(graph).length).toBeGreaterThan(10);
   });
 
+  test("CI GATE: Shared Web Adapter layer không có cycle hoặc phụ thuộc ngược vào provider", async () => {
+    const { graph, cycles } = findCircularDependencies(sharedWebDir);
+    expect(cycles.length).toBe(0);
+    expect(Object.keys(graph).length).toBeGreaterThan(10);
+
+    const sharedModules = Object.keys(graph);
+    const providerSegments = [
+      "/m365-copilot/",
+      "/chatgpt-web/",
+      "/gemini-web/",
+      "/google-ai-studio/",
+      "/qwen-web/",
+    ];
+    for (const modulePath of sharedModules) {
+      const source = await Bun.file(path.resolve(sharedWebDir, modulePath)).text();
+      for (const providerSegment of providerSegments) {
+        expect(source.includes(providerSegment)).toBe(false);
+      }
+    }
+  });
+
   test("ARCH INTEGRITY: Root Adapter Facade bảo toàn đầy đủ các API công khai", async () => {
     const rootModule = await import("../src/adapters/m365-copilot");
+    const sharedNormalization = await import("../src/adapters/web/normalization");
+    const sharedPrompt = await import("../src/adapters/web/prompt");
+    const sharedProtocol = await import("../src/adapters/web/protocol");
+    const sharedTools = await import("../src/adapters/web/tools");
 
     // Core Classes
     expect(rootModule.M365AgentLoop).toBeDefined();
@@ -49,5 +75,14 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.BashCommandTranslator).toBeDefined();
     expect(rootModule.stripShellPrefix).toBeDefined();
     expect(rootModule.normalizePatchEnvelope).toBeDefined();
+
+    // Shared Web Adapter facade
+    expect(sharedNormalization.CodexPayloadNormalizer).toBeDefined();
+    expect(sharedNormalization.CodexRawPayload).toBeDefined();
+    expect(sharedPrompt.M365PromptCompiler).toBeDefined();
+    expect(sharedPrompt.promptCompiler).toBeDefined();
+    expect(sharedProtocol.parseStrictM365Response).toBeDefined();
+    expect(sharedTools.M365ToolBridge).toBeDefined();
+    expect(sharedTools.AtomicFileWriter).toBeDefined();
   });
 });

@@ -1,1 +1,1 @@
-export * from "./prompts/compiler";
+export * from "../web/prompt/compiler";

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseStrictM365Response } from "../src/adapters/m365-copilot/translation";
-import { buildM365FormatRetryPrompt } from "../src/adapters/m365-copilot/prompts";
-import { validateM365ToolCall } from "../src/adapters/m365-copilot/tools";
+import { buildM365FormatRetryPrompt } from "../src/adapters/web/prompt";
+import { validateM365ToolCall } from "../src/adapters/web/tools";
 
 describe("M365 Raw Response Reproduction & Analysis", () => {
   test("tái hiện chính xác response thực tế từ M365: phát hiện thiếu transport wrapper 4-backtick và trả về MISSING_TRANSPORT_FENCE", () => {

@@ -943,11 +943,12 @@ HTTP `503`.
 | Continuation | `src/responses/state.ts` |
 | Adapter contract | `src/adapters/base.ts` |
 | Provider routing | `src/server.ts`, `src/models/model-registry.ts` |
-| M365 normalization | `src/adapters/m365-copilot/normalization/` |
-| M365 prompt | `src/adapters/m365-copilot/prompts/` |
+| Shared Web normalization | `src/adapters/web/normalization/` |
+| Shared Web prompt compilation | `src/adapters/web/prompt/` |
+| Shared Web strict response protocol | `src/adapters/web/protocol/` |
+| Shared Web tool mapping | `src/adapters/web/tools/` |
 | M365 browser turn | `src/adapters/m365-copilot/browser/browser-worker.ts` |
-| M365 parser/translator | `src/adapters/m365-copilot/translation/` |
-| M365 tool mapping | `src/adapters/m365-copilot/tools/tool-bridge.ts` |
+| M365 DOM translation | `src/adapters/m365-copilot/translation/` |
 | Adapter events sang Responses API | `src/bridge.ts` |
 | Browser ownership | `src/launcher-browser-host.ts`, `launcher/electron/control-server.cjs` |
 | Browser surfaces | `launcher/electron/*-surface-manager.cjs` |
@@ -1059,7 +1060,25 @@ observability metadata không còn là một phần của contract.
 
 ## 6. Web Adapter
 
-### 6.1. ChatGPT Web
+### 6.1. Shared Web Adapter layer
+
+Thư mục: ../src/adapters/web/
+
+Shared layer chứa các thành phần không phụ thuộc vào hành vi DOM của một provider cụ thể:
+
+- `normalization/`: raw Codex wire payload và canonical request normalization.
+- `prompt/`: prompt compilation, conversation scenarios và format-retry prompt.
+- `protocol/`: strict response envelope parser.
+- `tools/`: tool argument normalization, validation, approval metadata và native-first tool bridge.
+
+Các Web provider import shared layer theo một chiều. Shared layer không được import ngược
+`m365-copilot`, `chatgpt-web`, `gemini-web`, `google-ai-studio` hoặc `qwen-web`.
+
+Giai đoạn này chỉ thay đổi ownership của module. Browser orchestration, provider lifecycle,
+selectors, capability picker, conversation URLs, attachments và DOM extraction vẫn thuộc từng
+provider và không thay đổi hành vi runtime.
+
+### 6.2. ChatGPT Web
 
 Thư mục: ../src/adapters/chatgpt-web/
 
@@ -1072,19 +1091,19 @@ Các trách nhiệm chính:
 - MCP entry point cho tool-enabled mode.
 - Chuyển ChatGPT DOM response thành adapter events.
 
-### 6.2. Microsoft 365 Copilot
+### 6.3. Microsoft 365 Copilot
 
 Thư mục: ../src/adapters/m365-copilot/
 
 Các boundary được architectural test xác nhận:
 
 - Root adapter facade.
-- Payload normalization.
-- Prompt compilation.
+- Shared payload normalization.
+- Shared prompt compilation.
 - Browser execution.
-- Strict response parsing.
+- Shared strict response parsing.
 - Tool-call translation.
-- Native-first tool bridge.
+- Shared native-first tool bridge.
 - Loop prevention.
 
 CI kiểm tra:
@@ -1099,7 +1118,7 @@ Architectural gate:
 bun run check:architecture
 ```
 
-### 6.3. Gemini Web
+### 6.4. Gemini Web
 
 Thư mục: ../src/adapters/gemini-web/
 
