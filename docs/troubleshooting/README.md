@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **040** | ChatGPT Web chưa sinh phản hồi mới nhưng worker tự dừng và trả lại assistant response của lượt trước | `chatgpt-web`, `web`, `launcher` | ✅ Đã Confirm | ./040-chatgpt-reuses-previous-assistant-response.md |
 | **039** | Abort lượt đang sinh khiến `phase=end` bị hủy, surface mắc ở trạng thái running và lượt tiếp theo mở tab mới | `m365-copilot`, `web`, `launcher`, `electron` | ✅ Đã Confirm | ./039-abort-cleanup-opens-new-launcher-tab.md |
 | **038** | Đồng nhất M365 Launcher lifecycle với `WebTurnEngine`, để browser worker nhận `Page` như các Web Adapter khác | `m365-copilot`, `web`, `launcher`, `electron` | ✅ Đã Confirm | ./038-unify-m365-launcher-lifecycle-with-web-engine.md |
 | **037** | Cập nhật tài liệu SOP `docs/adding-new-web-adapter-guide.md` theo kiến trúc `WebTurnEngine` | `docs`, `core`, `web`, `all-providers` | ⏳ Chờ User Test & Confirm | [037-update-adding-new-web-adapter-guide-sop.md](./037-update-adding-new-web-adapter-guide-sop.md) |

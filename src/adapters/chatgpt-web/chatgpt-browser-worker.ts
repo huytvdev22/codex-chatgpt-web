@@ -210,24 +210,19 @@ export class ChatGptBrowserWorker {
 
       if (canClickSend) {
         console.log(`[chatgpt-worker] [send] Nút gửi đã sẵn sàng ở lần thử ${attempt}, thực hiện click Send...`);
-        // Click qua Playwright
-        await sendLocator.click({ force: true, timeout: 1000 }).catch(() => {});
-
-        // Đồng thời dispatch sự kiện DOM toàn diện và requestSubmit form
-        await page.evaluate(({ sendSelector }) => {
-          const btn = document.querySelector(sendSelector) as HTMLButtonElement | null;
-          if (btn && !btn.disabled) {
-            btn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-            btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-            btn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
-            btn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-            btn.click();
-            const form = btn.closest("form");
-            if (form && typeof (form as any).requestSubmit === "function") {
-              (form as any).requestSubmit(btn);
-            }
-          }
-        }, { sendSelector: CHATGPT_SELECTORS.sendButton }).catch(() => {});
+        // Chỉ phát đúng một hành động submit. Trước đây worker click bằng
+        // Playwright rồi tiếp tục dispatch pointer/mouse events, gọi click()
+        // và requestSubmit() trên DOM. ChatGPT có thể đổi Send thành Stop ngay
+        // sau click đầu tiên, khiến chuỗi hành động thừa tác động vào control
+        // mới và dừng generation trong khi Codex vẫn đang chờ.
+        const clicked = await sendLocator
+          .click({ force: true, timeout: 1000 })
+          .then(() => true)
+          .catch(() => false);
+        if (!clicked) {
+          await composerLocator.focus().catch(() => {});
+          await page.keyboard.press("Enter").catch(() => {});
+        }
       } else {
         // Nút gửi chưa enabled: Focus vào composer và nhấn Enter
         console.log(`[chatgpt-worker] [send] Nút gửi chưa enabled ở lần thử ${attempt}, kích hoạt phím Enter...`);
@@ -250,11 +245,14 @@ export class ChatGptBrowserWorker {
   /**
    * Đọc nội dung phản hồi stream hiện tại từ DOM
    */
-  private async readLatestAssistantStreamText(page: Page): Promise<string> {
+  private async readLatestAssistantStreamText(
+    page: Page,
+    minimumAssistantCount = 0,
+  ): Promise<string> {
     return await page.evaluate(
-      ({ assistantSelector, codeBlockSelector }) => {
+      ({ assistantSelector, codeBlockSelector, minimumCount }) => {
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        if (messages.length === 0) return "";
+        if (messages.length <= minimumCount) return "";
         const latestMsg = messages[messages.length - 1] as HTMLElement;
 
         // Ưu tiên đọc từ code block nếu đã xuất hiện
@@ -273,6 +271,7 @@ export class ChatGptBrowserWorker {
       {
         assistantSelector: CHATGPT_SELECTORS.assistantMessage,
         codeBlockSelector: CHATGPT_SELECTORS.codeBlock,
+        minimumCount: minimumAssistantCount,
       }
     );
   }
@@ -413,6 +412,13 @@ export class ChatGptBrowserWorker {
     // 3. Cài đặt Clipboard Hook
     await this.setupClipboardHook(page);
 
+    // Khóa baseline trước khi gửi để không đọc nhầm câu trả lời cũ đang có
+    // trong conversation. Nút Start Voice tồn tại thường trực ở composer nên
+    // không thể được dùng một mình làm bằng chứng cho response mới.
+    const initialAssistantCount = await page
+      .locator(CHATGPT_SELECTORS.assistantMessage)
+      .count();
+
     // 4. Nhập prompt an toàn
     await this.insertPromptSafely(page, prompt);
 
@@ -440,7 +446,10 @@ export class ChatGptBrowserWorker {
       }
 
       // Đọc stream text
-      const currentText = await this.readLatestAssistantStreamText(page);
+      const currentText = await this.readLatestAssistantStreamText(
+        page,
+        initialAssistantCount,
+      );
       if (currentText.length > lastRenderedText.length) {
         const delta = currentText.slice(lastRenderedText.length);
         if (onChunk) {
@@ -453,14 +462,18 @@ export class ChatGptBrowserWorker {
       // Tín hiệu 1: Nút "Stop" biến mất VÀ Nút "Start Voice" xuất hiện (theo HTML thực tế)
       // Tín hiệu 2: Nút "Stop" biến mất VÀ Nút "Copy code" xuất hiện
       const completionCheck = await page.evaluate(
-        ({ stopSel, startVoiceSel, copyCodeSel }) => {
+        ({ stopSel, assistantSel, copyCodeSel, minimumCount }) => {
           const stopBtn = document.querySelector(stopSel);
           if (stopBtn) return { done: false, hasStop: true };
 
-          const startVoiceBtn = document.querySelector(startVoiceSel);
-          const copyCodeBtn = document.querySelector(copyCodeSel);
+          const messages = Array.from(document.querySelectorAll(assistantSel));
+          if (messages.length <= minimumCount) {
+            return { done: false, hasStop: false };
+          }
 
-          if (startVoiceBtn || copyCodeBtn) {
+          const latestMessage = messages[messages.length - 1] as HTMLElement;
+          const copyCodeBtn = latestMessage.querySelector(copyCodeSel);
+          if (copyCodeBtn) {
             return { done: true, hasStop: false };
           }
 
@@ -468,13 +481,14 @@ export class ChatGptBrowserWorker {
         },
         {
           stopSel: CHATGPT_SELECTORS.stopButton,
-          startVoiceSel: CHATGPT_SELECTORS.startVoiceButton,
+          assistantSel: CHATGPT_SELECTORS.assistantMessage,
           copyCodeSel: CHATGPT_SELECTORS.copyCodeButton,
+          minimumCount: initialAssistantCount,
         }
       );
 
       if (completionCheck.done && lastRenderedText.length > 0) {
-        console.log("[chatgpt-worker] Phát hiện tín hiệu hoàn tất (nút Stop biến mất, Start Voice/Copy xuất hiện).");
+        console.log("[chatgpt-worker] Phát hiện response mới hoàn tất (nút Stop biến mất, Copy xuất hiện trong assistant turn mới).");
         // Chờ thêm 500ms để DOM ổn định hoàn toàn
         await page.waitForTimeout(500);
         isStreaming = false;
@@ -487,7 +501,10 @@ export class ChatGptBrowserWorker {
         let isStillIdle = true;
         while (Date.now() < idleDeadline) {
           await page.waitForTimeout(300);
-          const checkText = await this.readLatestAssistantStreamText(page);
+          const checkText = await this.readLatestAssistantStreamText(
+            page,
+            initialAssistantCount,
+          );
           if (checkText !== lastRenderedText) {
             isStillIdle = false;
             break;
