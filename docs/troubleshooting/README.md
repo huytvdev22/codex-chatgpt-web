@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **027** | Chuyển `GeminiWebAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `gemini-web`, `web` | ⏳ Chờ User Test & Confirm | [027-migrate-gemini-web-adapter-to-shared-engine.md](./027-migrate-gemini-web-adapter-to-shared-engine.md) |
 | **026** | Triển khai `WebTurnEngine`, `WebProviderAdapter` và Driver Contracts tại `src/adapters/web/` | `core`, `web`, `all-providers` | ⏳ Chờ User Test & Confirm | [026-implement-shared-web-turn-engine-and-contracts.md](./026-implement-shared-web-turn-engine-and-contracts.md) |
 | **025** | Chuyển Conversation Store của Qwen, Google AI Studio và ChatGPT sang dùng `GenericConversationStore` | `qwen-web`, `google-ai-studio`, `chatgpt-web` | ⏳ Chờ User Test & Confirm | [025-unify-provider-conversation-stores-on-generic-store.md](./025-unify-provider-conversation-stores-on-generic-store.md) |
 | **024** | Bóc tách hạ tầng Conversation Key & Generic Conversation Store sang `src/adapters/web/conversation/` | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [024-extract-shared-web-conversation-infrastructure.md](./024-extract-shared-web-conversation-infrastructure.md) |
