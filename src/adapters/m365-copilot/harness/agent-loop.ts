@@ -1,6 +1,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { OpenAIToolCall } from "../../web/protocol/detectors/types";
+import { extractCognitiveBlocks } from "../../web/protocol/output-translator";
 import { parseStrictM365Response, type M365ProtocolErrorCode } from "../../web/protocol/strict-response-parser";
 import { truncateToolResult } from "../../web/prompt/assembler";
 import { buildM365FormatRetryPrompt } from "../../web/prompt/format-retry";
@@ -69,8 +70,20 @@ export interface AgentLoopResult {
 }
 
 type HarnessTranslationResult =
-  | { type: "final_answer"; content: string; rawResponse: string }
-  | { type: "tool_call"; tool_calls: OpenAIToolCall[]; rawResponse: string };
+  | {
+      type: "final_answer";
+      content: string;
+      rawResponse: string;
+      thinking?: string;
+      narrative?: string;
+    }
+  | {
+      type: "tool_call";
+      tool_calls: OpenAIToolCall[];
+      rawResponse: string;
+      thinking?: string;
+      narrative?: string;
+    };
 
 import { AtomicFileWriter, defaultAtomicFileWriter, type IAtomicFileWriter } from "../../web/tools/atomic-file-writer";
 
@@ -261,11 +274,14 @@ export class M365AgentLoop {
     if (parsed.kind === "protocol_error") {
       return { protocolError: { code: parsed.code, message: parsed.message } };
     }
+    const cognitive = extractCognitiveBlocks(rawResponse);
     if (parsed.kind === "final_answer") {
       return {
         type: "final_answer",
         content: parsed.content,
         rawResponse,
+        thinking: cognitive.thinking,
+        narrative: cognitive.narrative,
       };
     }
 
@@ -288,6 +304,8 @@ export class M365AgentLoop {
     return {
       type: "tool_call",
       rawResponse,
+      thinking: cognitive.thinking,
+      narrative: cognitive.narrative,
       tool_calls: normalizedCalls.map(call => ({
         id: call.id || `call_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
         type: "function",
@@ -481,6 +499,8 @@ export class M365AgentLoop {
         messages.push({
           role: "assistant",
           content: translation.content,
+          thinking: translation.thinking,
+          narrative: translation.narrative,
         });
 
         return {
@@ -499,6 +519,8 @@ export class M365AgentLoop {
         content: JSON.stringify({
           tool_calls: toolCalls,
         }),
+        thinking: translation.thinking,
+        narrative: translation.narrative,
       });
 
       // 4. Thực thi từng tool call và thu thập kết quả
