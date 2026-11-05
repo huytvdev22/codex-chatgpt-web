@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
+import { chatGptHtmlToMarkdown } from "../src/adapters/web/markdown";
 
 test("turns observed inline file path formats into Markdown links", () => {
   const cases = [
@@ -138,4 +138,3 @@ test("preserves script and style tags while removing buttons", () => {
   expect(md).not.toContain("<button>");
   expect(md).not.toContain("Copy code");
 });
-

@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **041** | Tinh gọn ChatGPT Web Adapter từ 13 xuống 5 file provider/runtime bắt buộc, tương tự cấu trúc Qwen | `chatgpt-web`, `web`, `architecture` | ✅ Đã Confirm | ./041-prune-chatgpt-adapter-to-provider-files.md |
 | **040** | ChatGPT Web chưa sinh phản hồi mới nhưng worker tự dừng và trả lại assistant response của lượt trước | `chatgpt-web`, `web`, `launcher` | ✅ Đã Confirm | ./040-chatgpt-reuses-previous-assistant-response.md |
 | **039** | Abort lượt đang sinh khiến `phase=end` bị hủy, surface mắc ở trạng thái running và lượt tiếp theo mở tab mới | `m365-copilot`, `web`, `launcher`, `electron` | ✅ Đã Confirm | ./039-abort-cleanup-opens-new-launcher-tab.md |
 | **038** | Đồng nhất M365 Launcher lifecycle với `WebTurnEngine`, để browser worker nhận `Page` như các Web Adapter khác | `m365-copilot`, `web`, `launcher`, `electron` | ✅ Đã Confirm | ./038-unify-m365-launcher-lifecycle-with-web-engine.md |

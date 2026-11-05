@@ -1,13 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CodexParsedRequest } from "../../types";
-import {
-  ChatGptBrowserWorker,
-  isValidChatGptConversationId,
-} from "./chatgpt-browser-worker";
+import { ChatGptBrowserWorker } from "./chatgpt-browser-worker";
 import {
   defaultChatGptConversationStore,
   chatGptConversationKey,
+  isValidChatGptConversationId,
 } from "./conversation-store";
 import { compileWebPrompt } from "../web/compile-prompt";
 import { LocalBrowserRuntime } from "../web/local-browser-runtime";
@@ -112,7 +110,7 @@ export class ChatGptWebAdapter extends WebProviderAdapter {
             prompt,
             attempt,
             incoming,
-            reasoningEffort,
+            heartbeat,
             existingConversationId,
             isNewConversation,
           }) => {
@@ -128,10 +126,7 @@ export class ChatGptWebAdapter extends WebProviderAdapter {
             return worker.executeTurn(page, {
               prompt,
               signal: incoming.abortSignal,
-              reasoningEffort: (reasoningEffort || "low") as
-                | "low"
-                | "medium"
-                | "high",
+              heartbeat,
               conversationId: existingConversationId,
               isNewConversation,
               onChunk: () => {},
@@ -172,7 +167,5 @@ export function createChatGptWebAdapter(
 }
 
 export * from "./selectors";
-export * from "./capability-picker";
 export * from "./chatgpt-browser-worker";
 export * from "./conversation-store";
-export * from "./markdown";

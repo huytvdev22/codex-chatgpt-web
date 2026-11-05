@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
+import { extractCodexTurnIdentityFromBody } from "../src/adapters/web/turn-identity";
 import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
@@ -47,7 +47,9 @@ const server = startServer(config, {
     name: "interrupt-smoke",
     runTurn: (parsed, incoming) => new Promise<void>((_resolve, reject) => {
       adapterStarted = true;
-      const identity = extractChatGptTurnIdentity(parsed);
+      const identity = extractCodexTurnIdentityFromBody(
+        parsed._rawBody || parsed,
+      );
       if (!identity.threadId || !identity.turnId) {
         reject(new Error("Routed smoke turn has no native Codex identity"));
         return;

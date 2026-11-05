@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import type { CodexParsedRequest } from "../../types";
-import { isValidChatGptConversationId } from "./chatgpt-browser-worker";
 import {
   buildWebConversationKey,
   GenericConversationStore,
@@ -25,10 +24,19 @@ export const CHATGPT_HOME_URL = "https://chatgpt.com/";
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_CONVERSATION_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
 
-export function normalizeChatGptConversationId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+export function isValidChatGptConversationId(
+  value: unknown,
+): value is string {
+  if (typeof value !== "string") return false;
   const trimmed = value.trim();
-  return CHATGPT_CONVERSATION_ID_PATTERN.test(trimmed) && trimmed !== "local-chatgpt" ? trimmed : null;
+  return (
+    CHATGPT_CONVERSATION_ID_PATTERN.test(trimmed) &&
+    trimmed !== "local-chatgpt"
+  );
+}
+
+export function normalizeChatGptConversationId(value: unknown): string | null {
+  return isValidChatGptConversationId(value) ? value.trim() : null;
 }
 
 export function chatGptConversationUrl(conversationId: string): string {

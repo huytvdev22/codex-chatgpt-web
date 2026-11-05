@@ -8,23 +8,15 @@ export const CHATGPT_SELECTORS = {
   composer: [
     'div.ProseMirror[data-composer-markdown][role="textbox"]',
     '#prompt-textarea',
-    'div[contenteditable="true"][role="textbox"]',
-    'div.ProseMirror',
   ].join(", "),
 
   /** Nút gửi tin nhắn (Send button) */
   sendButton: [
     'button[data-testid="send-button"]',
-    'button[type="submit"][aria-label="Send"]',
-    'button[type="submit"][aria-label="Send prompt"]',
     'button[aria-label="Send prompt"]',
     'button[aria-label="Send message"]',
     'button[aria-label="Send"]',
     'button[aria-label="Gửi"]',
-    'button[aria-label*="Send" i]',
-    'button[aria-label*="Gửi" i]',
-    'button[type="submit"]',
-    'form button[type="submit"]',
   ].join(", "),
 
   /** Nút dừng sinh câu trả lời (hiển thị trong quá trình model đang stream/suy nghĩ) */
@@ -53,12 +45,15 @@ export const CHATGPT_SELECTORS = {
   ].join(", "),
 
   /**
-   * Khối tin nhắn của Assistant (ChatGPT)
+   * Khối nội dung thực tế của Assistant.
+   *
+   * Không chọn article conversation-turn hoặc marker data-conversation-role:
+   * các node đó có thể đại diện cho user turn, node tiêu đề rỗng hoặc wrapper
+   * chứa nhiều phần tử con. Baseline theo số lượng wrapper khiến worker không
+   * nhận ra assistant response mới sau khi ChatGPT thay đổi cấu trúc DOM.
    */
   assistantMessage: [
-    'div[data-chatgpt-selection-message-id]',
     '[data-markdown-text-style="assistant-message"]',
-    'article[data-testid^="conversation-turn-"]',
   ].join(", "),
 
   /**
@@ -66,7 +61,6 @@ export const CHATGPT_SELECTORS = {
    */
   codeBlock: [
     'div[data-code-block="true"]',
-    '.CodeBlock-zu1QM3',
   ].join(", "),
 
   /**
@@ -74,8 +68,6 @@ export const CHATGPT_SELECTORS = {
    */
   copyCodeButton: [
     'button[aria-label="Copy code"]',
-    'div[data-code-block="true"] button[aria-label="Copy code"]',
-    'button:has(svg use[href*="copy"])',
   ].join(", "),
 
   /**

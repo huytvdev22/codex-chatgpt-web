@@ -71,8 +71,21 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
   });
 
   test("4. CHATGPT_SELECTORS chứa đầy đủ các bộ chọn DOM thực tế", () => {
-    expect(CHATGPT_SELECTORS.composer).toContain("div.ProseMirror");
-    expect(CHATGPT_SELECTORS.sendButton).toContain('button[type="submit"][aria-label="Send"]');
+    expect(CHATGPT_SELECTORS.composer).toContain(
+      'div.ProseMirror[data-composer-markdown][role="textbox"]',
+    );
+    expect(CHATGPT_SELECTORS.sendButton).toContain(
+      'button[data-testid="send-button"]',
+    );
+    expect(CHATGPT_SELECTORS.assistantMessage).toBe(
+      '[data-markdown-text-style="assistant-message"]',
+    );
+    expect(CHATGPT_SELECTORS.codeBlock).toBe(
+      'div[data-code-block="true"]',
+    );
+    expect(CHATGPT_SELECTORS.copyCodeButton).toBe(
+      'button[aria-label="Copy code"]',
+    );
     expect(CHATGPT_SELECTORS.stopButton).toContain('button[type="button"][aria-label="Stop"]');
     expect(CHATGPT_SELECTORS.startVoiceButton).toContain('button[type="button"][aria-label="Start Voice"]');
     expect(CHATGPT_SELECTORS.thinkButton).toContain('button[aria-label*="Think" i]');

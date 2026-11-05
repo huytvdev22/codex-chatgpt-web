@@ -5,6 +5,7 @@ import { findCircularDependencies } from "../scripts/check-circular-deps.js";
 
 describe("M365 Copilot Architecture Integrity & CI Gate", () => {
   const m365Dir = path.resolve(process.cwd(), "src/adapters/m365-copilot");
+  const chatGptDir = path.resolve(process.cwd(), "src/adapters/chatgpt-web");
   const sharedWebDir = path.resolve(process.cwd(), "src/adapters/web");
 
   test("CI GATE: Tuyệt đối không có Circular Dependency trong m365-copilot (Cycles = 0)", () => {
@@ -26,6 +27,26 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       "browser/conversation-url.ts",
       "browser/index.ts",
       "index.ts",
+    ]);
+  });
+
+  test("CI GATE: ChatGPT Web chỉ giữ các module provider và runtime entrypoint bắt buộc", () => {
+    const { graph, cycles } = findCircularDependencies(chatGptDir);
+
+    if (cycles.length > 0) {
+      console.error("\n[CI GATE ERROR] Phát hiện Circular Dependency trong ChatGPT Web:");
+      cycles.forEach((cycle: any, index: number) => {
+        console.error(`  #${index + 1}: ${cycle.join(" -> ")}`);
+      });
+    }
+
+    expect(cycles.length).toBe(0);
+    expect(Object.keys(graph).sort()).toEqual([
+      "browser-helper-main.ts",
+      "chatgpt-browser-worker.ts",
+      "conversation-store.ts",
+      "index.ts",
+      "selectors.ts",
     ]);
   });
 
