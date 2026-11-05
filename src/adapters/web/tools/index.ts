@@ -9,7 +9,12 @@ export {
 } from "./atomic-file-writer";
 
 export {
+  WebToolBridge,
   M365ToolBridge,
+  type WebRawToolCall,
+  type WebMappedToolCall,
+  type M365RawToolCall,
+  type M365MappedToolCall,
   normalizeFileContent,
 } from "./tool-bridge";
 

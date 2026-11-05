@@ -2,13 +2,13 @@ import { hasActualPriorAssistantReply, type IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { compileWebPrompt } from "./compile-prompt";
 import {
-  parseStrictM365Response,
-  type StrictM365ResponseResult,
+  parseStrictWebResponse,
+  type StrictWebResponseResult,
 } from "./protocol/strict-response-parser";
 import { validateWebProtocolResponse } from "./protocol/validate-response";
 import { runWebProtocolRetry } from "./protocol/retry-response";
 import { emitWebProtocolResponse } from "./protocol/emit-response";
-import { M365ToolBridge } from "./tools/tool-bridge";
+import { WebToolBridge } from "./tools/tool-bridge";
 import {
   cleanExpiredConversationGuards,
   conversationGuard,
@@ -187,8 +187,8 @@ export class WebTurnEngine {
             ? this.definition.response.sanitizeRawResponse(result.rawResponse)
             : result.rawResponse;
 
-          let parsedProtocol: StrictM365ResponseResult =
-            parseStrictM365Response(lastRaw);
+          let parsedProtocol: StrictWebResponseResult =
+            parseStrictWebResponse(lastRaw);
 
           if (
             parsedProtocol.kind === "protocol_error" &&
@@ -246,7 +246,7 @@ export class WebTurnEngine {
           const clientTools = parsed.context.tools || [];
           const mappedCalls = protocolResult.calls.map(rawCall => ({
             rawCall,
-            mapped: M365ToolBridge.mapToolCall(rawCall, clientTools),
+            mapped: WebToolBridge.mapToolCall(rawCall, clientTools),
           }));
 
           cleanExpiredConversationGuards();

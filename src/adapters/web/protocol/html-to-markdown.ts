@@ -24,24 +24,44 @@ export function normalizeMarkdownFences(md: string): string {
   return fixed;
 }
 
+export interface WebHtmlToMarkdownOptions {
+  leadingPrefixes?: RegExp[];
+  statusPatterns?: RegExp[];
+}
+
 /**
- * Chuyển đổi cây HTML của tin nhắn sang chuỗi Markdown chuẩn hóa.
+ * Chuyển đổi cây HTML của tin nhắn sang chuỗi Markdown chuẩn hóa dùng chung cho Web Adapter.
  */
-export function m365HtmlToMarkdown(html: string): string {
+export function webHtmlToMarkdown(
+  html: string,
+  options: WebHtmlToMarkdownOptions = {},
+): string {
   if (!html || !html.trim()) return "";
   let md = chatGptHtmlToMarkdown(html).trim();
 
-  // Dọn dẹp tiền tố "Copilot said:" hoặc "Copilot:"
-  md = md.replace(/^Copilot(?: said)?:\s*/i, "").trim();
+  const prefixes = options.leadingPrefixes ?? [];
+  for (const prefix of prefixes) {
+    md = md.replace(prefix, "").trim();
+  }
 
-  // Dọn dẹp các cụm từ status/thinking nếu còn sót ở đầu phản hồi
-  for (const pattern of STATUS_PATTERNS) {
+  const statuses = options.statusPatterns ?? [];
+  for (const pattern of statuses) {
     md = md.replace(pattern, "").trim();
   }
 
-  // Dọn dẹp lại lần nữa nếu tiền tố Copilot said nằm trước status hoặc ngược lại
-  md = md.replace(/^Copilot(?: said)?:\s*/i, "").trim();
+  for (const prefix of prefixes) {
+    md = md.replace(prefix, "").trim();
+  }
 
-  md = normalizeMarkdownFences(md);
-  return md;
+  return normalizeMarkdownFences(md);
+}
+
+/**
+ * Chuyển đổi cây HTML của tin nhắn sang chuỗi Markdown chuẩn hóa (preset tương thích M365).
+ */
+export function m365HtmlToMarkdown(html: string): string {
+  return webHtmlToMarkdown(html, {
+    leadingPrefixes: [/^Copilot(?: said)?:\s*/i],
+    statusPatterns: STATUS_PATTERNS,
+  });
 }

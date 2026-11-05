@@ -5,14 +5,14 @@ import {
   type ToolValidationFailure,
 } from "../tools";
 import type {
-  M365ProtocolErrorCode,
-  StrictM365ResponseResult,
+  WebProtocolErrorCode,
+  StrictWebResponseResult,
 } from "./strict-response-parser";
 
 export interface ValidateWebProtocolOptions {
   classifyFailure?: (
     failure: ToolValidationFailure,
-  ) => M365ProtocolErrorCode;
+  ) => WebProtocolErrorCode;
 }
 
 /**
@@ -21,10 +21,10 @@ export interface ValidateWebProtocolOptions {
  * preventing adapters from executing a valid prefix of an invalid batch.
  */
 export function validateWebProtocolResponse(
-  result: StrictM365ResponseResult,
+  result: StrictWebResponseResult,
   clientTools: CodexTool[],
   options: ValidateWebProtocolOptions = {},
-): StrictM365ResponseResult {
+): StrictWebResponseResult {
   if (result.kind !== "tool_calls") return result;
 
   for (const call of result.calls) {

@@ -1,7 +1,11 @@
-import { normalizeMarkdownFences, m365HtmlToMarkdown } from "./html-to-markdown";
-export { m365HtmlToMarkdown };
+import {
+  normalizeMarkdownFences,
+  m365HtmlToMarkdown,
+  webHtmlToMarkdown,
+} from "./html-to-markdown";
+export { m365HtmlToMarkdown, webHtmlToMarkdown };
 
-export interface M365MarkdownBlock {
+export interface SemanticMarkdownBlock {
   key: string;
   tag: string;
   html: string;
@@ -9,23 +13,25 @@ export interface M365MarkdownBlock {
   streamable: boolean;
 }
 
+export type M365MarkdownBlock = SemanticMarkdownBlock;
+
 /**
- * M365MarkdownBuffer quản lý luồng streaming append-only theo khối ngữ nghĩa:
+ * SemanticMarkdownBuffer quản lý luồng streaming append-only theo khối ngữ nghĩa:
  * 1. Phân rã nội dung câu trả lời thành từng khối ngữ nghĩa độc lập (paragraphs, headings, code blocks, lists).
  * 2. Chỉ commit và emit các khối đã hoàn thành (khi khối tiếp theo xuất hiện hoặc turn kết thúc).
  * 3. Tuyệt đối không stream dở dang khối code block để tránh gãy vỡ cú pháp Markdown (fences).
  * 4. Đảm bảo tính toàn vẹn và không bao giờ bị lệch chỉ mục chuỗi (index offset misalignment).
  */
-export class M365MarkdownBuffer {
+export class SemanticMarkdownBuffer {
   private readonly committedKeys = new Set<string>();
   private markdown = "";
-  private pendingBlocks: M365MarkdownBlock[] = [];
+  private pendingBlocks: SemanticMarkdownBlock[] = [];
 
   constructor(
     private readonly transform: (md: string) => string = md => md,
   ) {}
 
-  observe(blocks: M365MarkdownBlock[]): string {
+  observe(blocks: SemanticMarkdownBlock[]): string {
     this.pendingBlocks = blocks;
     let delta = "";
 
@@ -48,7 +54,7 @@ export class M365MarkdownBuffer {
     return delta;
   }
 
-  finish(finalBlocks?: M365MarkdownBlock[]): { markdown: string; delta: string } {
+  finish(finalBlocks?: SemanticMarkdownBlock[]): { markdown: string; delta: string } {
     const blocks =
       finalBlocks && finalBlocks.length > 0 ? finalBlocks : this.pendingBlocks;
     let delta = "";
@@ -71,7 +77,7 @@ export class M365MarkdownBuffer {
     return this.markdown;
   }
 
-  private commitBlock(block: M365MarkdownBlock): string {
+  private commitBlock(block: SemanticMarkdownBlock): string {
     let rawMd: string;
     if (
       /<\s*tool[\\_]*call\s*>/i.test(block.text) ||
@@ -92,3 +98,5 @@ export class M365MarkdownBuffer {
     return delta;
   }
 }
+
+export const M365MarkdownBuffer = SemanticMarkdownBuffer;

@@ -1,6 +1,6 @@
 import { SafeCommandGuard } from "../tools/safe-command-guard";
 
-export type M365ProtocolErrorCode =
+export type WebProtocolErrorCode =
   | "MISSING_TRANSPORT_FENCE"
   | "MISSING_RESPONSE_ENVELOPE"
   | "MULTIPLE_RESPONSE_ENVELOPES"
@@ -17,13 +17,13 @@ export type M365ProtocolErrorCode =
   | "DISALLOWED_COMMAND"
   | "UNKNOWN_TOOL";
 
-export interface StrictM365ToolCall {
+export interface StrictWebToolCall {
   id?: string;
   name: string;
   arguments: Record<string, unknown>;
 }
 
-export type StrictM365ResponseResult =
+export type StrictWebResponseResult =
   | {
     kind: "final_answer";
     content: string;
@@ -31,15 +31,19 @@ export type StrictM365ResponseResult =
   }
   | {
     kind: "tool_calls";
-    calls: StrictM365ToolCall[];
+    calls: StrictWebToolCall[];
     rawResponse: string;
   }
   | {
     kind: "protocol_error";
-    code: M365ProtocolErrorCode;
+    code: WebProtocolErrorCode;
     message: string;
     rawResponse: string;
   };
+
+export type M365ProtocolErrorCode = WebProtocolErrorCode;
+export type StrictM365ToolCall = StrictWebToolCall;
+export type StrictM365ResponseResult = StrictWebResponseResult;
 
 const ROOT_OPEN = "<webResponse>";
 const ROOT_CLOSE = "</webResponse>";
@@ -125,9 +129,9 @@ function validatePatchGrammar(patch: string): PatchGrammarError | null {
 
 function protocolError(
   rawResponse: string,
-  code: M365ProtocolErrorCode,
+  code: WebProtocolErrorCode,
   message: string
-): StrictM365ResponseResult {
+): StrictWebResponseResult {
   return { kind: "protocol_error", code, message, rawResponse };
 }
 
@@ -347,7 +351,7 @@ function buildMissingEnvelopeMessage(
 function parseFunctionToolCall(
   payload: string,
   rawResponse: string
-): StrictM365ToolCall | StrictM365ResponseResult {
+): StrictWebToolCall | StrictWebResponseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload.trim());
@@ -406,7 +410,7 @@ function parseFunctionToolCall(
 function parsePatchToolCall(
   payload: string,
   rawResponse: string
-): StrictM365ToolCall | StrictM365ResponseResult {
+): StrictWebToolCall | StrictWebResponseResult {
   const patch = payload.trim();
   if (!hasCompletePatchEnvelope(patch)) {
     return protocolError(
@@ -429,13 +433,13 @@ function parsePatchToolCall(
 }
 
 /**
- * Parser fail-closed cho response M365.
+ * Parser fail-closed cho response Web protocol (`<webResponse>`).
  *
  * Đây là framed protocol parser, không phải XML DOM parser tổng quát: phần final answer là Markdown
  * opaque và có thể chứa HTML/code không hợp lệ theo XML. Parser chỉ diễn giải các control frame
  * chính xác; nội dung Markdown không bao giờ được quét để suy đoán shell/JSON tool call.
  */
-export function parseStrictM365Response(rawResponse: string): StrictM365ResponseResult {
+export function parseStrictWebResponse(rawResponse: string): StrictWebResponseResult {
   const hasTransportFence = hasCompleteTransportFence(rawResponse);
   const framed = unwrapTransportFence(rawResponse);
 
@@ -508,7 +512,7 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
     return protocolError(rawResponse, "FORBIDDEN_THOUGHT_BLOCK", "Không được xuất thought/thinking trong response protocol.");
   }
 
-  const calls: StrictM365ToolCall[] = [];
+  const calls: StrictWebToolCall[] = [];
   let offset = 0;
   let sawToolFrame = false;
 
@@ -562,7 +566,11 @@ export function parseStrictM365Response(rawResponse: string): StrictM365Response
   return { kind: "final_answer", content, rawResponse };
 }
 
+export const parseStrictM365Response = parseStrictWebResponse;
+
 export {
+  ROOT_OPEN as WEB_RESPONSE_OPEN_TAG,
+  ROOT_CLOSE as WEB_RESPONSE_CLOSE_TAG,
   ROOT_OPEN as M365_RESPONSE_OPEN_TAG,
   ROOT_CLOSE as M365_RESPONSE_CLOSE_TAG,
 };

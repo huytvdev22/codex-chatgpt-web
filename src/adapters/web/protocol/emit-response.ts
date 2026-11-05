@@ -3,11 +3,11 @@ import type {
   CodexTool,
   CodexUsage,
 } from "../../../types";
-import { M365ToolBridge } from "../tools";
-import type { StrictM365ResponseResult } from "./strict-response-parser";
+import { WebToolBridge } from "../tools";
+import type { StrictWebResponseResult } from "./strict-response-parser";
 
 type SuccessfulWebProtocolResult = Exclude<
-  StrictM365ResponseResult,
+  StrictWebResponseResult,
   { kind: "protocol_error" }
 >;
 
@@ -61,7 +61,7 @@ export function emitWebProtocolResponse(
   }
 
   for (const rawCall of result.calls) {
-    const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools);
+    const mapped = WebToolBridge.mapToolCall(rawCall, clientTools);
     const callId = rawCall.id || createCallId();
     const serializedArguments = typeof mapped.arguments === "string"
       ? mapped.arguments

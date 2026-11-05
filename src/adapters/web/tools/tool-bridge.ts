@@ -9,15 +9,18 @@ import { buildCodexExecCommandArguments } from "./approval-policy";
 export { SafeCommandGuard } from "./safe-command-guard";
 export { normalizeFileContent, type NormalizeFileContentOptions } from "./content-decoder";
 
-export interface M365RawToolCall {
+export interface WebRawToolCall {
   name: string;
   arguments: Record<string, unknown> | string;
 }
 
-export interface M365MappedToolCall {
+export interface WebMappedToolCall {
   name: string;
   arguments: string;
 }
+
+export type M365RawToolCall = WebRawToolCall;
+export type M365MappedToolCall = WebMappedToolCall;
 
 export interface RequestUserInputOption {
   label: string;
@@ -117,18 +120,18 @@ export function normalizeRequestUserInputArgs(args: Record<string, any>): { ques
 }
 
 /**
- * Cầu nối native-first giữa M365 Copilot và Codex runtime.
+ * Cầu nối native-first giữa Web Provider và Codex runtime.
  * Adapter chỉ chuẩn hóa, kiểm tra capability và forward tool call;
  * Codex chịu trách nhiệm thực thi, sandbox, approval và hành vi theo hệ điều hành.
  */
-export class M365ToolBridge {
+export class WebToolBridge {
   /**
-   * Chuẩn hóa và forward tool call M365 sang đúng native tool do Codex quảng bá.
+   * Chuẩn hóa và forward tool call sang đúng native tool do Codex quảng bá.
    */
   static mapToolCall(
-    raw: M365RawToolCall,
+    raw: WebRawToolCall,
     clientTools: CodexTool[] = []
-  ): M365MappedToolCall {
+  ): WebMappedToolCall {
 
     const normalized = normalizeM365ToolArguments(raw.name, raw.arguments);
     const toolName = normalized.name;
@@ -195,3 +198,5 @@ export class M365ToolBridge {
     };
   }
 }
+
+export const M365ToolBridge = WebToolBridge;

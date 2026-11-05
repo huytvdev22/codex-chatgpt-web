@@ -1,8 +1,8 @@
 import { buildM365FormatRetryPrompt } from "../prompt";
-import type { StrictM365ResponseResult } from "./strict-response-parser";
+import type { StrictWebResponseResult } from "./strict-response-parser";
 
 export type SuccessfulWebProtocolResult = Exclude<
-  StrictM365ResponseResult,
+  StrictWebResponseResult,
   { kind: "protocol_error" }
 >;
 
@@ -19,9 +19,9 @@ export interface RunWebProtocolRetryOptions {
   abortSignal?: AbortSignal;
   execute: (
     context: WebProtocolRetryAttempt,
-  ) => Promise<StrictM365ResponseResult>;
+  ) => Promise<StrictWebResponseResult>;
   onProtocolError?: (
-    result: Extract<StrictM365ResponseResult, { kind: "protocol_error" }>,
+    result: Extract<StrictWebResponseResult, { kind: "protocol_error" }>,
     context: WebProtocolRetryAttempt,
   ) => void;
 }
@@ -36,7 +36,7 @@ export async function runWebProtocolRetry(
   options: RunWebProtocolRetryOptions,
 ): Promise<SuccessfulWebProtocolResult> {
   let attemptPrompt = options.initialPrompt;
-  let lastResult: StrictM365ResponseResult | null = null;
+  let lastResult: StrictWebResponseResult | null = null;
 
   for (let attempt = 0; attempt <= options.maxRetries; attempt += 1) {
     if (options.abortSignal?.aborted) {

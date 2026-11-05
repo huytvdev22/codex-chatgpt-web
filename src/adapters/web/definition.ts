@@ -3,7 +3,7 @@ import type { IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest, CodexUsage } from "../../types";
 import type { LauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 import type { NormalizedImageAttachment } from "./normalization/canonical-types";
-import type { M365ProtocolErrorCode } from "./protocol/strict-response-parser";
+import type { WebProtocolErrorCode } from "./protocol/strict-response-parser";
 import type { ToolValidationFailure } from "./tools/tool-validator";
 
 export type WebLauncherProviderId =
@@ -108,7 +108,7 @@ export interface WebResponseDriver {
   sanitizeRawResponse?(raw: string): string;
   classifyValidationFailure?: (
     failure: ToolValidationFailure,
-  ) => M365ProtocolErrorCode;
+  ) => WebProtocolErrorCode;
   tolerantNaturalTextFallback?: boolean;
   createCallId?: () => string;
   includeDetailedDoneEvent?: boolean;
