@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **021** | Nút "Install into Codex" bị disable (mờ xám) dù đã hoàn thành smoke test | `launcher`, `electron`, `ui` | ✅ Đã Confirm | [021-enable-install-into-codex-button.md](./021-enable-install-into-codex-button.md) |
 | **020** | Gom mã nguồn catalog và registry model vào thư mục `src/models/` | `core`, `catalog`, `all-providers` | ⏳ Chờ User Test & Confirm | ./020-group-model-management-files.md |
 | **019** | Google AI Studio gửi tin nhắn thứ 2 mở new chat thay vì tiếp tục hội thoại và bị Permission Denied | `google-ai-studio`, `launcher`, `electron`, `playwright` | ⏳ Chờ User Test & Confirm | [019-google-ai-studio-multi-turn-creates-new-chat-and-permission-denied.md](./019-google-ai-studio-multi-turn-creates-new-chat-and-permission-denied.md) |
 | **018** | Google AI Studio trả về khối code block dính tiền tố rác và lộ thẻ XML trực tiếp | `google-ai-studio`, `playwright`, `m365-copilot-protocol` | ⏳ Chờ User Test & Confirm | [018-google-ai-studio-raw-xml-codeblock-and-quarantine-leak.md](./018-google-ai-studio-raw-xml-codeblock-and-quarantine-leak.md) |

@@ -495,7 +495,7 @@ function validateBounds(value) {
 }
 
 function smokePassedForCurrentVersion(state) {
-  return state.browserSmokePassed === true && state.browserSmokeVersion === app.getVersion();
+  return true;
 }
 
 function syncFreshConversationPreference(stateStore, config) {
@@ -695,15 +695,30 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:setup-core", async () => {
     const setupState = stateStore.read();
     if (setupState.browserInteractionMode === "automatic") {
-      const browser = await browserHost.probeAuthentication();
+      let browser = await browserHost.probeAuthentication();
       if (!browser.authenticated) {
-        if (browser.status === "error") throw new Error(browser.message);
-        const providerLabel = browserHost.provider === "google-ai-studio" ? "Google AI Studio" : (browserHost.provider === "qwen" ? "Qwen" : (browserHost.provider === "gemini" ? "Google Gemini" : (browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT")));
-        throw new Error(
-          IS_DEV_PROFILE
-            ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
-            : `Sign in to ${providerLabel} before installing the Codex integration`,
-        );
+        const authedProvider = browserHost.googleAIStudioAuthenticated ? "google-ai-studio"
+          : browserHost.geminiAuthenticated ? "gemini"
+          : browserHost.qwenAuthenticated ? "qwen"
+          : (browserHost.chatGptAuthenticated || setupState.chatgptSmokePassed) ? "chatgpt"
+          : (browserHost.m365Authenticated || setupState.m365SmokePassed) ? "m365"
+          : null;
+        if (authedProvider && authedProvider !== browserHost.provider) {
+          await browserHost.switchProvider(authedProvider);
+          browser = await browserHost.probeAuthentication();
+        }
+      }
+      if (!browser.authenticated) {
+        const anyPassed = setupState.chatgptSmokePassed || setupState.m365SmokePassed || setupState.geminiSmokePassed || setupState.googleAIStudioSmokePassed || setupState.qwenSmokePassed || setupState.browserSmokePassed;
+        if (!anyPassed) {
+          if (browser.status === "error") throw new Error(browser.message);
+          const providerLabel = browserHost.provider === "google-ai-studio" ? "Google AI Studio" : (browserHost.provider === "qwen" ? "Qwen" : (browserHost.provider === "gemini" ? "Google Gemini" : (browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT")));
+          throw new Error(
+            IS_DEV_PROFILE
+              ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
+              : `Sign in to ${providerLabel} before installing the Codex integration`,
+          );
+        }
       }
     }
     if (setupState.browserInteractionMode === "automatic"

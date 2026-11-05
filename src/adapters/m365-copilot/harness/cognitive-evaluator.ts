@@ -26,6 +26,22 @@ export interface CognitiveSessionMetrics {
  * Đo lường mức độ tuân thủ giao thức Cognitive Loop (Thinking -> Narrative -> Tool Action)
  */
 export class CognitiveEvaluator {
+  private getToolCallIds(message: AgentMessage): string[] {
+    if (message.role !== "assistant") return [];
+
+    try {
+      const parsed = JSON.parse(message.content) as {
+        tool_calls?: Array<{ id?: unknown }>;
+      };
+      if (!Array.isArray(parsed.tool_calls)) return [];
+      return parsed.tool_calls
+        .map(call => call?.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
   private hasToolCall(message: AgentMessage): boolean {
     if (message.toolCallId) return true;
     if (message.role !== "assistant") return false;
@@ -85,9 +101,23 @@ export class CognitiveEvaluator {
 
     const assistantMessages = result.messages.filter(m => m.role === "assistant");
     const toolResultMessages = result.messages.filter(m => m.role === "tool_result");
+    const failedToolCallIds = new Set(
+      toolResultMessages
+        .filter(message => message.isError && message.toolCallId)
+        .map(message => message.toolCallId as string)
+    );
 
     const turnEvaluations: CognitiveTurnEvaluation[] = assistantMessages.map((msg, idx) =>
-      this.evaluateTurn(msg, idx + 1)
+      this.evaluateTurn(
+        {
+          ...msg,
+          isError: Boolean(
+            msg.isError
+            || this.getToolCallIds(msg).some(callId => failedToolCallIds.has(callId))
+          ),
+        },
+        idx + 1
+      )
     );
 
     const totalAssistantTurns = assistantMessages.length || 1;

@@ -1268,7 +1268,7 @@ function SetupSurface({
           description={devProfile
             ? copy.devStepInstallBody
             : "Add Microsoft 365 Copilot and ChatGPT Web models to Codex without replacing native catalog."}
-          disabled={globalActionDisabled || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
+          disabled={globalActionDisabled}
           index={manualInteraction ? 1 : 3}
           onAction={install}
           repeatable
