@@ -15,9 +15,8 @@ import {
   parseStrictM365Response,
   type StrictM365ResponseResult,
 } from "../web/protocol/strict-response-parser";
+import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import {
-  normalizeM365ToolArguments,
-  validateM365ToolCall,
   M365ToolBridge,
 } from "../web/tools";
 import {
@@ -170,25 +169,10 @@ export class GeminiWebAdapter implements ProviderAdapter {
         lastRaw = result.rawResponse;
         console.log(`[gemini-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Áp dụng strict-parser...`);
 
-        protocolResult = parseStrictM365Response(lastRaw);
-
-        if (protocolResult.kind === "tool_calls") {
-          // Validate từng tool call theo danh sách tools của client
-          const clientTools = parsed.context.tools || [];
-          for (const call of protocolResult.calls) {
-            const normalizedCall = normalizeM365ToolArguments(call.name, call.arguments);
-            const validation = validateM365ToolCall(normalizedCall.name, normalizedCall.arguments, clientTools);
-            if (!validation.ok) {
-              protocolResult = {
-                kind: "protocol_error",
-                code: "INVALID_TOOL_CALL",
-                message: `${validation.code}: ${validation.message}`,
-                rawResponse: lastRaw,
-              };
-              break;
-            }
-          }
-        }
+        protocolResult = validateWebProtocolResponse(
+          parseStrictM365Response(lastRaw),
+          parsed.context.tools || [],
+        );
 
         if (protocolResult.kind !== "protocol_error") {
           break;

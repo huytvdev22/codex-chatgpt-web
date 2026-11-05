@@ -16,9 +16,8 @@ import {
   parseStrictM365Response,
   type StrictM365ResponseResult,
 } from "../web/protocol/strict-response-parser";
+import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import {
-  normalizeM365ToolArguments,
-  validateM365ToolCall,
   M365ToolBridge,
   type ToolValidationFailure,
 } from "../web/tools";
@@ -246,29 +245,20 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
           }
         }
 
-        if (protocolResult.kind === "tool_calls") {
-          const clientTools = parsed.context.tools || [];
-          for (const call of protocolResult.calls) {
-            const normalizedCall = normalizeM365ToolArguments(call.name, call.arguments);
-            const validation = validateM365ToolCall(normalizedCall.name, normalizedCall.arguments, clientTools);
-            if (!validation.ok) {
-              const failure = validation as ToolValidationFailure;
-              const isDisallowed = failure.message.includes("vi phạm quy tắc an toàn");
-              const isUnknown = failure.code === "UNKNOWN_TOOL";
-              protocolResult = {
-                kind: "protocol_error",
-                code: isDisallowed
-                  ? "DISALLOWED_COMMAND"
-                  : isUnknown
-                    ? "UNKNOWN_TOOL"
-                    : "INVALID_TOOL_CALL",
-                message: `${failure.code}: ${failure.message}`,
-                rawResponse: lastRaw,
-              };
-              break;
-            }
-          }
-        }
+        protocolResult = validateWebProtocolResponse(
+          protocolResult,
+          parsed.context.tools || [],
+          {
+            classifyFailure: (failure: ToolValidationFailure) => {
+              if (failure.message.includes("vi phạm quy tắc an toàn")) {
+                return "DISALLOWED_COMMAND";
+              }
+              return failure.code === "UNKNOWN_TOOL"
+                ? "UNKNOWN_TOOL"
+                : "INVALID_TOOL_CALL";
+            },
+          },
+        );
 
         if (protocolResult.kind !== "protocol_error") break;
 
