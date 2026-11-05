@@ -15,7 +15,7 @@ export {
   sanitizeCodexPatchContent,
   sanitizeJsonControlChars,
   autoHealHtmlMangledTags,
-} from "./toolcall-detector";
+} from "../../web/protocol/toolcall-detector";
 
 export {
   parseStrictM365Response,
@@ -36,7 +36,7 @@ export {
   GitDiffRule,
   FindRule,
   isDestructiveCommand,
-} from "./bash-translator";
+} from "../../web/protocol/bash-translator";
 
 export {
   M365OutputTranslator,
@@ -53,7 +53,7 @@ export {
   maskArgumentsForLog,
   maskToolCallsForLog,
   balanceJsonBraces,
-} from "./output-translator";
+} from "../../web/protocol/output-translator";
 
-export * from "./detectors";
-export * from "./log-masker";
+export * from "../../web/protocol/detectors";
+export * from "../../web/protocol/log-masker";

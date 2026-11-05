@@ -1,1 +1,1 @@
-export * from "./translation/output-translator";
+export * from "../web/protocol/output-translator";

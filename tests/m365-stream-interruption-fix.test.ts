@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { M365ToolCallDetector } from "../src/adapters/m365-copilot/translation/toolcall-detector";
+import { M365ToolCallDetector } from "../src/adapters/web/protocol/toolcall-detector";
 import { FastPathStreamBuffer } from "../src/adapters/m365-copilot/browser/fast-path-stream-buffer";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent } from "../src/types";

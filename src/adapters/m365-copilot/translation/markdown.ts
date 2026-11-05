@@ -14,4 +14,4 @@ export {
   type ParsedToolCall,
   sanitizeCodexPatchContent,
   sanitizeJsonControlChars,
-} from "./toolcall-detector";
+} from "../../web/protocol/toolcall-detector";

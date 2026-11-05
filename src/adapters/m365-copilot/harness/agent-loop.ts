@@ -1,6 +1,6 @@
 
 import { randomUUID } from "node:crypto";
-import type { OpenAIToolCall } from "../translation/detectors/types";
+import type { OpenAIToolCall } from "../../web/protocol/detectors/types";
 import { parseStrictM365Response, type M365ProtocolErrorCode } from "../../web/protocol/strict-response-parser";
 import { truncateToolResult } from "../../web/prompt/assembler";
 import { buildM365FormatRetryPrompt } from "../../web/prompt/format-retry";

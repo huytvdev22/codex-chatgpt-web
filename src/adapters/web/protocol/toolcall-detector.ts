@@ -1,5 +1,5 @@
 
-import { chatGptHtmlToMarkdown } from "./html-to-markdown";
+import { chatGptHtmlToMarkdown } from "../markdown";
 
 export interface ParsedToolCall {
   name: string;

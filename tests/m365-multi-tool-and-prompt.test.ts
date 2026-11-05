@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { M365OutputTranslator } from "../src/adapters/m365-copilot/translation/output-translator";
-import { XmlToolCallDetector } from "../src/adapters/m365-copilot/translation/detectors/xml-detector";
+import { M365OutputTranslator } from "../src/adapters/web/protocol/output-translator";
+import { XmlToolCallDetector } from "../src/adapters/web/protocol/detectors/xml-detector";
 import {
   UNIFIED_TOOL_PROTOCOL,
   renderDynamicToolDeclarations,

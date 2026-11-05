@@ -1,5 +1,5 @@
 
-import { stripOuterCodeFence } from "../translation/strip-code-fence";
+import { stripOuterCodeFence } from "../../web/protocol/strip-code-fence";
 
 export interface FastPathExtraction {
   isFastPath: boolean;

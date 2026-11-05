@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { autoHealHtmlMangledTags, sanitizeCodexPatchContent } from "../src/adapters/m365-copilot/translation/toolcall-detector";
+import { autoHealHtmlMangledTags, sanitizeCodexPatchContent } from "../src/adapters/web/protocol/toolcall-detector";
 import { normalizeFileContent } from "../src/adapters/web/tools/tool-bridge";
 
 describe("M365 HTML & Tag Mangling Auto-Healing Tests", () => {
