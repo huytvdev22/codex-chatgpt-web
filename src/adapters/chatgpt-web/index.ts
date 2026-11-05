@@ -15,19 +15,20 @@ import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
   CodexRawPayload,
 } from "../web/normalization";
-import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
+import {
+  closeLauncherBrowserTurn,
+  resolveLauncherDescriptorPath,
+  startLauncherBrowserTurn,
+} from "../web/launcher-runtime";
 import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  connectLauncherBrowserHost,
-  readLauncherBrowserHostDescriptor,
   notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { processRunning } from "../../process";
 
 export interface ChatGptAdapterOptions {
   userDataDir?: string;
@@ -101,35 +102,28 @@ export class ChatGptWebAdapter implements ProviderAdapter {
     // 2. Kết nối Launcher Surface qua notifyLauncherTurn (chuẩn M365/Launcher lifecycle)
     if (descriptorPath) {
       try {
-        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        if (processRunning(descriptor.pid)) {
-          console.log(`[chatgpt-adapter] Đăng ký turn với Launcher (phase=start, conversationKey=${conversationKey || 'none'})...`);
-          const lease = await notifyLauncherTurn(
-            descriptorPath,
-            {
-              phase: "start",
-              traceId: turnTraceId,
-              helperPid: process.pid,
-              conversationKey,
-              connectorIdentity: "chatgpt-web",
-              provider: "chatgpt",
-              requireRetainedConversation: false,
-            },
-            undefined,
-            incoming.abortSignal,
-          );
-
-          surfaceId = lease.surfaceId || descriptor.chatGptSurfaceId || descriptor.surfaceId;
-          leaseConversationId = lease.conversationId;
-          console.log(`[chatgpt-adapter] Launcher cấp surface: ${surfaceId} (reused=${lease.reused}, convId=${lease.conversationId || 'mới'})`);
-
-          launcherConnection = await connectLauncherBrowserHost(
-            descriptorPath,
-            20_000,
-            surfaceId,
-            incoming.abortSignal,
-          );
-          page = launcherConnection.page;
+        console.log(`[chatgpt-adapter] Đăng ký turn với Launcher (phase=start, conversationKey=${conversationKey || 'none'})...`);
+        const session = await startLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
+            phase: "start",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            conversationKey,
+            connectorIdentity: "chatgpt-web",
+            provider: "chatgpt",
+            requireRetainedConversation: false,
+          },
+          signal: incoming.abortSignal,
+          resolveSurfaceId: (descriptor, leaseSurfaceId) =>
+            leaseSurfaceId || descriptor.chatGptSurfaceId || descriptor.surfaceId,
+        });
+        if (session) {
+          surfaceId = session.surfaceId;
+          leaseConversationId = session.conversationId;
+          launcherConnection = session.connection;
+          page = session.connection.page;
+          console.log(`[chatgpt-adapter] Launcher cấp surface: ${surfaceId} (reused=${session.reused}, convId=${session.conversationId || 'mới'})`);
         }
       } catch (err) {
         console.warn(`[chatgpt-adapter] Không thể kết nối Launcher qua CDP: ${err instanceof Error ? err.message : String(err)}. Sẽ thử local Chrome.`);
@@ -241,9 +235,7 @@ export class ChatGptWebAdapter implements ProviderAdapter {
         }
       }
 
-      if (launcherConnection) {
-        await launcherConnection.browser.close().catch(() => {});
-      }
+      await closeLauncherBrowserTurn(launcherConnection);
     }
   }
 

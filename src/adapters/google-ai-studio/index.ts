@@ -22,19 +22,19 @@ import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
   CodexRawPayload,
 } from "../web/normalization";
-import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
+import {
+  resolveLauncherDescriptorPath,
+  startLauncherBrowserTurn,
+} from "../web/launcher-runtime";
 import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  connectLauncherBrowserHost,
-  readLauncherBrowserHostDescriptor,
   notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { processRunning } from "../../process";
 
 export interface GoogleAIStudioAdapterOptions {
   userDataDir?: string;
@@ -125,34 +125,26 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     // 2. Kết nối Launcher Surface nếu có
     if (descriptorPath) {
       try {
-        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        if (processRunning(descriptor.pid)) {
-          console.log(`[ai-studio-adapter] Đăng ký turn với Launcher (conversationKey=${conversationKey || 'none'})...`);
-          const lease = await notifyLauncherTurn(
-            descriptorPath,
-            {
-              phase: "start",
-              traceId: turnTraceId,
-              helperPid: process.pid,
-              conversationKey,
-              connectorIdentity: "google-ai-studio",
-              provider: "google-ai-studio",
-              requireRetainedConversation: false,
-            },
-            undefined,
-            incoming.abortSignal,
-          );
-
-          surfaceId = lease.surfaceId || descriptor.surfaceId;
-          leasePromptId = lease.conversationId;
-          launcherConversationReused = lease.reused === true;
-          launcherConnection = await connectLauncherBrowserHost(
-            descriptorPath,
-            20_000,
-            surfaceId,
-            incoming.abortSignal,
-          );
-          page = launcherConnection.page;
+        console.log(`[ai-studio-adapter] Đăng ký turn với Launcher (conversationKey=${conversationKey || 'none'})...`);
+        const session = await startLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
+            phase: "start",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            conversationKey,
+            connectorIdentity: "google-ai-studio",
+            provider: "google-ai-studio",
+            requireRetainedConversation: false,
+          },
+          signal: incoming.abortSignal,
+        });
+        if (session) {
+          surfaceId = session.surfaceId;
+          leasePromptId = session.conversationId;
+          launcherConversationReused = session.reused;
+          launcherConnection = session.connection;
+          page = session.connection.page;
         }
       } catch (err) {
         launcherError = err instanceof Error ? err : new Error(String(err));

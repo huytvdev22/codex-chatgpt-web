@@ -15,19 +15,20 @@ import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
   CodexRawPayload,
 } from "../web/normalization";
-import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
+import {
+  closeLauncherBrowserTurn,
+  resolveLauncherDescriptorPath,
+  startLauncherBrowserTurn,
+} from "../web/launcher-runtime";
 import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  connectLauncherBrowserHost,
-  readLauncherBrowserHostDescriptor,
   notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { processRunning } from "../../process";
 
 export interface QwenAdapterOptions {
   userDataDir?: string;
@@ -92,35 +93,28 @@ export class QwenWebAdapter implements ProviderAdapter {
     // 2. Kết nối Launcher Surface nếu có
     if (descriptorPath) {
       try {
-        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        if (processRunning(descriptor.pid)) {
-          console.log(`[qwen-adapter] Đăng ký turn với Launcher (phase=start, conversationKey=${conversationKey || 'none'})...`);
-          const lease = await notifyLauncherTurn(
-            descriptorPath,
-            {
-              phase: "start",
-              traceId: turnTraceId,
-              helperPid: process.pid,
-              conversationKey,
-              connectorIdentity: "qwen-web",
-              provider: "qwen" as any,
-              requireRetainedConversation: false,
-            },
-            undefined,
-            incoming.abortSignal,
-          );
-
-          surfaceId = lease.surfaceId || (descriptor as any).qwenSurfaceId || descriptor.surfaceId;
-          leaseConversationId = lease.conversationId;
-          console.log(`[qwen-adapter] Launcher cấp surface: ${surfaceId} (reused=${lease.reused}, convId=${lease.conversationId || 'mới'})`);
-
-          launcherConnection = await connectLauncherBrowserHost(
-            descriptorPath,
-            20_000,
-            surfaceId,
-            incoming.abortSignal,
-          );
-          page = launcherConnection.page;
+        console.log(`[qwen-adapter] Đăng ký turn với Launcher (phase=start, conversationKey=${conversationKey || 'none'})...`);
+        const session = await startLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
+            phase: "start",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            conversationKey,
+            connectorIdentity: "qwen-web",
+            provider: "qwen",
+            requireRetainedConversation: false,
+          },
+          signal: incoming.abortSignal,
+          resolveSurfaceId: (descriptor, leaseSurfaceId) =>
+            leaseSurfaceId || descriptor.qwenSurfaceId || descriptor.surfaceId,
+        });
+        if (session) {
+          surfaceId = session.surfaceId;
+          leaseConversationId = session.conversationId;
+          launcherConnection = session.connection;
+          page = session.connection.page;
+          console.log(`[qwen-adapter] Launcher cấp surface: ${surfaceId} (reused=${session.reused}, convId=${session.conversationId || 'mới'})`);
         }
       } catch (err) {
         launcherError = err instanceof Error ? err : new Error(String(err));
@@ -231,9 +225,7 @@ export class QwenWebAdapter implements ProviderAdapter {
         }
       }
 
-      if (launcherConnection) {
-        await launcherConnection.browser.close().catch(() => {});
-      }
+      await closeLauncherBrowserTurn(launcherConnection);
     }
   }
 

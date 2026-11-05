@@ -19,20 +19,21 @@ import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
   CodexRawPayload,
 } from "../web/normalization";
-import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
+import {
+  closeLauncherBrowserTurn,
+  resolveLauncherDescriptorPath,
+  startLauncherBrowserTurn,
+} from "../web/launcher-runtime";
 import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import type { Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  connectLauncherBrowserHost,
   notifyLauncherTurn,
-  readLauncherBrowserHostDescriptor,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
-import { processRunning } from "../../process";
 
 export interface GeminiAdapterOptions {
   userDataDir?: string;
@@ -92,32 +93,26 @@ export class GeminiWebAdapter implements ProviderAdapter {
     if (descriptorPath) {
       let launcherError: Error | null = null;
       try {
-        const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-        if (processRunning(descriptor.pid)) {
-          const lease = await notifyLauncherTurn(
-            descriptorPath,
-            {
-              phase: "start",
-              traceId: turnTraceId,
-              helperPid: process.pid,
-              conversationKey,
-              connectorIdentity: "gemini-web",
-              provider: "gemini",
-              requireRetainedConversation: false,
-            },
-            undefined,
-            incoming.abortSignal,
-          );
+        const session = await startLauncherBrowserTurn({
+          descriptorPath,
+          activity: {
+            phase: "start",
+            traceId: turnTraceId,
+            helperPid: process.pid,
+            conversationKey,
+            connectorIdentity: "gemini-web",
+            provider: "gemini",
+            requireRetainedConversation: false,
+          },
+          signal: incoming.abortSignal,
+          resolveSurfaceId: (descriptor, leaseSurfaceId) =>
+            leaseSurfaceId || descriptor.geminiSurfaceId || descriptor.surfaceId,
+        });
+        if (session) {
           leaseStarted = true;
-          const targetSurfaceId = lease.surfaceId || descriptor.geminiSurfaceId || descriptor.surfaceId;
-          console.log(`[gemini-adapter] Kết nối Playwright qua Launcher CDP (pid=${descriptor.pid}, surface=${targetSurfaceId})...`);
-          launcherConnection = await connectLauncherBrowserHost(
-            descriptorPath,
-            20_000,
-            targetSurfaceId,
-            incoming.abortSignal,
-          );
-          page = launcherConnection.page;
+          launcherConnection = session.connection;
+          page = session.connection.page;
+          console.log(`[gemini-adapter] Kết nối Playwright qua Launcher CDP (pid=${session.connection.descriptor.pid}, surface=${session.surfaceId})...`);
         }
       } catch (err) {
         launcherError = err instanceof Error ? err : new Error(String(err));
@@ -211,9 +206,7 @@ export class GeminiWebAdapter implements ProviderAdapter {
           console.warn("[gemini-adapter] Không thể gửi phase=end tới launcher:", releaseErr);
         }
       }
-      if (launcherConnection) {
-        await launcherConnection.browser.close().catch(() => {});
-      }
+      await closeLauncherBrowserTurn(launcherConnection);
     }
   }
 
