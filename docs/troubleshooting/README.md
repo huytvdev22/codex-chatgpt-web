@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **032** | Chuyển `FastPathStreamBuffer`, `M365MarkdownBuffer` và `harness` sang `src/adapters/web/` | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [032-extract-web-stream-buffers-and-harness.md](./032-extract-web-stream-buffers-and-harness.md) |
 | **031** | Chuyển `M365CopilotAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `m365-copilot`, `web` | ⏳ Chờ User Test & Confirm | [031-migrate-m365-copilot-adapter-to-shared-engine.md](./031-migrate-m365-copilot-adapter-to-shared-engine.md) |
 | **030** | Chuyển `ChatGptWebAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `chatgpt-web`, `web` | ⏳ Chờ User Test & Confirm | [030-migrate-chatgpt-web-adapter-to-shared-engine.md](./030-migrate-chatgpt-web-adapter-to-shared-engine.md) |
 | **029** | Chuyển `GoogleAIStudioAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `google-ai-studio`, `web` | ⏳ Chờ User Test & Confirm | [029-migrate-google-ai-studio-adapter-to-shared-engine.md](./029-migrate-google-ai-studio-adapter-to-shared-engine.md) |

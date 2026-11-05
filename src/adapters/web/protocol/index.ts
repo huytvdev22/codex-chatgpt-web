@@ -3,6 +3,9 @@ export * from "./validate-response";
 export * from "./retry-response";
 export * from "./emit-response";
 export * from "./strip-code-fence";
+export * from "./html-to-markdown";
+export * from "./semantic-detector";
+export * from "./fast-path-stream-buffer";
 export {
   M365ToolCallDetector,
   type M365ToolCallDetectorOptions,
@@ -10,7 +13,6 @@ export {
   sanitizeJsonControlChars,
   sanitizeCodexPatchContent,
   autoHealHtmlMangledTags,
-  chatGptHtmlToMarkdown,
 } from "./toolcall-detector";
 export * from "./output-translator";
 export * from "./log-masker";

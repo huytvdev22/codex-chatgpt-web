@@ -3,8 +3,12 @@ import { connectLauncherBrowserHost, notifyLauncherTurn } from "../../../launche
 import { getConfigDir } from "../../../config";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "../translation/semantic-detector";
-import { FastPathStreamBuffer } from "./fast-path-stream-buffer";
+import {
+  m365HtmlToMarkdown,
+  M365MarkdownBuffer,
+  type M365MarkdownBlock,
+  FastPathStreamBuffer,
+} from "../../web/protocol";
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../../models/model-registry";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";

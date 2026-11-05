@@ -5,13 +5,13 @@ import { executeM365Turn, m365ConversationKey } from "./browser";
 import { type ToolValidationFailure } from "../web/tools";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
 
-export * from "./session";
+export * from "../web/execution";
 export * from "../web/normalization";
 export * from "../web/prompt/index";
-export * from "./translation";
+export * from "../web/protocol";
 export * from "../web/tools";
+export * from "../web/harness";
 export * from "./browser";
-export * from "./harness";
 
 function resolveM365MaxFormatRetries(): number {
   const configuredRetries = Number.parseInt(
