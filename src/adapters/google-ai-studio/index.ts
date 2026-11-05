@@ -9,9 +9,9 @@ import {
 } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
 import {
-  promptCompiler,
   buildM365FormatRetryPrompt,
 } from "../web/prompt";
+import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
   type StrictM365ResponseResult,
@@ -24,7 +24,6 @@ import {
 } from "../web/tools";
 import {
   CodexRawPayload,
-  CodexPayloadNormalizer,
 } from "../web/normalization";
 import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
@@ -202,11 +201,9 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
     const isNewConversation = !launcherConversationReused && !hasPriorAssistantReply && !existingPromptId;
 
-    // Biên dịch prompt chuẩn M365 (Tool Protocol)
-    const normalized = CodexPayloadNormalizer.normalize(rawPayload);
-    const compileResult = promptCompiler.compile({
-      normalized,
-      parsed,
+    // Biên dịch prompt qua shared Web Adapter pipeline.
+    const compileResult = compileWebPrompt(parsed, {
+      assistantName: "Google AI Studio",
       isNewConversation,
     });
     const initialPrompt = compileResult.finalPrompt;

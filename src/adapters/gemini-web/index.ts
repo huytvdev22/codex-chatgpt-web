@@ -8,8 +8,8 @@ import {
   buildShortOutputFormatAnchor,
   TOOL_REMINDER_PROMPT,
   buildM365FormatRetryPrompt,
-  M365PromptCompiler,
 } from "../web/prompt";
+import { compileWebPrompt } from "../web/compile-prompt";
 import { resolveGeminiReasoningEffort } from "../../models/model-registry";
 import {
   parseStrictM365Response,
@@ -22,7 +22,6 @@ import {
 } from "../web/tools";
 import {
   CodexRawPayload,
-  CodexPayloadNormalizer,
 } from "../web/normalization";
 import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
@@ -89,24 +88,6 @@ export class GeminiWebAdapter implements ProviderAdapter {
     const pages = this.browserContext.pages();
     this.activePage = pages[0] || (await this.browserContext.newPage());
     return this.activePage;
-  }
-
-  /**
-   * Biên dịch prompt gửi sang Gemini Web từ request của Codex, sử dụng pipeline
-   * chuẩn hóa đầy đủ: kèm Available Tools Declarations, trailing tool results,
-   * environment context và format anchor thống nhất.
-   */
-  private compilePrompt(parsed: CodexParsedRequest, isNewConversation: boolean): string {
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const normalized = CodexPayloadNormalizer.normalize(rawPayload);
-    const compiler = new M365PromptCompiler({ assistantName: "Gemini" });
-    const compileResult = compiler.compile({
-      normalized,
-      parsed,
-      isNewConversation,
-      assistantName: "Gemini",
-    });
-    return compileResult.finalPrompt;
   }
 
   /**
@@ -179,7 +160,10 @@ export class GeminiWebAdapter implements ProviderAdapter {
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(parsed.context.messages);
     const isNewConversation = !hasPriorAssistantReply;
-    const initialPrompt = this.compilePrompt(parsed, isNewConversation);
+    const initialPrompt = compileWebPrompt(parsed, {
+      assistantName: "Gemini",
+      isNewConversation,
+    }).finalPrompt;
     const reasoningEffort = resolveGeminiReasoningEffort(parsed.modelId, parsed.options.reasoning);
 
     console.log(`[gemini-adapter] Bắt đầu lượt gửi cho model: ${parsed.modelId}, cấp độ tư duy: ${reasoningEffort || "mặc định"}`);

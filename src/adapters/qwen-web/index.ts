@@ -6,9 +6,9 @@ import { isValidQwenConversationId, QWEN_SELECTORS } from "./selectors";
 import { defaultQwenConversationStore, qwenConversationKey } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
 import {
-  M365PromptCompiler,
   buildM365FormatRetryPrompt,
 } from "../web/prompt";
+import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
   type StrictM365ResponseResult,
@@ -20,7 +20,6 @@ import {
 } from "../web/tools";
 import {
   CodexRawPayload,
-  CodexPayloadNormalizer,
 } from "../web/normalization";
 import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
@@ -87,22 +86,6 @@ export class QwenWebAdapter implements ProviderAdapter {
     const pages = this.browserContext.pages();
     this.activePage = pages[0] || (await this.browserContext.newPage());
     return this.activePage;
-  }
-
-  /**
-   * Biên dịch prompt gửi sang Qwen Web bằng kịch bản tương tác thống nhất
-   */
-  private compilePrompt(parsed: CodexParsedRequest, isNewConversation: boolean): string {
-    const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
-    const normalized = CodexPayloadNormalizer.normalize(rawPayload);
-    const compiler = new M365PromptCompiler({ assistantName: "Qwen" });
-    const compileResult = compiler.compile({
-      normalized,
-      parsed,
-      isNewConversation,
-      assistantName: "Qwen",
-    });
-    return compileResult.finalPrompt;
   }
 
   /**
@@ -193,7 +176,10 @@ export class QwenWebAdapter implements ProviderAdapter {
     const isNewConversation = !hasPriorAssistantReply && !existingConversationId;
     activeConversationId = existingConversationId;
 
-    const initialPrompt = this.compilePrompt(parsed, isNewConversation);
+    const initialPrompt = compileWebPrompt(parsed, {
+      assistantName: "Qwen",
+      isNewConversation,
+    }).finalPrompt;
 
     const reasoningEffort = parsed.options.reasoning || "low";
     console.log(`[qwen-adapter] Bắt đầu lượt gửi (thread=${threadId || "n/a"}, conv=${existingConversationId || "mới"}, isNew=${isNewConversation})`);
