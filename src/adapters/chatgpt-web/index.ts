@@ -5,15 +5,12 @@ import { ChatGptBrowserWorker, isValidChatGptConversationId } from "./chatgpt-br
 import { CHATGPT_SELECTORS } from "./selectors";
 import { defaultChatGptConversationStore, chatGptConversationKey } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
-import {
-  buildM365FormatRetryPrompt,
-} from "../web/prompt";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
-  type StrictM365ResponseResult,
 } from "../web/protocol/strict-response-parser";
 import { validateWebProtocolResponse } from "../web/protocol/validate-response";
+import { runWebProtocolRetry } from "../web/protocol/retry-response";
 import {
   M365ToolBridge,
 } from "../web/tools";
@@ -165,60 +162,40 @@ export class ChatGptWebAdapter implements ProviderAdapter {
 
     try {
       const maxRetries = this.options.maxFormatRetries ?? 2;
-      let attemptPrompt = initialPrompt;
-      let protocolResult: StrictM365ResponseResult | null = null;
-      let lastRaw = "";
+      const protocolResult = await runWebProtocolRetry({
+        initialPrompt,
+        maxRetries,
+        providerName: "ChatGPT",
+        abortSignal: incoming.abortSignal,
+        execute: async ({ attempt, prompt }) => {
+          console.log(`[chatgpt-adapter] Thực thi lượt (lần thử ${attempt + 1}/${maxRetries + 1})...`);
 
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        if (incoming.abortSignal?.aborted) {
-          throw new DOMException("ChatGpt turn aborted", "AbortError");
-        }
+          const result = await this.worker.executeTurn(page, {
+            prompt,
+            signal: incoming.abortSignal,
+            reasoningEffort,
+            conversationId: existingConversationId,
+            isNewConversation,
+            onChunk: () => {},
+          });
 
-        console.log(`[chatgpt-adapter] Thực thi lượt (lần thử ${attempt + 1}/${maxRetries + 1})...`);
+          if (isValidChatGptConversationId(result.conversationId)) {
+            activeConversationId = result.conversationId;
+            defaultChatGptConversationStore.setConversationId(threadId, result.conversationId);
+            console.log(`[chatgpt-adapter] Đã ghi nhận conversationId: "${result.conversationId}" (threadId="${threadId || 'active'}")`);
+          }
 
-        const result = await this.worker.executeTurn(page, {
-          prompt: attemptPrompt,
-          signal: incoming.abortSignal,
-          reasoningEffort,
-          conversationId: existingConversationId,
-          isNewConversation,
-          onChunk: () => {},
-        });
-
-        if (isValidChatGptConversationId(result.conversationId)) {
-          activeConversationId = result.conversationId;
-          defaultChatGptConversationStore.setConversationId(threadId, result.conversationId);
-          console.log(`[chatgpt-adapter] Đã ghi nhận conversationId: "${result.conversationId}" (threadId="${threadId || 'active'}")`);
-        }
-
-        lastRaw = result.rawResponse;
-        console.log(`[chatgpt-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Đang phân tích strict response...`);
-
-        protocolResult = validateWebProtocolResponse(
-          parseStrictM365Response(lastRaw),
-          parsed.context.tools || [],
-        );
-
-        if (protocolResult.kind !== "protocol_error") {
-          break;
-        }
-
-        console.warn(`[chatgpt-adapter] [Format Error] Lỗi giao thức (${protocolResult.code}): ${protocolResult.message}`);
-        if (attempt >= maxRetries) {
-          throw new Error(
-            `[ChatGPT Format Error] Đã thử ${maxRetries + 1} lần nhưng phản hồi vẫn sai protocol (${protocolResult.code}): ${protocolResult.message}`
+          const lastRaw = result.rawResponse;
+          console.log(`[chatgpt-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Đang phân tích strict response...`);
+          return validateWebProtocolResponse(
+            parseStrictM365Response(lastRaw),
+            parsed.context.tools || [],
           );
-        }
-
-        attemptPrompt = buildM365FormatRetryPrompt({
-          code: protocolResult.code,
-          message: protocolResult.message,
-        });
-      }
-
-      if (!protocolResult || protocolResult.kind === "protocol_error") {
-        throw new Error("[ChatGPT Format Error] Không nhận được response protocol hợp lệ.");
-      }
+        },
+        onProtocolError: result => {
+          console.warn(`[chatgpt-adapter] [Format Error] Lỗi giao thức (${result.code}): ${result.message}`);
+        },
+      });
 
       finalStatus = "completed";
 

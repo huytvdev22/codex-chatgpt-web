@@ -8,15 +8,13 @@ import {
   googleAIStudioConversationKey,
 } from "./conversation-store";
 import { extractCodexTurnIdentityFromBody } from "../web/turn-identity";
-import {
-  buildM365FormatRetryPrompt,
-} from "../web/prompt";
 import { compileWebPrompt } from "../web/compile-prompt";
 import {
   parseStrictM365Response,
   type StrictM365ResponseResult,
 } from "../web/protocol/strict-response-parser";
 import { validateWebProtocolResponse } from "../web/protocol/validate-response";
+import { runWebProtocolRetry } from "../web/protocol/retry-response";
 import {
   M365ToolBridge,
   type ToolValidationFailure,
@@ -189,88 +187,77 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     let protocolResult: StrictM365ResponseResult | null = null;
     try {
       const maxRetries = this.options.maxFormatRetries ?? 2;
-      let attemptPrompt = initialPrompt;
       let lastRaw = "";
 
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        if (incoming.abortSignal?.aborted) {
-          throw new DOMException("Google AI Studio turn aborted", "AbortError");
-        }
+      protocolResult = await runWebProtocolRetry({
+        initialPrompt,
+        maxRetries,
+        providerName: "Google AI Studio",
+        abortSignal: incoming.abortSignal,
+        execute: async ({ attempt, prompt }) => {
+          console.log(`[ai-studio-adapter] Thực thi lượt (lần thử ${attempt + 1}/${maxRetries + 1})...`);
 
-        console.log(`[ai-studio-adapter] Thực thi lượt (lần thử ${attempt + 1}/${maxRetries + 1})...`);
-
-        const result = await this.worker.executeTurn(page, {
-          prompt: attemptPrompt,
-          signal: incoming.abortSignal,
-          reasoningEffort,
-          promptId: existingPromptId,
-          isNewConversation: attempt === 0 ? isNewConversation : false,
-          onChunk: () => {
-            // Quarantine: Browser vẫn thu thập stream, nhưng adapter TUYỆT ĐỐI không emit thô trước validation
-          },
-        });
-
-        if (result.promptId) {
-          finalPromptId = result.promptId;
-          if (conversationKey) {
-            defaultGoogleAIStudioConversationStore.set(conversationKey, result.promptId);
-            console.log(`[ai-studio-adapter] Đã ghi nhận promptId mới: "${result.promptId}"`);
-          }
-        }
-
-        // Làm sạch toàn bộ tiền tố rác và hậu tố rác trước khi parse
-        lastRaw = sanitizeAIStudioResponse(result.rawResponse);
-        console.log(`[ai-studio-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Đang phân tích strict response...`);
-
-        protocolResult = parseStrictM365Response(lastRaw);
-
-        // Tolerant Answers: Nếu phản hồi là văn bản tự nhiên hợp lệ (chỉ thiếu transport fence 4-backtick hoặc webResponse)
-        // và không chứa bất kỳ hành vi gọi công cụ nào, chấp nhận ngay là final_answer
-        if (protocolResult.kind === "protocol_error") {
-          const isWrapperError =
-            protocolResult.code === "MISSING_TRANSPORT_FENCE" ||
-            protocolResult.code === "MISSING_RESPONSE_ENVELOPE";
-          const hasActionMarkers =
-            lastRaw.includes("<tool_call>") ||
-            lastRaw.includes("<custom_tool_call") ||
-            lastRaw.includes("*** Begin Patch");
-
-          if (isWrapperError && !hasActionMarkers && lastRaw.trim().length > 0) {
-            console.log(`[ai-studio-adapter] Tolerant Answers: Chấp nhận phản hồi văn bản tự nhiên (${lastRaw.length} ký tự) làm final_answer.`);
-            protocolResult = {
-              kind: "final_answer",
-              content: lastRaw.replace(/<\/?webResponse>/gi, "").trim(),
-              rawResponse: lastRaw,
-            };
-          }
-        }
-
-        protocolResult = validateWebProtocolResponse(
-          protocolResult,
-          parsed.context.tools || [],
-          {
-            classifyFailure: (failure: ToolValidationFailure) => {
-              if (failure.message.includes("vi phạm quy tắc an toàn")) {
-                return "DISALLOWED_COMMAND";
-              }
-              return failure.code === "UNKNOWN_TOOL"
-                ? "UNKNOWN_TOOL"
-                : "INVALID_TOOL_CALL";
+          const result = await this.worker.executeTurn(page, {
+            prompt,
+            signal: incoming.abortSignal,
+            reasoningEffort,
+            promptId: existingPromptId,
+            isNewConversation: attempt === 0 ? isNewConversation : false,
+            onChunk: () => {
+              // Quarantine: Browser vẫn thu thập stream, nhưng adapter TUYỆT ĐỐI không emit thô trước validation
             },
-          },
-        );
-
-        if (protocolResult.kind !== "protocol_error") break;
-
-        // Trường hợp parse lỗi (unrecognized), thử retry nếu còn lượt
-        if (attempt < maxRetries) {
-          console.warn(`[ai-studio-adapter] Không thể trích xuất cấu trúc chuẩn từ phản hồi, kích hoạt Retry Prompt...`);
-          attemptPrompt = buildM365FormatRetryPrompt({
-            code: protocolResult.code,
-            message: protocolResult.message,
           });
-        }
-      }
+
+          if (result.promptId) {
+            finalPromptId = result.promptId;
+            if (conversationKey) {
+              defaultGoogleAIStudioConversationStore.set(conversationKey, result.promptId);
+              console.log(`[ai-studio-adapter] Đã ghi nhận promptId mới: "${result.promptId}"`);
+            }
+          }
+
+          lastRaw = sanitizeAIStudioResponse(result.rawResponse);
+          console.log(`[ai-studio-adapter] Đã nhận rawResponse (${lastRaw.length} ký tự). Đang phân tích strict response...`);
+
+          let resultProtocol = parseStrictM365Response(lastRaw);
+          if (resultProtocol.kind === "protocol_error") {
+            const isWrapperError =
+              resultProtocol.code === "MISSING_TRANSPORT_FENCE" ||
+              resultProtocol.code === "MISSING_RESPONSE_ENVELOPE";
+            const hasActionMarkers =
+              lastRaw.includes("<tool_call>") ||
+              lastRaw.includes("<custom_tool_call") ||
+              lastRaw.includes("*** Begin Patch");
+
+            if (isWrapperError && !hasActionMarkers && lastRaw.trim().length > 0) {
+              console.log(`[ai-studio-adapter] Tolerant Answers: Chấp nhận phản hồi văn bản tự nhiên (${lastRaw.length} ký tự) làm final_answer.`);
+              resultProtocol = {
+                kind: "final_answer",
+                content: lastRaw.replace(/<\/?webResponse>/gi, "").trim(),
+                rawResponse: lastRaw,
+              };
+            }
+          }
+
+          return validateWebProtocolResponse(
+            resultProtocol,
+            parsed.context.tools || [],
+            {
+              classifyFailure: (failure: ToolValidationFailure) => {
+                if (failure.message.includes("vi phạm quy tắc an toàn")) {
+                  return "DISALLOWED_COMMAND";
+                }
+                return failure.code === "UNKNOWN_TOOL"
+                  ? "UNKNOWN_TOOL"
+                  : "INVALID_TOOL_CALL";
+              },
+            },
+          );
+        },
+        onProtocolError: () => {
+          console.warn("[ai-studio-adapter] Không thể trích xuất cấu trúc chuẩn từ phản hồi, kích hoạt Retry Prompt...");
+        },
+      });
 
       const inputTokens = Math.ceil(initialPrompt.length / 4);
       const outputTokens = Math.ceil((lastRaw.length || 10) / 4);
