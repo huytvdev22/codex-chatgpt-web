@@ -340,10 +340,22 @@ export class M365AgentLoop {
     options: AgentLoopOptions
   ): Promise<string> {
     const retryOpts = options.retryOptions || {};
-    const maxRetries = Math.max(1, retryOpts.maxRetries ?? 3);
-    const baseDelayMs = retryOpts.baseDelayMs ?? 2000;
-    const maxDelayMs = retryOpts.maxDelayMs ?? 30000;
-    const timeoutMs = retryOpts.perTurnTimeoutMs ?? 180000;
+    const configuredMaxRetries = retryOpts.maxRetries ?? 3;
+    const maxRetries = Number.isFinite(configuredMaxRetries)
+      ? Math.min(10, Math.max(1, Math.floor(configuredMaxRetries)))
+      : 3;
+    const configuredBaseDelayMs = retryOpts.baseDelayMs ?? 2000;
+    const baseDelayMs = Number.isFinite(configuredBaseDelayMs)
+      ? Math.min(30_000, Math.max(0, Math.floor(configuredBaseDelayMs)))
+      : 2000;
+    const configuredMaxDelayMs = retryOpts.maxDelayMs ?? 30000;
+    const maxDelayMs = Number.isFinite(configuredMaxDelayMs)
+      ? Math.min(120_000, Math.max(baseDelayMs, Math.floor(configuredMaxDelayMs)))
+      : 30000;
+    const configuredTimeoutMs = retryOpts.perTurnTimeoutMs ?? 180000;
+    const timeoutMs = Number.isFinite(configuredTimeoutMs)
+      ? Math.min(30 * 60_000, Math.max(0, Math.floor(configuredTimeoutMs)))
+      : 180000;
     const retryableErrors = retryOpts.retryableErrors ?? [
       "timeout",
       "quota",
@@ -388,7 +400,10 @@ export class M365AgentLoop {
    */
   async run(initialPrompt: string, options: AgentLoopOptions = {}): Promise<AgentLoopResult> {
 
-    const maxTurns = options.maxTurns ?? 30;
+    const configuredMaxTurns = options.maxTurns ?? 30;
+    const maxTurns = Number.isFinite(configuredMaxTurns)
+      ? Math.min(100, Math.max(1, Math.floor(configuredMaxTurns)))
+      : 30;
     const messages: AgentMessage[] = [];
     let currentPrompt = initialPrompt;
     let turnCount = 0;
