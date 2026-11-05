@@ -26,6 +26,7 @@ import {
   CodexRawPayload,
   CodexPayloadNormalizer,
 } from "../web/normalization";
+import { resolveLauncherDescriptorPath } from "../web/launcher-runtime";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +38,6 @@ import {
   notifyLauncherTurn,
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
-import { getConfigDir } from "../../config";
 import { processRunning } from "../../process";
 
 export interface GoogleAIStudioAdapterOptions {
@@ -73,20 +73,6 @@ export function sanitizeAIStudioResponse(raw: string): string {
   }
 
   return cleaned;
-}
-
-function resolveDescriptorPath(customPath?: string): string | null {
-  if (customPath && existsSync(customPath)) return customPath;
-  const envPath = process.env.CODEX_CHATGPT_WEB_HOME || getConfigDir();
-  const p1 = join(envPath, "runtime", "launcher-browser.json");
-  if (existsSync(p1)) return p1;
-  const p2 = join(homedir(), ".codex-google-ai-studio", "runtime", "launcher-browser.json");
-  if (existsSync(p2)) return p2;
-  const p3 = join(homedir(), ".codex-m365-copilot", "runtime", "launcher-browser.json");
-  if (existsSync(p3)) return p3;
-  const p4 = join(homedir(), ".codex-chatgpt-web", "runtime", "launcher-browser.json");
-  if (existsSync(p4)) return p4;
-  return null;
 }
 
 export class GoogleAIStudioAdapter implements ProviderAdapter {
@@ -153,7 +139,10 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
       || undefined;
     const conversationKey = googleAIStudioConversationKey(parsed, rawConversationKey);
 
-    const descriptorPath = resolveDescriptorPath(this.options.descriptorPath);
+    const descriptorPath = resolveLauncherDescriptorPath(
+      this.options.descriptorPath,
+      [".codex-google-ai-studio"],
+    );
     let page: Page | null = null;
     let launcherConnection: LauncherBrowserConnection | null = null;
     let surfaceId: string | undefined;
