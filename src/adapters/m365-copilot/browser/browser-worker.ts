@@ -7,9 +7,6 @@ import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "
 import { FastPathStreamBuffer } from "./fast-path-stream-buffer";
 import { ensureM365CapabilityMode } from "./capability-picker";
 import { resolveM365CapabilityMode } from "../../../models/model-registry";
-import { emitStructuredEvent } from "../../../observability/emitter";
-import { logDebugPipelineStation } from "../../../observability/debug-logger";
-import type { TraceContext } from "../../../observability/types";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
 import type { NormalizedImageAttachment } from "../normalization/canonical-types";
 import {
@@ -28,7 +25,6 @@ export interface M365BrowserRunOptions {
   shouldStop?: () => boolean;
   modelSlug?: string;
   reasoning?: string;
-  traceContext?: TraceContext;
   images?: NormalizedImageAttachment[];
 }
 
@@ -519,27 +515,6 @@ export async function executeM365Turn(
   const { browser, page } = connection;
   let finalStatus: "completed" | "failed" | "aborted" = "failed";
   let conversationId: string | undefined;
-  const startTime = Date.now();
-
-  emitStructuredEvent({
-    level: "info",
-    event: "m365.provider.started",
-    traceContext: options.traceContext,
-    safeDetails: {
-      provider: "m365-copilot",
-      modelSlug: options.modelSlug,
-      isNewConversation: Boolean(options.isNewConversation),
-      injectedPromptPreview: promptText,
-      rawPrompt: promptText,
-      promptBytes: Buffer.byteLength(promptText, "utf8"),
-    },
-    diagnosticDetails: {
-      promptBytes: Buffer.byteLength(promptText, "utf8"),
-    },
-  });
-
-  // [DEBUG PIPELINE] STEP 2: Bridge Server ➔ M365 Copilot Web (RAW INJECTED PROMPT)
-  logDebugPipelineStation(2, "BRIDGE SERVER ➔ M365 COPILOT WEB (RAW INJECTED PROMPT)", promptText);
 
   try {
     // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
@@ -1280,28 +1255,6 @@ export async function executeM365Turn(
         const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
         const unclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedTextSoFar) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedTextSoFar);
 
-        const statusSummary = status.isGenerating
-          ? `M365 đang sinh văn bản (${elapsedSec}s, ${currentChars} ký tự)...`
-          : (status.hasContent
-            ? `M365 tạm dừng sinh, đang chờ ổn định (${stableSec}s, ${currentChars} ký tự)...`
-            : `Đang chờ M365 bắt đầu phản hồi (${elapsedSec}s)...`);
-
-        emitStructuredEvent({
-          level: "info",
-          event: "m365.provider.progress",
-          traceContext: options.traceContext,
-          safeDetails: {
-            elapsedSeconds: elapsedSec,
-            isGenerating: status.isGenerating,
-            outputChars: currentChars,
-            stableSeconds: stableSec,
-            hasUnclosedToolCall: unclosedToolCall,
-            hasUnclosedPatch: unclosedPatch,
-            hasUnclosedPlan: unclosedPlan,
-            statusSummary,
-            domStatus: status.isGenerating ? "generating" : (status.hasContent ? "settling" : "idle"),
-          },
-        });
       }
 
       // Điều kiện kết thúc:
@@ -1465,64 +1418,15 @@ export async function executeM365Turn(
       throw new Error(`M365 did not expose a persistent /chat/conversation/{id} URL after completing the turn`);
     }
     finalStatus = "completed";
-    emitStructuredEvent({
-      level: timedOut ? "warning" : "info",
-      event: "m365.provider.finished",
-      traceContext: options.traceContext,
-      safeDetails: {
-        provider: "m365-copilot",
-        status: finalStatus,
-        durationMs: Date.now() - startTime,
-        outputChars: fullMarkdown.length,
-        responsePreview: fullMarkdown,
-        rawResponse: fullMarkdown,
-        timedOut,
-        terminalReason: timedOut ? "polling_timeout" : "completed_settled",
-        terminalExplanation: timedOut
-          ? `Hết thời gian chờ tối đa 120s nhưng M365 chưa đóng khối phản hồi hoàn toàn.`
-          : `M365 đã hoàn tất và văn bản đã ổn định.`,
-      },
-      diagnosticDetails: {
-        outputBytes: Buffer.byteLength(fullMarkdown, "utf8"),
-      },
-    });
     console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=${finalStatus} timedOut=${timedOut}`);
-
-    // [DEBUG PIPELINE] STEP 3: M365 Copilot Web ➔ Bridge Server (RAW RESPONSE SCRAPING)
-    logDebugPipelineStation(3, "M365 COPILOT WEB ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)", fullMarkdown);
 
     return fullMarkdown;
   } catch (err) {
     if (options.signal?.aborted) {
       finalStatus = "aborted";
-      emitStructuredEvent({
-        level: "warning",
-        event: "m365.provider.finished",
-        traceContext: options.traceContext,
-        safeDetails: {
-          provider: "m365-copilot",
-          status: finalStatus,
-          durationMs: Date.now() - startTime,
-          outputChars: 0,
-        },
-      });
       console.log(`[m365-worker] [aborted] turn aborted by client`);
     } else {
       finalStatus = "failed";
-      emitStructuredEvent({
-        level: "error",
-        event: "m365.provider.finished",
-        traceContext: options.traceContext,
-        safeDetails: {
-          provider: "m365-copilot",
-          status: finalStatus,
-          durationMs: Date.now() - startTime,
-          outputChars: 0,
-        },
-        diagnosticDetails: {
-          errorMessage: err instanceof Error ? err.message : String(err),
-        },
-      });
       console.error(`[m365-worker] [error]`, err);
     }
     throw err;

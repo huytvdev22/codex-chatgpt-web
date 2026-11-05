@@ -2005,7 +2005,6 @@ class BrowserHost {
       if (tab.interactionMode === "manual") {
         if (tab.status === "ready") {
           if (now - (tab.lastHeartbeatAt ?? 0) < RETAINED_TURN_TAB_TTL_MS) continue;
-          this.logger.info("browser.retained_tab_expired", { tabId: tab.id, traceId: tab.traceId });
           this.removeTurnTab(tab, false);
           continue;
         }
@@ -2023,7 +2022,6 @@ class BrowserHost {
       }
       if (tab.status === "ready") {
         if (now - (tab.lastHeartbeatAt ?? 0) < RETAINED_TURN_TAB_TTL_MS) continue;
-        this.logger.info("browser.retained_tab_expired", { tabId: tab.id, traceId: tab.traceId });
         this.removeTurnTab(tab, false);
         continue;
       }
@@ -3118,7 +3116,6 @@ class BrowserHost {
       else this.syncViewVisibility();
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
-      this.logger.info("browser.tab_reused", { tabId: existing.id, traceId });
       return {
         surfaceId: existing.surfaceId,
         tabId: existing.id,
@@ -3275,9 +3272,6 @@ class BrowserHost {
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
     tab.loading = false;
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
-    if (status === "completed") {
-      this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
-    }
     if (status === "completed"
       && retain
       && tab.conversationKey
@@ -3286,7 +3280,6 @@ class BrowserHost {
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.activeTraceId) this.hide();
       else this.syncViewVisibility?.();
-      this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
       return { cancelledByUser };

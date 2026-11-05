@@ -6,7 +6,6 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { redactText } = require("./logging.cjs");
-const { OBS_PREFIX_V1, OBS_PROTOCOL_VERSION } = require("./observability-policy.cjs");
 const {
   DETACH_OWNED_CHILD,
   processRunning,
@@ -183,90 +182,6 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     throw new Error("Runtime configuration has an invalid runtime command");
   }
   return config;
-}
-
-function tryParseStructuredEnvelope(rawLine, expectedNonce) {
-  if (typeof rawLine !== "string" || !rawLine.startsWith(OBS_PREFIX_V1)) {
-    return null;
-  }
-  const payloadStr = rawLine.slice(OBS_PREFIX_V1.length);
-  try {
-    const envelope = JSON.parse(payloadStr);
-    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
-      return null;
-    }
-    if (envelope.version !== OBS_PROTOCOL_VERSION) {
-      return null;
-    }
-    if (typeof envelope.event !== "string" || !envelope.event) {
-      return null;
-    }
-    if (!envelope.detail || typeof envelope.detail !== "object" || Array.isArray(envelope.detail)) {
-      return null;
-    }
-
-    // Xác thực Nonce an toàn: kiểm tra kiểu và độ dài trước khi gọi timingSafeEqual
-    if (typeof envelope.nonce !== "string" || typeof expectedNonce !== "string") {
-      return null;
-    }
-    const nonceBuf = Buffer.from(envelope.nonce, "utf8");
-    const expectedBuf = Buffer.from(expectedNonce, "utf8");
-    if (nonceBuf.length === 0 || nonceBuf.length !== expectedBuf.length) {
-      return null;
-    }
-    if (!crypto.timingSafeEqual(nonceBuf, expectedBuf)) {
-      return null;
-    }
-
-    return envelope;
-  } catch {
-    return null;
-  }
-}
-
-function dispatchStructuredLog(logger, envelopeOrLevel, maybeEvent, maybeDetail) {
-  if (!logger) return;
-  let level, eventName, detail;
-  if (typeof envelopeOrLevel === "object" && envelopeOrLevel !== null) {
-    level = envelopeOrLevel.level;
-    eventName = envelopeOrLevel.event;
-    detail = envelopeOrLevel.detail;
-  } else {
-    level = envelopeOrLevel;
-    eventName = maybeEvent;
-    detail = maybeDetail;
-  }
-
-  switch (level) {
-    case "debug":
-      if (typeof logger.debug === "function") {
-        logger.debug(eventName, detail);
-      } else {
-        logger.info(eventName, detail);
-      }
-      break;
-    case "warning":
-    case "warn":
-      if (typeof logger.warn === "function") {
-        logger.warn(eventName, detail);
-      } else {
-        logger.info(eventName, detail);
-      }
-      break;
-    case "error":
-      if (typeof logger.error === "function") {
-        logger.error(eventName, detail);
-      } else {
-        logger.info(eventName, detail);
-      }
-      break;
-    case "info":
-    default:
-      if (typeof logger.info === "function") {
-        logger.info(eventName, detail);
-      }
-      break;
-  }
 }
 
 class RuntimeSupervisor {
@@ -455,17 +370,6 @@ class RuntimeSupervisor {
     this.lastChildFailure[name] = null;
     this.lastChildOutput[name] = null;
     collectLines(child.stdout, (rawLine) => {
-      // 1. Thử parse Structured Log Event nếu đây là tiến trình daemon có nonce hợp lệ
-      if (name === "daemon" && this.daemonNonce) {
-        const envelope = tryParseStructuredEnvelope(rawLine, this.daemonNonce);
-        if (envelope) {
-          dispatchStructuredLog(this.logger, envelope.level, envelope.event, envelope.detail);
-          return;
-        }
-      }
-
-      // 2. Fallback cho legacy stdout hoặc dòng prefix sai nonce/malformed:
-      // BẮT BUỘC dùng chung redactedLine cho cả lastChildOutput và this.logger
       const redactedLine = redactText(rawLine);
       this.lastChildOutput[name] = redactedLine.slice(0, 1_000);
       this.logger.info(`runtime.${name}_stdout`, { line: redactedLine });
@@ -1238,7 +1142,5 @@ module.exports = {
   MAX_RESTARTS_PER_WINDOW,
   RESTART_WINDOW_MS,
   RuntimeSupervisor,
-  tryParseStructuredEnvelope,
-  dispatchStructuredLog,
   validateConfig,
 };

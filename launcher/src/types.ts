@@ -4,7 +4,7 @@ import type { LimitsSnapshot } from "./limits-types";
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
-export type Surface = "browser" | "setup" | "activity" | "limits" | "settings";
+export type Surface = "browser" | "setup" | "limits" | "settings";
 
 export interface LauncherState {
   version: 1;
@@ -69,55 +69,6 @@ export interface BrowserTabState {
   canConfirmSent?: boolean;
 }
 
-export interface LogRecord {
-  at: string;
-  level: "debug" | "info" | "warning" | "error";
-  event: string;
-  detail: Record<string, unknown>;
-}
-
-export interface TraceSpan {
-  spanId: string;
-  parentSpanId?: string;
-  name: string;
-  event: string;
-  category: "request" | "provider" | "tool" | "loop" | "bridge" | "turn" | "generic";
-  startTime: number;
-  durationMs: number;
-  status: "completed" | "failed" | "warning" | "running";
-  record: LogRecord;
-  turnIndex?: number;
-  traceId?: string;
-}
-
-export interface TraceGroup {
-  traceId: string;
-  rootSpanId?: string;
-  conversationId?: string;
-  startTime: number;
-  endTime: number;
-  durationMs: number;
-  status: "completed" | "failed" | "warning" | "running";
-  modelSlug?: string;
-  toolNames: string[];
-  records: LogRecord[];
-  spans: TraceSpan[];
-}
-
-export interface ConversationGroup {
-  conversationId: string;
-  title: string;
-  isSystem: boolean;
-  startTime: number;
-  endTime: number;
-  durationMs: number;
-  status: "completed" | "failed" | "warning" | "running";
-  modelSlug?: string;
-  traces: TraceGroup[];
-  records: LogRecord[];
-  spans: TraceSpan[];
-}
-
 export interface DoctorCheck {
   id: string;
   status: "ok" | "warning" | "error";
@@ -153,7 +104,6 @@ export interface LauncherSnapshot {
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
-  logs: LogRecord[];
   urls: {
     github: string;
     x: string;
@@ -217,9 +167,6 @@ export interface LauncherApi {
     value: boolean,
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
-  logs(limit?: number): Promise<LogRecord[]>;
-  clearLogs(): Promise<boolean>;
-  exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
   windowControl(action: "close" | "minimize" | "zoom"): void;
@@ -228,8 +175,6 @@ export interface LauncherApi {
   onStateChanged(listener: (state: LauncherState) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
-  onLog(listener: (record: LogRecord) => void): () => void;
-  onLogsCleared(listener: () => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
 }
 

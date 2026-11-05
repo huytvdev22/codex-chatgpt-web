@@ -391,7 +391,6 @@ src/adapters/m365-copilot/
   - `../../../launcher-browser-host`
   - `../translation/semantic-detector`
   - `../temp-chat/fastPathScraper`
-  - `../observability/*`
   - `../../../m365-models`
 
 ### 3.6. Phân hệ `translation` (Detectors & Protocol Translation)

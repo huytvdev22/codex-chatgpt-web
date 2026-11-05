@@ -257,8 +257,6 @@ test("browser control server authenticates and owns turn visibility", async () =
       ["heartbeat", "abcdef123456", process.pid, true],
       ["end", "abcdef123456", process.pid, "completed", true, undefined, true, true],
     ]);
-    assert.equal(logs.some(([, event]) => event === "browser.turn_started"), true);
-    assert.equal(logs.some(([, event]) => event === "browser.turn_ended"), true);
   } finally {
     await server.close();
   }

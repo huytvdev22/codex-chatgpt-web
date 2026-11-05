@@ -27,7 +27,6 @@ const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
   createLogger,
-  exportSanitizedLogs,
   installProcessDiagnosticGuards,
   registerLoggedIpc,
 } = require("./logging.cjs");
@@ -241,7 +240,7 @@ const NATIVE_COPY = Object.freeze({
     startupTitle: "Codex Web GPT could not start",
     startupDetail: "Retry starts the launcher again without changing your saved settings or ChatGPT profile.",
     startupCleanupFailed: "Startup cleanup failed",
-    catalogFailure: "Codex reached the launcher, but loading its model catalog failed (HTTP {status}; {reason}). Check Activity for details and export a safe log if it persists.",
+    catalogFailure: "Codex reached the launcher, but loading its model catalog failed (HTTP {status}; {reason}). Restart the launcher and review the local launcher log if the problem persists.",
   }),
   "zh-CN": Object.freeze({
     openLauncher: "打开 Codex Web GPT",
@@ -552,7 +551,6 @@ function registerIpc({ logger, stateStore }) {
       automatic: runtimeHost ? runtimeHost.setupConnectorName() : "Codex Native2",
       manual: runtimeHost ? runtimeHost.setupConnectorName("manual") : "Codex Zero Risk",
     },
-    logs: logger.recent(),
     urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL },
     platform: process.platform,
     packaged: app.isPackaged,
@@ -849,28 +847,6 @@ function registerIpc({ logger, stateStore }) {
     return stateStore.update({ [key]: value === true });
   });
   handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
-  handle("launcher:logs", (_event, limit) => logger.recent(limit));
-  handle("launcher:clear-logs", () => {
-    logger.clear();
-    send("launcher:logs-cleared");
-    return true;
-  });
-  handle("launcher:export-logs", async () => {
-    const date = new Date().toISOString().slice(0, 10);
-    const copy = nativeCopyFor(stateStore.read().language);
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: copy.exportDiagnostics,
-      defaultPath: path.join(app.getPath("documents"), `codex-web-gpt-diagnostics-${date}.jsonl`),
-      filters: [{ name: "JSON Lines", extensions: ["jsonl"] }],
-    });
-    if (result.canceled || !result.filePath) return null;
-    const recordCount = exportSanitizedLogs({
-      filePath: logger.filePath,
-      destinationPath: result.filePath,
-    });
-    logger.info("launcher.logs_exported", { recordCount });
-    return result.filePath;
-  });
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
     const launch = await updateController.beginInstall();
@@ -980,7 +956,6 @@ async function start() {
   }
   const logger = createLogger({
     filePath: path.join(app.getPath("logs"), "launcher.jsonl"),
-    publish: (record) => send("launcher:log", record),
   });
   const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
   const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");

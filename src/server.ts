@@ -94,10 +94,7 @@ import {
   extractCompactUserMessages,
 } from "./responses/compaction";
 import { parseRequest } from "./responses/parser";
-import { expandPreviousResponseInput, flushResponseState, rememberResponseState, getStoredResponseTraceState } from "./responses/state";
-import { resolveTraceContext, traceStorage } from "./observability/trace-context";
-import { emitStructuredEvent } from "./observability/emitter";
-import { logDebugPipelineStation } from "./observability/debug-logger";
+import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
@@ -557,146 +554,43 @@ async function handleM365ResponseRequest(
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
-  const previousResponseId = typeof requestedPreviousResponseId === "string" ? requestedPreviousResponseId : undefined;
-  const previousTraceState = previousResponseId ? getStoredResponseTraceState(previousResponseId) : undefined;
-
   const rawObj = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
   const requestId = typeof rawObj.id === "string" ? rawObj.id : `req_${createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 12)}`;
+  const expanded = expandPreviousResponseInput(raw);
+  if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
+    return formatErrorResponse(
+      409,
+      "invalid_request_error",
+      "Local continuation state for previous_response_id is unavailable; refusing to run M365 Copilot with partial Codex context. Compact the Codex task or start a new task before retrying.",
+    );
+  }
 
-  // 1. Phân giải Trace Context trước khi phát bất kỳ sự kiện nào
-  const { context: traceContext, isContinuation, correlationRecovered } = resolveTraceContext({
-    rawBody: raw,
-    headers: req.headers,
-    requestId,
-    previousResponseId,
-    cachedTraceState: previousTraceState,
-  });
-
-  // 2. Bọc toàn bộ trong traceStorage.run
-  return traceStorage.run(traceContext, async () => {
-    // [DEBUG PIPELINE] STEP 1: Codex IDE ➔ Bridge Server (RAW REQUEST / TOOL RESULT)
-    logDebugPipelineStation(1, "CODEX IDE ➔ BRIDGE SERVER (RAW REQUEST / TOOL RESULT)", JSON.stringify(raw));
-
-    // Trích xuất tin nhắn phục vụ telemetry
-    let userMessagePreview = "";
-    let actualCodexMessage = "";
-    const rawRecord = raw as Record<string, unknown> | null;
-    if (rawRecord && Array.isArray(rawRecord.messages)) {
-      const lastUser = [...rawRecord.messages].reverse().find((m: any) => m && m.role === "user");
-      userMessagePreview = typeof lastUser?.content === "string" ? lastUser.content : "";
-      actualCodexMessage = userMessagePreview;
-    } else if (rawRecord && Array.isArray(rawRecord.input)) {
-      const toolParts: string[] = [];
-      const userParts: string[] = [];
-      for (const item of rawRecord.input as any[]) {
-        if (!item || typeof item !== "object") continue;
-        if (item.type === "message" && item.role === "user") {
-          const t = typeof item.content === "string" ? item.content : Array.isArray(item.content) ? item.content.map((c: any) => c.text || "").join(" ") : "";
-          if (t) userParts.push(t);
-        } else if (item.type === "function_call_output") {
-          const callId = item.call_id || item.id || "call";
-          const out = typeof item.output === "string" ? item.output : JSON.stringify(item.output || "");
-          toolParts.push(`[Tool Result: ${callId}]\n${out}`);
-        }
-      }
-      userMessagePreview = toolParts.length > 0 ? `Tool Result (${toolParts.length} kết quả)` : (userParts[userParts.length - 1] || "");
-      actualCodexMessage = toolParts.length > 0 ? toolParts.join("\n\n") : userParts.join("\n\n");
-    }
-
-    // 3. Emit codex.request.received
-    emitStructuredEvent({
-      event: "codex.request.received",
-      level: "info",
-      message: userMessagePreview
-        ? `Nhận câu hỏi từ Codex: "${userMessagePreview.slice(0, 80)}${userMessagePreview.length > 80 ? "..." : ""}"`
-        : `Codex request received for model ${requestedModel}`,
-      source: "server",
-      safeDetails: {
-        method: req.method,
-        model: requestedModel,
-        stream: (raw as Record<string, unknown>)?.stream ?? true,
-        hasPreviousResponse: Boolean(previousResponseId),
-        ...(userMessagePreview ? { userMessage: userMessagePreview, promptPreview: userMessagePreview } : {}),
-        actualMessage: actualCodexMessage || userMessagePreview || undefined,
-        rawMessages: rawRecord?.messages || rawRecord?.input || [],
-      },
-    });
-
-    // 4. Emit trace.context.resolved
-    emitStructuredEvent({
-      event: "trace.context.resolved",
-      level: "info",
-      message: isContinuation
-        ? (correlationRecovered ? "Restored trace context from previous response" : "Started new trace (previous trace unavailable)")
-        : "Initialized root trace context for new turn",
-      source: "server",
-      safeDetails: {
-        isContinuation,
-        correlationRecovered,
-        providerCallIndex: traceContext.providerCallIndex,
-      },
-    });
-
-    // 5. Ingress detection: Emit codex.tool_result.received nếu input chứa function_call_output
-    const inputArr = Array.isArray((raw as Record<string, unknown>)?.input) ? (raw as Record<string, unknown>).input as unknown[] : [];
-    for (const item of inputArr) {
-      if (item && typeof item === "object" && (item as Record<string, unknown>).type === "function_call_output") {
-        const itemObj = item as Record<string, unknown>;
-        const callId = typeof itemObj.call_id === "string" ? itemObj.call_id : typeof itemObj.id === "string" ? itemObj.id : "call_unknown";
-        const outputStr = typeof itemObj.output === "string" ? itemObj.output : JSON.stringify(itemObj.output || "");
-        emitStructuredEvent({
-          event: "codex.tool_result.received",
-          level: "info",
-          message: `Received tool execution result for call ${callId}`,
-          source: "server",
-          toolCallId: callId,
-          safeDetails: {
-            toolCallId: callId,
-            resultBytes: Buffer.byteLength(outputStr, "utf8"),
-            isError: itemObj.is_error === true,
-            previousResponseId,
-            output: outputStr,
-            outputPreview: outputStr.slice(0, 160),
-          },
-        });
-      }
-    }
-
-    const expanded = expandPreviousResponseInput(raw);
-    if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
-      return formatErrorResponse(
-        409,
-        "invalid_request_error",
-        "Local continuation state for previous_response_id is unavailable; refusing to run M365 Copilot with partial Codex context. Compact the Codex task or start a new task before retrying.",
-      );
-    }
-
-    let parsed: CodexParsedRequest;
-    try {
-      parsed = parseRequest(expanded);
-      const identity = extractCodexTurnIdentityFromBody(expanded);
-      if (identity.threadId && identity.turnId) {
-        options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-      }
-    } catch (error) {
-      return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-    }
-
+  let parsed: CodexParsedRequest;
+  try {
+    parsed = parseRequest(expanded);
     const identity = extractCodexTurnIdentityFromBody(expanded);
-    const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
+    if (identity.threadId && identity.turnId) {
+      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+    }
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
 
-    console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
+  const identity = extractCodexTurnIdentityFromBody(expanded);
+  const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
 
-    const adapter = createM365CopilotAdapter();
-    const queue = new AsyncEventQueue<AdapterEvent>();
-    const abort = new AbortController();
-    if (req.signal.aborted) abort.abort();
-    else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+  console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
+
+  const adapter = createM365CopilotAdapter();
+  const queue = new AsyncEventQueue<AdapterEvent>();
+  const abort = new AbortController();
+  if (req.signal.aborted) abort.abort();
+  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
     const run = async () => {
       console.log(`[m365-turn] [busy] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
       try {
-        await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal, traceContext }, event => {
+        await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
           options.onAdapterEvent?.(event);
           queue.push(event);
         });
@@ -719,14 +613,6 @@ async function handleM365ResponseRequest(
       if (options.rememberState !== false) {
         rememberResponseState(parsed._rawBody, response, {
           force: true,
-          traceState: {
-            traceId: traceContext.traceId,
-            rootSpanId: traceContext.rootSpanId,
-            turnId: traceContext.clientTurnId,
-            conversationId: traceContext.conversationId,
-            providerCallIndex: traceContext.providerCallIndex,
-            toolIteration: traceContext.toolIteration,
-          },
         });
       }
     };
@@ -751,7 +637,6 @@ async function handleM365ResponseRequest(
           onTerminal: status => {
             console.log(`[m365-stream] [terminal] requestId=${requestId} conversationId=${conversationId} status=${status}`);
           },
-          traceContext,
         },
       );
       return new Response(stream, {
@@ -772,7 +657,6 @@ async function handleM365ResponseRequest(
     });
     rememberCompletedResponse(json);
     return Response.json(json);
-  });
 }
 
 async function handleGeminiResponseRequest(

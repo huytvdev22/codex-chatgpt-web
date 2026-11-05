@@ -120,7 +120,7 @@ Hệ thống **Codex-M365** thực chất là một **Local Semantic Gateway & P
   │ [src/bridge.ts: bridgeToResponsesSSE()]                                │
   │  - AsyncEventQueue -> Server-Sent Events (SSE)                         │
   │  - Emit Responses frames: text.delta, function_call.delta, completed   │
-  │  - Store traceState into Local Cache for next continuation             │
+  │  - Store response items into Local Cache for next continuation         │
   └───────────────────────────────────┬────────────────────────────────────┘
                                       │ (7) SSE Stream Chunk
                                       ▼
@@ -155,8 +155,6 @@ Dưới đây là bản kiểm kê toàn bộ module cấu thành hệ thống C
   ├── m365-models.ts                  [HIGH]     Định nghĩa danh mục model M365
   ├── bridge.ts                       [CRITICAL] Bộ chuyển đổi SSE Responses API
   ├── config.ts                       [HIGH]     Cấu hình hệ thống & đường dẫn
-  ├── observability/                  [HIGH]     Hệ thống Log cấu trúc & Trace Context
-  │   ├── types.ts, trace-context.ts, emitter.ts, debug-logger.ts
   └── adapters/
       └── m365-copilot/               [CRITICAL CORE]
           ├── index.ts                [CRITICAL] Adapter chính, điều phối turn & Loop Guard
@@ -218,8 +216,8 @@ sequenceDiagram
     participant SSE as SSE Egress (bridge.ts)
 
     IDE->>SVR: POST /v1/responses (model="m365-copilot/gpt-5.6-think", input=[userMsg])
-    Note over SVR: Step 1: Trace Context & Continuation Check
-    SVR->>SVR: resolveTraceContext() & parseRequest()
+    Note over SVR: Step 1: Continuation Check & Request Parsing
+    SVR->>SVR: expandPreviousResponseInput() & parseRequest()
     SVR->>ADP: adapter.runTurn(parsedRequest)
     
     Note over ADP: Step 2: Protocol Checks (Title Guard / Final Answer Guard)
@@ -259,17 +257,16 @@ sequenceDiagram
 
 ## Bảng theo dấu chi tiết Call Chain (Step-by-Step Breakdown)
 
-### Bước 1: Ingress & Trace Context Initialization
+### Bước 1: Ingress & Continuation Initialization
 - **File:** [`src/server.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/server.ts#L560-L685)
 - **Class/Function:** `responseRequest()` ➔ `handleM365ResponseRequest()`
 - **Input:** HTTP Request từ Codex IDE (chứa header `x-codex-turn-metadata`, body JSON chứa `model`, `input`, `previous_response_id`).
-- **Output:** Khởi tạo `TraceContext` gắn vào `AsyncLocalStorage` (`traceStorage.run`).
+- **Output:** Request đã khôi phục lịch sử cục bộ từ `previous_response_id` và được parse thành `CodexParsedRequest`.
 - **Vai trò:**  
   1. Kiểm tra model slug qua `isM365ModelSlug()`.
-  2. Phân giải `previous_response_id`: Tìm lại vết trace và lịch sử nén trong State Store.
-  3. Emit structured event: `codex.request.received` và `trace.context.resolved`.
+  2. Phân giải `previous_response_id`: Tìm lại lịch sử request/response trong State Store.
+  3. Từ chối continuation thiếu state cục bộ thay vì chạy với context không đầy đủ.
   4. Parse request thành domain object `CodexParsedRequest`.
-  5. In log: `[DEBUG PIPELINE] STEP 1: CODEX IDE ➔ BRIDGE SERVER (RAW REQUEST / TOOL RESULT)`.
 
 ### Bước 2: Turn Orchestration & Title/State Guards
 - **File:** [`src/adapters/m365-copilot/index.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/index.ts#L144-L260)
@@ -301,11 +298,9 @@ sequenceDiagram
 - **Output:** Chuỗi markdown phản hồi thô từ M365 Copilot (`fullMarkdown`).
 - **Vai trò:**  
   1. Kết nối Playwright CDP vào WebContentsView của Launcher Desktop thông qua file descriptor `launcher-browser.json`.
-  2. Emit event: `m365.provider.started`.
-  3. In log: `[DEBUG PIPELINE] STEP 2: BRIDGE SERVER ➔ M365 COPILOT WEB (RAW INJECTED PROMPT)`.
-  4. Nếu cần chat mới: Bấm nút "New chat" hoặc bật toggle "Temporary chat".
-  5. Điều khiển chọn đúng Model qua `ensureM365CapabilityMode()` (ví dụ GPT 5.6 Think).
-  6. Focus vào `#m365-chat-editor-target-element`, paste nội dung prompt và kích hoạt nút Gửi.
+  2. Nếu cần chat mới: Bấm nút "New chat" hoặc bật toggle "Temporary chat".
+  3. Điều khiển chọn đúng Model qua `ensureM365CapabilityMode()` (ví dụ GPT 5.6 Think).
+  4. Focus vào `#m365-chat-editor-target-element`, paste nội dung prompt và kích hoạt nút Gửi.
 
 ### Bước 5: Polling DOM & Semantic Block Buffering
 - **File:** [`src/adapters/m365-copilot/browser-worker.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/browser-worker.ts#L239-L575) & [`markdown.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/markdown.ts#L65-L152)
@@ -318,7 +313,6 @@ sequenceDiagram
   3. Đưa qua `M365MarkdownBuffer`: Chỉ emit những block ngữ nghĩa đã hoàn thành.
   4. Đưa qua `M365ToolCallDetector`: Nếu phát hiện thẻ mở `<tool_call>` hoặc `*** Begin Patch`, ngưng emit text ra giao diện để giấu code thô khỏi mắt người dùng.
   5. Xác định điều kiện kết thúc (Settled): Nút Stop biến mất, không còn shimmer, và nội dung không thay đổi trong 1-3 giây.
-  6. In log: `[DEBUG PIPELINE] STEP 3: M365 COPILOT WEB ➔ BRIDGE SERVER (RAW RESPONSE SCRAPING)`.
 
 ### Bước 6: Output Translation & Tool Call Extraction
 - **File:** [`src/adapters/m365-copilot/output-translator.ts`](file:///Users/huytv/IdeaProjects/1.m365-codex/codex-chatgpt-web/src/adapters/m365-copilot/output-translator.ts#L543-L651)
@@ -355,9 +349,8 @@ sequenceDiagram
 - **Vai trò:**  
   1. Đóng gói tool call theo schema Responses API (`response.output_item.added`, `response.function_call_arguments.done`).
   2. Phát sự kiện `response.completed` với `stopReason = "tool_use"` và `endTurn = false`.
-  3. In log: `[DEBUG PIPELINE] STEP 4: BRIDGE SERVER ➔ CODEX IDE (OUTGOING SSE / TOOL CALLS)`.
-  4. Lưu trạng thái `traceState` vào bộ nhớ đệm cho lượt tiếp theo.
-  5. Codex IDE nhận tool call, tự động thực thi lệnh trên máy cục bộ của người dùng, lấy kết quả và gửi request tiếp theo kèm `function_call_output` -> Chu trình lặp lại cho đến khi có Final Answer!
+  3. Lưu các response items cần thiết vào bộ nhớ đệm cho lượt tiếp theo.
+  4. Codex IDE nhận tool call, tự động thực thi lệnh trên máy cục bộ của người dùng, lấy kết quả và gửi request tiếp theo kèm `function_call_output` -> Chu trình lặp lại cho đến khi có Final Answer!
 
 ---
 

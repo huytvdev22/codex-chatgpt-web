@@ -339,7 +339,6 @@ class BrowserControlServer {
         } finally {
           response.off("close", onClose);
         }
-        this.logger.info("browser.turn_started", { traceId: body.traceId });
         writeJson(response, 200, { ok: true, ...lease, trackUsage: this.limits?.enabled() === true });
         return;
       } else if (request.url === "/v1/turn/heartbeat") {
@@ -361,7 +360,6 @@ class BrowserControlServer {
         const release = body.conversationId === undefined
           ? await host.endTurn(...endArguments)
           : await host.endTurn(...endArguments, body.conversationId);
-        this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
         writeJson(response, 200, { ok: true, ...release });
         return;
       }

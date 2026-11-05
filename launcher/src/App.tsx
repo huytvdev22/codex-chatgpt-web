@@ -15,7 +15,6 @@ import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { LimitsSurface } from "./LimitsSurface";
-import { TraceExplorer } from "./TraceExplorer";
 import { limitsCopyFor } from "./limits-copy";
 import { useLimits } from "./useLimits";
 import type {
@@ -25,7 +24,6 @@ import type {
   Language,
   LauncherSnapshot,
   LauncherState,
-  LogRecord,
   OperationState,
   Surface,
 } from "./types";
@@ -37,7 +35,6 @@ export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
   const [operation, setOperation] = useState<OperationState | null>(null);
-  const [logs, setLogs] = useState<LogRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const documentLanguage = snapshot?.state.language ?? "en";
 
@@ -52,7 +49,6 @@ export function App() {
       if (cancelled) return;
       setSnapshot(next);
       setBrowser(next.browser);
-      setLogs(next.logs);
       setOperation(next.operation);
       if (next.operation?.status === "failed") {
         setError(next.operation.message);
@@ -76,8 +72,6 @@ export function App() {
       setOperation(next);
       if (next.status === "failed") setError(next.message);
     });
-    const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-4999), record]));
-    const unsubscribeLogsCleared = api.onLogsCleared?.(() => setLogs([]));
     const unsubscribeUpdate = api.onUpdateState((update) => {
       setSnapshot((current) => current ? { ...current, update } : current);
     });
@@ -87,8 +81,6 @@ export function App() {
       unsubscribeConnectorNames();
       unsubscribeBrowser();
       unsubscribeOperation();
-      unsubscribeLog();
-      unsubscribeLogsCleared?.();
       unsubscribeUpdate();
     };
   }, []);
@@ -135,7 +127,6 @@ export function App() {
             copy={copy}
             key="launcher"
             language={language}
-            logs={logs}
             operation={operation}
             setError={setError}
             snapshot={snapshot}
@@ -296,7 +287,6 @@ function LauncherShell({
   browser,
   copy,
   language,
-  logs,
   operation,
   setError,
   snapshot,
@@ -305,7 +295,6 @@ function LauncherShell({
   browser: BrowserState | null;
   copy: Copy;
   language: Language;
-  logs: LogRecord[];
   operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
@@ -571,7 +560,6 @@ function LauncherShell({
                 />
               </SidebarGroup>
               <SidebarGroup label={copy.runtime}>
-                <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
                 <SidebarItem
                   active={surface === "limits"}
                   badge={limits.needsAttention ? (
@@ -640,9 +628,6 @@ function LauncherShell({
                 snapshot={snapshot}
                 updateState={updateState}
               />
-            ) : null}
-            {surface === "activity" ? (
-              <ActivitySurface copy={copy} language={language} logs={logs} setError={setError} />
             ) : null}
             {surface === "limits" ? (
               <LimitsSurface
@@ -1327,48 +1312,6 @@ function SetupSurface({
           {copy.restartCodex}
         </NoticeRow>
       ) : null}
-    </ContentSurface>
-  );
-}
-
-function ActivitySurface({
-  copy,
-  language,
-  logs,
-  setError,
-}: {
-  copy: Copy;
-  language: Language;
-  logs: LogRecord[];
-  setError: (error: string | null) => void;
-}) {
-  return (
-    <ContentSurface full fit subtitle={copy.activitySubtitle} title={copy.activityTitle}>
-      <div style={{ flex: 1, minHeight: 480, height: "100%", marginTop: 8, marginBottom: 8, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--color-border)" }}>
-        <TraceExplorer
-          logs={logs}
-          copy={copy}
-          language={language}
-          onClearLogs={async () => {
-            try {
-              if (api?.clearLogs) {
-                await api.clearLogs();
-              }
-            } catch (cause) {
-              setError(messageOf(cause));
-            }
-          }}
-          onExportLogs={async () => {
-            try {
-              if (api?.exportLogs) {
-                await api!.exportLogs();
-              }
-            } catch (cause) {
-              setError(messageOf(cause));
-            }
-          }}
-        />
-      </div>
     </ContentSurface>
   );
 }

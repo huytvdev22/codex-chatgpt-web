@@ -2579,7 +2579,7 @@ test("a later provider round reuses only its exact connector-bound conversation"
   assert.equal(tab.bootstrapReady, true);
   assert.equal(fixture.selectedTabId, tab.id);
   assert.deepEqual(throttling, [false]);
-  assert.deepEqual(events, ["visible", "published", "descriptor", "browser.tab_reused"]);
+  assert.deepEqual(events, ["visible", "published", "descriptor"]);
 });
 
 test("a retained conversation is not reused for a different connector identity", async () => {

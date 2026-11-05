@@ -1,10 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { renameAtomicFile, writePrivateFileAtomic } = require("./atomic-file.cjs");
-const {
-  STRUCTURED_DETAIL_EXPORT_ALLOWLIST,
-  filterSafeDetailsForExport,
-} = require("./observability-policy.cjs");
+const { renameAtomicFile } = require("./atomic-file.cjs");
 
 const MAX_LOG_BYTES = 32 * 1024 * 1024;
 const MAX_MEMORY_RECORDS = 5000;
@@ -18,107 +14,6 @@ function redactText(value) {
   return redacted.length > MAX_LOG_STRING_CHARS
     ? `${redacted.slice(0, MAX_LOG_STRING_CHARS)}…[truncated]`
     : redacted;
-}
-
-function redactHttpUrls(value) {
-  return value.replace(/https?:\/\/[^\s"'`<>]+/gi, (candidate) => {
-    const trailing = candidate.match(/[),.;:!?]+$/)?.[0] || "";
-    const url = trailing ? candidate.slice(0, -trailing.length) : candidate;
-    try {
-      return `${new URL(url).origin}${trailing}`;
-    } catch {
-      return "[redacted-url]";
-    }
-  });
-}
-
-function redactExportText(value) {
-  return redactHttpUrls(redactText(value))
-    .replace(/\b[A-Za-z]:\\+Users\\+[^\\/\r\n"'`<>|]+/gi, "[user-home]")
-    .replace(/\/(?:Users|home)\/[^/\r\n"'`<>]+/g, "[user-home]")
-    .replace(/((?:visible rows|sidebar (?:rows|titles)|conversation titles):)\s*[^\r\n]*/gi, "$1 [redacted]");
-}
-
-function sanitizeForExport(value, seen = new WeakSet()) {
-  if (typeof value === "string") return redactExportText(value);
-  if (value === null || typeof value !== "object") return value;
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeForExport(item, seen));
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [
-      key,
-      /^(?:prompt|response|html|dom|content|visibleRows|sidebarRows|sidebarTitles|conversationTitle|conversationTitles|chatTitle|chatTitles)$/i.test(key)
-        ? "[redacted]"
-        : sanitizeForExport(item, seen),
-    ]),
-  );
-}
-
-function exportSanitizedLogs({ filePath, destinationPath }) {
-  const sourcePaths = [`${filePath}.1`, filePath];
-  const destination = path.resolve(destinationPath);
-  const destinationStat = fs.statSync(destination, { throwIfNoEntry: false });
-  if (sourcePaths.some(sourcePath => {
-    if (path.resolve(sourcePath) === destination) return true;
-    if (!destinationStat) return false;
-    const sourceStat = fs.statSync(sourcePath, { throwIfNoEntry: false });
-    return sourceStat && (
-      (sourceStat.ino !== 0 && sourceStat.dev === destinationStat.dev && sourceStat.ino === destinationStat.ino)
-      || fs.realpathSync(sourcePath) === fs.realpathSync(destination)
-    );
-  })) {
-    throw new Error("Refusing to overwrite a launcher source log with an exported diagnostic");
-  }
-  const records = [];
-  for (const sourcePath of sourcePaths) {
-    let lines;
-    try {
-      lines = fs.readFileSync(sourcePath, "utf8").split(/\r?\n/).filter(Boolean);
-    } catch (error) {
-      if (error && error.code === "ENOENT") continue;
-      throw error;
-    }
-    for (const line of lines) {
-      try {
-        const record = JSON.parse(line);
-        if (!record
-          || typeof record.at !== "string"
-          || !["debug", "info", "warning", "error"].includes(record.level)
-          || typeof record.event !== "string") continue;
-        let sanitizedDetail;
-        if (record.detail && typeof record.detail === "object" && typeof record.detail.traceId === "string") {
-          const exportedDetail = {};
-          for (const key of STRUCTURED_DETAIL_EXPORT_ALLOWLIST) {
-            if (key === "safeDetails") {
-              exportedDetail.safeDetails = filterSafeDetailsForExport(record.event, record.detail.safeDetails);
-            } else if (key in record.detail && record.detail[key] !== undefined) {
-              exportedDetail[key] = record.detail[key];
-            }
-          }
-          sanitizedDetail = sanitizeForExport(exportedDetail);
-        } else {
-          sanitizedDetail = record.detail && typeof record.detail === "object"
-            ? sanitizeForExport(record.detail)
-            : {};
-        }
-        records.push({
-          at: record.at,
-          level: record.level,
-          event: record.event,
-          detail: sanitizedDetail,
-        });
-      } catch {}
-    }
-  }
-  // Replacing the directory entry also avoids following a link introduced after
-  // the identity check. A failed write leaves the previous export intact.
-  writePrivateFileAtomic(
-    destination,
-    records.length > 0 ? `${records.map(record => JSON.stringify(record)).join("\n")}\n` : "",
-    { protectDirectory: false },
-  );
-  return records.length;
 }
 
 function sanitize(value, seen = new WeakSet()) {
@@ -249,12 +144,9 @@ function registerLoggedIpc(ipcMain, logger, channel, handler) {
 
 module.exports = {
   createLogger,
-  exportSanitizedLogs,
   installProcessDiagnosticGuards,
   readRecent,
-  redactExportText,
   redactText,
   registerLoggedIpc,
   sanitize,
-  sanitizeForExport,
 };
