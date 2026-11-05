@@ -1,6 +1,6 @@
 # 032 — Chuyển `FastPathStreamBuffer`, `M365MarkdownBuffer` và `harness` sang `src/adapters/web/`
 
-**Trạng thái:** `⏳ Chờ User Test & Confirm`
+**Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/m365-copilot/` vẫn chứa các module không phụ thuộc M365 DOM như `browser/fast-path-stream-buffer.ts`, `translation/html-to-markdown.ts`, `translation/semantic-detector.ts` và `harness/*`.

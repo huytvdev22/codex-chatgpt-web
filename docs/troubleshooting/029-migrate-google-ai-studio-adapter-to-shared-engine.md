@@ -1,6 +1,6 @@
 # 029 — Chuyển `GoogleAIStudioAdapter` sang dùng `WebProviderAdapter` & `WebTurnEngine`
 
-**Trạng thái:** `⏳ Chờ User Test & Confirm`
+**Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/google-ai-studio/index.ts` tự viết tay toàn bộ vòng đời `runTurn()` (quản lý Launcher lease, biên dịch prompt, retry giao thức, emit response), trùng lặp với các Web provider khác.

@@ -17,4 +17,4 @@
 - `bun run check:architecture`: Pass (`4 pass, 0 fail`).
 
 ## Trạng thái
-⏳ Chờ User Test & Confirm
+✅ Đã Confirm

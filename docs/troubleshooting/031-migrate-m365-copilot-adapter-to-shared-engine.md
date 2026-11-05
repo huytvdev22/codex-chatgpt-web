@@ -1,6 +1,6 @@
 # 031 — Chuyển `M365CopilotAdapter` sang dùng `WebProviderAdapter` & `WebTurnEngine`
 
-**Trạng thái:** `⏳ Chờ User Test & Confirm`
+**Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/m365-copilot/index.ts` tự viết tay toàn bộ vòng lặp điều phối `runTurn()` (early-exit check, compile prompt, retry giao thức, loop guard, emit tool/final answer), tách biệt với 4 Web provider còn lại.

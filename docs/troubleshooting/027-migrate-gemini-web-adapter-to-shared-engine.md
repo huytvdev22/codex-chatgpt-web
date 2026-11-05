@@ -1,6 +1,6 @@
 # 027 — Chuyển `GeminiWebAdapter` sang dùng `WebProviderAdapter` & `WebTurnEngine`
 
-**Trạng thái:** `⏳ Chờ User Test & Confirm`
+**Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/gemini-web/index.ts` tự viết tay toàn bộ vòng đời `runTurn()` (tạo traceId, kết nối Launcher / fallback LocalBrowser, biên dịch prompt, retry giao thức `<webResponse>`, emit response, giải phóng lease), trùng lặp với các Web provider khác.

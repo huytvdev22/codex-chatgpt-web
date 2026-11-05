@@ -1,6 +1,6 @@
 # 030 — Chuyển `ChatGptWebAdapter` sang dùng `WebProviderAdapter` & `WebTurnEngine`
 
-**Trạng thái:** `⏳ Chờ User Test & Confirm`
+**Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/chatgpt-web/index.ts` tự triển khai toàn bộ vòng đời `runTurn()` thủ công (quản lý Launcher lease, biên dịch prompt, retry giao thức `<webResponse>`, emit response), trùng lặp với các Web provider khác.

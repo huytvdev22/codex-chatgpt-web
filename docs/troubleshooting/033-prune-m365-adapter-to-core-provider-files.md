@@ -1,6 +1,6 @@
 # 033 — Tinh gọn `src/adapters/m365-copilot/` về đúng 7 file đặc thù Provider
 
-**Trạng thái:** `⏳ Chờ User Test & Confirm`
+**Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/m365-copilot/` vẫn còn 16 file compatibility shim và module phụ trợ (`markdown.ts`, `output-translator.ts`, `prompt.ts`, `prompts.ts`, `prompt-strategy.ts`, `session/*`, `translation/*`, `harness/*`, `browser/fast-path-stream-buffer.ts`).

@@ -18,4 +18,4 @@
 - `bun run build`: Pass.
 
 ## Trạng thái
-⏳ Chờ User Test & Confirm
+✅ Đã Confirm

@@ -7,7 +7,7 @@
 
 ## Trạng thái
 
-⏳ Chờ User Test & Confirm
+✅ Đã Confirm
 
 ## Phạm vi thay đổi (Atomic Slice #2)
 
