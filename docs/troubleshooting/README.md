@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **030** | Chuyển `ChatGptWebAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `chatgpt-web`, `web` | ⏳ Chờ User Test & Confirm | [030-migrate-chatgpt-web-adapter-to-shared-engine.md](./030-migrate-chatgpt-web-adapter-to-shared-engine.md) |
 | **029** | Chuyển `GoogleAIStudioAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `google-ai-studio`, `web` | ⏳ Chờ User Test & Confirm | [029-migrate-google-ai-studio-adapter-to-shared-engine.md](./029-migrate-google-ai-studio-adapter-to-shared-engine.md) |
 | **028** | Chuyển `QwenWebAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `qwen-web`, `web` | ⏳ Chờ User Test & Confirm | [028-migrate-qwen-web-adapter-to-shared-engine.md](./028-migrate-qwen-web-adapter-to-shared-engine.md) |
 | **027** | Chuyển `GeminiWebAdapter` sang kế thừa `WebProviderAdapter` và điều phối qua `WebTurnEngine` | `gemini-web`, `web` | ⏳ Chờ User Test & Confirm | [027-migrate-gemini-web-adapter-to-shared-engine.md](./027-migrate-gemini-web-adapter-to-shared-engine.md) |
