@@ -22,7 +22,8 @@ Tài liệu kiến trúc không được tự nhận là nguồn sự thật cao
 | Tài liệu | Vai trò | Trạng thái | Hành động |
 | --- | --- | --- | --- |
 | ../README.md | Cài đặt và sử dụng | Current | Kiểm tra theo mỗi release |
-| [Kiến trúc tổng thể](architecture.md) | Boundary và runtime chính | Review required | Đối chiếu source trước khi cập nhật |
+| [Kiến trúc toàn hệ thống](system-architecture.md) | Server, provider routing, adapter contract, Launcher và lifecycle | Current | Cập nhật khi boundary hoặc contract thay đổi |
+| [Kiến trúc ChatGPT Web](architecture.md) | Contract chuyên sâu của ChatGPT Web, MCP và browser lifecycle | Review required | Đối chiếu source và ChatGPT Web tests |
 | [Mô hình bảo mật](security-model.md) | Trust boundary và invariant | Review required | Đối chiếu tests bảo mật |
 | [Release validation](release-validation.md) | Quality gate phát hành | Review required | Đồng bộ với `package.json` và CI |
 | [Hướng dẫn Web adapter](adding-new-web-adapter-guide.md) | Mở rộng provider | Current, verify | Kiểm tra bằng contract hiện tại |
@@ -72,8 +73,9 @@ Source of truth: <source/test paths>
 
 ## Kế hoạch audit
 
-1. Audit `architecture.md` theo server, adapters, launcher và Responses bridge.
-2. Đồng bộ `security-model.md` với approval, launcher authorization và MCP lifecycle.
-3. Đồng bộ `release-validation.md` với quality gates thực tế và local launcher logging.
-4. Chuẩn hóa `build-windows.md`, loại bỏ đường dẫn máy cá nhân và version runtime ghi cứng.
-5. Kiểm tra định kỳ link tương đối, file reference và metadata xác minh của tài liệu hiện hành.
+1. Duy trì `system-architecture.md` làm living architecture của toàn hệ thống.
+2. Audit `architecture.md` như tài liệu chuyên sâu ChatGPT Web, không dùng thay cho kiến trúc đa provider.
+3. Đồng bộ `security-model.md` với approval, launcher authorization và MCP lifecycle.
+4. Đồng bộ `release-validation.md` với quality gates thực tế và local launcher logging.
+5. Chuẩn hóa `build-windows.md`, loại bỏ đường dẫn máy cá nhân và version runtime ghi cứng.
+6. Kiểm tra định kỳ link tương đối, file reference và metadata xác minh của tài liệu hiện hành.

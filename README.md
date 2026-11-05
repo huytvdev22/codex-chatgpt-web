@@ -1,199 +1,350 @@
-<p align="center">
-  <img src="assets/readme/hero.svg" width="960" alt="Switch to web models. Stay in Codex. Your ChatGPT plan. Your workflow. Maximum capabilities.">
-</p>
+# Codex M365 Copilot
 
-<p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
-</p>
+> **Phiên bản hiện tại:** `6.9.5`
+>
+> **Runtime:** Bun `1.4.0`
+>
+> **Desktop Launcher:** Electron `42`, React `19`, Vite `6`
+>
+> **Nền tảng đóng gói:** Windows x64, macOS 13+ và Linux x64
 
-<p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/latest">All releases</a>
-</p>
+Codex M365 Copilot là một bridge cục bộ giúp Codex Desktop hoặc Codex CLI sử dụng các mô hình AI
+thông qua giao diện Web. Dự án cung cấp một Responses API trên loopback, định tuyến request tới
+Web Adapter phù hợp hoặc chuyển tiếp request tới native Codex khi model không thuộc Web provider.
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
-</p>
+## Nội dung
 
-<p align="center">
-  <img src="assets/demo.gif" width="960" alt="A live ChatGPT Web turn using the native Codex harness">
-</p>
+- #tính-năng-chính
+- #kiến-trúc
+- #provider-được-hỗ-trợ
+- #cài-đặt
+- #thiết-lập
+- #sử-dụng
+- #chạy-từ-mã-nguồn
+- #kiểm-thử-và-build
+- #bảo-mật-và-giới-hạn
+- #tài-liệu
 
-<p align="center">
-  <a href="#get-started">Get started</a> · <a href="https://github.com/miuuyy/codex-chatgpt-web/releases">What’s new</a> · <a href="docs/architecture.md">Architecture</a> · <a href="TROUBLESHOOTING.md">Troubleshooting</a>
-</p>
+## Tính năng chính
 
-Use the ChatGPT Web models available on your account, including Pro, from Codex’s native model picker—with ChatGPT Web’s separate usage limits, without spending your Work or Codex quota. Keep the same interface, tasks, images, and streaming.
+- Tích hợp Web model vào model catalog của Codex.
+- Giữ native Codex models và native request passthrough.
+- Hỗ trợ Responses API dạng streaming và non-streaming.
+- Hỗ trợ `previous_response_id` bằng continuation state cục bộ.
+- Hỗ trợ compact context cho Web provider và native model.
+- Chuyển tiếp native Search, Image Generation và Image Editing.
+- Quản lý browser surface bằng Electron Launcher.
+- Hỗ trợ text và image input theo capability của từng model.
+- Quản lý turn ownership, heartbeat, cancellation và retained conversation.
+- Fail closed khi model, browser state, tool call hoặc lifecycle không thể được xác minh.
 
-Full harness mode connects ChatGPT to the current task’s files, terminal, tools, and approvals through MCP. Conversations stay tied to your Codex task, so you can keep working as the context grows.
+## Kiến trúc
 
-<div id="get-started"><a id="quick-start"></a></div>
+```text
+Codex Desktop / Codex CLI
+          |
+          | Responses API trên loopback
+          v
+Local Responses API Server
+          |
+          +-- GET  /v1/models
+          +-- POST /v1/responses
+          +-- POST /v1/responses/compact
+          +-- POST /v1/alpha/search
+          +-- POST /v1/images/generations
+          +-- POST /v1/images/edits
+          |
+          +-- Web provider
+          |      +-- ChatGPT Web
+          |      +-- Microsoft 365 Copilot
+          |      +-- Gemini Web
+          |      +-- Google AI Studio
+          |      +-- Qwen Web
+          |
+          +-- Native Codex passthrough
 
-## Get started
+Electron Launcher
+          |
+          +-- Embedded browser surfaces
+          +-- Provider surface managers
+          +-- Runtime supervisor
+          +-- Browser control server
+          +-- Codex integration
+          +-- Update và operational logging
+```
 
-**Available models:** Free/Go → **Luna / Think**. Accounts with reasoning controls → **Instant–High**, plus **Extra High** and **Pro** when available. The launcher detects what your account can use.
+Các boundary chính:
 
-1. **Install the launcher** using the download for your system above.
-2. **Sign in to ChatGPT** in the embedded browser and run the browser smoke test.
-3. **Install models** and restart Codex once. In automatic mode, choose a model ending in **(Web)**. Pro versions have separate entries; Sol reasoning is selected through Effort. Zero Risk keeps its dedicated entry.
-4. **For coding with tools**, open **MCP** in the launcher and complete the Full harness setup below.
+- `src/server.ts` chịu trách nhiệm HTTP ingress và provider routing.
+- `src/models/model-registry.ts` là registry cho Web provider và model route.
+- `src/adapters/base.ts` định nghĩa `ProviderAdapter`.
+- `src/bridge.ts` chuyển `AdapterEvent` thành Responses API output.
+- `src/responses/` quản lý parsing, continuation và compaction.
+- `launcher/electron/` sở hữu Electron process, browser surfaces và runtime lifecycle.
+- `launcher/src/` chứa renderer React và typed preload contract.
 
-The app includes its browser and runtime. No separate Chrome, Node, or Bun installation is needed.
+Xem chi tiết tại:
 
-<details>
-<summary><strong>Terminal install, updates & repair</strong></summary>
+- docs/system-architecture.md
+- docs/architecture.md
+- docs/security-model.md
 
-Quit the launcher before updating. These installers select the platform and architecture, verify the published checksums, and preserve your ChatGPT profile and launcher settings.
+## Provider được hỗ trợ
 
-**macOS / Linux**
+Provider và model route được khai báo tập trung trong `src/models/model-registry.ts`.
+
+| Provider ID | Mô tả |
+| --- | --- |
+| `chatgpt-web` | ChatGPT Web với chế độ thường hoặc suy nghĩ |
+| `m365-copilot` | Microsoft 365 Copilot Web |
+| `gemini-web` | Google Gemini Web |
+| `google-ai-studio` | Google AI Studio |
+| `qwen-web` | Qwen Web |
+
+Model catalog, context window, compaction threshold, composer limit, input modality và reasoning
+level được lấy từ registry. Không nên ghi cứng model route ở module khác.
+
+## Cài đặt
+
+Tải bản phù hợp từ trang
+[GitHub Releases](https://github.com/miuuyy/codex-chatgpt-web/releases/latest).
+
+Các định dạng package hiện được cấu hình:
+
+| Nền tảng | Kiến trúc | Định dạng |
+| --- | --- | --- |
+| Windows | x64 | NSIS `.exe` |
+| macOS | arm64, x64 | `.dmg`, `.zip` |
+| Linux | x64 | `.AppImage` |
+
+### macOS và Linux
 
 ```bash
 curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
-**Windows PowerShell**
+### Windows PowerShell
 
 ```powershell
 irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
-</details>
+Launcher package chứa Electron và runtime cần thiết. Người dùng bản đóng gói không cần cài riêng
+Node.js, Bun hoặc Chromium.
 
-<details>
-<summary><strong>Models, modes & MCP setup</strong></summary>
+## Thiết lập
 
-<a id="modes"></a>
+1. Mở Launcher.
+2. Đăng nhập provider cần sử dụng trong browser surface tương ứng.
+3. Chạy bước kiểm tra provider nếu Launcher cung cấp.
+4. Cài model catalog vào Codex.
+5. Thoát hoàn toàn rồi mở lại Codex để nạp model catalog mới.
+6. Chọn Web model phù hợp trong model picker của Codex.
 
-Automatic modes offer Luna/Think when the account has no reasoning selector; otherwise Instant–High, with Extra High and Pro available independently when exposed by the account.
+Việc đăng nhập browser provider và đăng nhập Codex là hai session riêng. Dữ liệu đăng nhập của
+browser được giữ trong Electron profile do Launcher sở hữu.
 
-| Mode | Sending messages | Local Codex tools |
+## Sử dụng
+
+### Chế độ tự động
+
+Runtime và browser worker thực hiện provider turn theo adapter contract:
+
+1. Codex gửi request tới local Responses API.
+2. Server nhận diện provider từ model ID.
+3. Request được parse và mở rộng continuation nếu có.
+4. Adapter biên dịch prompt và thực hiện browser turn.
+5. Provider response được parse thành text hoặc tool call.
+6. Bridge phát Responses API events về Codex.
+
+### Chế độ thủ công
+
+Launcher có workflow tương tác thủ công, được trình bày trong sản phẩm dưới tên Zero Risk:
+
+- Launcher chuẩn bị nội dung cần gửi.
+- Người dùng tự copy, paste, chọn model và gửi trên giao diện provider.
+- Người dùng xác nhận trạng thái `Sent`.
+- Runtime vẫn quản lý request identity, ownership và cancellation.
+
+Không áp dụng hành vi của một provider cho provider khác nếu chưa có source và regression test
+xác nhận.
+
+## API cục bộ
+
+| Method | Endpoint | Mục đích |
 | --- | --- | --- |
-| **Browser-only** | Automatic | No |
-| **Full harness (With Automation)** | Automatic | Yes, through MCP |
-| **Zero Risk** | Paste and send manually | Yes, through a separate MCP connector |
+| `GET` | `/v1/models` | Native catalog và Web model catalog |
+| `POST` | `/v1/responses` | Responses request |
+| `POST` | `/v1/responses/compact` | Context compaction |
+| `POST` | `/v1/alpha/search` | Native authenticated search |
+| `POST` | `/v1/images/generations` | Native image generation |
+| `POST` | `/v1/images/edits` | Native image editing |
 
-Zero Risk does not read or operate the ChatGPT page. Choose the model and `Codex Zero Risk` connector yourself, paste and send the prepared prompt, then confirm **Sent** in the launcher. Automatic models ending in **(Web)** expose their supported Effort choices in Codex. Instant and each Pro version have separate entries to preserve their context budgets; older saved model entries keep their original fixed mode.
+`GET /v1/responses` không hỗ trợ WebSocket transport và trả về HTTP `426`.
 
-<a id="full-harness"></a>
+## Chạy từ mã nguồn
 
-### Full harness
+### Yêu cầu
 
-Full mode connects ChatGPT's tool calls back to the current Codex task through the official
-[OpenAI tunnel-client](https://github.com/openai/tunnel-client). The tunnel is outbound: it does
-not expose a public IP, open an inbound port, or require router forwarding.
+- Bun `1.4.0`
+- Git
+- Desktop session nếu chạy Electron Launcher
 
-The launcher's **MCP** page guides the complete setup. For the exact clicks, see the
-[video walkthroughs](TROUBLESHOOTING.md).
-
-> **Limits**
->
-> See [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309) for the current
-> ChatGPT message allowances for **GPT-5.6 Sol Pro** and **GPT-6 Astra**. Context limits depend on
-> the account type and selected effort. Plus Medium/High uses a measured 90,000-token window, or
-> up to 270,000 tokens with experimental **3× context** enabled, with native Codex compaction
-> supported throughout.
-
-1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
-   **Connect harness**.
-2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector named exactly
-   **Codex Native2**, with **Authentication: None** and **Allow all actions**.
-3. Run **Verify runtime** to confirm that **Codex Native2** is attached and available.
-
-Write/modify actions also require the ChatGPT workspace and its administrator policy to permit
-them. See
-[developer mode and MCP apps](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt).
-Unexpected approval prompts fail closed unless `--auto-approve-tool-calls` is explicitly enabled;
-that option clicks **Allow once**, never a permanent grant.
-
-</details>
-
-<details>
-<summary><strong>Diagnostics & subagents</strong></summary>
-
-<a id="operations"></a>
-
-Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
-Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
-**Save chats in ChatGPT** keeps task conversations in ChatGPT history. Off by default; independent of **New browser chat for each turn**.
-Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
-
-New installs use **Compatibility V1** for cross-backend subagents. **Native** preserves Codex's own
-feature settings and enables plaintext Web-to-Web V2 delegation. Restart Codex and start a new task
-after changing the protocol:
+### Khởi động Launcher
 
 ```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
-```
-
-</details>
-
-<details>
-<summary><strong>Requirements & security</strong></summary>
-
-<a id="limitations-and-security"></a>
-
-- This is unofficial browser automation, not an OpenAI API. ChatGPT UI changes can break selectors;
-  drift fails explicitly instead of silently switching model or transport.
-- Browser state is a sensitive login artifact, and the loopback listener is reachable by processes
-  running as the same local user. Never share the launcher profile; use a trusted workstation.
-- Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,
-  tests, and packaging are gated on all three in CI; account-bound browser and MCP flows use the
-  separate [release validation](docs/release-validation.md).
-- Builds are not yet platform-signed, so Gatekeeper or SmartScreen may warn. The installers verify
-  the published SHA-256 manifest before installation.
-
-Read the complete [architecture](docs/architecture.md) and
-[security model](docs/security-model.md) before enabling full mode. Report vulnerabilities through
-[SECURITY.md](SECURITY.md).
-
-Temporary Chat is a [ChatGPT privacy mode](https://help.openai.com/en/articles/8914046-temporary-chat-faq); prompts are still processed by OpenAI.
-
-Validation coverage: [release validation](docs/release-validation.md).
-
-This is independent software and is not affiliated with or endorsed by OpenAI. Use it only with
-your own account and in accordance with applicable [Terms of Use](https://openai.com/policies/terms-of-use/)
-and workspace policies; it does not bypass authentication or access controls.
-
-</details>
-
-<details>
-<summary><strong>Run from source & develop</strong></summary>
-
-<a id="development"></a>
-
-```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
+git clone https://github.com/miuuyy/codex-chatgpt-web.git
+cd codex-chatgpt-web
+bun install --frozen-lockfile
 bun run app
 ```
 
-This source path requires Bun 1.4.0. The command installs locked dependencies and opens the app.
+### Khởi động server
 
 ```bash
-bun run app
-bun run verify
-bun run smoke:subagents
+bun run start
+```
+
+### Các lệnh CLI chính
+
+```bash
+bun run src/cli.ts setup
+bun run src/cli.ts doctor
+bun run src/cli.ts serve
+bun run src/cli.ts subagents status
+bun run src/cli.ts subagents compatibility-v1
+bun run src/cli.ts subagents native
+bun run src/cli.ts uninstall --yes
+```
+
+Lệnh CLI cũng hỗ trợ các nhóm lệnh `login`, `route`, `browser`, `service`, `hook` và `open`.
+Chạy help để xem contract hiện tại:
+
+```bash
+bun run src/cli.ts help
+```
+
+## Kiểm thử và build
+
+### Core runtime
+
+```bash
+bun run test
+bun run typecheck
+bun run check:architecture
+bun run build
+bun run smoke
+```
+
+### Electron Launcher
+
+```bash
+bun run launcher:typecheck
+bun run launcher:build
+bun run launcher:test
 bun run app:package
+bun run app:smoke
 ```
 
+### Quality gate tổng hợp
 
-</details>
+```bash
+bun run verify
+```
 
-## Star History
+`check:architecture` kiểm tra circular dependency và public facade contract của Microsoft 365
+Copilot Adapter.
 
-<a href="https://www.star-history.com/?repos=miuuyy%2Fcodex-chatgpt-web&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&theme=dark&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-  </picture>
-</a>
+CI, build và package smoke không thay thế kiểm thử có tài khoản thật. Xem
+docs/release-validation.md trước khi phát hành.
 
----
+## Logging và chẩn đoán
 
-[Troubleshooting](TROUBLESHOOTING.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE) · [CI](https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml)
+Runtime không còn hệ thống structured observability, trace propagation hoặc Activity/Trace
+Explorer. Launcher chỉ giữ operational logging tối thiểu.
 
-Also by me: <img src="assets/readme/persona-voice.svg" width="20" height="20" alt=""> [ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice) — local, near-real-time custom voices for ChatGPT and Codex.
+Launcher vẫn giữ operational logging tối thiểu để ghi:
+
+- Lỗi startup.
+- Lỗi process hoặc stream.
+- Lỗi IPC handler.
+- Runtime supervision failure.
+- Thông tin cần thiết cho log rotation.
+
+Local launcher JSONL log là dữ liệu nhạy cảm. Không chia sẻ log chưa được kiểm tra và làm sạch.
+
+Khi gặp lỗi:
+
+1. Chạy `doctor`.
+2. Ghi lại lỗi đầy đủ, thời điểm xảy ra, hệ điều hành, Launcher version, provider, model và
+   interaction mode.
+3. Thử lại đúng một lần trong Codex task mới.
+4. Đọc [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Bảo mật và giới hạn
+
+- Đây là browser automation không chính thức, không phải API của các Web provider.
+- Provider có thể thay đổi DOM và làm selector không còn hợp lệ.
+- Browser profile chứa authenticated session và phải được xem là dữ liệu bí mật.
+- Loopback listener có thể được truy cập bởi process chạy cùng máy người dùng.
+- Provider DOM không được coi là structured input đáng tin cậy.
+- Tool call phải được parse, normalize và validate trước khi forward.
+- Không tự động fallback sang provider, model hoặc reasoning level khác.
+- Native OpenAI authorization không được lấy từ browser session.
+- Lifecycle không rõ ràng, ownership mismatch hoặc cancellation phải fail closed.
+- Build hiện chưa được platform-sign nên Gatekeeper hoặc SmartScreen có thể cảnh báo.
+
+Đọc [SECURITY.md](SECURITY.md) trước khi báo cáo lỗ hổng hoặc gửi dữ liệu chẩn đoán.
+
+## Cấu trúc repository
+
+```text
+src/
+  adapters/             Provider adapters
+  models/               Model registry và catalog
+  responses/            Parsing, state và compaction
+  usage/                Usage accounting
+  server.ts             Local Responses API server
+  bridge.ts             AdapterEvent sang Responses API
+  cli.ts                CLI entry point
+
+launcher/
+  electron/             Electron main process và browser ownership
+  src/                  React renderer
+  tests/                Launcher tests
+
+tests/                  Core và adapter regression tests
+scripts/                Build, verification, installer và release scripts
+docs/                   Architecture, security và release documentation
+```
+
+## Tài liệu
+
+- docs/README.md
+- docs/system-architecture.md
+- docs/architecture.md
+- docs/security-model.md
+- docs/release-validation.md
+- docs/adding-new-web-adapter-guide.md
+- docs/build-windows.md
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Contributing](CONTRIBUTING.md)
+
+## Trạng thái dự án
+
+Source code, tests và scripts là nguồn sự thật. Nếu README hoặc tài liệu kiến trúc khác với
+implementation, ưu tiên theo thứ tự:
+
+1. Source code đang chạy.
+2. Tests và architectural gates.
+3. Build, release và configuration scripts.
+4. Tài liệu được đánh dấu `Current`.
+5. Historical incident và Git history.
+
+## Giấy phép
+
+Dự án được phát hành theo LICENSE.
+
+Dự án là phần mềm độc lập, không liên kết hoặc được xác nhận bởi OpenAI, Microsoft, Google, Alibaba
+Cloud hay các Web provider được tích hợp. Chỉ sử dụng với tài khoản của chính người dùng và tuân thủ
+điều khoản dịch vụ, chính sách workspace cùng quy định áp dụng.
