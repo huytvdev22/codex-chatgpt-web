@@ -16,9 +16,9 @@ import {
 import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import { runWebProtocolRetry } from "../web/protocol/retry-response";
 import {
-  M365ToolBridge,
   type ToolValidationFailure,
 } from "../web/tools";
+import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
   CodexRawPayload,
 } from "../web/normalization";
@@ -267,30 +267,15 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
         totalTokens: inputTokens + outputTokens,
       };
 
-      if (protocolResult && protocolResult.kind === "tool_calls") {
-        const clientTools = parsed.context.tools || [];
-        const mappedCalls = protocolResult.calls.map(rawCall => ({
-          rawCall,
-          mapped: M365ToolBridge.mapToolCall(rawCall, clientTools),
-          callId: rawCall.id || `call_${randomBytes(8).toString("hex")}`,
-        }));
-
-        for (const { mapped, callId } of mappedCalls) {
-          const serializedArgs = typeof mapped.arguments === "string"
-            ? mapped.arguments
-            : JSON.stringify(mapped.arguments ?? {});
-
-          emit({ type: "tool_call_start", id: callId, name: mapped.name });
-          emit({ type: "tool_call_delta", arguments: serializedArgs });
-          emit({ type: "tool_call_end" });
-        }
-        emit({ type: "done", stopReason: "tool_calls", usage });
-        return;
-      }
-
-      if (protocolResult && protocolResult.kind === "final_answer") {
-        emit({ type: "text_delta", text: protocolResult.content });
-        emit({ type: "done", stopReason: "stop", endTurn: true, usage });
+      if (protocolResult) {
+        emitWebProtocolResponse({
+          result: protocolResult,
+          clientTools: parsed.context.tools || [],
+          emit,
+          createCallId: () => `call_${randomBytes(8).toString("hex")}`,
+          usage,
+          includeDetailedDoneEvent: true,
+        });
         return;
       }
 
@@ -301,7 +286,7 @@ export class GoogleAIStudioAdapter implements ProviderAdapter {
     } finally {
       if (descriptorPath && surfaceId) {
         try {
-          const finalStatus = protocolResult && protocolResult.kind !== "protocol_error" ? "completed" : "failed";
+          const finalStatus = protocolResult ? "completed" : "failed";
           await notifyLauncherTurn(
             descriptorPath,
             {

@@ -1,6 +1,11 @@
 import { buildM365FormatRetryPrompt } from "../prompt";
 import type { StrictM365ResponseResult } from "./strict-response-parser";
 
+export type SuccessfulWebProtocolResult = Exclude<
+  StrictM365ResponseResult,
+  { kind: "protocol_error" }
+>;
+
 export interface WebProtocolRetryAttempt {
   attempt: number;
   prompt: string;
@@ -29,7 +34,7 @@ export interface RunWebProtocolRetryOptions {
  */
 export async function runWebProtocolRetry(
   options: RunWebProtocolRetryOptions,
-): Promise<StrictM365ResponseResult> {
+): Promise<SuccessfulWebProtocolResult> {
   let attemptPrompt = options.initialPrompt;
   let lastResult: StrictM365ResponseResult | null = null;
 

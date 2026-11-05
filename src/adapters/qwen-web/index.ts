@@ -11,9 +11,7 @@ import {
 } from "../web/protocol/strict-response-parser";
 import { validateWebProtocolResponse } from "../web/protocol/validate-response";
 import { runWebProtocolRetry } from "../web/protocol/retry-response";
-import {
-  M365ToolBridge,
-} from "../web/tools";
+import { emitWebProtocolResponse } from "../web/protocol/emit-response";
 import {
   CodexRawPayload,
 } from "../web/normalization";
@@ -194,36 +192,18 @@ export class QwenWebAdapter implements ProviderAdapter {
 
       finalStatus = "completed";
 
-      // 4. Phát sự kiện ra Codex
       if (protocolResult.kind === "final_answer") {
         console.log(`[qwen-adapter] Trả về final answer (${protocolResult.content.length} ký tự).`);
-        emit({
-          type: "text_delta",
-          text: protocolResult.content,
-        });
-      } else if (protocolResult.kind === "tool_calls") {
+      } else {
         console.log(`[qwen-adapter] Phát hiện ${protocolResult.calls.length} tool calls hợp lệ.`);
-        const clientTools = parsed.context.tools || [];
-        for (const rawCall of protocolResult.calls) {
-          const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools);
-          const callId = rawCall.id || `call_qwen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-          emit({
-            type: "tool_call_start",
-            id: callId,
-            name: mapped.name,
-          });
-          emit({
-            type: "tool_call_delta",
-            arguments: typeof mapped.arguments === "string" ? mapped.arguments : JSON.stringify(mapped.arguments),
-          });
-          emit({
-            type: "tool_call_end",
-          });
-        }
       }
 
-      emit({
-        type: "done",
+      emitWebProtocolResponse({
+        result: protocolResult,
+        clientTools: parsed.context.tools || [],
+        emit,
+        createCallId: () =>
+          `call_qwen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       });
 
       console.log(`[qwen-adapter] Kết thúc lượt thành công.`);
