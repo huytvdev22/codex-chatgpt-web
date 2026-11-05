@@ -6,6 +6,7 @@ import { truncateToolResult } from "../../web/prompt/assembler";
 import { buildM365FormatRetryPrompt } from "../../web/prompt/format-retry";
 import { normalizeM365ToolArguments } from "../../web/tools/argument-normalizer";
 import { validateM365ToolCall } from "../../web/tools/tool-validator";
+import { SafeCommandGuard } from "../../web/tools/safe-command-guard";
 import type { CodexTool } from "../../../types";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -175,6 +176,18 @@ async execute(name: string, args: Record<string, any>): Promise < string > {
 
         case "run_command": {
       const cmd = String(args.cmd || args.command || "");
+      if (!cmd.trim()) {
+        return "Lỗi: Lệnh thực thi không được để trống.";
+      }
+      const commandValidation = SafeCommandGuard.validateShellCommand(cmd);
+      if (!commandValidation.allowed) {
+        return [
+          "Lỗi: Lệnh bị từ chối do vi phạm quy tắc an toàn.",
+          commandValidation.rule ? `[${commandValidation.rule}]` : "",
+          commandValidation.message || "",
+          commandValidation.guidance || "",
+        ].filter(Boolean).join(" ");
+      }
       try {
         const out = execSync(cmd, {
           cwd: this.workingDir,
