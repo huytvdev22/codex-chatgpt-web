@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **037** | Cập nhật tài liệu SOP `docs/adding-new-web-adapter-guide.md` theo kiến trúc `WebTurnEngine` | `docs`, `core`, `web`, `all-providers` | ⏳ Chờ User Test & Confirm | [037-update-adding-new-web-adapter-guide-sop.md](./037-update-adding-new-web-adapter-guide-sop.md) |
 | **036** | Cập nhật `docs/system-architecture.md` phản ánh kiến trúc `WebTurnEngine` và 7 file đặc thù của M365 | `docs`, `core`, `web`, `all-providers` | ✅ Đã Confirm | [036-update-system-architecture-docs-for-web-turn-engine.md](./036-update-system-architecture-docs-for-web-turn-engine.md) |
 | **035** | Mở rộng bộ test `WebTurnEngine` (22 kịch bản Lifecycle/Error/Conversation/Retry) và cổng kiểm tra Facade | `core`, `web`, `all-providers` | ✅ Đã Confirm | [035-expand-web-turn-engine-lifecycle-and-architecture-tests.md](./035-expand-web-turn-engine-lifecycle-and-architecture-tests.md) |
 | **034** | Làm sạch ranh giới DOM và chuẩn hóa tên trung lập (`Web*`) tại `src/adapters/web/` | `core`, `web`, `all-providers` | ✅ Đã Confirm | [034-clean-shared-web-boundary-and-neutralize-naming.md](./034-clean-shared-web-boundary-and-neutralize-naming.md) |
