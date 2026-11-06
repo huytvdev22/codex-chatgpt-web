@@ -17,14 +17,14 @@ export interface QwenTurnResult {
 }
 
 interface QwenResponseBaseline {
-  assistantCount: number;
+  assistantIds: string[];
   previousLatestText: string;
   hasSeenGenerating: boolean;
   stableCount: number;
 }
 
 interface QwenResponseObservation extends BrowserObservation {
-  assistantCount: number;
+  responseId?: string;
   completedState: boolean;
 }
 
@@ -322,18 +322,25 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
    */
   private async readLatestAssistantStreamText(
     page: Page,
-    minimumAssistantCount = 0,
+    initialAssistantIds: string[] = [],
   ): Promise<string> {
     return await page.evaluate(
       ({
         assistantSelector,
         phaseAnswerSelector,
         codeBlockSelector,
-        minimumCount,
+        baselineIds,
       }) => {
+        const baseline = new Set(baselineIds);
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        if (messages.length <= minimumCount) return "";
-        const latestMsg = messages[messages.length - 1] as HTMLElement;
+        const newMessages = messages.filter(message => {
+          const messageId = (message as HTMLElement).id;
+          return Boolean(messageId) && !baseline.has(messageId);
+        });
+        const latestMsg = newMessages[newMessages.length - 1] as
+          | HTMLElement
+          | undefined;
+        if (!latestMsg) return "";
 
         // 1. Ưu tiên đọc từ code block nếu đã xuất hiện
         const codeBlock = latestMsg.querySelector(codeBlockSelector);
@@ -352,7 +359,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         assistantSelector: QWEN_SELECTORS.assistantMessage,
         phaseAnswerSelector: QWEN_SELECTORS.phaseAnswer,
         codeBlockSelector: QWEN_SELECTORS.codeBlock,
-        minimumCount: minimumAssistantCount,
+        baselineIds: initialAssistantIds,
       }
     );
   }
@@ -375,14 +382,20 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         assistantSelector,
         copyCodeSelector,
         copyResponseSelector,
-        minimumCount,
+        baselineIds,
       }) => {
         const win = window as any;
         win.__qwen_last_copied_code = null;
 
+        const baseline = new Set(baselineIds);
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        if (messages.length <= minimumCount) return false;
-        const latestMsg = messages[messages.length - 1] as HTMLElement | null;
+        const newMessages = messages.filter(message => {
+          const messageId = (message as HTMLElement).id;
+          return Boolean(messageId) && !baseline.has(messageId);
+        });
+        const latestMsg = newMessages[newMessages.length - 1] as
+          | HTMLElement
+          | undefined;
         if (!latestMsg) return false;
 
         // 1. Ưu tiên nút "Copy" trên codeblock markdown header
@@ -407,7 +420,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         assistantSelector: QWEN_SELECTORS.assistantMessage,
         copyCodeSelector: QWEN_SELECTORS.codeCopyButton,
         copyResponseSelector: QWEN_SELECTORS.responseCopyButton,
-        minimumCount: context.baseline.assistantCount,
+        baselineIds: context.baseline.assistantIds,
       }
     );
 
@@ -440,7 +453,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
     console.warn("[qwen-worker] [copy-salvage] Không bắt được từ Clipboard, fallback trích xuất DOM text...");
     return await this.readLatestAssistantStreamText(
       page,
-      context.baseline.assistantCount,
+      context.baseline.assistantIds,
     );
   }
 
@@ -509,7 +522,9 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         const answerRoot =
           latestMessage?.querySelector(phaseAnswerSelector) || latestMessage;
         return {
-          assistantCount: messages.length,
+          assistantIds: messages
+            .map(message => (message as HTMLElement).id)
+            .filter(Boolean),
           previousLatestText: (answerRoot?.textContent || "").trim(),
         };
       },
@@ -535,19 +550,32 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         stopSelector,
         disabledSendSelector,
         assistantSelector,
+        baselineIds,
       }) => {
+        const baseline = new Set(baselineIds);
         const isStopVisible = Boolean(document.querySelector(stopSelector));
         const isDisabledSendVisible = Boolean(document.querySelector(disabledSendSelector));
+        const messages = Array.from(
+          document.querySelectorAll(assistantSelector),
+        );
+        const newMessages = messages.filter(message => {
+          const messageId = (message as HTMLElement).id;
+          return Boolean(messageId) && !baseline.has(messageId);
+        });
+        const latestNewMessage = newMessages[newMessages.length - 1] as
+          | HTMLElement
+          | undefined;
         return {
           isGenerating: isStopVisible,
           isCompletedState: !isStopVisible && isDisabledSendVisible,
-          assistantCount: document.querySelectorAll(assistantSelector).length,
+          responseId: latestNewMessage?.id || undefined,
         };
       },
       {
         stopSelector: QWEN_SELECTORS.stopButton,
         disabledSendSelector: QWEN_SELECTORS.sendButtonDisabled,
         assistantSelector: QWEN_SELECTORS.assistantMessage,
+        baselineIds: baseline.assistantIds,
       },
     );
 
@@ -555,7 +583,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
 
     const currentText = await this.readLatestAssistantStreamText(
       page,
-      baseline.assistantCount,
+      baseline.assistantIds,
     );
     if (currentText && currentText !== baseline.previousLatestText) {
       baseline.previousLatestText = currentText;
@@ -564,7 +592,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
       baseline.stableCount += 1;
     }
 
-    const hasNewResponse = status.assistantCount > baseline.assistantCount;
+    const hasNewResponse = Boolean(status.responseId);
     const normalCompletion =
       hasNewResponse &&
       baseline.hasSeenGenerating &&
@@ -581,10 +609,10 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
       text: currentText,
       isGenerating: status.isGenerating,
       isCompleted: normalCompletion || fastCompletion,
-      assistantCount: status.assistantCount,
+      responseId: status.responseId,
       completedState: status.isCompletedState,
       activityKey: [
-        status.assistantCount,
+        status.responseId || "no-new-response",
         status.isGenerating,
         status.isCompletedState,
         currentText.length,
