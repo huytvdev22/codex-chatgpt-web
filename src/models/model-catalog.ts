@@ -257,10 +257,37 @@ export function ensureManagedModelCatalogFile(
           ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
           : [];
         const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
-        const hasQwen = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === "qwen-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2 && m.default_reasoning_level === "low");
+        const expectedVisibleQwenSlugs = [
+          "qwen-web",
+          "qwen-web/qwen3.7-plus",
+          "qwen-web/qwen3.8-max",
+          "qwen-web/qwen3.8-omni-flash",
+        ];
+        const qwenModels = Array.isArray(raw.models)
+          ? raw.models.filter(
+              (m: any) =>
+                typeof m?.slug === "string" &&
+                isProviderModel(m.slug, "qwen-web") &&
+                m.visibility !== "hide",
+            )
+          : [];
+        const currentVisibleQwenSlugs = qwenModels
+          .map((m: any) => m.slug)
+          .sort();
+        const hasCurrentQwenSurface =
+          JSON.stringify(currentVisibleQwenSlugs) ===
+          JSON.stringify(expectedVisibleQwenSlugs);
+        const allQwenHaveReasoningLevels =
+          qwenModels.length === expectedVisibleQwenSlugs.length &&
+          qwenModels.every(
+            (m: any) =>
+              Array.isArray(m.supported_reasoning_levels) &&
+              m.supported_reasoning_levels.length === 2 &&
+              m.default_reasoning_level === "low",
+          );
         const hasGoogleAIStudio = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === GOOGLE_AI_STUDIO_DEFAULT_SLUG);
 
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasQwen || !hasGoogleAIStudio) {
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasCurrentQwenSurface || !allQwenHaveReasoningLevels || !hasGoogleAIStudio) {
           shouldWrite = true;
         }
       } catch {

@@ -215,9 +215,9 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
     routes: [
       {
         slug: "qwen-web",
-        displayName: "Qwen (Web)",
-        description: "Qwen Web với chế độ thường hoặc suy nghĩ.",
-        backendModel: "qwen-max",
+        displayName: "Qwen3.7 Plus (Web)",
+        description: "Qwen3.7 Plus qua Qwen Web, hỗ trợ văn bản và đa phương thức.",
+        backendModel: "Qwen3.7-Plus",
         contextWindow: 128_000,
         autoCompactTokenLimit: 96_000,
         effectiveContextWindowPercent: 95,
@@ -228,6 +228,58 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
           { effort: "low", description: "Off", mode: "normal" },
           { effort: "high", description: "Think", mode: "thinking" },
         ],
+        metadata: { targetMenuLabel: "Qwen3.7-Plus" },
+      },
+      {
+        slug: "qwen-web/qwen3.7-plus",
+        displayName: "Qwen3.7 Plus (Web)",
+        description: "Qwen3.7 Plus qua Qwen Web, hỗ trợ văn bản và đa phương thức.",
+        backendModel: "Qwen3.7-Plus",
+        contextWindow: 128_000,
+        autoCompactTokenLimit: 96_000,
+        effectiveContextWindowPercent: 95,
+        composerCharLimit: 200_000,
+        inputModalities: ["text", "image"],
+        defaultReasoningLevel: "low",
+        reasoningLevels: [
+          { effort: "low", description: "Off", mode: "normal" },
+          { effort: "high", description: "Think", mode: "thinking" },
+        ],
+        metadata: { targetMenuLabel: "Qwen3.7-Plus" },
+      },
+      {
+        slug: "qwen-web/qwen3.8-max",
+        displayName: "Qwen3.8 Max (Web)",
+        description: "Model flagship Qwen3.8 Max qua Qwen Web.",
+        backendModel: "Qwen3.8-Max",
+        contextWindow: 128_000,
+        autoCompactTokenLimit: 96_000,
+        effectiveContextWindowPercent: 95,
+        composerCharLimit: 200_000,
+        inputModalities: ["text", "image"],
+        defaultReasoningLevel: "low",
+        reasoningLevels: [
+          { effort: "low", description: "Off", mode: "normal" },
+          { effort: "high", description: "Think", mode: "thinking" },
+        ],
+        metadata: { targetMenuLabel: "Qwen3.8-Max" },
+      },
+      {
+        slug: "qwen-web/qwen3.8-omni-flash",
+        displayName: "Qwen3.8 Omni Flash (Web)",
+        description: "Qwen3.8 Omni Flash qua Qwen Web, tối ưu tác vụ đa phương thức tốc độ cao.",
+        backendModel: "Qwen3.8-Omni-Flash",
+        contextWindow: 128_000,
+        autoCompactTokenLimit: 96_000,
+        effectiveContextWindowPercent: 95,
+        composerCharLimit: 200_000,
+        inputModalities: ["text", "image"],
+        defaultReasoningLevel: "low",
+        reasoningLevels: [
+          { effort: "low", description: "Off", mode: "normal" },
+          { effort: "high", description: "Think", mode: "thinking" },
+        ],
+        metadata: { targetMenuLabel: "Qwen3.8-Omni-Flash" },
       },
     ],
   },
@@ -328,4 +380,9 @@ export function resolveGeminiReasoningEffort(
   const route = modelId ? findModelRoute(modelId) : undefined;
   if (!route) return "medium";
   return resolveModelReasoning(route, requestedEffort).effort;
+}
+
+export function resolveQwenTargetMenuLabel(modelId?: string): string {
+  if (!modelId) return "Qwen3.7-Plus";
+  return findModelRoute(modelId)?.metadata?.targetMenuLabel ?? "Qwen3.7-Plus";
 }

@@ -3,6 +3,7 @@ import {
   isProviderModel,
   listModelRoutes,
   requireModelRoute,
+  resolveQwenTargetMenuLabel,
 } from "../src/models/model-registry";
 import { QWEN_SELECTORS, extractConversationIdFromUrl, isValidQwenConversationId } from "../src/adapters/qwen-web/selectors";
 import { createQwenWebAdapter, QwenWebAdapter } from "../src/adapters/qwen-web";
@@ -20,12 +21,27 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     expect(isProviderModel("", "qwen-web")).toBe(false);
   });
 
-  test("2. Registry trả về route Qwen mặc định với chế độ Think", () => {
+  test("2. Registry trả về đầy đủ các model Qwen Web mới", () => {
     const routes = listModelRoutes("qwen-web");
-    expect(routes.length).toBeGreaterThan(0);
+    expect(routes).toHaveLength(4);
     expect(routes[0].slug).toBe("qwen-web");
-    expect(routes[0].displayName).toBe("Qwen (Web)");
+    expect(routes[0].displayName).toBe("Qwen3.7 Plus (Web)");
     expect(routes[0].contextWindow).toBe(128_000);
+    expect(routes.map(route => route.slug)).toEqual([
+      "qwen-web",
+      "qwen-web/qwen3.7-plus",
+      "qwen-web/qwen3.8-max",
+      "qwen-web/qwen3.8-omni-flash",
+    ]);
+    expect(routes.map(route => route.backendModel)).toEqual([
+      "Qwen3.7-Plus",
+      "Qwen3.7-Plus",
+      "Qwen3.8-Max",
+      "Qwen3.8-Omni-Flash",
+    ]);
+    expect(resolveQwenTargetMenuLabel("qwen-web")).toBe("Qwen3.7-Plus");
+    expect(resolveQwenTargetMenuLabel("qwen-web/qwen3.8-max")).toBe("Qwen3.8-Max");
+    expect(resolveQwenTargetMenuLabel("qwen-web/qwen3.8-omni-flash")).toBe("Qwen3.8-Omni-Flash");
   });
 
   test("3. Model Catalog tạo model qwen-web chuẩn chỉnh giống ChatGPT Web", () => {
@@ -39,7 +55,7 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     const model = buildQwenModel(mockTemplate, requireModelRoute("qwen-web"), mockConfig);
 
     expect(model.slug).toBe("qwen-web");
-    expect(model.display_name).toBe("Qwen (Web)");
+    expect(model.display_name).toBe("Qwen3.7 Plus (Web)");
     expect(model.context_window).toBe(128_000);
     expect(model.default_reasoning_level).toBe("low");
     expect(Array.isArray(model.supported_reasoning_levels)).toBe(true);
@@ -61,6 +77,12 @@ describe("Qwen Web Adapter Architecture & Integration Tests", () => {
     expect(QWEN_SELECTORS.thinkingTrigger).toContain(".qwen-chat-v2-dropdown-menu-trigger");
     expect(QWEN_SELECTORS.thinkingPopup).toContain(".qwen-chat-v2-dropdown-menu-popup");
     expect(QWEN_SELECTORS.thinkingMenuItem).toBe(".qwen-chat-v2-dropdown-menu-item");
+    expect(QWEN_SELECTORS.modelPickerTrigger).toContain('[aria-label="Select Model"]');
+    expect(QWEN_SELECTORS.modelPickerCurrent).toBe(".wms-trigger__text");
+    expect(QWEN_SELECTORS.modelList).toContain('[aria-label="Models"]');
+    expect(QWEN_SELECTORS.modelOption).toBe('.wms-list__item[role="option"]');
+    expect(QWEN_SELECTORS.modelOptionName).toBe(".wms-list__name-text");
+    expect(QWEN_SELECTORS.modelOptionSelected).toContain('[aria-selected="true"]');
   });
 
   test("5. Trích xuất đúng Conversation ID từ URL Qwen Web", () => {

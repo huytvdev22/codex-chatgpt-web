@@ -9,6 +9,7 @@ import {
 } from "./conversation-store";
 import { LocalBrowserRuntime } from "../web/local-browser-runtime";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
+import { resolveQwenTargetMenuLabel } from "../../models/model-registry";
 
 export interface QwenAdapterOptions {
   userDataDir?: string;
@@ -103,6 +104,7 @@ export class QwenWebAdapter extends WebProviderAdapter {
             page,
             prompt,
             attempt,
+            parsed,
             incoming,
             heartbeat,
             reasoningEffort,
@@ -122,6 +124,7 @@ export class QwenWebAdapter extends WebProviderAdapter {
               prompt,
               signal: incoming.abortSignal,
               heartbeat,
+              modelLabel: resolveQwenTargetMenuLabel(parsed.modelId),
               reasoningEffort: (reasoningEffort || "low") as
                 | "low"
                 | "medium"

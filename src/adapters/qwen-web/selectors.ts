@@ -30,6 +30,16 @@ export const QWEN_SELECTORS = {
   // Nút tạo cuộc trò chuyện mới (New Chat) ở sidebar bên trái
   newChatButton: 'div[role="button"][aria-label="New Chat"], .sidebar-entry-fixed-list-content',
 
+  // Bộ chọn model Qwen Web
+  modelPickerTrigger:
+    '#qwen-chat-header-left [role="button"][aria-haspopup="listbox"][aria-label="Select Model"]',
+  modelPickerCurrent: '.wms-trigger__text',
+  modelList: '.wms-list[role="listbox"][aria-label="Models"]',
+  modelOption: '.wms-list__item[role="option"]',
+  modelOptionName: '.wms-list__name-text',
+  modelOptionSelected:
+    '.wms-list__item[role="option"][aria-selected="true"]',
+
   // Bộ chọn chế độ suy nghĩ (Thinking Mode)
   thinkingSelector: '.qwen-thinking-selector',
   thinkingTrigger: '.qwen-thinking-selector .qwen-chat-v2-dropdown-menu-trigger, .qwen-thinking-selector .qwen-chat-v2-dropdown-menu-select',

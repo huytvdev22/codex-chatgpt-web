@@ -9,6 +9,7 @@ import { QWEN_SELECTORS, extractConversationIdFromUrl, isValidQwenConversationId
 
 export interface QwenBrowserRunOptions extends BaseBrowserRunOptions {
   reasoningEffort?: string;
+  modelLabel?: string;
 }
 
 export interface QwenTurnResult {
@@ -38,6 +39,118 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
   QwenResponseObservation
 > {
   protected readonly logPrefix = "qwen-worker";
+
+  /**
+   * Chọn model Qwen bằng exact label trên giao diện.
+   *
+   * Không dùng fuzzy match để tránh chọn nhầm giữa Qwen3.8-Max và
+   * Qwen3.8-Omni-Flash. Nếu model hiện tại đã đúng thì không mở picker.
+   */
+  public async selectModel(
+    page: Page,
+    targetModel: string,
+  ): Promise<void> {
+    const normalizedTarget = targetModel.trim();
+    if (!normalizedTarget) return;
+
+    await page.waitForSelector(QWEN_SELECTORS.modelPickerTrigger, {
+      state: "visible",
+      timeout: 15_000,
+    });
+
+    const trigger = page.locator(QWEN_SELECTORS.modelPickerTrigger).first();
+    const currentModel = (
+      await trigger
+        .locator(QWEN_SELECTORS.modelPickerCurrent)
+        .textContent()
+        .catch(() => null)
+    )?.trim();
+
+    if (currentModel === normalizedTarget) {
+      console.log(
+        `[qwen-worker] Model đã sẵn sàng: "${normalizedTarget}".`,
+      );
+      return;
+    }
+
+    console.log(
+      `[qwen-worker] Đang đổi model từ "${currentModel || "chưa xác định"}" sang "${normalizedTarget}"...`,
+    );
+
+    const expanded = await trigger.getAttribute("aria-expanded");
+    if (expanded !== "true") {
+      await trigger.click({ timeout: 3_000 });
+    }
+
+    await page.waitForSelector(QWEN_SELECTORS.modelList, {
+      state: "visible",
+      timeout: 3_000,
+    });
+
+    const options = page.locator(QWEN_SELECTORS.modelOption);
+    const optionCount = await options.count();
+    let matched = false;
+
+    for (let index = 0; index < optionCount; index += 1) {
+      const option = options.nth(index);
+      const label = (
+        await option
+          .locator(QWEN_SELECTORS.modelOptionName)
+          .textContent()
+          .catch(() => null)
+      )?.trim();
+
+      if (label !== normalizedTarget) continue;
+
+      await option.scrollIntoViewIfNeeded().catch(() => {});
+      await option.click({ timeout: 3_000 });
+      matched = true;
+      break;
+    }
+
+    if (!matched) {
+      const availableModels: string[] = [];
+      for (let index = 0; index < optionCount; index += 1) {
+        const label = (
+          await options
+            .nth(index)
+            .locator(QWEN_SELECTORS.modelOptionName)
+            .textContent()
+            .catch(() => null)
+        )?.trim();
+        if (label) availableModels.push(label);
+      }
+
+      throw new Error(
+        `[qwen-worker] Không tìm thấy model "${normalizedTarget}". Các model hiện có: ${availableModels.join(", ") || "không xác định"}.`,
+      );
+    }
+
+    const selectionDeadline = Date.now() + 3_000;
+    let selectedModel = "";
+
+    while (Date.now() < selectionDeadline) {
+      selectedModel = (
+        await trigger
+          .locator(QWEN_SELECTORS.modelPickerCurrent)
+          .textContent()
+          .catch(() => null)
+      )?.trim() || "";
+
+      if (selectedModel === normalizedTarget) {
+        console.log(
+          `[qwen-worker] Đã chọn model thành công: "${selectedModel}".`,
+        );
+        return;
+      }
+
+      await page.waitForTimeout(50);
+    }
+
+    throw new Error(
+      `[qwen-worker] Đã click model "${normalizedTarget}" nhưng trigger vẫn hiển thị "${selectedModel || currentModel || "chưa xác định"}".`,
+    );
+  }
 
   /**
    * Thiết lập chế độ Thinking Mode trên giao diện Qwen Web dựa theo tùy chọn
@@ -502,6 +615,11 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
     options: QwenBrowserRunOptions,
   ): Promise<void> {
     await this.setupClipboardHook(page);
+
+    if (options.modelLabel) {
+      await this.selectModel(page, options.modelLabel);
+    }
+
     const wantThinking =
       options.reasoningEffort === "high" ||
       options.reasoningEffort === "think";
