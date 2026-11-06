@@ -142,6 +142,7 @@ export class GoogleAIStudioAdapter extends WebProviderAdapter {
             prompt,
             attempt,
             incoming,
+            heartbeat,
             reasoningEffort,
             existingConversationId,
             isNewConversation,
@@ -158,6 +159,7 @@ export class GoogleAIStudioAdapter extends WebProviderAdapter {
             const result = await worker.executeTurn(page, {
               prompt,
               signal: incoming.abortSignal,
+              heartbeat,
               reasoningEffort: (reasoningEffort || "medium") as
                 | "low"
                 | "medium"

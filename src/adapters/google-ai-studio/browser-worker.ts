@@ -1,5 +1,12 @@
 import type { Page } from "playwright-core";
 import {
+  BaseWebBrowserWorker,
+  type BaseBrowserRunOptions,
+  type BaseBrowserTurnResult,
+  type BrowserCompletionContext,
+  type BrowserObservation,
+} from "../web/browser";
+import {
   AI_STUDIO_SELECTORS,
   GOOGLE_AI_STUDIO_NEW_CHAT_URL,
   buildGoogleAIStudioPromptUrl,
@@ -8,19 +15,26 @@ import {
 } from "./selectors";
 import { ensureGoogleAIStudioThinkingLevel } from "./capability-picker";
 
-export interface GoogleAIStudioBrowserRunOptions {
-  prompt: string;
-  onChunk?: (text: string) => void;
-  signal?: AbortSignal;
+export interface GoogleAIStudioBrowserRunOptions
+  extends BaseBrowserRunOptions {
   reasoningEffort?: string;
   promptId?: string;
-  isNewConversation?: boolean;
-  timeoutMs?: number;
 }
 
 export interface GoogleAIStudioTurnResult {
   rawResponse: string;
   promptId?: string;
+}
+
+interface GoogleAIStudioResponseBaseline {
+  turnCount: number;
+  previousLatestText: string;
+  stableCount: number;
+}
+
+interface GoogleAIStudioResponseObservation
+  extends BrowserObservation {
+  freshTurnCount: number;
 }
 
 /**
@@ -36,10 +50,18 @@ function sanitizePromptUrlsForAIStudio(prompt: string): string {
  * Worker điều khiển trình duyệt Playwright tương tác với Google AI Studio (aistudio.google.com).
  * Bám sát cấu trúc của Browser Worker trong M365 Copilot và Qwen Web.
  */
-export class GoogleAIStudioBrowserWorker {
+export class GoogleAIStudioBrowserWorker extends BaseWebBrowserWorker<
+  GoogleAIStudioBrowserRunOptions,
+  GoogleAIStudioTurnResult,
+  GoogleAIStudioResponseBaseline,
+  GoogleAIStudioResponseObservation
+> {
+  protected readonly logPrefix = "ai-studio-worker";
+
   private selectors: GoogleAIStudioDomSelectors;
 
   constructor(customSelectors?: Partial<GoogleAIStudioDomSelectors>) {
+    super();
     this.selectors = { ...AI_STUDIO_SELECTORS, ...customSelectors };
   }
 
@@ -182,10 +204,56 @@ export class GoogleAIStudioBrowserWorker {
     }, this.selectors.composer);
   }
 
+  protected async navigate(
+    page: Page,
+    options: GoogleAIStudioBrowserRunOptions,
+  ): Promise<void> {
+    await this.ensureTargetPage(page, {
+      promptId: options.promptId,
+      isNewConversation: options.isNewConversation,
+    });
+  }
+
+  protected async prepareProvider(
+    page: Page,
+    options: GoogleAIStudioBrowserRunOptions,
+  ): Promise<void> {
+    if (!options.reasoningEffort) return;
+
+    await ensureGoogleAIStudioThinkingLevel(page, {
+      level: options.reasoningEffort,
+      selectors: this.selectors,
+    });
+  }
+
+  protected async captureResponseBaseline(
+    page: Page,
+  ): Promise<GoogleAIStudioResponseBaseline> {
+    const turnCount = await page.evaluate(
+      () => document.querySelectorAll("ms-chat-turn").length,
+    );
+
+    return {
+      turnCount,
+      previousLatestText: "",
+      stableCount: 0,
+    };
+  }
+
+  protected async insertPrompt(
+    page: Page,
+    prompt: string,
+  ): Promise<void> {
+    await this.insertPromptSafely(page, prompt);
+  }
+
   /**
    * Nhấn nút Run (hoặc phím tắt Control+Enter) và xác nhận tin nhắn đã được gửi
    */
-  private async submitPrompt(page: Page, signal?: AbortSignal): Promise<void> {
+  protected async submitPrompt(
+    page: Page,
+    options: GoogleAIStudioBrowserRunOptions,
+  ): Promise<void> {
     console.log("[ai-studio-worker] Đang kích hoạt lệnh Run...");
 
     const runBtn = page.locator(this.selectors.runButton).first();
@@ -209,10 +277,12 @@ export class GoogleAIStudioBrowserWorker {
     // Vòng lặp xác nhận đã gửi: Chờ nút Stop xuất hiện hoặc composer sạch
     const submitDeadline = Date.now() + 10_000;
     while (Date.now() < submitDeadline) {
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      if (options.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
 
       const isSubmitted = await page.evaluate(
-        ({ stopSel, composerSel }) => {
+        ({ composerSel }) => {
           const genericBtn = document.querySelector('ms-run-button button');
           if (genericBtn && (genericBtn.classList.contains('stoppable') || (genericBtn.textContent || '').includes('Stop'))) {
             return true;
@@ -220,7 +290,7 @@ export class GoogleAIStudioBrowserWorker {
           const ta = document.querySelector(composerSel) as HTMLTextAreaElement | null;
           return ta ? ta.value.trim().length === 0 : false;
         },
-        { stopSel: this.selectors.stopButton, composerSel: this.selectors.composer }
+        { composerSel: this.selectors.composer },
       );
 
       if (isSubmitted) {
@@ -241,13 +311,15 @@ export class GoogleAIStudioBrowserWorker {
    * 3. Xóa bỏ toàn bộ rác giao diện Angular / Material (mat-expansion-panel-header, buttons, icons, actions-container).
    * 4. Trích xuất text sạch nguyên bản từ code block (pre code) và các đoạn văn bản.
    */
-  private async readLatestCleanResponse(page: Page): Promise<string> {
-    return await page.evaluate(() => {
+  private async readLatestCleanResponse(
+    page: Page,
+    baseline: GoogleAIStudioResponseBaseline,
+  ): Promise<string> {
+    return await page.evaluate((baselineTurnCount) => {
       // 1. Tìm tất cả các ms-chat-turn
       const allTurns = Array.from(document.querySelectorAll("ms-chat-turn"));
-      // Lọc các turn mới không thuộc baseline cũ
-      const freshTurns = allTurns.filter((t) => !t.hasAttribute("data-codex-turn-baseline"));
-      const candidateTurns = freshTurns.length > 0 ? freshTurns : allTurns;
+      const freshTurns = allTurns.slice(baselineTurnCount);
+      const candidateTurns = freshTurns;
 
       // Lọc turn của model (chứa .model-prompt-container hoặc không chứa user input/editor)
       let modelTurns = candidateTurns.filter(
@@ -300,127 +372,161 @@ export class GoogleAIStudioBrowserWorker {
 
       // 4. Lấy nội dung text sạch
       return (clone.textContent || "").trim();
-    });
+    }, baseline.turnCount);
   }
 
-  /**
-   * Thực thi một lượt gửi câu hỏi và nhận câu trả lời từ Google AI Studio
-   */
-  public async executeTurn(
+  protected async observeResponse(
     page: Page,
-    options: GoogleAIStudioBrowserRunOptions
-  ): Promise<GoogleAIStudioTurnResult> {
-    const { prompt, onChunk, signal, timeoutMs = 180_000 } = options;
-
-    if (signal?.aborted) {
-      throw new DOMException("Google AI Studio turn aborted before start", "AbortError");
-    }
-
-    // 1. Điều hướng đến đúng URL
-    await this.ensureTargetPage(page, {
-      promptId: options.promptId,
-      isNewConversation: options.isNewConversation,
-    });
-
-    // 2. Thiết lập Thinking Level nếu được chỉ định
-    if (options.reasoningEffort) {
-      await ensureGoogleAIStudioThinkingLevel(page, {
-        level: options.reasoningEffort,
-        selectors: this.selectors,
-      });
-    }
-
-    // 3. Nhập prompt an toàn
-    await this.insertPromptSafely(page, prompt);
-
-    // Trước khi submit: Đánh dấu tất cả turn hiện có là baseline để không bao giờ đọc nhầm lượt cũ
-    await page.evaluate(() => {
-      const existingTurns = document.querySelectorAll("ms-chat-turn");
-      existingTurns.forEach((turn) => {
-        turn.setAttribute("data-codex-turn-baseline", "true");
-      });
-    });
-
-    // 4. Bấm Run / Gửi prompt
-    await this.submitPrompt(page, signal);
-
-    // 5. Theo dõi stream câu trả lời và chờ hoàn tất
-    console.log("[ai-studio-worker] Bắt đầu theo dõi stream câu trả lời...");
-    let lastEmittedLength = 0;
-    let stableCount = 0;
-    let fullResponse = "";
-    const startTime = Date.now();
-    const pollInterval = 300;
-
-    while (Date.now() - startTime < timeoutMs) {
-      if (signal?.aborted) {
-        throw new DOMException("Google AI Studio turn aborted during streaming", "AbortError");
-      }
-
-      // Đọc trạng thái model đang sinh câu trả lời
-      const isGenerating = await page.evaluate(() => {
+    baseline: GoogleAIStudioResponseBaseline,
+  ): Promise<GoogleAIStudioResponseObservation> {
+    const status = await page.evaluate(
+      (baselineTurnCount) => {
         const btn = document.querySelector('ms-run-button button');
-        return btn ? (btn.classList.contains('stoppable') || (btn.textContent || '').includes('Stop')) : false;
-      });
+        const isGenerating = btn
+          ? btn.classList.contains("stoppable") ||
+            (btn.textContent || "").includes("Stop")
+          : false;
 
-      // Kiểm tra xem có thông báo lỗi từ Google AI Studio trong DOM không
-      const pageError = await page.evaluate(() => {
-        const errorNodes = document.querySelectorAll(
-          'ms-chat-turn:not([data-codex-turn-baseline]) .error-container, ms-chat-turn:not([data-codex-turn-baseline]) .error-message, ms-chat-turn:not([data-codex-turn-baseline]) ms-alert, ms-chat-turn:not([data-codex-turn-baseline]) [role="alert"]'
+        const allTurns = Array.from(
+          document.querySelectorAll("ms-chat-turn"),
         );
-        for (const node of errorNodes) {
-          const text = (node.textContent || '').trim();
-          if (text) return text;
-        }
-        const activeTurns = document.querySelectorAll('ms-chat-turn:not([data-codex-turn-baseline])');
-        for (const turn of activeTurns) {
-          const t = turn.textContent || '';
-          if (t.includes('Permission denied')) {
-            return 'Permission denied. Please check your account permissions and project settings.';
+        const freshTurns = allTurns.slice(baselineTurnCount);
+
+        let pageError: string | null = null;
+        const errorSelector = [
+          ".error-container",
+          ".error-message",
+          "ms-alert",
+          '[role="alert"]',
+        ].join(",");
+
+        for (const turn of freshTurns) {
+          const errorNodes = Array.from(
+            turn.querySelectorAll(errorSelector),
+          );
+          for (const node of errorNodes) {
+            const text = (node.textContent || "").trim();
+            if (text) {
+              pageError = text;
+              break;
+            }
+          }
+          if (pageError) break;
+
+          const turnText = turn.textContent || "";
+          if (turnText.includes("Permission denied")) {
+            pageError =
+              "Permission denied. Please check your account permissions and project settings.";
+            break;
           }
         }
-        return null;
-      });
 
-      if (pageError && !isGenerating && fullResponse.length === 0) {
-        throw new Error(`[AI_STUDIO_ERROR] Google AI Studio từ chối yêu cầu: ${pageError}`);
-      }
+        return {
+          isGenerating,
+          freshTurnCount: freshTurns.length,
+          pageError,
+        };
+      },
+      baseline.turnCount,
+    );
 
-      // Đọc văn bản sạch hiện tại
-      const currentText = await this.readLatestCleanResponse(page);
+    const currentText = await this.readLatestCleanResponse(page, baseline);
 
-      if (currentText.length > lastEmittedLength) {
-        const delta = currentText.slice(lastEmittedLength);
-        lastEmittedLength = currentText.length;
-        fullResponse = currentText;
-        stableCount = 0;
-        if (onChunk) onChunk(delta);
-      } else if (currentText.length > 0 && currentText.length === lastEmittedLength) {
-        stableCount++;
-      }
-
-      // Khi model không còn ở trạng thái Generating (nút Stop đã biến mất)
-      if (!isGenerating && fullResponse.length > 0) {
-        // Chờ văn bản ổn định trong 2 nhịp (600ms) để đảm bảo render DOM xong
-        if (stableCount >= 2) {
-          console.log(`[ai-studio-worker] Model đã sinh xong hoàn tất (${fullResponse.length} ký tự).`);
-          break;
-        }
-      }
-
-      await page.waitForTimeout(pollInterval);
+    if (status.pageError && !status.isGenerating && currentText.length === 0) {
+      throw new Error(
+        `[AI_STUDIO_ERROR] Google AI Studio từ chối yêu cầu: ${status.pageError}`,
+      );
     }
 
-    // 6. Kiểm tra xem URL có thay đổi và có Prompt ID mới không
-    const finalUrl = page.url();
-    const detectedPromptId = parseGoogleAIStudioPromptId(finalUrl);
+    if (
+      currentText.length > 0 &&
+      currentText !== baseline.previousLatestText
+    ) {
+      baseline.previousLatestText = currentText;
+      baseline.stableCount = 0;
+    } else if (currentText.length > 0) {
+      baseline.stableCount += 1;
+    }
+
+    const isCompleted =
+      status.freshTurnCount > 0 &&
+      !status.isGenerating &&
+      currentText.length > 0 &&
+      baseline.stableCount >= 2;
+
+    if (isCompleted) {
+      console.log(
+        `[ai-studio-worker] Model đã sinh xong hoàn tất (${currentText.length} ký tự).`,
+      );
+    }
 
     return {
-      rawResponse: fullResponse,
-      promptId: detectedPromptId,
+      text: currentText,
+      isGenerating: status.isGenerating,
+      isCompleted,
+      freshTurnCount: status.freshTurnCount,
+      activityKey: [
+        status.freshTurnCount,
+        status.isGenerating,
+        currentText.length,
+      ].join(":"),
+    };
+  }
+
+  protected async extractCompletedResponse(
+    page: Page,
+    context: BrowserCompletionContext<
+      GoogleAIStudioResponseBaseline,
+      GoogleAIStudioResponseObservation
+    >,
+  ): Promise<string> {
+    const finalText = await this.readLatestCleanResponse(
+      page,
+      context.baseline,
+    );
+
+    return finalText || context.observation.text;
+  }
+
+  protected async resolveConversationId(
+    page: Page,
+  ): Promise<string | undefined> {
+    const deadline = Date.now() + 3_000;
+
+    while (Date.now() < deadline) {
+      const promptId = parseGoogleAIStudioPromptId(page.url());
+      if (promptId) return promptId;
+      await page.waitForTimeout(100);
+    }
+
+    return undefined;
+  }
+
+  protected async stopGeneration(page: Page): Promise<boolean> {
+    const stopLocator = page.locator(this.selectors.stopButton).first();
+    const clickedConfiguredStop = await stopLocator
+      .click({ timeout: 1_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (clickedConfiguredStop) return true;
+
+    return await page
+      .locator("ms-run-button button.stoppable")
+      .first()
+      .click({ timeout: 1_000 })
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  protected override createResult(
+    result: BaseBrowserTurnResult,
+  ): GoogleAIStudioTurnResult {
+    return {
+      rawResponse: result.rawResponse,
+      promptId: result.conversationId,
     };
   }
 }
 
 export const googleAIStudioBrowserWorker = new GoogleAIStudioBrowserWorker();
-
