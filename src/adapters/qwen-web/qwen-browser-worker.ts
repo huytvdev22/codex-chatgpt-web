@@ -1,14 +1,14 @@
 import type { Page } from "playwright-core";
+import {
+  BaseWebBrowserWorker,
+  type BaseBrowserRunOptions,
+  type BrowserCompletionContext,
+  type BrowserObservation,
+} from "../web/browser";
 import { QWEN_SELECTORS, extractConversationIdFromUrl, isValidQwenConversationId } from "./selectors";
 
-export interface QwenBrowserRunOptions {
-  prompt: string;
-  onChunk?: (text: string) => void;
-  signal?: AbortSignal;
+export interface QwenBrowserRunOptions extends BaseBrowserRunOptions {
   reasoningEffort?: string;
-  conversationId?: string;
-  isNewConversation?: boolean;
-  timeoutMs?: number;
 }
 
 export interface QwenTurnResult {
@@ -16,10 +16,29 @@ export interface QwenTurnResult {
   conversationId?: string;
 }
 
+interface QwenResponseBaseline {
+  assistantCount: number;
+  previousLatestText: string;
+  hasSeenGenerating: boolean;
+  stableCount: number;
+}
+
+interface QwenResponseObservation extends BrowserObservation {
+  assistantCount: number;
+  completedState: boolean;
+}
+
 /**
  * Worker điều khiển trình duyệt Playwright tương tác với Qwen Web (https://chat.qwen.ai)
  */
-export class QwenBrowserWorker {
+export class QwenBrowserWorker extends BaseWebBrowserWorker<
+  QwenBrowserRunOptions,
+  QwenTurnResult,
+  QwenResponseBaseline,
+  QwenResponseObservation
+> {
+  protected readonly logPrefix = "qwen-worker";
+
   /**
    * Thiết lập chế độ Thinking Mode trên giao diện Qwen Web dựa theo tùy chọn
    * - wantThinking = true: Chọn "Thinking"
@@ -134,7 +153,8 @@ export class QwenBrowserWorker {
       const win = window as any;
       win.__qwen_last_copied_code = null;
       const origWriteText = navigator.clipboard ? navigator.clipboard.writeText : null;
-      if (navigator.clipboard) {
+      if (navigator.clipboard && !win.__qwen_clipboard_hook_installed) {
+        win.__qwen_clipboard_hook_installed = true;
         navigator.clipboard.writeText = async (text: string) => {
           win.__qwen_last_copied_code = text;
           try {
@@ -144,11 +164,14 @@ export class QwenBrowserWorker {
           }
         };
       }
-      const onCopy = (e: ClipboardEvent) => {
-        const text = e.clipboardData?.getData("text/plain") || window.getSelection()?.toString();
-        if (text) win.__qwen_last_copied_code = text;
-      };
-      document.addEventListener("copy", onCopy, { capture: true });
+      if (!win.__qwen_copy_listener_installed) {
+        win.__qwen_copy_listener_installed = true;
+        const onCopy = (e: ClipboardEvent) => {
+          const text = e.clipboardData?.getData("text/plain") || window.getSelection()?.toString();
+          if (text) win.__qwen_last_copied_code = text;
+        };
+        document.addEventListener("copy", onCopy, { capture: true });
+      }
     });
   }
 
@@ -156,7 +179,10 @@ export class QwenBrowserWorker {
    * Nhập nội dung prompt vào ô textarea an toàn bằng Native OS Clipboard Paste
    * kết hợp dispatch sự kiện input để React state của Qwen nhận diện ngay lập tức
    */
-  private async insertPromptSafely(page: Page, promptText: string): Promise<void> {
+  protected async insertPrompt(
+    page: Page,
+    promptText: string,
+  ): Promise<void> {
     console.log(`[qwen-worker] Đang nhập prompt an toàn qua Native Clipboard Paste (${promptText.length} ký tự)...`);
 
     await page.waitForSelector(QWEN_SELECTORS.composer, { timeout: 15_000, state: "visible" });
@@ -235,7 +261,10 @@ export class QwenBrowserWorker {
   /**
    * Thực hiện gửi tin nhắn và xác nhận chắc chắn tin nhắn đã được gửi đi
    */
-  private async submitPrompt(page: Page, signal?: AbortSignal): Promise<void> {
+  protected async submitPrompt(
+    page: Page,
+    options: QwenBrowserRunOptions,
+  ): Promise<void> {
     console.log("[qwen-worker] Đang nhấn nút gửi...");
 
     const composerLocator = page.locator(QWEN_SELECTORS.composer).first();
@@ -261,7 +290,9 @@ export class QwenBrowserWorker {
     // Vòng lặp xác nhận chắc chắn tin nhắn đã được gửi đi
     const submitDeadline = Date.now() + 10_000;
     while (Date.now() < submitDeadline) {
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      if (options.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
 
       const isSubmitted = await page.evaluate(
         ({ stopSelector, composerSelector }) => {
@@ -289,11 +320,19 @@ export class QwenBrowserWorker {
   /**
    * Đọc nội dung phản hồi stream hiện tại từ DOM
    */
-  private async readLatestAssistantStreamText(page: Page): Promise<string> {
+  private async readLatestAssistantStreamText(
+    page: Page,
+    minimumAssistantCount = 0,
+  ): Promise<string> {
     return await page.evaluate(
-      ({ assistantSelector, phaseAnswerSelector, codeBlockSelector }) => {
+      ({
+        assistantSelector,
+        phaseAnswerSelector,
+        codeBlockSelector,
+        minimumCount,
+      }) => {
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        if (messages.length === 0) return "";
+        if (messages.length <= minimumCount) return "";
         const latestMsg = messages[messages.length - 1] as HTMLElement;
 
         // 1. Ưu tiên đọc từ code block nếu đã xuất hiện
@@ -313,6 +352,7 @@ export class QwenBrowserWorker {
         assistantSelector: QWEN_SELECTORS.assistantMessage,
         phaseAnswerSelector: QWEN_SELECTORS.phaseAnswer,
         codeBlockSelector: QWEN_SELECTORS.codeBlock,
+        minimumCount: minimumAssistantCount,
       }
     );
   }
@@ -320,16 +360,28 @@ export class QwenBrowserWorker {
   /**
    * Trích xuất kết quả hoàn chỉnh qua cơ chế Copy-Salvage (Clipboard Hook)
    */
-  private async extractCompletedResponse(page: Page): Promise<string> {
+  protected async extractCompletedResponse(
+    page: Page,
+    context: BrowserCompletionContext<
+      QwenResponseBaseline,
+      QwenResponseObservation
+    >,
+  ): Promise<string> {
     console.log("[qwen-worker] [copy-salvage] Đang tìm và click nút Copy code...");
 
     // Cố gắng click nút "Copy" của code block trong tin nhắn cuối
     const clicked = await page.evaluate(
-      ({ assistantSelector, copyCodeSelector, copyResponseSelector }) => {
+      ({
+        assistantSelector,
+        copyCodeSelector,
+        copyResponseSelector,
+        minimumCount,
+      }) => {
         const win = window as any;
         win.__qwen_last_copied_code = null;
 
         const messages = Array.from(document.querySelectorAll(assistantSelector));
+        if (messages.length <= minimumCount) return false;
         const latestMsg = messages[messages.length - 1] as HTMLElement | null;
         if (!latestMsg) return false;
 
@@ -355,6 +407,7 @@ export class QwenBrowserWorker {
         assistantSelector: QWEN_SELECTORS.assistantMessage,
         copyCodeSelector: QWEN_SELECTORS.codeCopyButton,
         copyResponseSelector: QWEN_SELECTORS.responseCopyButton,
+        minimumCount: context.baseline.assistantCount,
       }
     );
 
@@ -385,24 +438,17 @@ export class QwenBrowserWorker {
     }
 
     console.warn("[qwen-worker] [copy-salvage] Không bắt được từ Clipboard, fallback trích xuất DOM text...");
-    return await this.readLatestAssistantStreamText(page);
+    return await this.readLatestAssistantStreamText(
+      page,
+      context.baseline.assistantCount,
+    );
   }
 
-  /**
-   * Thực thi một lượt gửi câu hỏi và nhận câu trả lời từ Qwen Web
-   */
-  public async executeTurn(
+  protected async navigate(
     page: Page,
-    options: QwenBrowserRunOptions
-  ): Promise<QwenTurnResult> {
-    const { prompt, onChunk, signal, conversationId, isNewConversation, timeoutMs = 180_000 } = options;
-    let currentConversationId = isValidQwenConversationId(conversationId || "") ? conversationId : undefined;
-
-    if (signal?.aborted) {
-      throw new DOMException("Qwen turn aborted before start", "AbortError");
-    }
-
-    // 1. Quản lý URL & Điều hướng
+    options: QwenBrowserRunOptions,
+  ): Promise<void> {
+    const { conversationId, isNewConversation } = options;
     const currentUrl = page.url();
     if (isNewConversation) {
       if (currentUrl.includes("/c/")) {
@@ -436,100 +482,122 @@ export class QwenBrowserWorker {
         }
       }
     }
+  }
 
-    // 2. Thiết lập Clipboard Hook để bắt payload code sạch
+  protected async prepareProvider(
+    page: Page,
+    options: QwenBrowserRunOptions,
+  ): Promise<void> {
     await this.setupClipboardHook(page);
-
-    // 3. Thiết lập chế độ Thinking Mode (mặc định tắt giống chatgpt-web, chỉ bật khi effort là "high" hoặc "think")
-    const wantThinking = options.reasoningEffort === "high" || options.reasoningEffort === "think";
+    const wantThinking =
+      options.reasoningEffort === "high" ||
+      options.reasoningEffort === "think";
     await this.setThinkingMode(page, wantThinking);
+  }
 
-    // 4. Nhập prompt an toàn
-    await this.insertPromptSafely(page, prompt);
+  protected async captureResponseBaseline(
+    page: Page,
+  ): Promise<QwenResponseBaseline> {
+    const state = await page.evaluate(
+      ({ assistantSelector, phaseAnswerSelector }) => {
+        const messages = Array.from(
+          document.querySelectorAll(assistantSelector),
+        );
+        const latestMessage = messages[messages.length - 1] as
+          | HTMLElement
+          | undefined;
+        const answerRoot =
+          latestMessage?.querySelector(phaseAnswerSelector) || latestMessage;
+        return {
+          assistantCount: messages.length,
+          previousLatestText: (answerRoot?.textContent || "").trim(),
+        };
+      },
+      {
+        assistantSelector: QWEN_SELECTORS.assistantMessage,
+        phaseAnswerSelector: QWEN_SELECTORS.phaseAnswer,
+      },
+    );
 
-    // 5. Nhấn nút gửi
-    await this.submitPrompt(page, signal);
+    return {
+      ...state,
+      hasSeenGenerating: false,
+      stableCount: 0,
+    };
+  }
 
-    // 5. Theo dõi quá trình Qwen trả lời và bắt nội dung hoàn chỉnh
-    console.log("[qwen-worker] Đang theo dõi quá trình sinh câu trả lời của Qwen...");
-    const startTime = Date.now();
-    let hasSeenGenerating = false;
-    let lastChunkText = "";
-    let stableCount = 0;
-    const requiredStableCount = 4; // 4 lần liên tiếp không đổi text (khoảng 1.2s)
-
-    while (Date.now() - startTime < timeoutMs) {
-      if (signal?.aborted) {
-        // Cố gắng bấm nút Stop nếu bị hủy
-        await page.locator(QWEN_SELECTORS.stopButton).first().click().catch(() => {});
-        throw new DOMException("Qwen turn was aborted during execution", "AbortError");
-      }
-
-      // Kiểm tra trạng thái đang sinh câu trả lời
-      const status = await page.evaluate(({ stopSelector, disabledSendSelector }) => {
+  protected async observeResponse(
+    page: Page,
+    baseline: QwenResponseBaseline,
+  ): Promise<QwenResponseObservation> {
+    const status = await page.evaluate(
+      ({
+        stopSelector,
+        disabledSendSelector,
+        assistantSelector,
+      }) => {
         const isStopVisible = Boolean(document.querySelector(stopSelector));
         const isDisabledSendVisible = Boolean(document.querySelector(disabledSendSelector));
         return {
           isGenerating: isStopVisible,
           isCompletedState: !isStopVisible && isDisabledSendVisible,
+          assistantCount: document.querySelectorAll(assistantSelector).length,
         };
-      }, {
+      },
+      {
         stopSelector: QWEN_SELECTORS.stopButton,
         disabledSendSelector: QWEN_SELECTORS.sendButtonDisabled,
-      });
+        assistantSelector: QWEN_SELECTORS.assistantMessage,
+      },
+    );
 
-      if (status.isGenerating) {
-        hasSeenGenerating = true;
-      }
+    if (status.isGenerating) baseline.hasSeenGenerating = true;
 
-      // Đọc text stream hiện tại
-      const currentText = await this.readLatestAssistantStreamText(page);
-
-      if (currentText.length > 0 && currentText !== lastChunkText) {
-        stableCount = 0;
-        const delta = currentText.startsWith(lastChunkText)
-          ? currentText.slice(lastChunkText.length)
-          : currentText;
-        lastChunkText = currentText;
-
-        if (delta.length > 0 && onChunk) {
-          onChunk(delta);
-        }
-      } else if (currentText.length > 0 && currentText === lastChunkText) {
-        stableCount++;
-      }
-
-      // Điều kiện hoàn thành:
-      // 1. Đã từng thấy Qwen bắt đầu sinh câu trả lời (hasSeenGenerating)
-      // 2. Nút Stop đã biến mất
-      // 3. Text đã ổn định ít nhất 4 vòng lặp (1.2 giây)
-      if (hasSeenGenerating && !status.isGenerating && stableCount >= requiredStableCount) {
-        console.log(`[qwen-worker] Qwen đã hoàn tất câu trả lời (${lastChunkText.length} ký tự).`);
-        break;
-      }
-
-      // Fallback: nếu chưa kịp bắt gặp nút stop (trả lời quá nhanh) nhưng text đã ổn định và có nội dung hoàn chỉnh
-      if (!hasSeenGenerating && currentText.length > 50 && stableCount >= 8 && status.isCompletedState) {
-        console.log("[qwen-worker] [fast-path] Bắt được phản hồi hoàn tất trực tiếp mà không qua stop-button.");
-        break;
-      }
-
-      // Theo dõi xem Qwen đã đổi URL sang /c/<id> chưa trong quá trình stream
-      if (!currentConversationId) {
-        currentConversationId = extractConversationIdFromUrl(page.url()) || undefined;
-      }
-
-      await page.waitForTimeout(300);
+    const currentText = await this.readLatestAssistantStreamText(
+      page,
+      baseline.assistantCount,
+    );
+    if (currentText && currentText !== baseline.previousLatestText) {
+      baseline.previousLatestText = currentText;
+      baseline.stableCount = 0;
+    } else if (currentText) {
+      baseline.stableCount += 1;
     }
 
-    // 6. Trích xuất phản hồi hoàn chỉnh
-    const rawResponse = await this.extractCompletedResponse(page);
+    const hasNewResponse = status.assistantCount > baseline.assistantCount;
+    const normalCompletion =
+      hasNewResponse &&
+      baseline.hasSeenGenerating &&
+      !status.isGenerating &&
+      baseline.stableCount >= 4;
+    const fastCompletion =
+      hasNewResponse &&
+      !baseline.hasSeenGenerating &&
+      currentText.length > 50 &&
+      baseline.stableCount >= 8 &&
+      status.isCompletedState;
 
-    // 7. Cập nhật conversation ID mới từ URL sau khi hoàn thành lượt (với polling chờ URL đổi nếu là SPA routing)
-    if (!currentConversationId) {
-      currentConversationId = extractConversationIdFromUrl(page.url()) || undefined;
-    }
+    return {
+      text: currentText,
+      isGenerating: status.isGenerating,
+      isCompleted: normalCompletion || fastCompletion,
+      assistantCount: status.assistantCount,
+      completedState: status.isCompletedState,
+      activityKey: [
+        status.assistantCount,
+        status.isGenerating,
+        status.isCompletedState,
+        currentText.length,
+      ].join(":"),
+    };
+  }
 
+  protected async resolveConversationId(
+    page: Page,
+    options: QwenBrowserRunOptions,
+  ): Promise<string | undefined> {
+    let currentConversationId =
+      extractConversationIdFromUrl(page.url()) || undefined;
     if (!currentConversationId) {
       const waitStart = Date.now();
       while (Date.now() - waitStart < 3000) {
@@ -554,15 +622,24 @@ export class QwenBrowserWorker {
       }
     }
 
-    const finalConversationId = isValidQwenConversationId(currentConversationId || "")
+    const finalConversationId = isValidQwenConversationId(
+      currentConversationId || "",
+    )
       ? currentConversationId
-      : (isValidQwenConversationId(conversationId || "") ? conversationId : undefined);
+      : isValidQwenConversationId(options.conversationId || "")
+        ? options.conversationId
+        : undefined;
 
     console.log(`[qwen-worker] Lượt hoàn tất thành công. URL: ${page.url()}, Conversation ID: ${finalConversationId || "chưa xác định"}`);
+    return finalConversationId;
+  }
 
-    return {
-      rawResponse: rawResponse || lastChunkText,
-      conversationId: finalConversationId,
-    };
+  protected async stopGeneration(page: Page): Promise<boolean> {
+    return await page
+      .locator(QWEN_SELECTORS.stopButton)
+      .first()
+      .click({ timeout: 1_000 })
+      .then(() => true)
+      .catch(() => false);
   }
 }

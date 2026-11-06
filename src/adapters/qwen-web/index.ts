@@ -49,8 +49,7 @@ export class QwenWebAdapter extends WebProviderAdapter {
           maxFormatRetries: resolvedOptions.maxFormatRetries ?? 2,
         },
         conversation: {
-          resolveConversationKey: ({ parsed, threadId }) =>
-            qwenConversationKey(parsed, threadId),
+          resolveConversationKey: ({ parsed, threadId }) =>qwenConversationKey(parsed, threadId),
           resolveState: ({
             threadId,
             leaseConversationId,
@@ -105,6 +104,7 @@ export class QwenWebAdapter extends WebProviderAdapter {
             prompt,
             attempt,
             incoming,
+            heartbeat,
             reasoningEffort,
             existingConversationId,
             isNewConversation,
@@ -121,6 +121,7 @@ export class QwenWebAdapter extends WebProviderAdapter {
             return worker.executeTurn(page, {
               prompt,
               signal: incoming.abortSignal,
+              heartbeat,
               reasoningEffort: (reasoningEffort || "low") as
                 | "low"
                 | "medium"
