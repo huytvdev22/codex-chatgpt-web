@@ -151,8 +151,14 @@ export abstract class BaseWebBrowserWorker<
     return result as TResult;
   }
 
-  // template method
-  private async waitForCompletion(
+  /**
+   * Shared polling lifecycle cho provider worker.
+   *
+   * `protected` cho phép các provider phức tạp như M365 chuyển đổi theo từng
+   * slice: provider vẫn có thể giữ orchestration đặc thù trong thời gian tạm
+   * thời nhưng dùng chung heartbeat, abort, hard deadline và idle deadline.
+   */
+  protected async waitForCompletion(
     page: Page,
     baseline: TBaseline,
     options: TOptions,
