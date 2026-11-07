@@ -5,7 +5,9 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
-| **043** | Chuyển ChatGPT Browser Worker sang `BaseWebBrowserWorker`, bổ sung fail-fast submit và response identity fallback | `chatgpt-web`, `web`, `playwright` | ⏳ Chờ User Test & Confirm | ./043-migrate-chatgpt-browser-worker-to-shared-lifecycle.md |
+| **045** | ChatGPT báo `Couldn't copy to clipboard` do synthetic click không tạo trusted user activation | `chatgpt-web`, `web`, `playwright`, `clipboard` | ✅ Đã Confirm | ./045-chatgpt-clipboard-copy-requires-focus.md |
+| **044** | Tool result còn nằm trong composer ChatGPT khiến Codex treo ở trạng thái Editing files | `chatgpt-web`, `web`, `playwright` | ✅ Đã Confirm | ./044-chatgpt-tool-result-stuck-in-composer.md |
+| **043** | Chuyển ChatGPT Browser Worker sang `BaseWebBrowserWorker`, bổ sung fail-fast submit và response identity fallback | `chatgpt-web`, `web`, `playwright` | ✅ Đã Confirm | ./043-migrate-chatgpt-browser-worker-to-shared-lifecycle.md |
 | **042** | Qwen tiếp tục chờ khi prompt chưa gửi hoặc không nhận ra response mới khi DOM message không có ID | `qwen-web`, `web`, `playwright` | ✅ Đã Confirm | ./042-qwen-submit-confirmation-and-response-identity.md |
 | **041** | Tinh gọn ChatGPT Web Adapter từ 13 xuống 5 file provider/runtime bắt buộc, tương tự cấu trúc Qwen | `chatgpt-web`, `web`, `architecture` | ✅ Đã Confirm | ./041-prune-chatgpt-adapter-to-provider-files.md |
 | **040** | ChatGPT Web chưa sinh phản hồi mới nhưng worker tự dừng và trả lại assistant response của lượt trước | `chatgpt-web`, `web`, `launcher` | ✅ Đã Confirm | ./040-chatgpt-reuses-previous-assistant-response.md |

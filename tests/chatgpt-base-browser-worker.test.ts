@@ -107,14 +107,25 @@ describe("ChatGptBrowserWorker shared lifecycle", () => {
   });
 
   test("fail-fast khi không thể xác nhận prompt đã gửi", async () => {
-    const locator = {
-      first: () => locator,
-      isVisible: async () => false,
-      isEnabled: async () => false,
-      focus: async () => {},
+    const createLocator = (visible: boolean) => {
+      const locator = {
+        first: () => locator,
+        nth: () => locator,
+        count: async () => 1,
+        isVisible: async () => visible,
+        isEnabled: async () => false,
+        focus: async () => {},
+        textContent: async () => "tool_result vẫn chưa được gửi",
+      };
+      return locator;
     };
+    const composerLocator = createLocator(true);
+    const hiddenControlLocator = createLocator(false);
     const page = {
-      locator: () => locator,
+      locator: (selector: string) =>
+        selector.includes("ProseMirror") || selector.includes("prompt-textarea")
+          ? composerLocator
+          : hiddenControlLocator,
       keyboard: {
         press: async () => {},
       },

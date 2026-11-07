@@ -6,7 +6,7 @@
 - **Cách sửa:** Hardening submit/response identity, chuyển sang shared lifecycle và thêm regression test.
 
 ## Trạng thái
-⏳ Chờ User Test & Confirm
+✅ Đã Confirm
 
 ## Phạm vi
 

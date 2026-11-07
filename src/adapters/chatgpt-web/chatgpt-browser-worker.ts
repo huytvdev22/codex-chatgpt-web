@@ -1,4 +1,4 @@
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
 import {
   BaseWebBrowserWorker,
   type BaseBrowserRunOptions,
@@ -50,6 +50,25 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
   protected readonly logPrefix = "chatgpt-worker";
 
   /**
+   * ChatGPT có thể giữ đồng thời composer hoặc control ẩn để phục vụ responsive
+   * layout. Luôn chọn phần tử đang hiển thị thay vì mặc định lấy phần tử đầu tiên.
+   */
+  private async findVisibleLocator(
+    page: Page,
+    selector: string,
+  ): Promise<Locator | undefined> {
+    const locators = page.locator(selector);
+    const count = await locators.count();
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locators.nth(index);
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Cài đặt Clipboard Hook trên trang để đón lấy payload copy code trực tiếp
    */
   private async setupClipboardHook(page: Page): Promise<void> {
@@ -92,7 +111,15 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
 
     // Focus vào tab và composer
     await page.bringToFront().catch(() => {});
-    const composerLocator = page.locator(CHATGPT_SELECTORS.composer).first();
+    const composerLocator = await this.findVisibleLocator(
+      page,
+      CHATGPT_SELECTORS.composer,
+    );
+    if (!composerLocator) {
+      throw new Error(
+        "[chatgpt-worker] Không tìm thấy composer đang hiển thị để nhập prompt.",
+      );
+    }
     await composerLocator.click();
     await composerLocator.focus();
 
@@ -115,10 +142,9 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     }
 
     // 3. Fallback qua DOM Native InputEvent nếu locator.fill() chưa chèn đủ text
-    let actualLength = await page.evaluate(
-      (sel) => (document.querySelector(sel)?.textContent || "").trim().length,
-      CHATGPT_SELECTORS.composer
-    );
+    let actualLength = (
+      await composerLocator.textContent().catch(() => "")
+    ).trim().length;
 
     if (!fillSuccess || actualLength < promptText.trim().length * 0.8) {
       console.warn(`[chatgpt-worker] locator.fill chưa đưa đủ ký tự (${actualLength}/${promptText.trim().length}), kích hoạt DOM text injection trực tiếp...`);
@@ -150,12 +176,13 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     // 4. Kích hoạt đồng bộ state cho React & ProseMirror để bật nút Send
     // Thao tác nhấn Space rồi Backspace thông qua bàn phím Playwright kích hoạt native key transaction,
     // giúp React nhận diện văn bản hợp lệ và gỡ bỏ thuộc tính disabled trên nút Send 100%.
-    const sendLocator = page.locator(CHATGPT_SELECTORS.sendButton).first();
+    const sendLocator = await this.findVisibleLocator(
+      page,
+      CHATGPT_SELECTORS.sendButton,
+    );
     let isSendEnabled = false;
-    try {
+    if (sendLocator) {
       isSendEnabled = await sendLocator.isEnabled({ timeout: 500 }).catch(() => false);
-    } catch {
-      isSendEnabled = false;
     }
 
     if (!isSendEnabled) {
@@ -166,10 +193,9 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
       await page.waitForTimeout(200);
     }
 
-    const finalLength = await page.evaluate(
-      (sel) => (document.querySelector(sel)?.textContent || "").trim().length,
-      CHATGPT_SELECTORS.composer
-    );
+    const finalLength = (
+      await composerLocator.textContent().catch(() => "")
+    ).trim().length;
     console.log(`[chatgpt-worker] Đã nhập thành công toàn bộ prompt (${finalLength}/${promptText.trim().length} ký tự) trực tiếp vào ô chat.`);
   }
 
@@ -183,8 +209,15 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
   ): Promise<void> {
     console.log("[chatgpt-worker] Bắt đầu quá trình gửi tin nhắn...");
 
-    const composerLocator = page.locator(CHATGPT_SELECTORS.composer).first();
-    const sendLocator = page.locator(CHATGPT_SELECTORS.sendButton).first();
+    const composerLocator = await this.findVisibleLocator(
+      page,
+      CHATGPT_SELECTORS.composer,
+    );
+    if (!composerLocator) {
+      throw new Error(
+        "[chatgpt-worker] Không tìm thấy composer đang hiển thị để gửi prompt.",
+      );
+    }
 
     const submitDeadline = Date.now() + 15_000;
     let attempt = 0;
@@ -197,57 +230,48 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
 
       // 1. Kiểm tra xem tin nhắn đã được gửi đi thành công chưa:
       // Tín hiệu A: Nút Stop xuất hiện (ChatGPT đang sinh câu trả lời)
-      // Tín hiệu B: Ô soạn thảo đã trống rỗng (văn bản đã được gửi đi sạch sẽ)
-      const isSubmitted = await page.evaluate(
-        ({ stopSelector, composerSelector }) => {
-          const stopBtn = document.querySelector(stopSelector);
-          if (stopBtn) return true;
-
-          const editor = document.querySelector(composerSelector);
-          const text = (editor?.textContent || "").trim();
-          return text.length === 0;
-        },
-        { stopSelector: CHATGPT_SELECTORS.stopButton, composerSelector: CHATGPT_SELECTORS.composer }
+      // Tín hiệu B: Chính composer đang hiển thị đã trống sau thao tác click.
+      // Không dùng document.querySelector vì ChatGPT có thể giữ composer ẩn rỗng.
+      const stopVisible = await this.findVisibleLocator(
+        page,
+        CHATGPT_SELECTORS.stopButton,
       );
+      const composerText = (
+        await composerLocator.textContent().catch(() => "")
+      ).trim();
+      const isSubmitted = Boolean(stopVisible) || composerText.length === 0;
 
       if (isSubmitted) {
-        console.log(`[chatgpt-worker] Tin nhắn đã được gửi thành công ở lần thử ${attempt}!`);
+        console.log(
+          `[chatgpt-worker] Tin nhắn đã được gửi thành công ở lần thử ${attempt} (stopVisible=${Boolean(stopVisible)}, composerLength=${composerText.length})!`,
+        );
         return;
       }
 
       // 2. Thử kích hoạt nút Send nếu hiển thị và enabled
-      let canClickSend = false;
-      try {
-        const visible = await sendLocator.isVisible({ timeout: 300 }).catch(() => false);
-        const enabled = await sendLocator.isEnabled({ timeout: 300 }).catch(() => false);
-        canClickSend = visible && enabled;
-      } catch {
-        canClickSend = false;
-      }
+      const sendLocator = await this.findVisibleLocator(
+        page,
+        CHATGPT_SELECTORS.sendButton,
+      );
+      const canClickSend = sendLocator
+        ? await sendLocator.isEnabled({ timeout: 300 }).catch(() => false)
+        : false;
 
-      if (canClickSend) {
+      if (sendLocator && canClickSend) {
         console.log(`[chatgpt-worker] [send] Nút gửi đã sẵn sàng ở lần thử ${attempt}, thực hiện click Send...`);
-        // Chỉ phát đúng một hành động submit. Trước đây worker click bằng
-        // Playwright rồi tiếp tục dispatch pointer/mouse events, gọi click()
-        // và requestSubmit() trên DOM. ChatGPT có thể đổi Send thành Stop ngay
-        // sau click đầu tiên, khiến chuỗi hành động thừa tác động vào control
-        // mới và dừng generation trong khi Codex vẫn đang chờ.
-        const clicked = await sendLocator
-          .click({ force: true, timeout: 1000 })
-          .then(() => true)
-          .catch(() => false);
-        if (!clicked) {
-          await composerLocator.focus().catch(() => {});
-          await page.keyboard.press("Enter").catch(() => {});
-        }
+        await sendLocator.click({ timeout: 1_000 }).catch(error => {
+          console.warn(
+            `[chatgpt-worker] [send] Click Send thất bại ở lần thử ${attempt}, sẽ tìm lại control đang hiển thị:`,
+            error,
+          );
+        });
       } else {
-        // Nút gửi chưa enabled: Focus vào composer và nhấn Enter
-        console.log(`[chatgpt-worker] [send] Nút gửi chưa enabled ở lần thử ${attempt}, kích hoạt phím Enter...`);
-        await composerLocator.focus().catch(() => {});
-        await page.keyboard.press("Enter").catch(() => {});
-
-        // Ở các lần thử kế tiếp nếu nút chưa bật, thử kích hoạt micro-interaction Space + Backspace
+        // Không nhấn Enter vì ProseMirror multiline có thể chỉ chèn xuống dòng.
+        console.log(
+          `[chatgpt-worker] [send] Chưa tìm thấy nút Send visible/enabled ở lần thử ${attempt} (composerLength=${composerText.length}), chờ UI đồng bộ...`,
+        );
         if (attempt >= 2 && attempt % 2 === 0) {
+          await composerLocator.focus().catch(() => {});
           await page.keyboard.press("Space").catch(() => {});
           await page.keyboard.press("Backspace").catch(() => {});
         }
@@ -341,15 +365,21 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     const { baseline } = context;
     console.log("[chatgpt-worker] [copy-salvage] Đang tìm và click nút Copy code...");
 
-    // Cố gắng click nút "Copy code" của code block trong tin nhắn cuối
-    const clicked = await page.evaluate(
+    await page.bringToFront().catch(() => {});
+    const targetToken = `codex-copy-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    // Đánh dấu wrapper của assistant response mới để Playwright thực hiện
+    // trusted click. Không gọi HTMLElement.click() trong page.evaluate vì
+    // Chromium có thể từ chối clipboard nếu không có user activation.
+    const targetMarked = await page.evaluate(
       ({
         assistantSelector,
-        copyCodeSelector,
-        copyMessageSelector,
         baselineIds,
         baselineCount,
         baselineLatestText,
+        token,
       }) => {
         const win = window as any;
         win.__chatgpt_last_copied_code = null;
@@ -388,37 +418,51 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
           latestMsg.parentElement;
         if (!responseWrapper) return false;
 
-        // 1. Ưu tiên nút "Copy code"
-        let copyBtn = responseWrapper.querySelector(
-          copyCodeSelector,
-        ) as HTMLElement | null;
-        if (!copyBtn) {
-          // 2. Fallback: nút "Copy" toàn bộ tin nhắn
-          copyBtn = responseWrapper.querySelector(
-            copyMessageSelector,
-          ) as HTMLElement | null;
-        }
-
-        if (!copyBtn) return false;
-
-        copyBtn.scrollIntoView({ block: "center", inline: "center" });
-        copyBtn.focus();
-        copyBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-        copyBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-        copyBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
-        copyBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-        copyBtn.click();
+        responseWrapper.setAttribute("data-codex-copy-target", token);
         return true;
       },
       {
         assistantSelector: CHATGPT_SELECTORS.assistantMessage,
-        copyCodeSelector: CHATGPT_SELECTORS.copyCodeButton,
-        copyMessageSelector: CHATGPT_SELECTORS.copyMessageButton,
         baselineIds: baseline.assistantIds,
         baselineCount: baseline.assistantCount,
         baselineLatestText: baseline.initialLatestText,
+        token: targetToken,
       }
     );
+
+    let clicked = false;
+    if (targetMarked) {
+      const responseWrapper = page.locator(
+        `[data-codex-copy-target="${targetToken}"]`,
+      );
+      const codeCopyButton = responseWrapper
+        .locator(CHATGPT_SELECTORS.copyCodeButton)
+        .last();
+      const messageCopyButton = responseWrapper
+        .locator(CHATGPT_SELECTORS.copyMessageButton)
+        .last();
+      const copyButton = await codeCopyButton
+        .isVisible()
+        .catch(() => false)
+        ? codeCopyButton
+        : await messageCopyButton.isVisible().catch(() => false)
+          ? messageCopyButton
+          : undefined;
+
+      if (copyButton) {
+        clicked = await copyButton
+          .scrollIntoViewIfNeeded()
+          .then(() => copyButton.click({ timeout: 2_000 }))
+          .then(() => true)
+          .catch(error => {
+            console.warn(
+              "[chatgpt-worker] [copy-salvage] Trusted click nút Copy thất bại, fallback DOM:",
+              error,
+            );
+            return false;
+          });
+      }
+    }
 
     if (clicked) {
       // Chờ clipboard hook nhận được nội dung (tối đa 2.5s)
@@ -445,6 +489,14 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
         }
       }
     }
+
+    await page
+      .evaluate(token => {
+        document
+          .querySelector(`[data-codex-copy-target="${token}"]`)
+          ?.removeAttribute("data-codex-copy-target");
+      }, targetToken)
+      .catch(() => {});
 
     console.warn("[chatgpt-worker] [copy-salvage] Không bắt được từ Clipboard, fallback trích xuất DOM text...");
     return await this.readLatestAssistantStreamText(page, baseline);
