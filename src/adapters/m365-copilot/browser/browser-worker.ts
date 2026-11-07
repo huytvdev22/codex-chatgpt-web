@@ -728,96 +728,107 @@ export class M365BrowserWorker {
     return conversationId;
   }
 
-  public async executeTurn(
+  /**
+   * Đính kèm ảnh và nhập prompt vào đúng editor đang hiển thị.
+   * Thứ tự baseline -> attachment -> prompt được giữ nguyên để attachment của
+   * lượt hiện tại không làm sai response identity.
+   */
+  private async insertPrompt(
     page: Page,
+    promptText: string,
     options: M365BrowserRunOptions,
-  ): Promise<M365TurnResult> {
-    if (!options.conversationKey) {
-      throw new Error("M365 multi-surface requires a stable conversation key");
-    }
-    const promptText = options.prompt;
-    let conversationId: string | undefined;
-
-    try {
-    conversationId = await this.navigate(page, options);
-    await this.prepareProvider(page, options);
-    const beforeState = await this.captureResponseBaseline(page);
-
-    // 3.5. Đính kèm hình ảnh qua Plus Menu (Phương án 1)
+  ): Promise<Locator> {
     if (options.images && options.images.length > 0) {
       try {
         const payloads = m365ImageFilePayloads(options.images);
-        console.log(`[m365-worker] Đang đính kèm ${payloads.length} hình ảnh vào Copilot Web qua Plus Menu...`);
-        await attachFilesViaPlusMenu(page, payloads, { signal: options.signal });
-        console.log(`[m365-worker] Đính kèm hình ảnh hoàn tất!`);
-      } catch (err: any) {
-        console.warn(`[m365-worker] Lỗi trong quá trình đính kèm hình ảnh:`, err?.message);
+        console.log(
+          `[m365-worker] Đang đính kèm ${payloads.length} hình ảnh vào Copilot Web qua Plus Menu...`,
+        );
+        await attachFilesViaPlusMenu(page, payloads, {
+          signal: options.signal,
+        });
+        console.log("[m365-worker] Đính kèm hình ảnh hoàn tất!");
+      } catch (error: any) {
+        console.warn(
+          "[m365-worker] Lỗi trong quá trình đính kèm hình ảnh:",
+          error?.message,
+        );
       }
     }
 
-    // 4. Nhập prompt vào đúng editor đang hiển thị.
     const editorLocator = await this.findVisibleLocator(
       page,
       M365_CHAT_EDITOR_SELECTOR,
     );
     if (!editorLocator) {
-      throw new Error("Không tìm thấy ô nhập liệu M365 Copilot đang hiển thị!");
+      throw new Error(
+        "Không tìm thấy ô nhập liệu M365 Copilot đang hiển thị!",
+      );
     }
+
     await editorLocator.evaluate((editor, text) => {
       const target = editor as HTMLElement;
-      // Reset cache tích lũy dòng code của lượt trước
       delete (window as any).__m365_code_lines_cache;
       delete (window as any).__m365_code_lines_cache_by_block;
       target.focus();
 
-      // Xoá nội dung cũ nếu có
-      const sel = window.getSelection();
+      const selection = window.getSelection();
       const range = document.createRange();
       range.selectNodeContents(target);
-      sel?.removeAllRanges();
-      sel?.addRange(range);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
       document.execCommand("delete", false, undefined);
 
-      // Chèn prompt
-      const dt = new DataTransfer();
-      dt.setData("text/plain", text);
-      target.dispatchEvent(new ClipboardEvent("paste", {
-        clipboardData: dt,
-        bubbles: true,
-        cancelable: true,
-      }));
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData("text/plain", text);
+      target.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: dataTransfer,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
       target.dispatchEvent(new Event("input", { bubbles: true }));
       target.dispatchEvent(new Event("change", { bubbles: true }));
     }, promptText);
 
-    // Chờ ngắn để React cập nhật DOM và hiển thị nút Send
     await page.waitForTimeout(300);
+    return editorLocator;
+  }
 
-    // Nếu có đính kèm ảnh, chờ nút Send được bật (enabled) sau khi backend tải xong
+  /**
+   * Gửi prompt bằng một trusted Playwright click cho mỗi attempt.
+   */
+  private async submitPrompt(
+    page: Page,
+    editorLocator: Locator,
+    options: M365BrowserRunOptions,
+  ): Promise<void> {
     if (options.images && options.images.length > 0) {
       const sendWaitDeadline = Date.now() + 30_000;
       while (Date.now() < sendWaitDeadline) {
-        if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (options.signal?.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+
         const sendLocator = await this.findVisibleLocator(
           page,
           CHAT_SELECTORS.sendButton,
         );
-        const isEnabled = sendLocator
+        const enabled = sendLocator
           ? await sendLocator.isEnabled().catch(() => false)
           : false;
-        if (isEnabled) break;
+        if (enabled) break;
         await page.waitForTimeout(200);
       }
     }
 
-    // VÒNG LẶP GỬI & XÁC NHẬN CHẮC CHẮN (Guaranteed Submission Loop)
     let promptSubmitted = false;
     for (let submitAttempt = 0; submitAttempt < 10; submitAttempt++) {
       if (options.signal?.aborted) {
         throw new DOMException("Aborted", "AbortError");
       }
 
-      // Chỉ xác nhận bằng Stop visible hoặc chính editor visible đã rỗng.
       const stopLocator = await this.findVisibleLocator(
         page,
         CHAT_SELECTORS.stopButton,
@@ -834,7 +845,6 @@ export class M365BrowserWorker {
         break;
       }
 
-      // Mỗi attempt chỉ phát đúng một trusted Playwright click.
       const sendLocator = await this.findVisibleLocator(
         page,
         CHAT_SELECTORS.sendButton,
@@ -842,6 +852,7 @@ export class M365BrowserWorker {
       const sendEnabled = sendLocator
         ? await sendLocator.isEnabled().catch(() => false)
         : false;
+
       if (sendLocator && sendEnabled) {
         console.log(
           `[m365-worker] [send] Click Send visible ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length})`,
@@ -869,6 +880,29 @@ export class M365BrowserWorker {
         `[m365-worker] Không thể xác nhận prompt đã được gửi sau 10 lần thử (editorLength=${remainingText.length}).`,
       );
     }
+  }
+
+  public async executeTurn(
+    page: Page,
+    options: M365BrowserRunOptions,
+  ): Promise<M365TurnResult> {
+    if (!options.conversationKey) {
+      throw new Error("M365 multi-surface requires a stable conversation key");
+    }
+    const promptText = options.prompt;
+    let conversationId: string | undefined;
+
+    try {
+    conversationId = await this.navigate(page, options);
+    await this.prepareProvider(page, options);
+    const beforeState = await this.captureResponseBaseline(page);
+
+    const editorLocator = await this.insertPrompt(
+      page,
+      promptText,
+      options,
+    );
+    await this.submitPrompt(page, editorLocator, options);
 
     // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
     const markdownBuffer = new M365MarkdownBuffer();
