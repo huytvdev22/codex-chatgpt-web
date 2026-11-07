@@ -476,6 +476,9 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
  * thông qua Page do WebTurnEngine cấp, đồng nhất contract với các Web Adapter khác.
  */
 export class M365BrowserWorker {
+  private readonly activeEditors = new WeakMap<Page, Locator>();
+  private readonly retainedConversationIds = new WeakMap<Page, string>();
+
   /**
    * M365 có thể giữ nhiều editor/control cho responsive layout. Chỉ thao tác
    * trên phần tử đang hiển thị để không đọc nhầm editor ẩn đang rỗng hoặc click
@@ -500,10 +503,10 @@ export class M365BrowserWorker {
    * Xác thực surface và điều hướng theo retained-conversation contract.
    * Mismatch luôn fail-closed để không làm Codex tiếp tục nhầm conversation.
    */
-  private async navigate(
+  protected async navigate(
     page: Page,
     options: M365BrowserRunOptions,
-  ): Promise<string | undefined> {
+  ): Promise<void> {
     const currentConversationId = parseM365ConversationId(page.url());
 
     if (options.existingConversationId) {
@@ -515,7 +518,8 @@ export class M365BrowserWorker {
           `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
         );
       }
-      return currentConversationId;
+      this.retainedConversationIds.set(page, currentConversationId);
+      return;
     }
 
     if (options.launcherReused && currentConversationId) {
@@ -531,13 +535,12 @@ export class M365BrowserWorker {
       });
     }
 
-    return undefined;
   }
 
   /**
    * Chuẩn bị provider trước khi khóa response baseline.
    */
-  private async prepareProvider(
+  protected async prepareProvider(
     page: Page,
     options: M365BrowserRunOptions,
   ): Promise<void> {
@@ -612,8 +615,9 @@ export class M365BrowserWorker {
   /**
    * Khóa các assistant message đã tồn tại trước lượt gửi.
    */
-  private async captureResponseBaseline(
+  protected async captureResponseBaseline(
     page: Page,
+    _options?: M365BrowserRunOptions,
   ): Promise<M365ResponseBaseline> {
     return await page.evaluate(() => {
       const candidates = Array.from(
@@ -687,7 +691,7 @@ export class M365BrowserWorker {
    * Dừng generation bằng đúng Stop control đang hiển thị. Helper này là contract
    * sẽ được BaseWebBrowserWorker gọi khi abort, hard timeout hoặc idle timeout.
    */
-  private async stopGeneration(page: Page): Promise<boolean> {
+  protected async stopGeneration(page: Page): Promise<boolean> {
     const stopLocator = await this.findVisibleLocator(
       page,
       CHAT_SELECTORS.stopButton,
@@ -710,13 +714,14 @@ export class M365BrowserWorker {
    * Resolve conversation ID sau khi response hoàn tất, giữ retained ID làm
    * fallback nhưng vẫn yêu cầu M365 công bố URL persistent cho conversation mới.
    */
-  private async resolveConversationId(
+  protected async resolveConversationId(
     page: Page,
     options: M365BrowserRunOptions,
   ): Promise<string> {
     const conversationId =
       parseM365ConversationId(page.url()) ||
       (await waitForM365ConversationId(page)) ||
+      this.retainedConversationIds.get(page) ||
       options.existingConversationId?.toLowerCase();
 
     if (!conversationId) {
@@ -733,11 +738,11 @@ export class M365BrowserWorker {
    * Thứ tự baseline -> attachment -> prompt được giữ nguyên để attachment của
    * lượt hiện tại không làm sai response identity.
    */
-  private async insertPrompt(
+  protected async insertPrompt(
     page: Page,
     promptText: string,
     options: M365BrowserRunOptions,
-  ): Promise<Locator> {
+  ): Promise<void> {
     if (options.images && options.images.length > 0) {
       try {
         const payloads = m365ImageFilePayloads(options.images);
@@ -793,17 +798,25 @@ export class M365BrowserWorker {
     }, promptText);
 
     await page.waitForTimeout(300);
-    return editorLocator;
+    this.activeEditors.set(page, editorLocator);
   }
 
   /**
    * Gửi prompt bằng một trusted Playwright click cho mỗi attempt.
    */
-  private async submitPrompt(
+  protected async submitPrompt(
     page: Page,
-    editorLocator: Locator,
     options: M365BrowserRunOptions,
   ): Promise<void> {
+    const editorLocator =
+      this.activeEditors.get(page) ||
+      (await this.findVisibleLocator(page, M365_CHAT_EDITOR_SELECTOR));
+    if (!editorLocator) {
+      throw new Error(
+        "Không tìm thấy ô nhập liệu M365 Copilot đang hiển thị để gửi prompt!",
+      );
+    }
+
     if (options.images && options.images.length > 0) {
       const sendWaitDeadline = Date.now() + 30_000;
       while (Date.now() < sendWaitDeadline) {
@@ -893,16 +906,17 @@ export class M365BrowserWorker {
     let conversationId: string | undefined;
 
     try {
-    conversationId = await this.navigate(page, options);
+    await this.navigate(page, options);
+    conversationId = this.retainedConversationIds.get(page);
     await this.prepareProvider(page, options);
-    const beforeState = await this.captureResponseBaseline(page);
+    const beforeState = await this.captureResponseBaseline(page, options);
 
-    const editorLocator = await this.insertPrompt(
+    await this.insertPrompt(
       page,
       promptText,
       options,
     );
-    await this.submitPrompt(page, editorLocator, options);
+    await this.submitPrompt(page, options);
 
     // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
     const markdownBuffer = new M365MarkdownBuffer();
