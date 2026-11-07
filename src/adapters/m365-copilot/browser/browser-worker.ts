@@ -1,5 +1,9 @@
 import type { Locator, Page } from "playwright-core";
-import type { BaseBrowserRunOptions } from "../../web/browser";
+import {
+  BaseWebBrowserWorker,
+  type BaseBrowserRunOptions,
+  type BrowserCompletionContext,
+} from "../../web/browser";
 import {
   m365HtmlToMarkdown,
   M365MarkdownBuffer,
@@ -512,7 +516,13 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
  * Thực thi một lượt hội thoại với Microsoft 365 Copilot nhúng trong Launcher Desktop
  * thông qua Page do WebTurnEngine cấp, đồng nhất contract với các Web Adapter khác.
  */
-export class M365BrowserWorker {
+export class M365BrowserWorker extends BaseWebBrowserWorker<
+  M365BrowserRunOptions,
+  M365TurnResult,
+  M365ResponseBaseline,
+  M365ResponseObservation
+> {
+  protected readonly logPrefix = "m365-worker";
   private readonly activeEditors = new WeakMap<Page, Locator>();
   private readonly retainedConversationIds = new WeakMap<Page, string>();
   private readonly responseStates = new WeakMap<
@@ -550,6 +560,35 @@ export class M365BrowserWorker {
     this.activeEditors.delete(page);
     this.retainedConversationIds.delete(page);
     this.responseStates.delete(page);
+  }
+
+  /**
+   * Compatibility hooks trong lúc response polling và extraction vẫn đang được
+   * tách khỏi executeTurn. Các hook này khóa đúng contract của shared base;
+   * production path chỉ chuyển sang super.executeTurn sau khi observer đã được
+   * tách hoàn chỉnh và regression tests bảo toàn completion semantics.
+   */
+  protected async observeResponse(
+    _page: Page,
+    _baseline: M365ResponseBaseline,
+    _options: M365BrowserRunOptions,
+  ): Promise<M365ResponseObservation> {
+    throw new Error(
+      "M365 observeResponse compatibility hook must not run before polling migration is complete",
+    );
+  }
+
+  protected async extractCompletedResponse(
+    _page: Page,
+    _context: BrowserCompletionContext<
+      M365ResponseBaseline,
+      M365ResponseObservation
+    >,
+    _options: M365BrowserRunOptions,
+  ): Promise<string> {
+    throw new Error(
+      "M365 extractCompletedResponse compatibility hook must not run before polling migration is complete",
+    );
   }
 
   /**

@@ -76,12 +76,18 @@ describe("M365 browser worker migration contract", () => {
     expect(visibleEditorIndex).toBeGreaterThan(attachmentIndex);
   });
 
-  test("worker chưa được đánh dấu migration hoàn tất trước khi kế thừa shared base", async () => {
+  test("worker kế thừa shared base nhưng giữ compatibility polling cho tới khi observer hoàn tất", async () => {
     const source = await readWorkerSource();
 
-    expect(source).toContain("export class M365BrowserWorker {");
-    expect(source).not.toContain(
+    expect(source).toContain(
       "export class M365BrowserWorker extends BaseWebBrowserWorker",
     );
+    expect(source).toContain(
+      "M365 observeResponse compatibility hook must not run before polling migration is complete",
+    );
+    expect(source).toContain(
+      "M365 extractCompletedResponse compatibility hook must not run before polling migration is complete",
+    );
+    expect(source).toContain("public async executeTurn(");
   });
 });
