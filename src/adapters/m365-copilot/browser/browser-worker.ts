@@ -683,6 +683,51 @@ export class M365BrowserWorker {
     });
   }
 
+  /**
+   * Dừng generation bằng đúng Stop control đang hiển thị. Helper này là contract
+   * sẽ được BaseWebBrowserWorker gọi khi abort, hard timeout hoặc idle timeout.
+   */
+  private async stopGeneration(page: Page): Promise<boolean> {
+    const stopLocator = await this.findVisibleLocator(
+      page,
+      CHAT_SELECTORS.stopButton,
+    );
+    if (!stopLocator) return false;
+
+    return await stopLocator
+      .click({ timeout: 1_000 })
+      .then(() => true)
+      .catch(error => {
+        console.warn(
+          "[m365-worker] Không thể click Stop generation:",
+          error,
+        );
+        return false;
+      });
+  }
+
+  /**
+   * Resolve conversation ID sau khi response hoàn tất, giữ retained ID làm
+   * fallback nhưng vẫn yêu cầu M365 công bố URL persistent cho conversation mới.
+   */
+  private async resolveConversationId(
+    page: Page,
+    options: M365BrowserRunOptions,
+  ): Promise<string> {
+    const conversationId =
+      parseM365ConversationId(page.url()) ||
+      (await waitForM365ConversationId(page)) ||
+      options.existingConversationId?.toLowerCase();
+
+    if (!conversationId) {
+      throw new Error(
+        "M365 did not expose a persistent /chat/conversation/{id} URL after completing the turn",
+      );
+    }
+
+    return conversationId;
+  }
+
   public async executeTurn(
     page: Page,
     options: M365BrowserRunOptions,
@@ -844,12 +889,7 @@ export class M365BrowserWorker {
 
     while (attempts < maxAttempts) {
       if (options.signal?.aborted) {
-        await page.evaluate(() => {
-          const stopBtn = document.querySelector(
-            'button[aria-label*="Stop" i], button[aria-label*="Dừng" i], button[aria-label="Stop generating"], [data-testid="stop-button"], button[aria-label*="Cancel" i]'
-          ) as HTMLButtonElement | null;
-          if (stopBtn) stopBtn.click();
-        }).catch(() => { });
+        await this.stopGeneration(page).catch(() => false);
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
       }
 
@@ -1454,10 +1494,8 @@ export class M365BrowserWorker {
       options.onChunk?.(finalDelta);
     }
 
-    conversationId = conversationId || await waitForM365ConversationId(page);
-    if (!conversationId) {
-      throw new Error(`M365 did not expose a persistent /chat/conversation/{id} URL after completing the turn`);
-    }
+    conversationId =
+      conversationId || (await this.resolveConversationId(page, options));
     console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=completed timedOut=${timedOut}`);
 
       return {
