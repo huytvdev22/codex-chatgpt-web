@@ -18,6 +18,12 @@ export interface ChatGptTurnResult {
   conversationId?: string;
 }
 
+interface ChatGptResponseBaseline {
+  assistantIds: string[];
+  assistantCount: number;
+  initialLatestText: string;
+}
+
 /**
  * Trích xuất conversation ID từ URL ChatGPT (dạng https://chatgpt.com/c/<uuid>)
  */
@@ -233,7 +239,9 @@ export class ChatGptBrowserWorker {
       await page.waitForTimeout(400);
     }
 
-    console.warn("[chatgpt-worker] Hết thời gian chờ xác nhận gửi, tiếp tục theo dõi phản hồi...");
+    throw new Error(
+      "[chatgpt-worker] Không thể xác nhận prompt đã được gửi trong 15 giây.",
+    );
   }
 
   /**
@@ -241,24 +249,43 @@ export class ChatGptBrowserWorker {
    */
   private async readLatestAssistantStreamText(
     page: Page,
-    initialAssistantIds: string[] = [],
+    baseline: ChatGptResponseBaseline,
   ): Promise<string> {
     return await page.evaluate(
-      ({ assistantSelector, codeBlockSelector, baselineIds }) => {
-        const baseline = new Set(baselineIds);
+      ({
+        assistantSelector,
+        codeBlockSelector,
+        baselineIds,
+        baselineCount,
+        baselineLatestText,
+      }) => {
+        const knownIds = new Set(baselineIds);
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        const newMessages = messages.filter(message => {
+        const newMessages = messages.filter((message, index) => {
           const wrapper = message.closest(
             "div[data-chatgpt-selection-message-id]",
           );
           const messageId = wrapper?.getAttribute(
             "data-chatgpt-selection-message-id",
           );
-          return Boolean(messageId) && !baseline.has(messageId!);
+          return messageId
+            ? !knownIds.has(messageId)
+            : index >= baselineCount;
         });
-        const latestMsg = newMessages[newMessages.length - 1] as
+        let latestMsg = newMessages[newMessages.length - 1] as
           | HTMLElement
           | undefined;
+
+        if (!latestMsg) {
+          const latestExisting = messages[messages.length - 1] as
+            | HTMLElement
+            | undefined;
+          const latestText = (latestExisting?.textContent || "").trim();
+          if (latestText && latestText !== baselineLatestText) {
+            latestMsg = latestExisting;
+          }
+        }
+
         if (!latestMsg) return "";
 
         // Ưu tiên đọc từ code block nếu đã xuất hiện
@@ -277,7 +304,9 @@ export class ChatGptBrowserWorker {
       {
         assistantSelector: CHATGPT_SELECTORS.assistantMessage,
         codeBlockSelector: CHATGPT_SELECTORS.codeBlock,
-        baselineIds: initialAssistantIds,
+        baselineIds: baseline.assistantIds,
+        baselineCount: baseline.assistantCount,
+        baselineLatestText: baseline.initialLatestText,
       }
     );
   }
@@ -287,7 +316,7 @@ export class ChatGptBrowserWorker {
    */
   private async extractCompletedResponse(
     page: Page,
-    initialAssistantIds: string[],
+    baseline: ChatGptResponseBaseline,
   ): Promise<string> {
     console.log("[chatgpt-worker] [copy-salvage] Đang tìm và click nút Copy code...");
 
@@ -298,24 +327,39 @@ export class ChatGptBrowserWorker {
         copyCodeSelector,
         copyMessageSelector,
         baselineIds,
+        baselineCount,
+        baselineLatestText,
       }) => {
         const win = window as any;
         win.__chatgpt_last_copied_code = null;
 
-        const baseline = new Set(baselineIds);
+        const knownIds = new Set(baselineIds);
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        const newMessages = messages.filter(message => {
+        const newMessages = messages.filter((message, index) => {
           const wrapper = message.closest(
             "div[data-chatgpt-selection-message-id]",
           );
           const messageId = wrapper?.getAttribute(
             "data-chatgpt-selection-message-id",
           );
-          return Boolean(messageId) && !baseline.has(messageId!);
+          return messageId
+            ? !knownIds.has(messageId)
+            : index >= baselineCount;
         });
-        const latestMsg = newMessages[newMessages.length - 1] as
+        let latestMsg = newMessages[newMessages.length - 1] as
           | HTMLElement
           | undefined;
+
+        if (!latestMsg) {
+          const latestExisting = messages[messages.length - 1] as
+            | HTMLElement
+            | undefined;
+          const latestText = (latestExisting?.textContent || "").trim();
+          if (latestText && latestText !== baselineLatestText) {
+            latestMsg = latestExisting;
+          }
+        }
+
         if (!latestMsg) return false;
 
         const responseWrapper =
@@ -349,7 +393,9 @@ export class ChatGptBrowserWorker {
         assistantSelector: CHATGPT_SELECTORS.assistantMessage,
         copyCodeSelector: CHATGPT_SELECTORS.copyCodeButton,
         copyMessageSelector: CHATGPT_SELECTORS.copyMessageButton,
-        baselineIds: initialAssistantIds,
+        baselineIds: baseline.assistantIds,
+        baselineCount: baseline.assistantCount,
+        baselineLatestText: baseline.initialLatestText,
       }
     );
 
@@ -380,10 +426,7 @@ export class ChatGptBrowserWorker {
     }
 
     console.warn("[chatgpt-worker] [copy-salvage] Không bắt được từ Clipboard, fallback trích xuất DOM text...");
-    return await this.readLatestAssistantStreamText(
-      page,
-      initialAssistantIds,
-    );
+    return await this.readLatestAssistantStreamText(page, baseline);
   }
 
   /**
@@ -459,14 +502,20 @@ export class ChatGptBrowserWorker {
     // Khóa baseline bằng message identity thực tế thay vì số node. ChatGPT có
     // thể virtualize hoặc thay thế DOM cũ làm count thay đổi, nhưng
     // data-chatgpt-selection-message-id vẫn phân biệt chính xác response mới.
-    const initialAssistantIds = await page.evaluate(assistantSelector => {
-      return Array.from(document.querySelectorAll(assistantSelector))
-        .map(message =>
-          message
-            .closest("div[data-chatgpt-selection-message-id]")
-            ?.getAttribute("data-chatgpt-selection-message-id"),
-        )
-        .filter((value): value is string => Boolean(value));
+    const responseBaseline = await page.evaluate(assistantSelector => {
+      const messages = Array.from(document.querySelectorAll(assistantSelector));
+      const latestMessage = messages[messages.length - 1];
+      return {
+        assistantIds: messages
+          .map(message =>
+            message
+              .closest("div[data-chatgpt-selection-message-id]")
+              ?.getAttribute("data-chatgpt-selection-message-id"),
+          )
+          .filter((value): value is string => Boolean(value)),
+        assistantCount: messages.length,
+        initialLatestText: (latestMessage?.textContent || "").trim(),
+      };
     }, CHATGPT_SELECTORS.assistantMessage);
 
     // 3. Nhập prompt an toàn
@@ -511,7 +560,7 @@ export class ChatGptBrowserWorker {
       // Đọc stream text
       const currentText = await this.readLatestAssistantStreamText(
         page,
-        initialAssistantIds,
+        responseBaseline,
       );
       if (currentText !== lastRenderedText) {
         lastActivityAt = now;
@@ -534,22 +583,35 @@ export class ChatGptBrowserWorker {
           copyCodeSel,
           copyMessageSel,
           baselineIds,
+          baselineCount,
+          baselineLatestText,
         }) => {
           const stopBtn = document.querySelector(stopSel);
           if (stopBtn) return { done: false, hasStop: true };
 
-          const baseline = new Set(baselineIds);
+          const knownIds = new Set(baselineIds);
           const messages = Array.from(document.querySelectorAll(assistantSel));
-          const newMessages = messages.filter(message => {
+          const newMessages = messages.filter((message, index) => {
             const wrapper = message.closest(
               "div[data-chatgpt-selection-message-id]",
             );
             const messageId = wrapper?.getAttribute(
               "data-chatgpt-selection-message-id",
             );
-            return Boolean(messageId) && !baseline.has(messageId!);
+            return messageId
+              ? !knownIds.has(messageId)
+              : index >= baselineCount;
           });
-          const latestMessage = newMessages[newMessages.length - 1];
+          let latestMessage = newMessages[newMessages.length - 1];
+
+          if (!latestMessage) {
+            const latestExisting = messages[messages.length - 1];
+            const latestText = (latestExisting?.textContent || "").trim();
+            if (latestText && latestText !== baselineLatestText) {
+              latestMessage = latestExisting;
+            }
+          }
+
           if (!latestMessage) {
             return { done: false, hasStop: false };
           }
@@ -569,7 +631,9 @@ export class ChatGptBrowserWorker {
           assistantSel: CHATGPT_SELECTORS.assistantMessage,
           copyCodeSel: CHATGPT_SELECTORS.copyCodeButton,
           copyMessageSel: CHATGPT_SELECTORS.copyMessageButton,
-          baselineIds: initialAssistantIds,
+          baselineIds: responseBaseline.assistantIds,
+          baselineCount: responseBaseline.assistantCount,
+          baselineLatestText: responseBaseline.initialLatestText,
         }
       );
 
@@ -602,7 +666,7 @@ export class ChatGptBrowserWorker {
           await page.waitForTimeout(300);
           const checkText = await this.readLatestAssistantStreamText(
             page,
-            initialAssistantIds,
+            responseBaseline,
           );
           if (checkText !== lastRenderedText) {
             isStillIdle = false;
@@ -627,7 +691,7 @@ export class ChatGptBrowserWorker {
     // 7. Trích xuất phản hồi hoàn chỉnh bằng Copy-Salvage
     const rawResponse = await this.extractCompletedResponse(
       page,
-      initialAssistantIds,
+      responseBaseline,
     );
 
     // 8. Trích xuất conversation ID từ URL sau khi hoàn thành lượt
