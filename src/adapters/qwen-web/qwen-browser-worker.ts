@@ -19,6 +19,8 @@ export interface QwenTurnResult {
 
 interface QwenResponseBaseline {
   assistantIds: string[];
+  assistantCount: number;
+  initialLatestText: string;
   previousLatestText: string;
   hasSeenGenerating: boolean;
   stableCount: number;
@@ -427,7 +429,9 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
       await page.waitForTimeout(200);
     }
 
-    console.warn("[qwen-worker] Hết thời gian chờ xác nhận gửi, tiếp tục theo dõi phản hồi...");
+    throw new Error(
+      "[qwen-worker] Không thể xác nhận prompt đã được gửi trong 10 giây.",
+    );
   }
 
   /**
@@ -435,7 +439,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
    */
   private async readLatestAssistantStreamText(
     page: Page,
-    initialAssistantIds: string[] = [],
+    baseline: QwenResponseBaseline,
   ): Promise<string> {
     return await page.evaluate(
       ({
@@ -443,16 +447,33 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         phaseAnswerSelector,
         codeBlockSelector,
         baselineIds,
+        baselineCount,
+        baselineLatestText,
       }) => {
-        const baseline = new Set(baselineIds);
+        const knownIds = new Set(baselineIds);
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        const newMessages = messages.filter(message => {
+        const newMessages = messages.filter((message, index) => {
           const messageId = (message as HTMLElement).id;
-          return Boolean(messageId) && !baseline.has(messageId);
+          return messageId
+            ? !knownIds.has(messageId)
+            : index >= baselineCount;
         });
-        const latestMsg = newMessages[newMessages.length - 1] as
+        let latestMsg = newMessages[newMessages.length - 1] as
           | HTMLElement
           | undefined;
+
+        if (!latestMsg) {
+          const latestExisting = messages[messages.length - 1] as
+            | HTMLElement
+            | undefined;
+          const answerRoot =
+            latestExisting?.querySelector(phaseAnswerSelector) || latestExisting;
+          const latestText = (answerRoot?.textContent || "").trim();
+          if (latestText && latestText !== baselineLatestText) {
+            latestMsg = latestExisting;
+          }
+        }
+
         if (!latestMsg) return "";
 
         // 1. Ưu tiên đọc từ code block nếu đã xuất hiện
@@ -472,7 +493,9 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         assistantSelector: QWEN_SELECTORS.assistantMessage,
         phaseAnswerSelector: QWEN_SELECTORS.phaseAnswer,
         codeBlockSelector: QWEN_SELECTORS.codeBlock,
-        baselineIds: initialAssistantIds,
+        baselineIds: baseline.assistantIds,
+        baselineCount: baseline.assistantCount,
+        baselineLatestText: baseline.initialLatestText,
       }
     );
   }
@@ -496,19 +519,34 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         copyCodeSelector,
         copyResponseSelector,
         baselineIds,
+        baselineCount,
+        baselineLatestText,
       }) => {
         const win = window as any;
         win.__qwen_last_copied_code = null;
 
-        const baseline = new Set(baselineIds);
+        const knownIds = new Set(baselineIds);
         const messages = Array.from(document.querySelectorAll(assistantSelector));
-        const newMessages = messages.filter(message => {
+        const newMessages = messages.filter((message, index) => {
           const messageId = (message as HTMLElement).id;
-          return Boolean(messageId) && !baseline.has(messageId);
+          return messageId
+            ? !knownIds.has(messageId)
+            : index >= baselineCount;
         });
-        const latestMsg = newMessages[newMessages.length - 1] as
+        let latestMsg = newMessages[newMessages.length - 1] as
           | HTMLElement
           | undefined;
+
+        if (!latestMsg) {
+          const latestExisting = messages[messages.length - 1] as
+            | HTMLElement
+            | undefined;
+          const latestText = (latestExisting?.textContent || "").trim();
+          if (latestText && latestText !== baselineLatestText) {
+            latestMsg = latestExisting;
+          }
+        }
+
         if (!latestMsg) return false;
 
         // 1. Ưu tiên nút "Copy" trên codeblock markdown header
@@ -534,6 +572,8 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         copyCodeSelector: QWEN_SELECTORS.codeCopyButton,
         copyResponseSelector: QWEN_SELECTORS.responseCopyButton,
         baselineIds: context.baseline.assistantIds,
+        baselineCount: context.baseline.assistantCount,
+        baselineLatestText: context.baseline.initialLatestText,
       }
     );
 
@@ -564,10 +604,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
     }
 
     console.warn("[qwen-worker] [copy-salvage] Không bắt được từ Clipboard, fallback trích xuất DOM text...");
-    return await this.readLatestAssistantStreamText(
-      page,
-      context.baseline.assistantIds,
-    );
+    return await this.readLatestAssistantStreamText(page, context.baseline);
   }
 
   protected async navigate(
@@ -643,6 +680,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
           assistantIds: messages
             .map(message => (message as HTMLElement).id)
             .filter(Boolean),
+          assistantCount: messages.length,
           previousLatestText: (answerRoot?.textContent || "").trim(),
         };
       },
@@ -654,6 +692,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
 
     return {
       ...state,
+      initialLatestText: state.previousLatestText,
       hasSeenGenerating: false,
       stableCount: 0,
     };
@@ -668,41 +707,60 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
         stopSelector,
         disabledSendSelector,
         assistantSelector,
+        phaseAnswerSelector,
         baselineIds,
+        baselineCount,
+        baselineLatestText,
       }) => {
-        const baseline = new Set(baselineIds);
+        const knownIds = new Set(baselineIds);
         const isStopVisible = Boolean(document.querySelector(stopSelector));
         const isDisabledSendVisible = Boolean(document.querySelector(disabledSendSelector));
         const messages = Array.from(
           document.querySelectorAll(assistantSelector),
         );
-        const newMessages = messages.filter(message => {
+        const newMessages = messages.filter((message, index) => {
           const messageId = (message as HTMLElement).id;
-          return Boolean(messageId) && !baseline.has(messageId);
+          return messageId
+            ? !knownIds.has(messageId)
+            : index >= baselineCount;
         });
-        const latestNewMessage = newMessages[newMessages.length - 1] as
+        let latestNewMessage = newMessages[newMessages.length - 1] as
           | HTMLElement
           | undefined;
+
+        if (!latestNewMessage) {
+          const latestExisting = messages[messages.length - 1] as
+            | HTMLElement
+            | undefined;
+          const answerRoot =
+            latestExisting?.querySelector(phaseAnswerSelector) || latestExisting;
+          const latestText = (answerRoot?.textContent || "").trim();
+          if (latestText && latestText !== baselineLatestText) {
+            latestNewMessage = latestExisting;
+          }
+        }
+
         return {
           isGenerating: isStopVisible,
           isCompletedState: !isStopVisible && isDisabledSendVisible,
           responseId: latestNewMessage?.id || undefined,
+          hasNewResponse: Boolean(latestNewMessage),
         };
       },
       {
         stopSelector: QWEN_SELECTORS.stopButton,
         disabledSendSelector: QWEN_SELECTORS.sendButtonDisabled,
         assistantSelector: QWEN_SELECTORS.assistantMessage,
+        phaseAnswerSelector: QWEN_SELECTORS.phaseAnswer,
         baselineIds: baseline.assistantIds,
+        baselineCount: baseline.assistantCount,
+        baselineLatestText: baseline.initialLatestText,
       },
     );
 
     if (status.isGenerating) baseline.hasSeenGenerating = true;
 
-    const currentText = await this.readLatestAssistantStreamText(
-      page,
-      baseline.assistantIds,
-    );
+    const currentText = await this.readLatestAssistantStreamText(page, baseline);
     if (currentText && currentText !== baseline.previousLatestText) {
       baseline.previousLatestText = currentText;
       baseline.stableCount = 0;
@@ -710,7 +768,7 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
       baseline.stableCount += 1;
     }
 
-    const hasNewResponse = Boolean(status.responseId);
+    const hasNewResponse = status.hasNewResponse;
     const normalCompletion =
       hasNewResponse &&
       baseline.hasSeenGenerating &&
@@ -730,7 +788,8 @@ export class QwenBrowserWorker extends BaseWebBrowserWorker<
       responseId: status.responseId,
       completedState: status.isCompletedState,
       activityKey: [
-        status.responseId || "no-new-response",
+        status.responseId ||
+          (hasNewResponse ? "new-response-without-id" : "no-new-response"),
         status.isGenerating,
         status.isCompletedState,
         currentText.length,
