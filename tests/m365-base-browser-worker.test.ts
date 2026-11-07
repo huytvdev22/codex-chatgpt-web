@@ -60,8 +60,8 @@ describe("M365 browser worker migration contract", () => {
     expect(source).toContain(
       "Launcher reused an unbound M365 surface that already contains a conversation",
     );
-    expect(source).toContain(
-      "currentConversationId !== options.existingConversationId.toLowerCase()",
+    expect(source).toMatch(
+      /currentConversationId\s*!==\s*options\.existingConversationId\.toLowerCase\(\)/,
     );
   });
 

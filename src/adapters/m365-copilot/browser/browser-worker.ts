@@ -54,6 +54,13 @@ export type M365TurnResult = {
   conversationId: string;
 };
 
+interface M365ResponseBaseline {
+  aiCount: number;
+  count: number;
+  lastText: string;
+  lastHtml: string;
+}
+
 /**
  * Thử trích xuất toàn bộ mã nguồn/văn bản từ khối Scriptor Code Block thông qua nút Copy Code.
  *
@@ -493,6 +500,193 @@ export class M365BrowserWorker {
     return undefined;
   }
 
+  /**
+   * Xác thực surface và điều hướng theo retained-conversation contract.
+   * Mismatch luôn fail-closed để không làm Codex tiếp tục nhầm conversation.
+   */
+  private async navigate(
+    page: Page,
+    options: M365BrowserRunOptions,
+  ): Promise<string | undefined> {
+    const currentConversationId = parseM365ConversationId(page.url());
+
+    if (options.existingConversationId) {
+      if (
+        currentConversationId !==
+        options.existingConversationId.toLowerCase()
+      ) {
+        throw new Error(
+          `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
+        );
+      }
+      return currentConversationId;
+    }
+
+    if (options.launcherReused && currentConversationId) {
+      throw new Error(
+        "Launcher reused an unbound M365 surface that already contains a conversation",
+      );
+    }
+
+    if (page.url() !== M365_CHAT_URL) {
+      await page.goto(M365_CHAT_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Chuẩn bị provider trước khi khóa response baseline.
+   */
+  private async prepareProvider(
+    page: Page,
+    options: M365BrowserRunOptions,
+  ): Promise<void> {
+    await page.waitForSelector(M365_CHAT_EDITOR_SELECTOR, {
+      timeout: 15_000,
+    });
+
+    if (options.modelSlug) {
+      const targetMode = resolveM365CapabilityMode(
+        options.modelSlug,
+        options.reasoning,
+      );
+      await ensureM365CapabilityMode(page, targetMode).catch(error => {
+        console.warn(
+          `[m365-worker] Warning: Failed to ensure capability mode '${targetMode}':`,
+          error,
+        );
+      });
+    }
+
+    // Chờ tối đa 12 giây cho lượt trước hoàn tất. Chỉ dừng generation cũ khi
+    // surface thực sự bị kẹt, sau đó chờ editor trở lại trạng thái idle.
+    await page
+      .evaluate(async ({ editorSelector, stopSelector }) => {
+        const isIdle = () => {
+          const stopButton = document.querySelector(stopSelector);
+          const editors = Array.from(
+            document.querySelectorAll<HTMLElement>(editorSelector),
+          );
+          const visibleEditor = editors.find(editor => {
+            const style = window.getComputedStyle(editor);
+            const rect = editor.getBoundingClientRect();
+            return (
+              style.display !== "none" &&
+              style.visibility !== "hidden" &&
+              rect.width > 0 &&
+              rect.height > 0
+            );
+          });
+          const editorDisabled =
+            visibleEditor?.getAttribute("aria-disabled") === "true";
+          return !stopButton && !editorDisabled;
+        };
+
+        if (isIdle()) return;
+
+        const idleDeadline = Date.now() + 12_000;
+        while (Date.now() < idleDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          if (isIdle()) return;
+        }
+
+        const stopButton = document.querySelector(
+          stopSelector,
+        ) as HTMLButtonElement | null;
+        if (!stopButton) return;
+
+        stopButton.click();
+        const stopDeadline = Date.now() + 3_000;
+        while (Date.now() < stopDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+          if (isIdle()) break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 800));
+      }, {
+        editorSelector: M365_CHAT_EDITOR_SELECTOR,
+        stopSelector: CHAT_SELECTORS.stopButton,
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * Khóa các assistant message đã tồn tại trước lượt gửi.
+   */
+  private async captureResponseBaseline(
+    page: Page,
+  ): Promise<M365ResponseBaseline> {
+    return await page.evaluate(() => {
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']",
+        ),
+      );
+      const aiList: HTMLElement[] = [];
+
+      for (const element of candidates) {
+        if (
+          element.matches("[data-content='user-message']") ||
+          element.querySelector("[data-content='user-message']")
+        ) {
+          continue;
+        }
+
+        const ariaLabel = (
+          element.getAttribute("aria-label") || ""
+        ).toLowerCase();
+        if (
+          ariaLabel.includes("you said") ||
+          ariaLabel.includes("bạn đã nói")
+        ) {
+          continue;
+        }
+
+        const explicitAi = element.matches(
+          ".fai-CopilotMessage, [data-content='ai-message']",
+        );
+        const hasAiMarkers = Boolean(
+          element.querySelector(
+            ".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']",
+          ),
+        );
+        const heading = element.querySelector(
+          ".fai-CopilotMessage__accessibleHeading, [class*='heading' i], h2, h3, h4",
+        );
+        const copilotHeading = (
+          heading?.textContent || ""
+        ).toLowerCase().includes("copilot");
+
+        if (explicitAi || hasAiMarkers || copilotHeading) {
+          aiList.push(element);
+        }
+      }
+
+      const aiMessages = aiList.filter(
+        (message, index, all) =>
+          !all.some(
+            (other, otherIndex) =>
+              otherIndex !== index && other.contains(message),
+          ),
+      );
+
+      aiMessages.forEach(message => {
+        message.setAttribute("data-codex-turn-baseline", "true");
+      });
+
+      const latestMessage = aiMessages[aiMessages.length - 1] || null;
+      return {
+        aiCount: aiMessages.length,
+        count: aiMessages.length,
+        lastText: (latestMessage?.textContent || "").trim(),
+        lastHtml: latestMessage?.innerHTML || "",
+      };
+    });
+  }
+
   public async executeTurn(
     promptText: string,
     options: M365BrowserRunOptions
@@ -501,115 +695,12 @@ export class M365BrowserWorker {
       throw new Error("M365 multi-surface requires a stable conversation key");
     }
     const page = options.page;
-    let conversationId = options.existingConversationId;
+    let conversationId: string | undefined;
 
     try {
-    // 1. Kiểm tra URL, đảm bảo đang ở trang M365 Copilot
-    const currentConversationId = parseM365ConversationId(page.url());
-    if (options.existingConversationId) {
-      if (currentConversationId !== options.existingConversationId.toLowerCase()) {
-        throw new Error(
-          `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
-        );
-      }
-      conversationId = currentConversationId;
-    } else if (options.launcherReused && currentConversationId) {
-      throw new Error("Launcher reused an unbound M365 surface that already contains a conversation");
-    } else if (page.url() !== M365_CHAT_URL) {
-      await page.goto(M365_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    }
-
-    // 3. Chờ khung nhập liệu xuất hiện
-    const editorSelector = M365_CHAT_EDITOR_SELECTOR;
-    await page.waitForSelector(editorSelector, { timeout: 15_000 });
-
-    // 3.1. Đảm bảo model mong muốn (Capability Mode) được chọn trên giao diện M365 Copilot
-    if (options.modelSlug) {
-      const targetMode = resolveM365CapabilityMode(options.modelSlug, options.reasoning);
-      await ensureM365CapabilityMode(page, targetMode).catch(err => {
-        console.warn(`[m365-worker] Warning: Failed to ensure capability mode '${targetMode}':`, err);
-      });
-    }
-
-    // 3.2. Đảm bảo M365 Copilot đã sẵn sàng (Idle), không còn bận sinh từ lượt trước
-    await page.evaluate(async () => {
-      const isIdle = () => {
-        const stopBtn = document.querySelector(
-          'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
-        );
-        const editor = document.querySelector(
-          '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
-        );
-        const isEditorDisabled = editor?.getAttribute("aria-disabled") === "true";
-        return !stopBtn && !isEditorDisabled;
-      };
-
-      if (isIdle()) return;
-
-      // Kiên nhẫn chờ tối đa 12000ms cho M365 tự hoàn tất sinh lượt trước và chuyển về Trạng thái 1
-      const start = Date.now();
-      while (Date.now() - start < 12000) {
-        await new Promise(r => setTimeout(r, 250));
-        if (isIdle()) return;
-      }
-
-      // Tuyệt đối KHÔNG tự ý click nút Stop bừa bãi! Chỉ giải phóng nếu kẹt cứng quá 12s,
-      // và khi click xong, PHẢI CHỜ cho tới khi nút Stop biến mất hoàn toàn và ô chat quay về Trạng thái 1
-      const stopBtn = document.querySelector(
-        'button[aria-label="Stop generating"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
-      ) as HTMLButtonElement | null;
-      if (stopBtn) {
-        stopBtn.click();
-        const stopClickAt = Date.now();
-        while (Date.now() - stopClickAt < 3000) {
-          await new Promise(r => setTimeout(r, 200));
-          if (isIdle()) break;
-        }
-        await new Promise(r => setTimeout(r, 800)); // Chờ thêm để BizChat render xong thông báo dừng (nếu có)
-      }
-    }).catch(() => { });
-
-    // Đọc số lượng và nội dung tin nhắn AI hiện tại trước khi gửi
-    const beforeState = await page.evaluate(() => {
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-        ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-      ));
-      const aiList: HTMLElement[] = [];
-      for (const el of candidates) {
-        if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) {
-          continue;
-        }
-        const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
-        if (ariaLabel.includes("you said") || ariaLabel.includes("bạn đã nói")) {
-          continue;
-        }
-        const isExplicitAi = el.matches(".fai-CopilotMessage, [data-content='ai-message']");
-        const hasAiMarkers = Boolean(
-          el.querySelector(".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']")
-        );
-        const heading = el.querySelector(".fai-CopilotMessage__accessibleHeading, [class*='heading' i], h2, h3, h4");
-        const headingText = (heading?.textContent || "").toLowerCase();
-        const isCopilotHeading = headingText.includes("copilot");
-
-        if (isExplicitAi || hasAiMarkers || isCopilotHeading) {
-          aiList.push(el);
-        }
-      }
-      const aiMessages = aiList.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-
-      // Đánh dấu thuộc tính baseline lên tất cả các tin nhắn AI đã tồn tại trước lượt gửi này
-      aiMessages.forEach((msg) => {
-        msg.setAttribute("data-codex-turn-baseline", "true");
-      });
-
-      const lastEl = aiMessages.length > 0 ? (aiMessages[aiMessages.length - 1] as HTMLElement) : null;
-      return {
-        aiCount: aiMessages.length,
-        count: aiMessages.length,
-        lastText: lastEl ? (lastEl.textContent?.trim() || "") : "",
-        lastHtml: lastEl ? (lastEl.innerHTML || "") : "",
-      };
-    });
+    conversationId = await this.navigate(page, options);
+    await this.prepareProvider(page, options);
+    const beforeState = await this.captureResponseBaseline(page);
 
     // 3.5. Đính kèm hình ảnh qua Plus Menu (Phương án 1)
     if (options.images && options.images.length > 0) {
