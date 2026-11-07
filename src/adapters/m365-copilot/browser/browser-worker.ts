@@ -57,6 +57,43 @@ interface M365ResponseBaseline {
   lastHtml: string;
 }
 
+interface M365ResponseDomStatus {
+  isGenerating: boolean;
+  blocks: M365MarkdownBlock[];
+  rawHtml?: string;
+  isNew: boolean;
+  hasContent: boolean;
+  detectedWebError: string;
+  fastPathRawText: string | null;
+  isInputActionsIdle?: boolean;
+}
+
+interface M365ResponseObservation {
+  text: string;
+  isGenerating: boolean;
+  isCompleted: boolean;
+  activityKey: string;
+  status: M365ResponseDomStatus;
+  blocks: M365MarkdownBlock[];
+  fastPathActive: boolean;
+  timedOut: boolean;
+}
+
+interface M365ResponseRuntimeState {
+  markdownBuffer: M365MarkdownBuffer;
+  fastPathBuffer: FastPathStreamBuffer;
+  fastPathActive: boolean;
+  lastFastPathText: string;
+  seenGenerating: boolean;
+  hasSeenGenerating: boolean;
+  completedCandidateAt: number | null;
+  stableCycles: number;
+  lastTextChangeAt: number;
+  lastBlocks: M365MarkdownBlock[];
+  attempts: number;
+  lastStatus: M365ResponseDomStatus | null;
+}
+
 /**
  * Thử trích xuất toàn bộ mã nguồn/văn bản từ khối Scriptor Code Block thông qua nút Copy Code.
  *
@@ -478,6 +515,42 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
 export class M365BrowserWorker {
   private readonly activeEditors = new WeakMap<Page, Locator>();
   private readonly retainedConversationIds = new WeakMap<Page, string>();
+  private readonly responseStates = new WeakMap<
+    Page,
+    M365ResponseRuntimeState
+  >();
+
+  private createResponseRuntimeState(): M365ResponseRuntimeState {
+    return {
+      markdownBuffer: new M365MarkdownBuffer(),
+      fastPathBuffer: new FastPathStreamBuffer(),
+      fastPathActive: false,
+      lastFastPathText: "",
+      seenGenerating: false,
+      hasSeenGenerating: false,
+      completedCandidateAt: null,
+      stableCycles: 0,
+      lastTextChangeAt: Date.now(),
+      lastBlocks: [],
+      attempts: 0,
+      lastStatus: null,
+    };
+  }
+
+  private getResponseRuntimeState(page: Page): M365ResponseRuntimeState {
+    const existing = this.responseStates.get(page);
+    if (existing) return existing;
+
+    const created = this.createResponseRuntimeState();
+    this.responseStates.set(page, created);
+    return created;
+  }
+
+  private clearTurnRuntimeState(page: Page): void {
+    this.activeEditors.delete(page);
+    this.retainedConversationIds.delete(page);
+    this.responseStates.delete(page);
+  }
 
   /**
    * M365 có thể giữ nhiều editor/control cho responsive layout. Chỉ thao tác
@@ -910,6 +983,7 @@ export class M365BrowserWorker {
     conversationId = this.retainedConversationIds.get(page);
     await this.prepareProvider(page, options);
     const beforeState = await this.captureResponseBaseline(page, options);
+    this.responseStates.set(page, this.createResponseRuntimeState());
 
     await this.insertPrompt(
       page,
