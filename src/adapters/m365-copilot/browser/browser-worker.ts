@@ -1,4 +1,4 @@
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
 import {
   m365HtmlToMarkdown,
   M365MarkdownBuffer,
@@ -473,6 +473,26 @@ async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
  * thông qua Page do WebTurnEngine cấp, đồng nhất contract với các Web Adapter khác.
  */
 export class M365BrowserWorker {
+  /**
+   * M365 có thể giữ nhiều editor/control cho responsive layout. Chỉ thao tác
+   * trên phần tử đang hiển thị để không đọc nhầm editor ẩn đang rỗng hoặc click
+   * nhầm Send button không thuộc composer hiện hành.
+   */
+  private async findVisibleLocator(
+    page: Page,
+    selector: string,
+  ): Promise<Locator | undefined> {
+    const locators = page.locator(selector);
+    const count = await locators.count();
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locators.nth(index);
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
   public async executeTurn(
     promptText: string,
     options: M365BrowserRunOptions
@@ -603,24 +623,25 @@ export class M365BrowserWorker {
       }
     }
 
-    // 4. Nhập prompt vào editor và kích hoạt nút Gửi
-    await page.evaluate((text) => {
-      const editor = (document.getElementById("m365-chat-editor-target-element") ||
-        document.querySelector(".fai-BebopLiteChatInput [role='textbox']") ||
-        document.querySelector(".fai-ChatInput [role='textbox']") ||
-        document.querySelector("div[contenteditable='true']:not([aria-readonly='true']):not([aria-label*='Code editor' i])") ||
-        document.querySelector("[role='textbox']:not([aria-readonly='true']):not([aria-label*='Code editor' i])") ||
-        document.querySelector("textarea:not([aria-readonly='true'])")) as HTMLElement;
-      if (!editor) throw new Error("Không tìm thấy ô nhập liệu của M365 Copilot!");
+    // 4. Nhập prompt vào đúng editor đang hiển thị.
+    const editorLocator = await this.findVisibleLocator(
+      page,
+      M365_CHAT_EDITOR_SELECTOR,
+    );
+    if (!editorLocator) {
+      throw new Error("Không tìm thấy ô nhập liệu M365 Copilot đang hiển thị!");
+    }
+    await editorLocator.evaluate((editor, text) => {
+      const target = editor as HTMLElement;
       // Reset cache tích lũy dòng code của lượt trước
       delete (window as any).__m365_code_lines_cache;
       delete (window as any).__m365_code_lines_cache_by_block;
-      editor.focus();
+      target.focus();
 
       // Xoá nội dung cũ nếu có
       const sel = window.getSelection();
       const range = document.createRange();
-      range.selectNodeContents(editor);
+      range.selectNodeContents(target);
       sel?.removeAllRanges();
       sel?.addRange(range);
       document.execCommand("delete", false, undefined);
@@ -628,122 +649,93 @@ export class M365BrowserWorker {
       // Chèn prompt
       const dt = new DataTransfer();
       dt.setData("text/plain", text);
-      editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
-      editor.dispatchEvent(new Event("change", { bubbles: true }));
+      target.dispatchEvent(new ClipboardEvent("paste", {
+        clipboardData: dt,
+        bubbles: true,
+        cancelable: true,
+      }));
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
     }, promptText);
 
     // Chờ ngắn để React cập nhật DOM và hiển thị nút Send
-    await new Promise(r => setTimeout(r, 300));
+    await page.waitForTimeout(300);
 
     // Nếu có đính kèm ảnh, chờ nút Send được bật (enabled) sau khi backend tải xong
     if (options.images && options.images.length > 0) {
-      const sendSelector = CHAT_SELECTORS.sendButton;
-      const sendLocator = page.locator(sendSelector).first();
       const sendWaitDeadline = Date.now() + 30_000;
       while (Date.now() < sendWaitDeadline) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const isEnabled = await sendLocator.isEnabled().catch(() => false);
+        const sendLocator = await this.findVisibleLocator(
+          page,
+          CHAT_SELECTORS.sendButton,
+        );
+        const isEnabled = sendLocator
+          ? await sendLocator.isEnabled().catch(() => false)
+          : false;
         if (isEnabled) break;
-        await new Promise(r => setTimeout(r, 200));
+        await page.waitForTimeout(200);
       }
     }
 
     // VÒNG LẶP GỬI & XÁC NHẬN CHẮC CHẮN (Guaranteed Submission Loop)
     let promptSubmitted = false;
     for (let submitAttempt = 0; submitAttempt < 10; submitAttempt++) {
-      // 1. Kiểm tra xem M365 đã chuyển sang trạng thái "Stop generating" (Trạng thái 3) hoặc editor đã được gửi sạch chưa
-      promptSubmitted = await page.evaluate(() => {
-        const stopBtn = document.querySelector(
-          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"]'
-        );
-        const sendBtn = document.querySelector(
-          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
-        );
-        const editor = document.querySelector(
-          '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
-        );
-        const editorText = editor?.textContent?.trim() || "";
-        return Boolean(stopBtn) || (!sendBtn && editorText.length === 0);
-      });
+      if (options.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+
+      // Chỉ xác nhận bằng Stop visible hoặc chính editor visible đã rỗng.
+      const stopLocator = await this.findVisibleLocator(
+        page,
+        CHAT_SELECTORS.stopButton,
+      );
+      const editorText = (
+        await editorLocator.textContent().catch(() => "")
+      ).trim();
+      promptSubmitted = Boolean(stopLocator) || editorText.length === 0;
 
       if (promptSubmitted) {
-        console.log(`[m365-worker] [send] Đã xác nhận prompt được gửi thành công ở lần thử ${submitAttempt + 1}`);
+        console.log(
+          `[m365-worker] [send] Đã xác nhận prompt được gửi thành công ở lần thử ${submitAttempt + 1} (stopVisible=${Boolean(stopLocator)}, editorLength=${editorText.length})`,
+        );
         break;
       }
 
-      // 2. Thử kích hoạt nút Send bằng Playwright Native Pointer Click
-      // CHÚ Ý: Selector CHỈ ĐƯỢC CHỌN nút Send, TUYỆT ĐỐI KHÔNG DÙNG .fai-SendButton thuần túy!
-      try {
-        const sendLocator = page.locator(
-          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
-        ).first();
-        if (await sendLocator.count() > 0 && await sendLocator.isVisible()) {
-          await sendLocator.click({ force: true, timeout: 500 });
-          // Kiểm tra ngay: Nếu sau click nút đã chuyển sang Stop generating thì BREAK NGAY LẬP TỨC!
-          await new Promise(r => setTimeout(r, 200));
-          const isNowGenerating = await page.evaluate(() => {
-            return Boolean(document.querySelector('button[aria-label="Stop generating"], .fai-SendButton__stopIcon'));
-          });
-          if (isNowGenerating) {
-            console.log(`[m365-worker] [send] Playwright pointer click thành công, M365 đã chuyển sang Stop generating ở lần thử ${submitAttempt + 1}`);
-            promptSubmitted = true;
-            break;
-          }
-        }
-      } catch { }
-
-      // 3. Dự phòng trong DOM: Dispatch sự kiện CHỈ KHI NÚT LÀ NÚT SEND (Loại trừ 100% nút Stop!)
-      const domSendSuccess = await page.evaluate(() => {
-        const sendBtn = document.querySelector(
-          'button[type="submit"][aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), button[aria-label="Send"]:not([aria-label*="Stop"]):not(:has(.fai-SendButton__stopIcon)), .fai-BebopLiteChatInput__actions button[type="submit"]:has(.fai-SendButton__sendIcon):not(:has(.fai-SendButton__stopIcon))'
-        ) as HTMLButtonElement | null;
-        if (sendBtn && !sendBtn.disabled) {
-          sendBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-          sendBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-          sendBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
-          sendBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-          sendBtn.click();
-          const form = sendBtn.closest("form");
-          if (form && typeof (form as any).requestSubmit === "function") {
-            (form as any).requestSubmit(sendBtn);
-          }
-          return true;
-        }
-        return false;
-      }).catch(() => false);
-
-      if (domSendSuccess) {
-        await new Promise(r => setTimeout(r, 200));
-        const isNowGenerating = await page.evaluate(() => {
-          return Boolean(document.querySelector('button[aria-label="Stop generating"], .fai-SendButton__stopIcon'));
+      // Mỗi attempt chỉ phát đúng một trusted Playwright click.
+      const sendLocator = await this.findVisibleLocator(
+        page,
+        CHAT_SELECTORS.sendButton,
+      );
+      const sendEnabled = sendLocator
+        ? await sendLocator.isEnabled().catch(() => false)
+        : false;
+      if (sendLocator && sendEnabled) {
+        console.log(
+          `[m365-worker] [send] Click Send visible ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length})`,
+        );
+        await sendLocator.click({ timeout: 1_000 }).catch(error => {
+          console.warn(
+            `[m365-worker] [send] Click Send thất bại ở lần thử ${submitAttempt + 1}:`,
+            error,
+          );
         });
-        if (isNowGenerating) {
-          console.log(`[m365-worker] [send] DOM send dispatch thành công ở lần thử ${submitAttempt + 1}`);
-          promptSubmitted = true;
-          break;
-        }
+      } else {
+        console.log(
+          `[m365-worker] [send] Send chưa visible/enabled ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length}), chờ UI đồng bộ...`,
+        );
       }
 
-      // 4. Dự phòng phím tắt gửi trong ô chat: Control+Enter và Enter (chỉ khi chưa chuyển sang Stop)
-      const shouldPressEnter = await page.evaluate(() => {
-        const isStopPresent = Boolean(document.querySelector('button[aria-label="Stop generating"], .fai-SendButton__stopIcon'));
-        return !isStopPresent;
-      });
-      if (shouldPressEnter) {
-        await page.evaluate(() => {
-          const editor = document.querySelector(
-            '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
-          ) as HTMLElement;
-          if (editor) {
-            editor.focus();
-          }
-        }).catch(() => { });
-        await page.keyboard.press("Control+Enter");
-        await page.keyboard.press("Enter");
-      }
+      await page.waitForTimeout(300);
+    }
 
-      await new Promise(r => setTimeout(r, 300));
+    if (!promptSubmitted) {
+      const remainingText = (
+        await editorLocator.textContent().catch(() => "")
+      ).trim();
+      throw new Error(
+        `[m365-worker] Không thể xác nhận prompt đã được gửi sau 10 lần thử (editorLength=${remainingText.length}).`,
+      );
     }
 
     // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
