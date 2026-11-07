@@ -1,4 +1,5 @@
 import type { Locator, Page } from "playwright-core";
+import type { BaseBrowserRunOptions } from "../../web/browser";
 import {
   m365HtmlToMarkdown,
   M365MarkdownBuffer,
@@ -15,16 +16,11 @@ import {
   waitForM365ConversationId,
 } from "./conversation-url";
 
-export interface M365BrowserRunOptions {
-  page: Page;
-  onChunk: (text: string) => void;
-  signal?: AbortSignal;
+export interface M365BrowserRunOptions extends BaseBrowserRunOptions {
   conversationKey?: string;
   existingConversationId?: string;
   launcherReused?: boolean;
-  isNewConversation?: boolean;
   shouldStop?: () => boolean;
-  heartbeat?: () => Promise<void>;
   modelSlug?: string;
   reasoning?: string;
   images?: NormalizedImageAttachment[];
@@ -688,13 +684,13 @@ export class M365BrowserWorker {
   }
 
   public async executeTurn(
-    promptText: string,
-    options: M365BrowserRunOptions
+    page: Page,
+    options: M365BrowserRunOptions,
   ): Promise<M365TurnResult> {
     if (!options.conversationKey) {
       throw new Error("M365 multi-surface requires a stable conversation key");
     }
-    const page = options.page;
+    const promptText = options.prompt;
     let conversationId: string | undefined;
 
     try {
@@ -1271,7 +1267,7 @@ export class M365BrowserWorker {
         lastFastPathText = status.fastPathRawText;
         const delta = fastPathBuffer.observe(lastFastPathText);
         if (delta.length > 0) {
-          options.onChunk(delta);
+          options.onChunk?.(delta);
           lastTextChangeAt = Date.now();
           stableCycles = 0;
         } else {
@@ -1282,7 +1278,7 @@ export class M365BrowserWorker {
         lastBlocks = status.blocks as M365MarkdownBlock[];
         const delta = markdownBuffer.observe(lastBlocks);
         if (delta.length > 0) {
-          options.onChunk(delta);
+          options.onChunk?.(delta);
           lastTextChangeAt = Date.now();
           stableCycles = 0;
         } else {
@@ -1455,7 +1451,7 @@ export class M365BrowserWorker {
     }
 
     if (finalDelta.length > 0 && !options.shouldStop?.()) {
-      options.onChunk(finalDelta);
+      options.onChunk?.(finalDelta);
     }
 
     conversationId = conversationId || await waitForM365ConversationId(page);
