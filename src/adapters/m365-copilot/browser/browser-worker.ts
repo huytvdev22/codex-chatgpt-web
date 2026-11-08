@@ -96,6 +96,7 @@ interface M365ResponseRuntimeState {
   lastBlocks: M365MarkdownBlock[];
   attempts: number;
   lastStatus: M365ResponseDomStatus | null;
+  pendingStatus: M365ResponseDomStatus | null;
 }
 
 /**
@@ -544,6 +545,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       lastBlocks: [],
       attempts: 0,
       lastStatus: null,
+      pendingStatus: null,
     };
   }
 
@@ -562,19 +564,25 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     this.responseStates.delete(page);
   }
 
-  /**
-   * Compatibility hooks trong lúc response polling và extraction vẫn đang được
-   * tách khỏi executeTurn. Các hook này khóa đúng contract của shared base;
-   * production path chỉ chuyển sang super.executeTurn sau khi observer đã được
-   * tách hoàn chỉnh và regression tests bảo toàn completion semantics.
-   */
   protected async observeResponse(
-    _page: Page,
+    page: Page,
     _baseline: M365ResponseBaseline,
-    _options: M365BrowserRunOptions,
+    options: M365BrowserRunOptions,
   ): Promise<M365ResponseObservation> {
-    throw new Error(
-      "M365 observeResponse compatibility hook must not run before polling migration is complete",
+    const responseState = this.getResponseRuntimeState(page);
+    const status = responseState.pendingStatus;
+    if (!status) {
+      throw new Error(
+        "M365 observeResponse requires a DOM status captured for the current polling cycle",
+      );
+    }
+
+    responseState.pendingStatus = null;
+    return await this.applyResponseStatus(
+      page,
+      responseState,
+      status,
+      options,
     );
   }
 
@@ -1698,10 +1706,10 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText, isInputActionsIdle };
       }, beforeState);
 
-      const observation = await this.applyResponseStatus(
+      responseState.pendingStatus = status as M365ResponseDomStatus;
+      const observation = await this.observeResponse(
         page,
-        responseState,
-        status as M365ResponseDomStatus,
+        beforeState,
         options,
       );
       if (observation.isCompleted) {
