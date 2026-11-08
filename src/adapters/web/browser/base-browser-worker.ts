@@ -121,6 +121,13 @@ export abstract class BaseWebBrowserWorker<
     _options: TOptions,
   ): Promise<void> {}
 
+  protected shouldStopPolling(
+    _observation: TObservation,
+    _options: TOptions,
+  ): boolean {
+    return false;
+  }
+
   protected abstract navigate(
     page: Page,
     options: TOptions,
@@ -245,6 +252,9 @@ export abstract class BaseWebBrowserWorker<
       }
 
       if (observation.isCompleted) return observation;
+      if (this.shouldStopPolling(observation, options)) {
+        return observation;
+      }
 
       if (now - lastActivityAt >= idleTimeoutMs) {
         await this.stopGeneration(page).catch(() => false);
