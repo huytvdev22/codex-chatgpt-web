@@ -612,6 +612,15 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     );
   }
 
+  protected shouldEmitObservationDelta(
+    _observation: M365ResponseObservation,
+    _options: M365BrowserRunOptions,
+  ): boolean {
+    // M365MarkdownBuffer và FastPathStreamBuffer đã phát semantic delta trong
+    // applyResponseStatus. Không để shared lifecycle phát lại observation.text.
+    return false;
+  }
+
   protected async observeResponse(
     page: Page,
     _baseline: M365ResponseBaseline,
