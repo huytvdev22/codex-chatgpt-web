@@ -106,6 +106,9 @@ export abstract class BaseWebBrowserWorker<
         rawResponse: rawResponse || observation.text,
         ...(conversationId ? { conversationId } : {}),
       });
+    } catch (error) {
+      await this.handleExecutionError(error, page, options);
+      throw error;
     } finally {
       await this.cleanupTurnState(page, options);
     }
@@ -117,6 +120,12 @@ export abstract class BaseWebBrowserWorker<
   ): Promise<void> {}
 
   protected async cleanupTurnState(
+    _page: Page,
+    _options: TOptions,
+  ): Promise<void> {}
+
+  protected async handleExecutionError(
+    _error: unknown,
     _page: Page,
     _options: TOptions,
   ): Promise<void> {}
