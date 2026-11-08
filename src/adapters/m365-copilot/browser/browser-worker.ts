@@ -524,6 +524,10 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   M365ResponseObservation
 > {
   protected readonly logPrefix = "m365-worker";
+  protected readonly defaultHardTimeoutMs = 20 * 60_000;
+  protected readonly defaultIdleTimeoutMs = 30_000;
+  protected readonly defaultPollingIntervalMs = 250;
+  protected readonly defaultHeartbeatIntervalMs = 10_000;
   private readonly activeEditors = new WeakMap<Page, Locator>();
   private readonly retainedConversationIds = new WeakMap<Page, string>();
   private readonly responseStates = new WeakMap<
@@ -566,8 +570,11 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
 
   protected async initializeTurnState(
     page: Page,
-    _options: M365BrowserRunOptions,
+    options: M365BrowserRunOptions,
   ): Promise<void> {
+    if (!options.conversationKey) {
+      throw new Error("M365 multi-surface requires a stable conversation key");
+    }
     this.responseStates.set(page, this.createResponseRuntimeState());
   }
 

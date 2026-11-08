@@ -143,4 +143,24 @@ describe("M365 browser worker migration contract", () => {
       "private readonly responseStates = new WeakMap<",
     );
   });
+
+  test("shared lifecycle dùng timeout profile tương thích với M365 polling cũ", async () => {
+    const source = await readWorkerSource();
+
+    expect(source).toContain(
+      "protected readonly defaultHardTimeoutMs = 20 * 60_000;",
+    );
+    expect(source).toContain(
+      "protected readonly defaultIdleTimeoutMs = 30_000;",
+    );
+    expect(source).toContain(
+      "protected readonly defaultPollingIntervalMs = 250;",
+    );
+    expect(source).toContain(
+      "protected readonly defaultHeartbeatIntervalMs = 10_000;",
+    );
+    expect(source).toContain(
+      'throw new Error("M365 multi-surface requires a stable conversation key");',
+    );
+  });
 });
