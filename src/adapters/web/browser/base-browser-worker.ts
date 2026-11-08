@@ -128,6 +128,13 @@ export abstract class BaseWebBrowserWorker<
     return false;
   }
 
+  protected shouldEmitObservationDelta(
+    _observation: TObservation,
+    _options: TOptions,
+  ): boolean {
+    return true;
+  }
+
   protected abstract navigate(
     page: Page,
     options: TOptions,
@@ -248,7 +255,12 @@ export abstract class BaseWebBrowserWorker<
           ? observation.text.slice(lastRenderedText.length)
           : "";
         lastRenderedText = observation.text;
-        if (delta) options.onChunk?.(delta);
+        if (
+          delta &&
+          this.shouldEmitObservationDelta(observation, options)
+        ) {
+          options.onChunk?.(delta);
+        }
       }
 
       if (observation.isCompleted) return observation;
