@@ -77,30 +77,49 @@ export abstract class BaseWebBrowserWorker<
   ): Promise<TResult> {
     this.throwIfAborted(options.signal, "before start");
 
-    await this.navigate(page, options);
-    await this.prepareProvider(page, options);
+    await this.initializeTurnState(page, options);
+    try {
+      await this.navigate(page, options);
+      await this.prepareProvider(page, options);
 
-    const baseline = await this.captureResponseBaseline(page, options);
+      const baseline = await this.captureResponseBaseline(page, options);
 
-    await this.insertPrompt(page, options.prompt, options);
-    await this.submitPrompt(page, options);
+      await this.insertPrompt(page, options.prompt, options);
+      await this.submitPrompt(page, options);
 
-    const observation = await this.waitForCompletion(
-      page,
-      baseline,
-      options,
-    );
-    const rawResponse = await this.extractCompletedResponse(page, {
-      baseline,
-      observation,
-    }, options);
-    const conversationId = await this.resolveConversationId(page, options);
+      const observation = await this.waitForCompletion(
+        page,
+        baseline,
+        options,
+      );
+      const rawResponse = await this.extractCompletedResponse(
+        page,
+        {
+          baseline,
+          observation,
+        },
+        options,
+      );
+      const conversationId = await this.resolveConversationId(page, options);
 
-    return this.createResult({
-      rawResponse: rawResponse || observation.text,
-      ...(conversationId ? { conversationId } : {}),
-    });
+      return this.createResult({
+        rawResponse: rawResponse || observation.text,
+        ...(conversationId ? { conversationId } : {}),
+      });
+    } finally {
+      await this.cleanupTurnState(page, options);
+    }
   }
+
+  protected async initializeTurnState(
+    _page: Page,
+    _options: TOptions,
+  ): Promise<void> {}
+
+  protected async cleanupTurnState(
+    _page: Page,
+    _options: TOptions,
+  ): Promise<void> {}
 
   protected abstract navigate(
     page: Page,
