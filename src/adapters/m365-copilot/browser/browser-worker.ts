@@ -585,6 +585,22 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     this.clearTurnRuntimeState(page);
   }
 
+  protected createResult(result: {
+    rawResponse: string;
+    conversationId?: string;
+  }): M365TurnResult {
+    if (!result.conversationId) {
+      throw new Error(
+        "M365 completed turn did not resolve a conversation ID",
+      );
+    }
+
+    return {
+      rawResponse: result.rawResponse,
+      conversationId: result.conversationId,
+    };
+  }
+
   protected async observeResponse(
     page: Page,
     _baseline: M365ResponseBaseline,
