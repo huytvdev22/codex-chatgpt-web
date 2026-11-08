@@ -745,6 +745,145 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     };
   }
 
+  private async applyResponseStatus(
+    page: Page,
+    responseState: M365ResponseRuntimeState,
+    status: M365ResponseDomStatus,
+    options: M365BrowserRunOptions,
+  ): Promise<M365ResponseObservation> {
+    const stableCompletionMs = 500;
+
+    if (status.isGenerating) {
+      responseState.hasSeenGenerating = true;
+      responseState.seenGenerating = true;
+      responseState.completedCandidateAt = null;
+    } else if (
+      responseState.hasSeenGenerating &&
+      responseState.completedCandidateAt === null
+    ) {
+      responseState.completedCandidateAt = Date.now();
+    }
+
+    if (status.detectedWebError) {
+      throw new Error(`[M365 Web Error] ${status.detectedWebError}`);
+    }
+
+    if (
+      responseState.attempts === 80 &&
+      !responseState.seenGenerating &&
+      status.blocks.length === 0
+    ) {
+      console.warn(
+        "[m365-worker] [warning] Sau 20s vẫn chưa nhận được phản hồi từ M365 (có thể nút Gửi chưa được kích hoạt hoặc mạng chậm).",
+      );
+    }
+
+    if (responseState.attempts % 40 === 0) {
+      await options.heartbeat?.().catch(error => {
+        console.warn(
+          "[m365-worker] Không thể gửi heartbeat trong compatibility polling:",
+          error,
+        );
+      });
+    }
+
+    if (responseState.attempts % 4 === 0) {
+      await page
+        .evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+          document
+            .querySelectorAll(
+              "[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block",
+            )
+            .forEach(element => {
+              try {
+                const scrollElement = element as HTMLElement;
+                const maxScroll =
+                  scrollElement.scrollHeight - scrollElement.clientHeight;
+                if (
+                  maxScroll > 0 &&
+                  scrollElement.scrollTop < maxScroll
+                ) {
+                  scrollElement.scrollTop = Math.min(
+                    maxScroll,
+                    scrollElement.scrollTop + 350,
+                  );
+                }
+              } catch {}
+            });
+        })
+        .catch(() => {});
+    }
+
+    if (
+      typeof status.fastPathRawText === "string" &&
+      status.fastPathRawText.length > 0
+    ) {
+      responseState.fastPathActive = true;
+      responseState.lastFastPathText = status.fastPathRawText;
+      const delta = responseState.fastPathBuffer.observe(
+        responseState.lastFastPathText,
+      );
+      if (delta) {
+        options.onChunk?.(delta);
+        responseState.lastTextChangeAt = Date.now();
+        responseState.stableCycles = 0;
+      } else {
+        responseState.stableCycles++;
+      }
+    } else if (
+      !responseState.fastPathActive &&
+      status.blocks.length > 0
+    ) {
+      responseState.lastBlocks = status.blocks;
+      const delta = responseState.markdownBuffer.observe(
+        responseState.lastBlocks,
+      );
+      if (delta) {
+        options.onChunk?.(delta);
+        responseState.lastTextChangeAt = Date.now();
+        responseState.stableCycles = 0;
+      } else {
+        responseState.stableCycles++;
+      }
+    }
+
+    responseState.lastStatus = status;
+
+    const combinedText = responseState.fastPathActive
+      ? responseState.lastFastPathText
+      : responseState.lastBlocks.map(block => block.text).join(" ");
+    const timeSinceChange = Date.now() - responseState.lastTextChangeAt;
+    const isVeryShortInitialText = combinedText.trim().length < 120;
+    const minGraceMs = isVeryShortInitialText ? 3_000 : 1_500;
+    const requiredStableCycles = isVeryShortInitialText ? 6 : 2;
+    const isStopDismissedStable =
+      responseState.hasSeenGenerating &&
+      !status.isGenerating &&
+      responseState.completedCandidateAt !== null &&
+      Date.now() - responseState.completedCandidateAt >= stableCompletionMs;
+    const isInputIdle =
+      Boolean(status.isInputActionsIdle) &&
+      !status.isGenerating &&
+      responseState.stableCycles >= requiredStableCycles;
+    const isCompleted =
+      status.hasContent &&
+      !status.isGenerating &&
+      (isInputIdle || isStopDismissedStable) &&
+      timeSinceChange >= minGraceMs;
+
+    const observation = this.createResponseObservation(responseState, false);
+    observation.isCompleted = isCompleted;
+
+    if (isCompleted) {
+      console.log(
+        `[m365-worker] [completed] attempts=${responseState.attempts} hasSeenGenerating=${responseState.hasSeenGenerating} isInputIdle=${isInputIdle} timeSinceChange=${timeSinceChange}ms fastPath=${responseState.fastPathActive}`,
+      );
+    }
+
+    return observation;
+  }
+
   /**
    * M365 có thể giữ nhiều editor/control cho responsive layout. Chỉ thao tác
    * trên phần tử đang hiển thị để không đọc nhầm editor ẩn đang rỗng hoặc click
@@ -1559,188 +1698,19 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText, isInputActionsIdle };
       }, beforeState);
 
-      // Quản lý chuyển trạng thái State Machine:
-      // READY_TO_SEND -> GENERATING (thấy nút Stop) -> COMPLETED (nút Stop biến mất ổn định trong 500ms)
-      if (status.isGenerating) {
-        responseState.hasSeenGenerating = true;
-        responseState.seenGenerating = true;
-        responseState.completedCandidateAt = null;
-      } else if (responseState.hasSeenGenerating) {
-        // Nút Stop đã từng xuất hiện và hiện tại đã biến mất: ghi nhận ứng viên hoàn thành
-        if (responseState.completedCandidateAt === null) {
-          responseState.completedCandidateAt = Date.now();
-        }
-      }
-
-      // Nếu phát hiện lỗi giao diện web của M365 (quota, session hết hạn, error banner), ném lỗi ngay
-      if (status.detectedWebError) {
-        throw new Error(`[M365 Web Error] ${status.detectedWebError}`);
-      }
-
-      if (status.isGenerating) {
-        responseState.seenGenerating = true;
-      }
-
-      // Cảnh báo nếu sau 20s gửi tin nhắn mà M365 chưa có phản hồi nào
-      if (
-        responseState.attempts === 80 &&
-        !responseState.seenGenerating &&
-        status.blocks.length === 0
-      ) {
-        console.warn(`[m365-worker] [warning] Sau 20s vẫn chưa nhận được phản hồi từ M365 (có thể nút Gửi chưa được kích hoạt hoặc mạng chậm).`);
-      }
-
-      if (responseState.attempts % 40 === 0) { // Cứ mỗi 10 giây gửi heartbeat tới launcher
-        options.heartbeat?.().catch(() => { });
-      }
-
-      // Định kỳ cuộn trang và các container Code Preview xuống để kích thích Monaco render các dòng tiếp theo
-      if (responseState.attempts % 4 === 0) {
-        await page.evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight);
-          document.querySelectorAll("[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block").forEach(el => {
-            try {
-              const scrollEl = el as HTMLElement;
-              const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
-              if (maxScroll > 0 && scrollEl.scrollTop < maxScroll) {
-                // Cuộn tịnh tiến 350px mỗi lần thay vì nhảy vọt một bước xuống đáy,
-                // đảm bảo Monaco kịp render các dòng trung gian vào DOM để cache thu thập đủ.
-                scrollEl.scrollTop = Math.min(maxScroll, scrollEl.scrollTop + 350);
-              }
-            } catch { }
-          });
-        }).catch(() => { });
-      }
-
-      // Stream các khối đã hoàn thành:
-      // 1. Ưu tiên Fast-Path nếu tìm thấy khối code trong Scriptor Editor
-      if (typeof status.fastPathRawText === "string" && status.fastPathRawText.length > 0) {
-        responseState.fastPathActive = true;
-        responseState.lastFastPathText = status.fastPathRawText;
-        const delta = responseState.fastPathBuffer.observe(
-          responseState.lastFastPathText,
-        );
-        if (delta.length > 0) {
-          options.onChunk?.(delta);
-          responseState.lastTextChangeAt = Date.now();
-          responseState.stableCycles = 0;
-        } else {
-          responseState.stableCycles++;
-        }
-      } else if (
-        !responseState.fastPathActive &&
-        status.blocks &&
-        status.blocks.length > 0
-      ) {
-        // 2. Fallback sang Semantic DOM Blocks nếu không tìm thấy khối Scriptor Code Editor (áp dụng cho cả Temporary Mode và Stateful Mode)
-        responseState.lastBlocks = status.blocks as M365MarkdownBlock[];
-        const delta = responseState.markdownBuffer.observe(
-          responseState.lastBlocks,
-        );
-        if (delta.length > 0) {
-          options.onChunk?.(delta);
-          responseState.lastTextChangeAt = Date.now();
-          responseState.stableCycles = 0;
-        } else {
-          responseState.stableCycles++;
-        }
-      }
-
-      // Định kỳ mỗi ~4 giây (16 chu kỳ) phát log tiến độ chi tiết để theo dõi trạng thái sống (Liveness)
-      if (responseState.attempts % 16 === 0) {
-        const elapsedSec = Math.round(
-          (responseState.attempts * pollIntervalMs) / 1000,
-        );
-        const currentChars = responseState.fastPathActive
-          ? responseState.lastFastPathText.length
-          : responseState.lastBlocks.reduce(
-              (acc, block) => acc + block.text.length,
-              0,
-            );
-        const stableSec = Math.round(
-          (Date.now() - responseState.lastTextChangeAt) / 1000,
-        );
-        const combinedTextSoFar = responseState.fastPathActive
-          ? responseState.lastFastPathText
-          : responseState.lastBlocks.map(block => block.text).join(" ");
-        const unclosedToolCall = /(?:<|\b)\s*tool\\\\?_call\s*>/i.test(combinedTextSoFar) && !/(?:<\s*\/|\/\s*)tool\\\\?_call\s*>/i.test(combinedTextSoFar);
-        const unclosedPatch = /(?:\\?\*){3}\s*Begin Patch/i.test(combinedTextSoFar) && !/(?:\\?\*){3}\s*End Patch/i.test(combinedTextSoFar);
-        const unclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedTextSoFar) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedTextSoFar);
-
-      }
-
-      // Điều kiện kết thúc:
-      // 1. Phải có nội dung trả lời (hasContent)
-      // 2. Không còn đang sinh (!status.isGenerating)
-      // 3. Khối tool_call, patch hoặc proposed_plan đã đóng trọn vẹn, hoặc văn bản đã ngừng thay đổi đủ lâu
-      const combinedText = responseState.fastPathActive
-        ? responseState.lastFastPathText
-        : responseState.lastBlocks.map(block => block.text).join(" ");
-      const hasUnclosedToolCall = /(?:<|\b)\s*tool\\?_call\s*>/i.test(combinedText) && !/(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
-      const hasUnclosedPatch = /(?:\\?\*){2,3}\s*Begin Patch/i.test(combinedText) && !/(?:\\?\*){2,3}\s*End Patch/i.test(combinedText);
-      const hasUnclosedPlan = /<\s*proposed[\\_]*plan\s*>/i.test(combinedText) && !/<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
-      const toolCallFullyClosed = /(?:<\s*\/|\/\s*)tool\\?_call\s*>/i.test(combinedText);
-      const planFullyClosed = /<\s*\/proposed[\\_]*plan\s*>/i.test(combinedText);
-      const hasWebResponseOpen = /<\s*(?:web|m365)[\\_]*response\s*>/i.test(combinedText);
-      const webResponseFullyClosed = /(?:<\s*\/|\/\s*)(?:web|m365)[\\_]*response\s*>/i.test(combinedText);
-      const completionGraceMs = 1_500;
-
-      // Nếu M365 đã dừng sinh và văn bản không đổi:
-      // 1. Nếu có thẻ tool_call, patch hoặc proposed_plan đã đóng trọn vẹn: Chỉ cần ổn định 1 giây là kết thúc ngay
-      // 2. Nếu đang có khối mở dở dang: Chờ ổn định để xem M365 có viết tiếp không
-      // 3. Phá vỡ DEADLOCK an toàn:
-      //    - Nếu đang có khối mở dở dang (unclosed patch, unclosed tool call, unclosed plan):
-      //      Tuyệt đối KHÔNG ngắt sớm sau 8s vì mô hình reasoning/think có thể pause giữa các file tới 15-25s.
-      //      Chỉ kích hoạt hard deadlock breaker khi bất động ít nhất 30 giây (120 chu kỳ polling).
-      //    - Nếu không có khối dở dang: 8 giây (32 chu kỳ).
-
-      // Khi response sử dụng m365Response envelope, chỉ frame đóng ngoài cùng mới
-      // được phép chứng minh response đã hoàn tất. End Patch hoặc closing
-      // custom_tool_call có thể xuất hiện trước closing m365Response trong chunk
-      // cuối, nên không được kết thúc polling chỉ vì patch đã đóng.
-      const timeSinceChange = Date.now() - responseState.lastTextChangeAt;
-
-      // Khi M365 đã có nội dung và không còn nút Stop generating (!status.isGenerating):
-      // - Chuyển sang Trạng thái 1 (Trạng thái rảnh tuyệt đối): Trong .fai-BebopLiteChatInput__actions không còn nút submit/stop
-      // - Chuyển trạng thái hoàn thành: hasSeenGenerating === true && !status.isGenerating && (Date.now() - completedCandidateAt >= stableCompletionMs)
-      // - Nếu có m365Response envelope: chỉ kết thúc sớm sau khi envelope ngoài
-      //   cùng đã đóng.
-      // - Với response legacy không có m365Response: vẫn cho phép tool/plan/patch
-      //   marker đóng chứng minh response đã hoàn tất.
-      // Đảm bảo không ngắt non khi M365 mới trả lời một câu dẫn cực ngắn (<120 ký tự) và đang render khối codeblock
-      const isVeryShortInitialText = (combinedText.trim().length < 120);
-      const minGraceMs = isVeryShortInitialText ? 3_000 : completionGraceMs;
-      const requiredStableCycles = isVeryShortInitialText ? 6 : 2;
-
-      const isStopDismissedStable =
-        responseState.hasSeenGenerating &&
-        !status.isGenerating &&
-        responseState.completedCandidateAt !== null &&
-        Date.now() - responseState.completedCandidateAt >= stableCompletionMs;
-      const isState1Idle =
-        Boolean(status.isInputActionsIdle) &&
-        !status.isGenerating &&
-        responseState.stableCycles >= requiredStableCycles;
-
-      // Browser Worker chỉ xác định M365 đã sinh xong hay chưa.
-      // Strict parser chịu trách nhiệm xác định response đúng hay sai format.
-      //
-      // - Còn generating hoặc text còn thay đổi: tiếp tục chờ.
-      // - Đã dừng generating và text ổn định: kết thúc thu thập.
-      // - Không dùng protocol marker để kéo dài hoặc rút ngắn thời gian chờ.
-      const generationFinished = isState1Idle || isStopDismissedStable;
-      const textStable = timeSinceChange >= minGraceMs;
-      const isSettled = !status.isGenerating && generationFinished && textStable;
-
-      if (status.hasContent && !status.isGenerating && isSettled) {
-        console.log(`[m365-worker] [completed] attempts=${responseState.attempts} durationMs=${responseState.attempts * pollIntervalMs} hasSeenGenerating=${responseState.hasSeenGenerating} isState1Idle=${Boolean(status.isInputActionsIdle)} timeSinceCandidate=${responseState.completedCandidateAt ? Date.now() - responseState.completedCandidateAt : 0}ms toolCallClosed=${toolCallFullyClosed} planClosed=${planFullyClosed} webResponseOpen=${hasWebResponseOpen} webResponseClosed=${webResponseFullyClosed} timeSinceChange=${timeSinceChange}ms fastPath=${responseState.fastPathActive}`);
+      const observation = await this.applyResponseStatus(
+        page,
+        responseState,
+        status as M365ResponseDomStatus,
+        options,
+      );
+      if (observation.isCompleted) {
         break;
       }
 
       // Dynamic Liveness Timeout:
       // Nếu đã chạm mốc maxAttempts nhưng M365 vẫn đang sinh (isGenerating) hoặc văn bản vừa thay đổi trong vòng 30s:
       // Tiếp tục gia hạn thời gian chờ để không bao giờ cắt cụt câu trả lời lớn đang sinh dở
-      responseState.lastStatus = status as M365ResponseDomStatus;
       if (responseState.attempts >= maxAttempts) {
         const timeSinceLastChange =
           Date.now() - responseState.lastTextChangeAt;
