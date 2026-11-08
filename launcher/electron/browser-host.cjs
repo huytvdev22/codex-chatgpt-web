@@ -2642,6 +2642,15 @@ class BrowserHost {
     return this.snapshot();
   }
 
+  openDevTools() {
+    const contents = this.activeView()?.webContents;
+    if (!contents || contents.isDestroyed()) {
+      throw new Error("The active browser surface is unavailable for DevTools");
+    }
+    contents.openDevTools({ mode: "detach", activate: true });
+    return true;
+  }
+
   zoom(action) {
     if (action !== "in" && action !== "out" && action !== "reset") {
       throw new Error(`Unknown browser zoom action: ${action}`);

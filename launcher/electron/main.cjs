@@ -599,6 +599,7 @@ function registerIpc({ logger, stateStore }) {
   ) : null);
   handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot() ?? null; });
   handle("launcher:browser-navigate", (_event, action) => browserHost ? browserHost.navigate(action) : null);
+  handle("launcher:browser-devtools", () => browserHost ? browserHost.openDevTools() : false);
   handle("launcher:browser-zoom", (_event, action) => browserHost ? browserHost.zoom(action) : null);
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost ? browserHost.selectTab(tabId) : null);
   handle("launcher:browser-tab-close", (_event, tabId) => browserHost ? browserHost.closeTab(tabId) : null);

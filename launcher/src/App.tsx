@@ -766,6 +766,13 @@ function BrowserSurface({
       setError(messageOf(cause));
     }
   };
+  const openDevTools = async () => {
+    try {
+      await api!.openBrowserDevTools();
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
   const toggle = async () => {
     try {
       if (visible) await api!.hideBrowser();
@@ -884,6 +891,12 @@ function BrowserSurface({
             {Math.round((browser?.zoomFactor ?? 1) * 100)}%
           </button>
           <IconButton icon="plus" label={copy.zoomIn} onClick={() => void zoom("in")} />
+          <IconButton
+            disabled={!visible}
+            icon="logs"
+            label={copy.openBrowserDevTools}
+            onClick={() => void openDevTools()}
+          />
         </div>
         {passkeyAvailable ? (
           <button

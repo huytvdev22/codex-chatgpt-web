@@ -294,6 +294,25 @@ test("macOS passkey sign-in is additive to the unchanged embedded login action",
   assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
 });
 
+test("browser toolbar opens detached DevTools for the active embedded surface", () => {
+  assert.match(
+    appSource,
+    /api!\.openBrowserDevTools\(\)[\s\S]*?label=\{copy\.openBrowserDevTools\}/,
+  );
+  assert.match(
+    preloadSource,
+    /openBrowserDevTools:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:browser-devtools"\)/,
+  );
+  assert.match(
+    electronMain,
+    /handle\("launcher:browser-devtools",\s*\(\)\s*=>\s*browserHost\s*\?\s*browserHost\.openDevTools\(\)\s*:\s*false\)/,
+  );
+  assert.match(
+    browserHostSource,
+    /openDevTools\(\)\s*\{[\s\S]*?this\.activeView\(\)\?\.webContents[\s\S]*?contents\.openDevTools\(\{\s*mode:\s*"detach",\s*activate:\s*true\s*\}\)/,
+  );
+});
+
 test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {
   assert.match(
     appSource,
