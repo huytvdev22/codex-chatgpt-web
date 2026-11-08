@@ -564,6 +564,20 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     this.responseStates.delete(page);
   }
 
+  protected async initializeTurnState(
+    page: Page,
+    _options: M365BrowserRunOptions,
+  ): Promise<void> {
+    this.responseStates.set(page, this.createResponseRuntimeState());
+  }
+
+  protected async cleanupTurnState(
+    page: Page,
+    _options: M365BrowserRunOptions,
+  ): Promise<void> {
+    this.clearTurnRuntimeState(page);
+  }
+
   protected async observeResponse(
     page: Page,
     _baseline: M365ResponseBaseline,
@@ -1323,7 +1337,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     conversationId = this.retainedConversationIds.get(page);
     await this.prepareProvider(page, options);
     const beforeState = await this.captureResponseBaseline(page, options);
-    this.responseStates.set(page, this.createResponseRuntimeState());
+    await this.initializeTurnState(page, options);
 
     await this.insertPrompt(
       page,
@@ -1772,7 +1786,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       }
       throw err;
     } finally {
-      this.clearTurnRuntimeState(page);
+      await this.cleanupTurnState(page, options);
     }
   }
 }

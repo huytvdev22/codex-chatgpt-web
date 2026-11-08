@@ -104,7 +104,7 @@ describe("M365 browser worker migration contract", () => {
     expect(source).toContain("public async executeTurn(");
   });
 
-  test("compatibility polling dùng turn runtime state duy nhất và luôn cleanup", async () => {
+  test("compatibility polling dùng turn runtime state và lifecycle cleanup hook", async () => {
     const source = await readWorkerSource();
     const executeTurnStart = source.indexOf("public async executeTurn(");
     const executeTurnSource = source.slice(executeTurnStart);
@@ -120,8 +120,14 @@ describe("M365 browser worker migration contract", () => {
     );
     expect(executeTurnSource).toContain("} finally {");
     expect(executeTurnSource).toContain(
-      "this.clearTurnRuntimeState(page);",
+      "await this.cleanupTurnState(page, options);",
     );
+    expect(source).toContain("protected async initializeTurnState(");
+    expect(source).toContain("protected async cleanupTurnState(");
+    expect(source).toContain(
+      "this.responseStates.set(page, this.createResponseRuntimeState());",
+    );
+    expect(source).toContain("this.clearTurnRuntimeState(page);");
   });
 
   test("response runtime state gom đủ dữ liệu để tách observeResponse và extraction", async () => {
