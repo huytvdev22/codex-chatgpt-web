@@ -621,6 +621,13 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     return false;
   }
 
+  protected shouldDelayFirstObservation(
+    _options: M365BrowserRunOptions,
+  ): boolean {
+    // Compatibility polling cũ luôn chờ 250ms sau submit trước lần đọc DOM đầu tiên.
+    return true;
+  }
+
   protected async observeResponse(
     page: Page,
     _baseline: M365ResponseBaseline,
