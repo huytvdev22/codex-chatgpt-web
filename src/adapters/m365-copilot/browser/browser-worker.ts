@@ -585,6 +585,19 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     this.clearTurnRuntimeState(page);
   }
 
+  protected async handleExecutionError(
+    error: unknown,
+    _page: Page,
+    options: M365BrowserRunOptions,
+  ): Promise<void> {
+    if (options.signal?.aborted) {
+      console.log("[m365-worker] [aborted] turn aborted by client");
+      return;
+    }
+
+    console.error("[m365-worker] [error]", error);
+  }
+
   protected createResult(result: {
     rawResponse: string;
     conversationId?: string;
