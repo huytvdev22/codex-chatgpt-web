@@ -850,15 +850,6 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       );
     }
 
-    if (responseState.attempts % 40 === 0) {
-      await options.heartbeat?.().catch(error => {
-        console.warn(
-          "[m365-worker] Không thể gửi heartbeat trong compatibility polling:",
-          error,
-        );
-      });
-    }
-
     if (responseState.attempts % 4 === 0) {
       await page
         .evaluate(() => {
