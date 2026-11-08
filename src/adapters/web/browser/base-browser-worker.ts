@@ -135,6 +135,12 @@ export abstract class BaseWebBrowserWorker<
     return true;
   }
 
+  protected shouldDelayFirstObservation(
+    _options: TOptions,
+  ): boolean {
+    return false;
+  }
+
   protected abstract navigate(
     page: Page,
     options: TOptions,
@@ -210,6 +216,7 @@ export abstract class BaseWebBrowserWorker<
     let lastHeartbeatAt = startedAt - heartbeatIntervalMs;
     let lastActivityKey: string | undefined;
     let lastRenderedText = "";
+    let isFirstObservation = true;
 
     while (true) {
       if (options.signal?.aborted) {
@@ -235,6 +242,14 @@ export abstract class BaseWebBrowserWorker<
         await this.stopGeneration(page).catch(() => false);
         throw new BrowserHardTimeoutError(hardTimeoutMs);
       }
+
+      if (
+        isFirstObservation &&
+        this.shouldDelayFirstObservation(options)
+      ) {
+        await page.waitForTimeout(pollingIntervalMs);
+      }
+      isFirstObservation = false;
 
       const observation = await this.observeResponse(
         page,
