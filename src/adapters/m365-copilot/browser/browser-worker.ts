@@ -601,6 +601,17 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     };
   }
 
+  protected shouldStopPolling(
+    observation: M365ResponseObservation,
+    options: M365BrowserRunOptions,
+  ): boolean {
+    return Boolean(
+      options.shouldStop?.() &&
+        !observation.isGenerating &&
+        observation.status.hasContent,
+    );
+  }
+
   protected async observeResponse(
     page: Page,
     _baseline: M365ResponseBaseline,
@@ -1749,7 +1760,10 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         beforeState,
         options,
       );
-      if (observation.isCompleted) {
+      if (
+        observation.isCompleted ||
+        this.shouldStopPolling(observation, options)
+      ) {
         break;
       }
 
