@@ -10,7 +10,13 @@ function getTsFiles(dir, base = "") {
   const list = fs.readdirSync(dir);
   for (const file of list) {
     const fullPath = path.join(dir, file);
-    const relPath = path.join(base, file);
+    // Dependency graph keys are repository-style module paths, not native
+    // filesystem paths. Keep them stable across Windows and POSIX runners.
+    const relPath = path.posix.join(
+      ...[base, file]
+        .filter(Boolean)
+        .flatMap(part => part.split(/[\\/]+/)),
+    );
     const stat = fs.statSync(fullPath);
     if (stat.isDirectory()) {
       results = results.concat(getTsFiles(fullPath, relPath));
@@ -36,7 +42,12 @@ export function findCircularDependencies(targetDir) {
     const deps = [];
     while ((match = importRegex.exec(content)) !== null) {
       const importTarget = match[1];
-      const resolvedPath = path.normalize(path.join(path.dirname(relPath), importTarget));
+      const resolvedPath = path.posix.normalize(
+        path.posix.join(
+          path.posix.dirname(relPath),
+          ...importTarget.split(/[\\/]+/),
+        ),
+      );
       deps.push(resolvedPath);
     }
     graph[relPath] = deps;
