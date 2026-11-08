@@ -90,4 +90,38 @@ describe("M365 browser worker migration contract", () => {
     );
     expect(source).toContain("public async executeTurn(");
   });
+
+  test("compatibility polling dùng turn runtime state duy nhất và luôn cleanup", async () => {
+    const source = await readWorkerSource();
+    const executeTurnStart = source.indexOf("public async executeTurn(");
+    const executeTurnSource = source.slice(executeTurnStart);
+
+    expect(executeTurnSource).toContain(
+      "const responseState = this.getResponseRuntimeState(page);",
+    );
+    expect(executeTurnSource).not.toContain(
+      "const markdownBuffer = new M365MarkdownBuffer();",
+    );
+    expect(executeTurnSource).not.toContain(
+      "const fastPathBuffer = new FastPathStreamBuffer();",
+    );
+    expect(executeTurnSource).toContain("} finally {");
+    expect(executeTurnSource).toContain(
+      "this.clearTurnRuntimeState(page);",
+    );
+  });
+
+  test("response runtime state gom đủ dữ liệu để tách observeResponse và extraction", async () => {
+    const source = await readWorkerSource();
+
+    expect(source).toContain("interface M365ResponseRuntimeState {");
+    expect(source).toContain("markdownBuffer: M365MarkdownBuffer;");
+    expect(source).toContain("fastPathBuffer: FastPathStreamBuffer;");
+    expect(source).toContain("lastFastPathText: string;");
+    expect(source).toContain("lastBlocks: M365MarkdownBlock[];");
+    expect(source).toContain("lastStatus: M365ResponseDomStatus | null;");
+    expect(source).toContain(
+      "private readonly responseStates = new WeakMap<",
+    );
+  });
 });
