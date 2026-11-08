@@ -133,10 +133,10 @@ Các định dạng package hiện được cấu hình:
 
 | Nền tảng | Kiến trúc | Định dạng | Tải phiên bản 6.9.5 |
 | --- | --- | --- | --- |
-| Windows | x64 | NSIS `.exe` | [codex-web-gpt-6.9.5-win-x64.exe](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-win-x64.exe) |
-| macOS | arm64 | `.dmg` | [codex-web-gpt-6.9.5-mac-arm64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-mac-arm64.dmg) |
-| macOS | x64 | `.dmg` | [codex-web-gpt-6.9.5-mac-x64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-mac-x64.dmg) |
-| Linux | x64 | `.AppImage` | [codex-web-gpt-6.9.5-linux-x64.AppImage](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-linux-x64.AppImage) |
+| Windows | x64 | NSIS `.exe` | [codex-web-gpt-6.9.5-win-x64.exe](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-win-x64.exe) |
+| macOS | arm64 | `.dmg` | [codex-web-gpt-6.9.5-mac-arm64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-mac-arm64.dmg) |
+| macOS | x64 | `.dmg` | [codex-web-gpt-6.9.5-mac-x64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-mac-x64.dmg) |
+| Linux | x64 | `.AppImage` | [codex-web-gpt-6.9.5-linux-x64.AppImage](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-linux-x64.AppImage) |
 
 ### macOS và Linux
 
