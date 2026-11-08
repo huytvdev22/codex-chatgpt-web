@@ -579,16 +579,131 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   }
 
   protected async extractCompletedResponse(
-    _page: Page,
-    _context: BrowserCompletionContext<
+    page: Page,
+    context: BrowserCompletionContext<
       M365ResponseBaseline,
       M365ResponseObservation
     >,
-    _options: M365BrowserRunOptions,
+    options: M365BrowserRunOptions,
   ): Promise<string> {
-    throw new Error(
-      "M365 extractCompletedResponse compatibility hook must not run before polling migration is complete",
+    const responseState = this.getResponseRuntimeState(page);
+    let fullMarkdown = "";
+    let finalDelta = "";
+
+    if (
+      responseState.fastPathActive ||
+      responseState.fastPathBuffer.getText().length > 0
+    ) {
+      const result = responseState.fastPathBuffer.finish(
+        responseState.lastFastPathText ||
+          responseState.fastPathBuffer.getText(),
+      );
+      fullMarkdown =
+        result.markdown || responseState.fastPathBuffer.getText();
+      finalDelta = result.delta;
+    }
+
+    if (!fullMarkdown.trim()) {
+      const result = responseState.markdownBuffer.finish(
+        responseState.lastBlocks,
+      );
+      if (result.markdown?.trim()) {
+        fullMarkdown = result.markdown;
+        finalDelta = result.delta;
+      }
+    }
+
+    if (!fullMarkdown.trim()) {
+      fullMarkdown =
+        responseState.fastPathBuffer.getText() ||
+        responseState.lastFastPathText ||
+        responseState.lastBlocks.map(block => block.text).join("\n");
+      if (fullMarkdown && !finalDelta) {
+        finalDelta = fullMarkdown;
+      }
+    }
+
+    const needsEnvelopeFix =
+      /<(?:web|m365)Response\b/i.test(fullMarkdown) &&
+      !/<\/(?:web|m365)Response\s*>/i.test(fullMarkdown);
+    const hasUnclosedMarkers =
+      /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(fullMarkdown) &&
+      !/(?:<\/custom_tool_call>|\*{3}\s*End Patch)/i.test(fullMarkdown);
+    const hasCodeBlockOnPage =
+      (await page
+        .locator(
+          "button#copy-button, button#preview-toggle-button, button[aria-label='Copy code'], button[aria-label='Code']",
+        )
+        .count()
+        .catch(() => 0)) > 0;
+
+    console.log(
+      `[m365-worker] [salvage-eval] Đánh giá điều kiện cứu hộ: needsEnvelopeFix=${needsEnvelopeFix}, hasUnclosedMarkers=${hasUnclosedMarkers}, fastPathActive=${responseState.fastPathActive}, hasCodeBlockOnPage=${hasCodeBlockOnPage}, textLen=${fullMarkdown.length}`,
     );
+
+    if (
+      needsEnvelopeFix ||
+      hasUnclosedMarkers ||
+      responseState.fastPathActive ||
+      hasCodeBlockOnPage
+    ) {
+      console.log(
+        "[m365-worker] [salvage-eval] -> Phát hiện response cần cứu hộ hoặc có Code Block trên trang. Kích hoạt tryExtractCodeViaCopyButton...",
+      );
+      const copiedCode = await tryExtractCodeViaCopyButton(page);
+      if (copiedCode) {
+        const copiedHasClose =
+          /<\/(?:web|m365)Response\s*>/i.test(copiedCode);
+        const currentLacksClose =
+          !/<\/(?:web|m365)Response\s*>/i.test(fullMarkdown);
+
+        if (
+          (currentLacksClose && copiedHasClose) ||
+          copiedCode.length > fullMarkdown.length
+        ) {
+          console.log(
+            `[m365-worker] [copy-salvage] ÁP DỤNG THAY THẾ: Chuỗi từ Copy Button (${copiedCode.length} chars) hoàn chỉnh hơn chuỗi cào DOM (${fullMarkdown.length} chars). Hoàn tất cứu hộ 100%!`,
+          );
+          if (
+            copiedCode.length > fullMarkdown.length &&
+            !options.shouldStop?.()
+          ) {
+            const extra = copiedCode.startsWith(fullMarkdown)
+              ? copiedCode.slice(fullMarkdown.length)
+              : copiedCode;
+            if (extra) finalDelta = extra;
+          }
+          fullMarkdown = copiedCode;
+        } else {
+          console.log(
+            `[m365-worker] [copy-salvage] Nội dung copy (${copiedCode.length} chars) không dài hơn hoặc không cải thiện envelope so với DOM (${fullMarkdown.length} chars). Giữ nguyên DOM text.`,
+          );
+        }
+      } else {
+        console.warn(
+          "[m365-worker] [copy-salvage] Không trích xuất được code qua nút Copy. Tiếp tục sử dụng kết quả cào DOM.",
+        );
+      }
+    } else {
+      console.log(
+        "[m365-worker] [salvage-eval] Phản hồi đã có cấu trúc hoàn chỉnh và không có Code Block cần cứu hộ.",
+      );
+    }
+
+    if (!fullMarkdown.trim()) {
+      throw new Error(
+        "[M365 Format Error] M365 Copilot không trả về bất kỳ nội dung phản hồi nào. Vui lòng kiểm tra kết nối mạng hoặc thử lại.",
+      );
+    }
+
+    if (finalDelta && !options.shouldStop?.()) {
+      options.onChunk?.(finalDelta);
+    }
+
+    console.log(
+      `[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=completed timedOut=${context.observation.timedOut}`,
+    );
+    return fullMarkdown;
   }
 
   /**
@@ -1612,103 +1727,48 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(responseState.attempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
     }
 
-    // Kết thúc lượt sinh: Flush toàn bộ các khối còn lại (bao gồm khối cuối cùng)
-    let fullMarkdown: string = "";
-    let finalDelta: string = "";
-    if (
-      responseState.fastPathActive ||
-      (responseState.fastPathBuffer.getText() &&
-        responseState.fastPathBuffer.getText().length > 0)
-    ) {
-      const res = responseState.fastPathBuffer.finish(
-        responseState.lastFastPathText ||
-          responseState.fastPathBuffer.getText(),
-      );
-      fullMarkdown =
-        res.markdown || responseState.fastPathBuffer.getText();
-      finalDelta = res.delta;
-    }
-    if (!fullMarkdown || !fullMarkdown.trim()) {
-      const res = responseState.markdownBuffer.finish(
-        responseState.lastBlocks,
-      );
-      if (res.markdown && res.markdown.trim()) {
-        fullMarkdown = res.markdown;
-        finalDelta = res.delta;
-      }
-    }
-    // Cứu hộ cấp cuối: Nếu vẫn rỗng, trích xuất từ bất kỳ nguồn text nào đã tích lũy trong lượt
-    if (!fullMarkdown || !fullMarkdown.trim()) {
-      fullMarkdown =
-        responseState.fastPathBuffer.getText() ||
-        responseState.lastFastPathText ||
-        responseState.lastBlocks.map(block => block.text).join("\n") ||
-        "";
-      if (fullMarkdown && !finalDelta) {
-        finalDelta = fullMarkdown;
-      }
-    }
-
-    // Cứu hộ DOM Virtualization bằng nút Copy Code:
-    // Đối với các phản hồi dài (>70 dòng), Microsoft Copilot sử dụng cơ chế DOM Virtualization,
-    // chỉ render một phần dòng và giấu phần còn lại trong spacer div. Nút copy-button kết nối
-    // trực tiếp với model dữ liệu trong bộ nhớ của editor nên luôn chứa 100% nội dung nguyên bản.
-    const needsEnvelopeFix = /<(?:web|m365)Response\b/i.test(fullMarkdown) && !/<\/(?:web|m365)Response\s*>/i.test(fullMarkdown);
-    const hasUnclosedMarkers = /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(fullMarkdown) &&
-      !(/(?:<\/custom_tool_call>|\*{3}\s*End Patch)/i.test(fullMarkdown));
-    const hasCodeBlockOnPage = await page.locator(
-      "button#copy-button, button#preview-toggle-button, button[aria-label='Copy code'], button[aria-label='Code']"
-    ).count().catch(() => 0) > 0;
-
-    console.log(`[m365-worker] [salvage-eval] Đánh giá điều kiện cứu hộ: needsEnvelopeFix=${needsEnvelopeFix}, hasUnclosedMarkers=${hasUnclosedMarkers}, fastPathActive=${responseState.fastPathActive}, hasCodeBlockOnPage=${hasCodeBlockOnPage}, textLen=${fullMarkdown.length}`);
-
-    if (
-      needsEnvelopeFix ||
-      hasUnclosedMarkers ||
-      responseState.fastPathActive ||
-      hasCodeBlockOnPage
-    ) {
-      console.log("[m365-worker] [salvage-eval] -> Phát hiện response cần cứu hộ hoặc có Code Block trên trang. Kích hoạt tryExtractCodeViaCopyButton...");
-      const copiedCode = await tryExtractCodeViaCopyButton(page);
-      if (copiedCode) {
-        const copiedHasClose = /<\/(?:web|m365)Response\s*>/i.test(copiedCode);
-        const currentLacksClose = !/<\/(?:web|m365)Response\s*>/i.test(fullMarkdown);
-
-        if ((currentLacksClose && copiedHasClose) || copiedCode.length > fullMarkdown.length) {
-          console.log(`[m365-worker] [copy-salvage] ÁP DỤNG THAY THẾ: Chuỗi từ Copy Button (${copiedCode.length} chars) hoàn chỉnh hơn chuỗi cào DOM (${fullMarkdown.length} chars). Hoàn tất cứu hộ 100%!`);
-          if (copiedCode.length > fullMarkdown.length && !options.shouldStop?.()) {
-            const extra = copiedCode.startsWith(fullMarkdown)
-              ? copiedCode.slice(fullMarkdown.length)
-              : copiedCode;
-            if (extra) {
-              finalDelta = extra;
-            }
-          }
-          fullMarkdown = copiedCode;
-        } else {
-          console.log(`[m365-worker] [copy-salvage] Nội dung copy (${copiedCode.length} chars) không dài hơn hoặc không cải thiện envelope so với DOM (${fullMarkdown.length} chars). Giữ nguyên DOM text.`);
-        }
-      } else {
-        console.warn("[m365-worker] [copy-salvage] Không trích xuất được code qua nút Copy. Tiếp tục sử dụng kết quả cào DOM.");
-      }
-    } else {
-      console.log("[m365-worker] [salvage-eval] Phản hồi đã có cấu trúc hoàn chỉnh và không có Code Block cần cứu hộ.");
-    }
-
-    // Đảm bảo có nội dung phản hồi hợp lệ trước khi hoàn tất lượt
-    if (!fullMarkdown || !fullMarkdown.trim()) {
-      throw new Error(
-        `[M365 Format Error] M365 Copilot không trả về bất kỳ nội dung phản hồi nào. Vui lòng kiểm tra kết nối mạng hoặc thử lại.`
-      );
-    }
-
-    if (finalDelta.length > 0 && !options.shouldStop?.()) {
-      options.onChunk?.(finalDelta);
-    }
+    const finalStatus =
+      responseState.lastStatus ||
+      ({
+        isGenerating: false,
+        blocks: responseState.lastBlocks,
+        isNew: responseState.lastBlocks.length > 0,
+        hasContent:
+          responseState.lastBlocks.length > 0 ||
+          responseState.lastFastPathText.length > 0,
+        detectedWebError: "",
+        fastPathRawText: responseState.lastFastPathText || null,
+      } satisfies M365ResponseDomStatus);
+    const observation: M365ResponseObservation = {
+      text: responseState.fastPathActive
+        ? responseState.lastFastPathText
+        : responseState.lastBlocks.map(block => block.text).join("\n"),
+      isGenerating: finalStatus.isGenerating,
+      isCompleted: !finalStatus.isGenerating && finalStatus.hasContent,
+      activityKey: [
+        finalStatus.isGenerating,
+        responseState.fastPathActive,
+        responseState.lastFastPathText.length,
+        responseState.lastBlocks
+          .map(block => `${block.key}:${block.text.length}`)
+          .join("|"),
+      ].join(":"),
+      status: finalStatus,
+      blocks: responseState.lastBlocks,
+      fastPathActive: responseState.fastPathActive,
+      timedOut,
+    };
+    const fullMarkdown = await this.extractCompletedResponse(
+      page,
+      {
+        baseline: beforeState,
+        observation,
+      },
+      options,
+    );
 
     conversationId =
       conversationId || (await this.resolveConversationId(page, options));
-    console.log(`[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=completed timedOut=${timedOut}`);
 
       return {
         rawResponse: fullMarkdown,
