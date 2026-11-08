@@ -77,30 +77,84 @@ export abstract class BaseWebBrowserWorker<
   ): Promise<TResult> {
     this.throwIfAborted(options.signal, "before start");
 
-    await this.navigate(page, options);
-    await this.prepareProvider(page, options);
+    await this.initializeTurnState(page, options);
+    try {
+      await this.navigate(page, options);
+      await this.prepareProvider(page, options);
 
-    const baseline = await this.captureResponseBaseline(page, options);
+      const baseline = await this.captureResponseBaseline(page, options);
 
-    await this.insertPrompt(page, options.prompt, options);
-    await this.submitPrompt(page, options);
+      await this.insertPrompt(page, options.prompt, options);
+      await this.submitPrompt(page, options);
 
-    const observation = await this.waitForCompletion(
-      page,
-      baseline,
-      options,
-    );
-    const rawResponse = await this.extractCompletedResponse(page, {
-      baseline,
-      observation,
-    }, options);
-    const conversationId = await this.resolveConversationId(page, options);
+      const observation = await this.waitForCompletion(
+        page,
+        baseline,
+        options,
+      );
+      const rawResponse = await this.extractCompletedResponse(
+        page,
+        {
+          baseline,
+          observation,
+        },
+        options,
+      );
+      const conversationId = await this.resolveConversationId(page, options);
 
-    return this.createResult({
-      rawResponse: rawResponse || observation.text,
-      ...(conversationId ? { conversationId } : {}),
-    });
+      return this.createResult({
+        rawResponse: rawResponse || observation.text,
+        ...(conversationId ? { conversationId } : {}),
+      });
+    } catch (error) {
+      await this.handleExecutionError(error, page, options);
+      throw error;
+    } finally {
+      await this.cleanupTurnState(page, options);
+    }
   }
+
+  protected async initializeTurnState(
+    _page: Page,
+    _options: TOptions,
+  ): Promise<void> {}
+
+  protected async cleanupTurnState(
+    _page: Page,
+    _options: TOptions,
+  ): Promise<void> {}
+
+  protected async handleExecutionError(
+    _error: unknown,
+    _page: Page,
+    _options: TOptions,
+  ): Promise<void> {}
+
+  protected shouldStopPolling(
+    _observation: TObservation,
+    _options: TOptions,
+  ): boolean {
+    return false;
+  }
+
+  protected shouldEmitObservationDelta(
+    _observation: TObservation,
+    _options: TOptions,
+  ): boolean {
+    return true;
+  }
+
+  protected shouldDelayFirstObservation(
+    _options: TOptions,
+  ): boolean {
+    return false;
+  }
+
+  protected async beforeObserveResponse(
+    _page: Page,
+    _baseline: TBaseline,
+    _options: TOptions,
+  ): Promise<void> {}
 
   protected abstract navigate(
     page: Page,
@@ -151,8 +205,14 @@ export abstract class BaseWebBrowserWorker<
     return result as TResult;
   }
 
-  // template method
-  private async waitForCompletion(
+  /**
+   * Shared polling lifecycle cho provider worker.
+   *
+   * `protected` cho phép các provider phức tạp như M365 chuyển đổi theo từng
+   * slice: provider vẫn có thể giữ orchestration đặc thù trong thời gian tạm
+   * thời nhưng dùng chung heartbeat, abort, hard deadline và idle deadline.
+   */
+  protected async waitForCompletion(
     page: Page,
     baseline: TBaseline,
     options: TOptions,
@@ -171,6 +231,7 @@ export abstract class BaseWebBrowserWorker<
     let lastHeartbeatAt = startedAt - heartbeatIntervalMs;
     let lastActivityKey: string | undefined;
     let lastRenderedText = "";
+    let isFirstObservation = true;
 
     while (true) {
       if (options.signal?.aborted) {
@@ -197,6 +258,15 @@ export abstract class BaseWebBrowserWorker<
         throw new BrowserHardTimeoutError(hardTimeoutMs);
       }
 
+      if (
+        isFirstObservation &&
+        this.shouldDelayFirstObservation(options)
+      ) {
+        await page.waitForTimeout(pollingIntervalMs);
+      }
+      isFirstObservation = false;
+
+      await this.beforeObserveResponse(page, baseline, options);
       const observation = await this.observeResponse(
         page,
         baseline,
@@ -216,10 +286,18 @@ export abstract class BaseWebBrowserWorker<
           ? observation.text.slice(lastRenderedText.length)
           : "";
         lastRenderedText = observation.text;
-        if (delta) options.onChunk?.(delta);
+        if (
+          delta &&
+          this.shouldEmitObservationDelta(observation, options)
+        ) {
+          options.onChunk?.(delta);
+        }
       }
 
       if (observation.isCompleted) return observation;
+      if (this.shouldStopPolling(observation, options)) {
+        return observation;
+      }
 
       if (now - lastActivityAt >= idleTimeoutMs) {
         await this.stopGeneration(page).catch(() => false);

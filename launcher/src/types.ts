@@ -132,6 +132,7 @@ export interface LauncherApi {
   showBrowser(): Promise<BrowserState>;
   hideBrowser(): Promise<BrowserState>;
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
+  openBrowserDevTools(): Promise<boolean>;
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string): Promise<BrowserState>;

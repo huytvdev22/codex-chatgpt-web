@@ -114,8 +114,8 @@ export class M365CopilotAdapter extends WebProviderAdapter {
               "[m365-adapter] Không có trình duyệt khả dụng để thực thi lượt.",
             );
           }
-          return worker.executeTurn(prompt, {
-            page,
+          return worker.executeTurn(page, {
+            prompt,
             // Quarantine: browser vẫn thu thập stream nhưng adapter không emit trước validation.
             onChunk: () => {},
             signal: incoming.abortSignal,
