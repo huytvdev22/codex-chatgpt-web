@@ -706,6 +706,45 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     return fullMarkdown;
   }
 
+  private createResponseObservation(
+    responseState: M365ResponseRuntimeState,
+    timedOut: boolean,
+  ): M365ResponseObservation {
+    const status =
+      responseState.lastStatus ||
+      ({
+        isGenerating: false,
+        blocks: responseState.lastBlocks,
+        isNew: responseState.lastBlocks.length > 0,
+        hasContent:
+          responseState.lastBlocks.length > 0 ||
+          responseState.lastFastPathText.length > 0,
+        detectedWebError: "",
+        fastPathRawText: responseState.lastFastPathText || null,
+      } satisfies M365ResponseDomStatus);
+    const text = responseState.fastPathActive
+      ? responseState.lastFastPathText
+      : responseState.lastBlocks.map(block => block.text).join("\n");
+
+    return {
+      text,
+      isGenerating: status.isGenerating,
+      isCompleted: !status.isGenerating && status.hasContent,
+      activityKey: [
+        status.isGenerating,
+        responseState.fastPathActive,
+        responseState.lastFastPathText.length,
+        responseState.lastBlocks
+          .map(block => `${block.key}:${block.text.length}`)
+          .join("|"),
+      ].join(":"),
+      status,
+      blocks: responseState.lastBlocks,
+      fastPathActive: responseState.fastPathActive,
+      timedOut,
+    };
+  }
+
   /**
    * M365 có thể giữ nhiều editor/control cho responsive layout. Chỉ thao tác
    * trên phần tử đang hiển thị để không đọc nhầm editor ẩn đang rỗng hoặc click
@@ -1727,37 +1766,10 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(responseState.attempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
     }
 
-    const finalStatus =
-      responseState.lastStatus ||
-      ({
-        isGenerating: false,
-        blocks: responseState.lastBlocks,
-        isNew: responseState.lastBlocks.length > 0,
-        hasContent:
-          responseState.lastBlocks.length > 0 ||
-          responseState.lastFastPathText.length > 0,
-        detectedWebError: "",
-        fastPathRawText: responseState.lastFastPathText || null,
-      } satisfies M365ResponseDomStatus);
-    const observation: M365ResponseObservation = {
-      text: responseState.fastPathActive
-        ? responseState.lastFastPathText
-        : responseState.lastBlocks.map(block => block.text).join("\n"),
-      isGenerating: finalStatus.isGenerating,
-      isCompleted: !finalStatus.isGenerating && finalStatus.hasContent,
-      activityKey: [
-        finalStatus.isGenerating,
-        responseState.fastPathActive,
-        responseState.lastFastPathText.length,
-        responseState.lastBlocks
-          .map(block => `${block.key}:${block.text.length}`)
-          .join("|"),
-      ].join(":"),
-      status: finalStatus,
-      blocks: responseState.lastBlocks,
-      fastPathActive: responseState.fastPathActive,
+    const observation = this.createResponseObservation(
+      responseState,
       timedOut,
-    };
+    );
     const fullMarkdown = await this.extractCompletedResponse(
       page,
       {
