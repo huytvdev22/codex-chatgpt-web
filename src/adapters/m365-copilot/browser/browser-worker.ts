@@ -1376,31 +1376,11 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     }
   }
 
-  public async executeTurn(
+  protected async waitForCompletion(
     page: Page,
+    beforeState: M365ResponseBaseline,
     options: M365BrowserRunOptions,
-  ): Promise<M365TurnResult> {
-    if (!options.conversationKey) {
-      throw new Error("M365 multi-surface requires a stable conversation key");
-    }
-    const promptText = options.prompt;
-    let conversationId: string | undefined;
-
-    try {
-    await this.navigate(page, options);
-    conversationId = this.retainedConversationIds.get(page);
-    await this.prepareProvider(page, options);
-    const beforeState = await this.captureResponseBaseline(page, options);
-    await this.initializeTurnState(page, options);
-
-    await this.insertPrompt(
-      page,
-      promptText,
-      options,
-    );
-    await this.submitPrompt(page, options);
-
-    // 5. Polling theo dõi luồng sinh phản hồi của Copilot và stream về client theo cơ chế Semantic Block Buffering
+  ): Promise<M365ResponseObservation> {
     const responseState = this.getResponseRuntimeState(page);
     const stableCompletionMs = 500;
     const maxAttempts = 2400; // 2400 * 250ms = 600 giây (10 phút) tối đa
@@ -1805,35 +1785,9 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(responseState.attempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
     }
 
-    const observation = this.createResponseObservation(
+    return this.createResponseObservation(
       responseState,
       timedOut,
     );
-    const fullMarkdown = await this.extractCompletedResponse(
-      page,
-      {
-        baseline: beforeState,
-        observation,
-      },
-      options,
-    );
-
-    conversationId =
-      conversationId || (await this.resolveConversationId(page, options));
-
-      return {
-        rawResponse: fullMarkdown,
-        conversationId,
-      };
-    } catch (err) {
-      if (options.signal?.aborted) {
-        console.log(`[m365-worker] [aborted] turn aborted by client`);
-      } else {
-        console.error(`[m365-worker] [error]`, err);
-      }
-      throw err;
-    } finally {
-      await this.cleanupTurnState(page, options);
-    }
   }
 }

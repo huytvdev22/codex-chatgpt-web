@@ -98,32 +98,28 @@ describe("M365 browser worker migration contract", () => {
     expect(source).toContain(
       "protected async extractCompletedResponse(",
     );
-    expect(source).toContain(
-      "const fullMarkdown = await this.extractCompletedResponse(",
-    );
-    expect(source).toContain("public async executeTurn(");
+    expect(source).toContain("protected async waitForCompletion(");
+    expect(source).not.toContain("public async executeTurn(");
   });
 
-  test("compatibility polling dùng turn runtime state và lifecycle cleanup hook", async () => {
+  test("M365 polling override dùng turn runtime state còn orchestration thuộc shared lifecycle", async () => {
     const source = await readWorkerSource();
-    const executeTurnStart = source.indexOf("public async executeTurn(");
-    const executeTurnSource = source.slice(executeTurnStart);
+    const pollingStart = source.indexOf("protected async waitForCompletion(");
+    const pollingSource = source.slice(pollingStart);
 
-    expect(executeTurnSource).toContain(
+    expect(pollingSource).toContain(
       "const responseState = this.getResponseRuntimeState(page);",
     );
-    expect(executeTurnSource).not.toContain(
+    expect(pollingSource).not.toContain(
       "const markdownBuffer = new M365MarkdownBuffer();",
     );
-    expect(executeTurnSource).not.toContain(
+    expect(pollingSource).not.toContain(
       "const fastPathBuffer = new FastPathStreamBuffer();",
     );
-    expect(executeTurnSource).toContain("} finally {");
-    expect(executeTurnSource).toContain(
-      "await this.cleanupTurnState(page, options);",
-    );
+    expect(source).not.toContain("public async executeTurn(");
     expect(source).toContain("protected async initializeTurnState(");
     expect(source).toContain("protected async cleanupTurnState(");
+    expect(source).toContain("protected async handleExecutionError(");
     expect(source).toContain(
       "this.responseStates.set(page, this.createResponseRuntimeState());",
     );
