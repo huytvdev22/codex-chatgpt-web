@@ -127,27 +127,27 @@ level được lấy từ registry. Không nên ghi cứng model route ở modul
 ## Cài đặt
 
 Tải bản phù hợp từ trang
-[GitHub Releases](https://github.com/miuuyy/codex-chatgpt-web/releases/latest).
+[GitHub Releases](https://github.com/huytvdev22/codex-chatgpt-web/releases/latest).
 
 Các định dạng package hiện được cấu hình:
 
 | Nền tảng | Kiến trúc | Định dạng | Tải phiên bản 6.9.5 |
 | --- | --- | --- | --- |
-| Windows | x64 | NSIS `.exe` | [codex-web-gpt-6.9.5-win-x64.exe](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-win-x64.exe) |
-| macOS | arm64 | `.dmg` | [codex-web-gpt-6.9.5-mac-arm64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-mac-arm64.dmg) |
-| macOS | x64 | `.dmg` | [codex-web-gpt-6.9.5-mac-x64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-mac-x64.dmg) |
-| Linux | x64 | `.AppImage` | [codex-web-gpt-6.9.5-linux-x64.AppImage](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-linux-x64.AppImage) |
+| Windows | x64 | NSIS `.exe` | https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-win-x64.exe |
+| macOS | arm64 | `.dmg` | https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-mac-arm64.dmg |
+| macOS | x64 | `.dmg` | https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-mac-x64.dmg |
+| Linux | x64 | `.AppImage` | https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v6.9.6/codex-web-gpt-6.9.6-linux-x64.AppImage |
 
 ### macOS và Linux
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/huytvdev22/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 ### Windows PowerShell
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/huytvdev22/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 Launcher package chứa Electron và runtime cần thiết. Người dùng bản đóng gói không cần cài riêng
@@ -324,7 +324,7 @@ xác nhận.
 ### Khởi động Launcher
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git
+git clone https://github.com/huytvdev22/codex-chatgpt-web.git
 cd codex-chatgpt-web
 bun install --frozen-lockfile
 bun run app
