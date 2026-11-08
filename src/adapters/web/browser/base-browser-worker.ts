@@ -150,6 +150,12 @@ export abstract class BaseWebBrowserWorker<
     return false;
   }
 
+  protected async beforeObserveResponse(
+    _page: Page,
+    _baseline: TBaseline,
+    _options: TOptions,
+  ): Promise<void> {}
+
   protected abstract navigate(
     page: Page,
     options: TOptions,
@@ -260,6 +266,7 @@ export abstract class BaseWebBrowserWorker<
       }
       isFirstObservation = false;
 
+      await this.beforeObserveResponse(page, baseline, options);
       const observation = await this.observeResponse(
         page,
         baseline,
