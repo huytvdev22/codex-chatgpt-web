@@ -16,6 +16,7 @@ interface TestBaseline {
 
 interface TestOptions extends BaseBrowserRunOptions {
   observations: BrowserObservation[];
+  stopAfterObservation?: boolean;
 }
 
 class TestBrowserWorker extends BaseWebBrowserWorker<
@@ -34,6 +35,18 @@ class TestBrowserWorker extends BaseWebBrowserWorker<
 
   protected async cleanupTurnState(): Promise<void> {
     this.calls.push("cleanupTurnState");
+  }
+
+  protected shouldStopPolling(
+    observation: BrowserObservation,
+    options: TestOptions,
+  ): boolean {
+    this.calls.push("shouldStopPolling");
+    return Boolean(
+      options.stopAfterObservation &&
+        !observation.isGenerating &&
+        observation.text.length > 0,
+    );
   }
 
   protected async navigate(): Promise<void> {
@@ -146,11 +159,40 @@ describe("BaseWebBrowserWorker", () => {
       "insertPrompt:Xin chào",
       "submitPrompt",
       "observeResponse",
+      "shouldStopPolling",
       "observeResponse",
       "extractCompletedResponse",
       "resolveConversationId",
       "cleanupTurnState",
     ]);
+  });
+
+  test("provider có thể dừng shared polling an toàn qua shouldStopPolling", async () => {
+    const worker = new TestBrowserWorker();
+
+    const result = await worker.executeTurn(createFakePage(), {
+      prompt: "Early stop",
+      stopAfterObservation: true,
+      pollingIntervalMs: 1,
+      observations: [
+        {
+          text: "Kết quả đủ dùng",
+          isGenerating: false,
+          isCompleted: false,
+          activityKey: "response-ready",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      rawResponse: "Kết quả đủ dùng",
+      conversationId: "conversation-1",
+    });
+    expect(worker.calls).toContain("shouldStopPolling");
+    expect(
+      worker.calls.filter(call => call === "observeResponse"),
+    ).toHaveLength(1);
+    expect(worker.calls.at(-1)).toBe("cleanupTurnState");
   });
 
   test("luôn cleanup turn state khi lifecycle thất bại", async () => {
