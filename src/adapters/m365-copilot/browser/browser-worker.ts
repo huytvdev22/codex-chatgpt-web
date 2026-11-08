@@ -1408,16 +1408,6 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
       }
 
-      // Cấm ngắt sớm khi M365 vẫn đang GENERATING
-      if (
-        options.shouldStop?.() &&
-        responseState.lastStatus &&
-        !responseState.lastStatus.isGenerating
-      ) {
-        console.log(`[m365-worker] [early-stop-safe] options.shouldStop triggered và M365 đã thoát trạng thái generating.`);
-        break;
-      }
-
       await page.waitForTimeout(pollIntervalMs);
       responseState.attempts++;
 
