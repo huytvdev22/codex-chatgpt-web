@@ -28,6 +28,14 @@ class TestBrowserWorker extends BaseWebBrowserWorker<
   stopCalls = 0;
   private observationIndex = 0;
 
+  protected async initializeTurnState(): Promise<void> {
+    this.calls.push("initializeTurnState");
+  }
+
+  protected async cleanupTurnState(): Promise<void> {
+    this.calls.push("cleanupTurnState");
+  }
+
   protected async navigate(): Promise<void> {
     this.calls.push("navigate");
   }
@@ -131,6 +139,7 @@ describe("BaseWebBrowserWorker", () => {
     });
     expect(chunks).toEqual(["Xin", " chào"]);
     expect(worker.calls).toEqual([
+      "initializeTurnState",
       "navigate",
       "prepareProvider",
       "captureResponseBaseline",
@@ -140,6 +149,35 @@ describe("BaseWebBrowserWorker", () => {
       "observeResponse",
       "extractCompletedResponse",
       "resolveConversationId",
+      "cleanupTurnState",
+    ]);
+  });
+
+  test("luôn cleanup turn state khi lifecycle thất bại", async () => {
+    class FailingBrowserWorker extends TestBrowserWorker {
+      protected async submitPrompt(): Promise<void> {
+        this.calls.push("submitPrompt");
+        throw new Error("submit failed");
+      }
+    }
+
+    const worker = new FailingBrowserWorker();
+
+    await expect(
+      worker.executeTurn(createFakePage(), {
+        prompt: "Cleanup",
+        observations: [],
+      }),
+    ).rejects.toThrow("submit failed");
+
+    expect(worker.calls).toEqual([
+      "initializeTurnState",
+      "navigate",
+      "prepareProvider",
+      "captureResponseBaseline",
+      "insertPrompt:Cleanup",
+      "submitPrompt",
+      "cleanupTurnState",
     ]);
   });
 
