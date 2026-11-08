@@ -163,4 +163,22 @@ describe("M365 browser worker migration contract", () => {
       'throw new Error("M365 multi-surface requires a stable conversation key");',
     );
   });
+
+  test("M365 semantic buffers giữ ownership streaming delta khi chuyển sang shared lifecycle", async () => {
+    const source = await readWorkerSource();
+
+    expect(source).toContain(
+      "protected shouldEmitObservationDelta(",
+    );
+    expect(source).toContain(
+      "M365MarkdownBuffer và FastPathStreamBuffer đã phát semantic delta",
+    );
+    expect(source).toContain("return false;");
+    expect(source).toContain(
+      "const delta = responseState.fastPathBuffer.observe(",
+    );
+    expect(source).toContain(
+      "const delta = responseState.markdownBuffer.observe(",
+    );
+  });
 });
