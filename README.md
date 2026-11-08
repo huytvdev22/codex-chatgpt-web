@@ -7,6 +7,8 @@
 > **Desktop Launcher:** Electron `42`, React `19`, Vite `6`
 >
 > **Nền tảng đóng gói:** Windows x64, macOS 13+ và Linux x64
+>
+> **Phát triển từ mã nguồn:** requires Bun 1.4.0.
 
 Codex M365 Copilot là một bridge cục bộ giúp Codex Desktop hoặc Codex CLI sử dụng các mô hình AI
 thông qua giao diện Web. Dự án cung cấp một Responses API trên loopback, định tuyến request tới
@@ -129,11 +131,12 @@ Tải bản phù hợp từ trang
 
 Các định dạng package hiện được cấu hình:
 
-| Nền tảng | Kiến trúc | Định dạng |
-| --- | --- | --- |
-| Windows | x64 | NSIS `.exe` |
-| macOS | arm64, x64 | `.dmg`, `.zip` |
-| Linux | x64 | `.AppImage` |
+| Nền tảng | Kiến trúc | Định dạng | Tải phiên bản 6.9.5 |
+| --- | --- | --- | --- |
+| Windows | x64 | NSIS `.exe` | [codex-web-gpt-6.9.5-win-x64.exe](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-win-x64.exe) |
+| macOS | arm64 | `.dmg` | [codex-web-gpt-6.9.5-mac-arm64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-mac-arm64.dmg) |
+| macOS | x64 | `.dmg` | [codex-web-gpt-6.9.5-mac-x64.dmg](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-mac-x64.dmg) |
+| Linux | x64 | `.AppImage` | [codex-web-gpt-6.9.5-linux-x64.AppImage](https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.9.5/codex-web-gpt-6.9.5-linux-x64.AppImage) |
 
 ### macOS và Linux
 
