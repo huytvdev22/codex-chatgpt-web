@@ -20,13 +20,12 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
 
     expect(cycles.length).toBe(0);
     expect(Object.keys(graph).sort()).toEqual([
-      "browser/attachments.ts",
-      "browser/browser-worker.ts",
-      "browser/capability-picker.ts",
-      "browser/conversation-key.ts",
-      "browser/conversation-url.ts",
-      "browser/index.ts",
+      "attachments.ts",
+      "capability-picker.ts",
+      "conversation-key.ts",
+      "conversation-url.ts",
       "index.ts",
+      "m365-browser-worker.ts",
     ]);
   });
 

@@ -3,7 +3,7 @@ import path from "node:path";
 
 const workerPath = path.resolve(
   process.cwd(),
-  "src/adapters/m365-copilot/browser/browser-worker.ts",
+  "src/adapters/m365-copilot/m365-browser-worker.ts",
 );
 
 async function readWorkerSource(): Promise<string> {
@@ -130,7 +130,9 @@ describe("M365 browser worker migration contract", () => {
     const source = await readWorkerSource();
 
     expect(source).toContain("interface M365ResponseRuntimeState {");
-    expect(source).toContain("markdownBuffer: M365MarkdownBuffer;");
+    expect(source).toContain(
+      "markdownBuffer: InstanceType<typeof M365MarkdownBuffer>;",
+    );
     expect(source).toContain("fastPathBuffer: FastPathStreamBuffer;");
     expect(source).toContain("lastFastPathText: string;");
     expect(source).toContain("lastBlocks: M365MarkdownBlock[];");

@@ -1,8 +1,8 @@
 
 import type { Page } from "playwright-core";
-import type { M365CapabilityMode } from "../../../models/model-registry";
+import type { M365CapabilityMode } from "../../models/model-registry";
 export type { M365CapabilityMode };
-export { resolveM365CapabilityMode } from "../../../models/model-registry";
+export { resolveM365CapabilityMode } from "../../models/model-registry";
 
 export interface M365CapabilitySpec {
   readonly mode: M365CapabilityMode;

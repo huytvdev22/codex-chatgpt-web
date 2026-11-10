@@ -1,7 +1,8 @@
 import type { ProviderAdapter } from "../base";
 import { promptCompiler } from "../web/prompt/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
-import { M365BrowserWorker, m365ConversationKey } from "./browser";
+import { M365BrowserWorker } from "./m365-browser-worker";
+import { m365ConversationKey } from "./conversation-key";
 import { type ToolValidationFailure } from "../web/tools";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
 
@@ -11,7 +12,31 @@ export * from "../web/prompt/index";
 export * from "../web/protocol";
 export * from "../web/tools";
 export * from "../web/harness";
-export * from "./browser";
+export {
+  M365BrowserWorker,
+  type M365TurnOptions,
+  type M365TurnResult,
+} from "./m365-browser-worker";
+export {
+  M365CapabilityPicker,
+  type M365CapabilityMode,
+  ensureM365CapabilityMode,
+  resolveM365CapabilityMode,
+} from "./capability-picker";
+export {
+  attachFilesViaPlusMenu,
+  m365ImageFilePayloads,
+  PLUS_MENU_SELECTORS,
+  type M365ImagePayload,
+  type AttachFilesOptions,
+} from "./attachments";
+export { m365ConversationKey } from "./conversation-key";
+export {
+  M365_CHAT_URL,
+  M365_CONVERSATION_ORIGIN,
+  parseM365ConversationId,
+  waitForM365ConversationId,
+} from "./conversation-url";
 
 function resolveM365MaxFormatRetries(): number {
   const configuredRetries = Number.parseInt(

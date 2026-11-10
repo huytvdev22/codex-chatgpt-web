@@ -3,17 +3,17 @@ import {
   BaseWebBrowserWorker,
   type BaseBrowserRunOptions,
   type BrowserCompletionContext,
-} from "../../web/browser";
+} from "../web/browser";
 import {
   m365HtmlToMarkdown,
   M365MarkdownBuffer,
   type M365MarkdownBlock,
   FastPathStreamBuffer,
-} from "../../web/protocol";
+} from "../web/protocol";
 import { ensureM365CapabilityMode } from "./capability-picker";
-import { resolveM365CapabilityMode } from "../../../models/model-registry";
+import { resolveM365CapabilityMode } from "../../models/model-registry";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
-import type { NormalizedImageAttachment } from "../../web/normalization/canonical-types";
+import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import {
   M365_CHAT_URL,
   parseM365ConversationId,
@@ -84,7 +84,7 @@ interface M365ResponseObservation {
 }
 
 interface M365ResponseRuntimeState {
-  markdownBuffer: M365MarkdownBuffer;
+  markdownBuffer: InstanceType<typeof M365MarkdownBuffer>;
   fastPathBuffer: FastPathStreamBuffer;
   fastPathActive: boolean;
   lastFastPathText: string;
@@ -1297,6 +1297,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         "Không tìm thấy ô nhập liệu M365 Copilot đang hiển thị để gửi prompt!",
       );
     }
+    const activeEditor = editorLocator;
 
     if (options.images && options.images.length > 0) {
       const sendWaitDeadline = Date.now() + 30_000;
@@ -1328,7 +1329,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         CHAT_SELECTORS.stopButton,
       );
       const editorText = (
-        await editorLocator.textContent().catch(() => "")
+        (await activeEditor.textContent().catch(() => "")) ?? ""
       ).trim();
       promptSubmitted = Boolean(stopLocator) || editorText.length === 0;
 
@@ -1368,7 +1369,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
 
     if (!promptSubmitted) {
       const remainingText = (
-        await editorLocator.textContent().catch(() => "")
+        (await activeEditor.textContent().catch(() => "")) ?? ""
       ).trim();
       throw new Error(
         `[m365-worker] Không thể xác nhận prompt đã được gửi sau 10 lần thử (editorLength=${remainingText.length}).`,

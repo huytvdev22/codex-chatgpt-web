@@ -1,5 +1,5 @@
-import type { CodexParsedRequest } from "../../../types";
-import { buildWebConversationKey } from "../../web/conversation/conversation-key";
+import type { CodexParsedRequest } from "../../types";
+import { buildWebConversationKey } from "../web/conversation/conversation-key";
 
 /**
  * Tạo khóa định danh ổn định cho một hội thoại M365 mà không làm lộ thread id

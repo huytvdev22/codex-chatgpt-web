@@ -1,5 +1,5 @@
 import type { Page } from "playwright-core";
-import type { NormalizedImageAttachment } from "../../web/normalization/canonical-types";
+import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 
 export interface M365ImagePayload {
   name: string;

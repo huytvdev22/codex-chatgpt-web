@@ -398,19 +398,19 @@ M365CopilotAdapter (kế thừa WebProviderAdapter)
           v
 WebTurnEngine.runTurn()
           |
-          +-- m365ConversationKey() (src/adapters/m365-copilot/browser/conversation-key.ts)
+          +-- m365ConversationKey() (src/adapters/m365-copilot/conversation-key.ts)
           +-- enableEarlyExitOnFinalAnswer (src/adapters/web/execution/turn-guard.ts)
           +-- CodexRawPayload + CodexPayloadNormalizer (src/adapters/web/normalization/)
           +-- promptCompiler.compile() (src/adapters/web/prompt/)
           +-- extractAttachments (attempt === 0)
           |
           v
-executeM365Turn() (src/adapters/m365-copilot/browser/browser-worker.ts)
+executeM365Turn() (src/adapters/m365-copilot/m365-browser-worker.ts)
           |
           +-- acquire/end M365 browser surface theo từng attempt (manageLauncherLeaseInEngine: false)
-          +-- xác thực URL hội thoại (browser/conversation-url.ts)
-          +-- chọn capability mode & model (browser/capability-picker.ts)
-          +-- đính kèm ảnh vào composer (browser/attachments.ts)
+          +-- xác thực URL hội thoại (conversation-url.ts)
+          +-- chọn capability mode & model (capability-picker.ts)
+          +-- đính kèm ảnh vào composer (attachments.ts)
           +-- điền composer, gửi prompt và đọc response DOM (FastPathStreamBuffer / SemanticMarkdownBuffer)
           |
           v
@@ -948,7 +948,7 @@ HTTP `503`.
 | Shared Web strict response protocol | `src/adapters/web/protocol/` |
 | Shared Web tool mapping | `src/adapters/web/tools/` |
 | Shared Web conversation & turn guard | `src/adapters/web/conversation/`, `src/adapters/web/execution/` |
-| M365 browser drivers (7 core files) | `src/adapters/m365-copilot/index.ts`, `src/adapters/m365-copilot/browser/` |
+| M365 provider modules (6 core files) | `src/adapters/m365-copilot/` |
 | Adapter events sang Responses API | `src/bridge.ts` |
 | Browser ownership | `src/launcher-browser-host.ts`, `launcher/electron/control-server.cjs` |
 | Browser surfaces | `launcher/electron/*-surface-manager.cjs` |
@@ -1104,13 +1104,13 @@ Adapter M365 đã được tinh gọn về đúng **7 file đặc thù của pro
 
 - `index.ts`: `M365CopilotAdapter` kế thừa `WebProviderAdapter` và re-export các facade tương thích ngược từ `src/adapters/web/`.
 - `browser/index.ts`: điểm xuất các trình điều khiển trình duyệt M365.
-- `browser/browser-worker.ts`: điều khiển trang M365 Copilot (`executeM365Turn`), gửi heartbeat, trích xuất DOM Scriptor/Semantic và quản lý lease theo từng attempt.
-- `browser/capability-picker.ts`: chọn mode/model và mức suy luận trên UI M365.
-- `browser/attachments.ts`: đính kèm hình ảnh vào khung soạn thảo M365.
-- `browser/conversation-url.ts`: nhận diện và kiểm tra URL hội thoại M365 hợp lệ.
-- `browser/conversation-key.ts`: hàm tạo khóa hội thoại M365 (`m365ConversationKey`).
+- `m365-browser-worker.ts`: điều khiển trang M365 Copilot (`executeM365Turn`), gửi heartbeat, trích xuất DOM Scriptor/Semantic và quản lý lease theo từng attempt.
+- `capability-picker.ts`: chọn mode/model và mức suy luận trên UI M365.
+- `attachments.ts`: đính kèm hình ảnh vào khung soạn thảo M365.
+- `conversation-url.ts`: nhận diện và kiểm tra URL hội thoại M365 hợp lệ.
+- `conversation-key.ts`: hàm tạo khóa hội thoại M365 (`m365ConversationKey`).
 
-> **Lưu ý kiến trúc về vòng đời Lease của M365:** Khác với 4 provider còn lại quản lý lease theo phạm vi toàn lượt trong `runtime-lifecycle.ts`, M365 hiện cấu hình `manageLauncherLeaseInEngine: false` để `executeM365Turn` trong `browser/browser-worker.ts` trực tiếp quản lý lease theo từng attempt kèm cơ chế khôi phục tab.
+> **Lưu ý kiến trúc về vòng đời Lease của M365:** Khác với 4 provider còn lại quản lý lease theo phạm vi toàn lượt trong `runtime-lifecycle.ts`, M365 hiện cấu hình `manageLauncherLeaseInEngine: false` để `executeM365Turn` trong `m365-browser-worker.ts` trực tiếp quản lý lease theo từng attempt kèm cơ chế khôi phục tab.
 
 Architectural gate:
 

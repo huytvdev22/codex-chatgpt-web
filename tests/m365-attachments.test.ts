@@ -5,7 +5,7 @@ import {
   m365ImageFilePayloads,
   attachFilesViaPlusMenu,
   PLUS_MENU_SELECTORS,
-} from "../src/adapters/m365-copilot/browser/attachments";
+} from "../src/adapters/m365-copilot/attachments";
 import { promptCompiler } from "../src/adapters/web/prompt/compiler";
 import { M365_IMAGE_ATTACHMENT_HINT } from "../src/adapters/web/prompt/templates";
 import type { NormalizedImageAttachment } from "../src/adapters/web/normalization/canonical-types";

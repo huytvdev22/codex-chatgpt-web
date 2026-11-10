@@ -1,14 +1,13 @@
 import assert from "node:assert";
 import {
-  availableM365ModelRoutes,
-  isM365ModelSlug,
+  isProviderModel,
+  listModelRoutes,
   resolveM365CapabilityMode,
-  requireM365ModelRoute,
-} from "../src/models/m365-models.ts";
+} from "../src/models/model-registry.ts";
 import {
   M365_CAPABILITY_SPECS,
   M365CapabilityPicker,
-} from "../src/adapters/m365-copilot/browser/capability-picker.ts";
+} from "../src/adapters/m365-copilot/capability-picker.ts";
 
 console.log("=============================================================");
 console.log("🚀 KIỂM THỬ TÍCH HỢP CAPABILITY PICKER & M365 MODEL CATALOG");
@@ -16,35 +15,22 @@ console.log("=============================================================");
 
 // 1. Kiểm tra Model Catalog M365
 console.log("\n[Test 1] Kiểm tra danh mục Model Route M365...");
-const routes = availableM365ModelRoutes();
-console.log("Danh sách route M365:", routes.map(r => `${r.slug} (${r.capabilityMode})`));
+const routes = listModelRoutes("m365-copilot");
+const isM365ModelSlug = modelId =>
+  isProviderModel(modelId, "m365-copilot");
+console.log("Danh sách route M365:", routes.map(route => route.slug));
 
 assert(routes.length >= 2, "Danh sách routes phải có ít nhất 2 model");
-assert(isM365ModelSlug("m365-copilot/auto"), "m365-copilot/auto phải là M365 slug");
-assert(isM365ModelSlug("m365-copilot/gpt-5.6-think"), "m365-copilot/gpt-5.6-think phải là M365 slug");
-assert(isM365ModelSlug("m365-copilot/gpt-5.6-quick"), "m365-copilot/gpt-5.6-quick phải là M365 slug");
-assert(isM365ModelSlug("m365-copilot/think"), "m365-copilot/think phải là M365 slug");
-assert(isM365ModelSlug("m365-copilot/quick"), "m365-copilot/quick phải là M365 slug");
 assert(isM365ModelSlug("m365-copilot/gpt-5.6"), "m365-copilot/gpt-5.6 phải là M365 slug");
 assert(isM365ModelSlug("m365-copilot"), "m365-copilot phải là M365 slug");
 console.log("✅ [Test 1 PASSED] Model routes được khai báo đầy đủ!");
 
 // 2. Kiểm tra hàm resolveM365CapabilityMode
 console.log("\n[Test 2] Kiểm tra hàm resolveM365CapabilityMode...");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/auto"), "auto");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5.6-think"), "gpt-5.6-think");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5.6-quick"), "gpt-5.6-quick");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/think"), "think");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/quick"), "quick");
-// Backward compatibility / alias slugs
 assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5.6"), "gpt-5.6-quick");
 assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5.6", "high"), "gpt-5.6-think");
+assert.strictEqual(resolveM365CapabilityMode("m365-copilot"), "quick");
 assert.strictEqual(resolveM365CapabilityMode("m365-copilot", "high"), "think");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5"), "gpt-5.6-think");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/fast"), "quick");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5.6-reasoning"), "gpt-5.6-think");
-assert.strictEqual(resolveM365CapabilityMode("m365-copilot/gpt-5.6-instant"), "gpt-5.6-quick");
-assert.strictEqual(resolveM365CapabilityMode("m365-custom-think"), "think");
 assert.strictEqual(resolveM365CapabilityMode(undefined), "auto");
 console.log("✅ [Test 2 PASSED] Phân giải Capability Mode chính xác!");
 

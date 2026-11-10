@@ -3,7 +3,7 @@ import type { CodexParsedRequest } from "../src/types";
 import {
   m365ConversationKey,
   parseM365ConversationId,
-} from "../src/adapters/m365-copilot/browser";
+} from "../src/adapters/m365-copilot";
 
 const CONVERSATION_ID = "8cbbbab7-10a3-4f92-950e-f0a1b18b8f89";
 
