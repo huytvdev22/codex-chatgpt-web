@@ -42,33 +42,9 @@ export interface ModelProviderDefinition {
 }
 
 export type ModelProviderId =
-  | "chatgpt-web"
   | "m365-copilot";
 
-const CHATGPT_WEB_ROUTE: ModelRouteDefinition = {
-  slug: "chatgpt-web",
-  displayName: "ChatGPT (Web)",
-  description: "ChatGPT Web với chế độ thường hoặc suy nghĩ.",
-  backendModel: "chatgpt-web",
-  contextWindow: 100_000,
-  autoCompactTokenLimit: 90_000,
-  effectiveContextWindowPercent: 90,
-  composerCharLimit: 500_000,
-  inputModalities: ["text", "image"],
-  defaultReasoningLevel: "low",
-  reasoningLevels: [
-    { effort: "low", description: "Normal", mode: "normal" },
-    { effort: "high", description: "Thinking", mode: "thinking" },
-  ],
-};
-
 export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefinition>> = {
-  "chatgpt-web": {
-    id: "chatgpt-web",
-    exactSlugs: ["chatgpt-web"],
-    slugPrefixes: ["chatgpt-web/"],
-    routes: [CHATGPT_WEB_ROUTE],
-  },
   "m365-copilot": {
     id: "m365-copilot",
     exactSlugs: ["m365-copilot"],

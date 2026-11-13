@@ -14,11 +14,8 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-export const CHATGPT_WEB_MODEL_PREFIX = "chatgpt-web/";
 export const M365_COPILOT_MODEL_PREFIX = "m365-copilot/";
 
-const isChatGptWebModelSlug = (slug: string): boolean =>
-  isProviderModel(slug, "chatgpt-web");
 const isM365ModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "m365-copilot");
 
@@ -143,7 +140,7 @@ export function getFallbackNativeCatalog(): { models: JsonObject[] } {
       if (Array.isArray(raw.models)) {
         for (const m of raw.models) {
           const s = typeof m?.slug === "string" ? m.slug : "";
-          if (s && !s.startsWith(CHATGPT_WEB_MODEL_PREFIX) && !s.startsWith(M365_COPILOT_MODEL_PREFIX)) {
+          if (s && !s.startsWith(M365_COPILOT_MODEL_PREFIX)) {
             modelsMap.set(s, m);
           }
         }
@@ -224,11 +221,7 @@ export function ensureManagedModelCatalogFile(
         const hasCurrentM365Surface =
           JSON.stringify(visibleM365Slugs) === JSON.stringify(expectedVisibleM365Slugs);
 
-        const chatGptModels = Array.isArray(raw.models)
-          ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
-          : [];
-        const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasChatGptDefault) {
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface) {
           shouldWrite = true;
         }
       } catch {
@@ -278,25 +271,17 @@ function modelPriority(template: JsonObject): number | undefined {
 
 function routedModelPriority(
   template: JsonObject,
-  route: ModelRouteDefinition,
-  config: AppConfig,
+  _route: ModelRouteDefinition,
+  _config: AppConfig,
 ): number | undefined {
-  const priority = modelPriority(template);
-  if (priority === undefined
-    || config.subagentProtocol !== "compatibility-v1"
-    || route.slug !== "chatgpt-web") return priority;
-  if (priority === Number.MAX_SAFE_INTEGER) {
-    throw new Error("Native Codex model template priority cannot reserve the Compatibility V1 roster");
-  }
-  // Preserve the native model and the single ChatGPT Web override in Codex V1's bounded registry.
-  return priority + 1;
+  return modelPriority(template);
 }
 
 function nativeTemplateCandidate(value: unknown, requireTools: boolean): value is JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const model = value as JsonObject;
   const modelSlug = slug(model);
-  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX)) return false;
+  if (!modelSlug || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX)) return false;
   // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
   // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
   // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
@@ -368,8 +353,6 @@ export function buildProviderModel(
   return model;
 }
 
-export const buildChatGptWebModel = buildProviderModel;
-
 export const buildM365Model = buildProviderModel;
 
 export function augmentNativeModelCatalog(
@@ -387,10 +370,7 @@ export function augmentNativeModelCatalog(
   const nativeModels = structuredClone(
     catalog.models.filter(model => {
       const s = slug(model);
-      return (
-        !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) &&
-        !s?.startsWith(M365_COPILOT_MODEL_PREFIX)
-      );
+      return !s?.startsWith(M365_COPILOT_MODEL_PREFIX);
     }),
   );
   if (config.subagentProtocol === "compatibility-v1") {

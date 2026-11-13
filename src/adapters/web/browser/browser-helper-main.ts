@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import { stdin, stdout } from "node:process";
-import { readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
+import { readLauncherBrowserHostDescriptor } from "../../../launcher-browser-host";
 
 function writeProtocol(message: unknown): void {
   stdout.write(`${JSON.stringify(message)}\n`);
@@ -26,7 +26,6 @@ async function handleMessage(line: string): Promise<void> {
 
   try {
     if (descriptorPath) {
-      // Xác thực descriptor hợp lệ (bao gồm kiểm tra partition tương ứng)
       readLauncherBrowserHostDescriptor(descriptorPath);
     }
 
@@ -52,7 +51,7 @@ async function handleMessage(line: string): Promise<void> {
         value: {
           authenticated: true,
           temporary: true,
-          url: "https://chatgpt.com/?temporary-chat=true",
+          url: "https://m365.cloud.microsoft/chat",
           solAvailable: true,
           extraHighAvailable: true,
           proAvailable: true,

@@ -1,4 +1,3 @@
-import { createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { extractCodexTurnIdentityFromBody } from "./adapters/web/turn-identity";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
@@ -77,16 +76,9 @@ import {
   syncCodexModelCatalogConfig,
   type CodexModelContextOverride,
 } from "./codex-integration";
-import {
-  isProviderModel,
-  requireModelRoute,
-  resolveModelReasoning,
-  type ModelRouteDefinition,
-} from "./models/model-registry";
+import { isProviderModel } from "./models/model-registry";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
 import { activeWebTurnRegistry } from "./adapters/web";
-import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
-import { fetchNativeCodex } from "./native-network";
 import {
   buildCompactV1Output,
   COMPACT_PROMPT,
@@ -100,7 +92,7 @@ import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
 
-type HttpTrackedEndpoint = "models" | "responses" | "compact" | "search" | "unspecified" | NativeImageEndpoint;
+type HttpTrackedEndpoint = "models" | "responses" | "compact" | "unspecified";
 
 export interface NativeCodexTurnIdentity {
   threadId: string;
@@ -401,7 +393,7 @@ export class HttpTurnCounter {
   }
 }
 
-type ChatGptWebAdapterFactory = (options?: any) => ProviderAdapter;
+type WebAdapterFactory = () => ProviderAdapter;
 
 export interface ResponseRequestOptions {
   /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
@@ -412,21 +404,6 @@ export interface ResponseRequestOptions {
   onTurnIdentity?: (identity: NativeCodexTurnIdentity) => void;
 }
 
-export function routeChatGptWebRequest(
-  parsed: CodexParsedRequest,
-  _config: AppConfig,
-): ModelRouteDefinition {
-  const route = requireModelRoute(parsed.modelId);
-  if (!isProviderModel(route.slug, "chatgpt-web")) {
-    throw new Error(`Model không thuộc ChatGPT Web: ${parsed.modelId}`);
-  }
-  const reasoning = resolveModelReasoning(route, parsed.options.reasoning);
-  delete parsed._chatgptModelFamily;
-  parsed.modelId = route.backendModel;
-  parsed.options.reasoning = reasoning.effort;
-  return route;
-}
-
 interface ModelCatalogFailure {
   stage: "config" | "request" | "transport" | "upstream" | "catalog";
   code?: string;
@@ -434,99 +411,39 @@ interface ModelCatalogFailure {
 
 function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
   if (!error || typeof error !== "object") return { stage };
-  // Fetch can wrap the network error. Keep only bounded codes, never free-form
-  // messages, URLs or paths from either layer in the health snapshot.
   for (const source of [error, "cause" in error ? error.cause : undefined]) {
     const code = source && typeof source === "object" && "code" in source ? source.code : undefined;
     if (typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code)) return { stage, code };
   }
   const name = "name" in error ? error.name : undefined;
-  // AbortError identifies cancellation, not who initiated it. The upstream request
-  // can also be cancelled by the server, so do not blame the Codex client here.
   if (name === "AbortError") return { stage, code: "ABORT_ERR" };
   if (name === "TimeoutError") return { stage, code: "ETIMEDOUT" };
   return { stage };
 }
 
 export async function modelsRequest(
-  req: Request,
+  _req: Request,
   config: AppConfig,
-  fetchUpstream?: NativeFetch,
   contextOverride?: () => CodexModelContextOverride | undefined,
   onFailure?: (failure: ModelCatalogFailure) => void,
 ): Promise<Response> {
-  const authHeader = req.headers.get("authorization") ?? "";
-  if (authHeader.startsWith("Bearer sk-")) {
-    const fallback = getFallbackNativeCatalog();
-    const catalog = augmentNativeModelCatalog(fallback, config, contextOverride?.());
-    syncManagedModelCatalogFile(catalog);
-    const body = JSON.stringify(catalog);
-    return new Response(body, {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "etag": `W/\"${createHash("sha256").update(body).digest("base64url")}\"`,
-      },
-    });
-  }
-
-  let upstream: Response;
-  let sent = false;
-  try {
-    upstream = await forwardNativeCodexRequest(req, "models", input => {
-      sent = true;
-      return (fetchUpstream ?? fetchNativeCodex)(input);
-    });
-  } catch (error) {
-    onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-  }
-  if (!upstream.ok) {
-    onFailure?.({ stage: "upstream" });
-    return upstream;
-  }
   let catalog: Record<string, unknown>;
   try {
-    catalog = augmentNativeModelCatalog(await upstream.json(), config, contextOverride?.());
+    const fallback = getFallbackNativeCatalog();
+    catalog = augmentNativeModelCatalog(fallback, config, contextOverride?.());
     syncManagedModelCatalogFile(catalog);
   } catch (error) {
     onFailure?.(modelCatalogFailure("catalog", error));
-    return formatErrorResponse(502, "invalid_response_error", error instanceof Error ? error.message : String(error));
+    return formatErrorResponse(500, "server_error", error instanceof Error ? error.message : String(error));
   }
   const body = JSON.stringify(catalog);
-  const headers = new Headers(upstream.headers);
-  headers.delete("content-encoding");
-  headers.delete("content-length");
-  headers.set("content-type", "application/json");
-  headers.set("etag", `W/\"${createHash("sha256").update(body).digest("base64url")}\"`);
-  return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers });
-}
-
-export async function nativeSearchRequest(
-  req: Request,
-  fetchUpstream?: NativeFetch,
-): Promise<Response> {
-  try {
-    return await forwardNativeCodexRequest(req, "alpha/search", fetchUpstream);
-  } catch (error) {
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function nativeImagesRequest(
-  req: Request,
-  endpoint: NativeImageEndpoint,
-  fetchUpstream?: NativeFetch,
-): Promise<Response> {
-  const authorization = req.headers.get("authorization") ?? "";
-  if (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length) {
-    return formatErrorResponse(401, "authentication_error", "Native image requests require incoming Codex Bearer authorization");
-  }
-  try {
-    return await forwardNativeCodexRequest(req, endpoint, fetchUpstream);
-  } catch (error) {
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-  }
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "etag": `W/\"${createHash("sha256").update(body).digest("base64url")}\"`,
+    },
+  });
 }
 
 function toolBridgeMaps(parsed: CodexParsedRequest): {
@@ -550,6 +467,7 @@ async function handleM365ResponseRequest(
   raw: unknown,
   requestedModel: string,
   options: ResponseRequestOptions = {},
+  adapterFactory: WebAdapterFactory = createM365CopilotAdapter,
 ): Promise<Response> {
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
@@ -581,7 +499,7 @@ async function handleM365ResponseRequest(
 
   console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
 
-  const adapter = createM365CopilotAdapter();
+  const adapter = adapterFactory();
   const queue = new AsyncEventQueue<AdapterEvent>();
   const abort = new AbortController();
   if (req.signal.aborted) abort.abort();
@@ -659,94 +577,12 @@ async function handleM365ResponseRequest(
     return Response.json(json);
 }
 
-async function handleChatGptResponseRequest(
-  req: Request,
-  raw: unknown,
-  requestedModel: string,
-  options: ResponseRequestOptions = {},
-): Promise<Response> {
-  const expanded = expandPreviousResponseInput(raw);
-  let parsed: CodexParsedRequest;
-  try {
-    parsed = parseRequest(expanded);
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
-
-  const adapter = createChatGptWebAdapter();
-  const queue = new AsyncEventQueue<AdapterEvent>();
-  const abort = new AbortController();
-  if (req.signal.aborted) abort.abort();
-  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
-
-  const run = async () => {
-    try {
-      await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
-        options.onAdapterEvent?.(event);
-        queue.push(event);
-      });
-    } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
-      options.onAdapterEvent?.(event);
-      queue.push(event);
-    } finally {
-      queue.close();
-    }
-  };
-
-  const maps = toolBridgeMaps(parsed);
-  const responseModel = requestedModel;
-
-  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
-    if (options.rememberState !== false) {
-      rememberResponseState(parsed._rawBody, response, {
-        force: true,
-      });
-    }
-  };
-
-  if (parsed.stream) {
-    void run();
-    const stream = bridgeToResponsesSSE(
-      queue,
-      responseModel,
-      maps.toolNsMap,
-      maps.freeformToolNames,
-      maps.toolSearchToolNames,
-      () => abort.abort(),
-      2_000,
-      {
-        hideThinkingSummary: parsed.options.hideThinkingSummary,
-        onCompletedResponse: rememberCompletedResponse,
-      },
-    );
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
-    });
-  }
-
-  await run();
-  const events = await queue.collect();
-  const json = buildResponseJSON(events, responseModel, {
-    hideThinkingSummary: parsed.options.hideThinkingSummary,
-    toolNsMap: maps.toolNsMap,
-  });
-  rememberCompletedResponse(json);
-  return Response.json(json);
-}
-
 export async function responseRequest(
   req: Request,
-  config: AppConfig,
-  adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
+  _config: AppConfig,
+  adapterFactory: WebAdapterFactory = createM365CopilotAdapter,
   options: ResponseRequestOptions = {},
 ): Promise<Response> {
-  const nativeRequest = req.clone();
   let raw: unknown;
   try {
     raw = await readJsonRequestBody(req);
@@ -769,17 +605,14 @@ export async function responseRequest(
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
   if (typeof requestedModel === "string" && isProviderModel(requestedModel, "m365-copilot")) {
-    return await handleM365ResponseRequest(req, raw, requestedModel, options);
+    return await handleM365ResponseRequest(req, raw, requestedModel, options, adapterFactory);
   }
-  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "chatgpt-web")) {
-    return await handleChatGptResponseRequest(req, raw, requestedModel, options);
-  }
-  if (typeof requestedModel === "string") {
-    try {
-      return await forwardNativeCodexRequest(nativeRequest, "responses", undefined, raw);
-    } catch (error) {
-      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-    }
+  if (typeof requestedModel === "string" && requestedModel.trim().length > 0) {
+    return formatErrorResponse(
+      400,
+      "invalid_request_error",
+      `Unsupported model '${requestedModel}'. Only m365-copilot models are enabled.`,
+    );
   }
   return formatErrorResponse(400, "invalid_request_error", "Missing or invalid model parameter");
 }
@@ -787,10 +620,9 @@ export async function responseRequest(
 export async function compactRequest(
   req: Request,
   config: AppConfig,
-  adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
+  adapterFactory: WebAdapterFactory = createM365CopilotAdapter,
   options: Pick<ResponseRequestOptions, "onTurnIdentity"> = {},
 ): Promise<Response> {
-  const nativeRequest = req.clone();
   let raw: Record<string, unknown>;
   try {
     const parsed = await readJsonRequestBody(req);
@@ -830,10 +662,7 @@ export async function compactRequest(
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
-  if (
-    isProviderModel(raw.model, "m365-copilot")
-    || isProviderModel(raw.model, "chatgpt-web")
-  ) {
+  if (isProviderModel(raw.model, "m365-copilot")) {
     const input = Array.isArray(raw.input) ? raw.input : [];
     const headers = new Headers(req.headers);
     headers.set("content-type", "application/json");
@@ -845,16 +674,16 @@ export async function compactRequest(
     });
     return await responseRequest(internal, config, adapterFactory, options);
   }
-  try {
-    return await forwardNativeCodexRequest(nativeRequest, "responses/compact", undefined, raw);
-  } catch (error) {
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-  }
+  return formatErrorResponse(
+    400,
+    "invalid_request_error",
+    `Unsupported model '${raw.model}'. Only m365-copilot models are enabled.`,
+  );
 }
 
 export function startServer(
   config: AppConfig,
-  dependencies: { fetchUpstream?: NativeFetch; adapterFactory?: ChatGptWebAdapterFactory } = {},
+  dependencies: { adapterFactory?: WebAdapterFactory } = {},
 ): UniversalServer {
   try {
     ensureManagedModelCatalogFile(config);
@@ -1065,7 +894,6 @@ export function startServer(
           const response = await modelsRequest(
             new Request(req, { signal }),
             catalogConfig,
-            dependencies.fetchUpstream,
             readCodexModelContextOverride,
             value => { failure = value; },
           );
@@ -1108,28 +936,6 @@ export function startServer(
           req.signal,
           process.platform,
           "compact",
-        );
-      }
-      if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(
-          signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
-          req.signal,
-          process.platform,
-          "search",
-        );
-      }
-      if (req.method === "POST"
-        && (url.pathname === "/v1/images/generations" || url.pathname === "/v1/images/edits")) {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        const endpoint: NativeImageEndpoint = url.pathname === "/v1/images/generations"
-          ? "images/generations"
-          : "images/edits";
-        return httpTurns.track(
-          signal => nativeImagesRequest(new Request(req, { signal }), endpoint, dependencies.fetchUpstream),
-          req.signal,
-          process.platform,
-          endpoint,
         );
       }
       return new Response("Not found", { status: 404 });

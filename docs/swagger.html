@@ -17,10 +17,10 @@
     const spec = {
       openapi: "3.0.3",
       info: {
-        title: "Codex M365 Copilot / ChatGPT Web — Local Responses API",
+        title: "Codex M365 Copilot — Local Responses API",
         version: "6.9.6",
         description:
-          "Local HTTP API Gateway chạy trên 127.0.0.1:17841. Dùng trực tiếp với Web models (m365-copilot/gpt-5.6, m365-copilot, chatgpt-web) sau khi đăng nhập trong Launcher."
+          "Local HTTP API Gateway chạy trên 127.0.0.1:17842 (Source/Dev) hoặc 127.0.0.1:17841 (Packaged/CLI). Hỗ trợ Microsoft 365 Copilot Web qua adapter sau khi đăng nhập trong Launcher."
       },
       servers: [
         ...(window.location.port === "17841" || window.location.port === "17842"
@@ -31,8 +31,7 @@
       ],
       tags: [
         { name: "Health", description: "Kiểm tra trạng thái server" },
-        { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Codex & Web Providers" },
-        { name: "Native Passthrough", description: "Chuyển tiếp trực tiếp tới OpenAI/Codex (cần Bearer token)" },
+        { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Microsoft 365 Copilot" },
         { name: "Admin Control", description: "Endpoint điều khiển nội bộ (cần Control Bearer token)" }
       ],
       components: {
@@ -40,7 +39,7 @@
           BearerAuth: {
             type: "http",
             scheme: "bearer",
-            description: "Token Codex (cho Native Passthrough) hoặc Control Token (cho /admin/*). Không cần cho Web models."
+            description: "Control Token (chỉ cần cho /admin/*)."
           }
         }
       },
@@ -83,10 +82,9 @@
         "/v1/responses": {
           post: {
             tags: ["Responses API"],
-            summary: "Gửi prompt tới Web Provider hoặc Native Codex",
+            summary: "Gửi prompt tới Microsoft 365 Copilot",
             description:
-              "Với Web models (m365-copilot/gpt-5.6, m365-copilot, chatgpt-web), không cần Authorization header. Đặt stream: false để nhận 1 JSON hoàn chỉnh khi test.",
-            security: [{}, { BearerAuth: [] }],
+              "Hỗ trợ các model m365-copilot/gpt-5.6 và m365-copilot. Không cần Authorization header. Đặt stream: false để nhận 1 JSON hoàn chỉnh khi test.",
             requestBody: {
               required: true,
               content: {
@@ -124,18 +122,17 @@
                     }
                   },
                   examples: {
-                    "M365 Copilot (Non-stream)": {
+                    "M365 Copilot GPT-5.6 (Non-stream)": {
                       value: {
                         model: "m365-copilot/gpt-5.6",
                         stream: false,
                         input: [{ role: "user", content: "Xin chào, trả lời ngắn gọn 1 câu." }]
                       }
                     },
-                    "ChatGPT Web (Non-stream)": {
+                    "M365 Copilot (Non-stream)": {
                       value: {
-                        model: "chatgpt-web",
+                        model: "m365-copilot",
                         stream: false,
-                        reasoning: { effort: "low" },
                         input: [{ role: "user", content: "1 + 1 bằng mấy?" }]
                       }
                     },
@@ -179,51 +176,6 @@
             },
             responses: {
               "200": { description: "Kết quả compaction" }
-            }
-          }
-        },
-        "/v1/alpha/search": {
-          post: {
-            tags: ["Native Passthrough"],
-            summary: "Native authenticated search (passthrough)",
-            security: [{ BearerAuth: [] }],
-            requestBody: {
-              required: true,
-              content: { "application/json": { schema: { type: "object" } } }
-            },
-            responses: {
-              "200": { description: "Kết quả tìm kiếm từ upstream" },
-              "401": { description: "Thiếu Bearer token" }
-            }
-          }
-        },
-        "/v1/images/generations": {
-          post: {
-            tags: ["Native Passthrough"],
-            summary: "Native image generation (passthrough)",
-            security: [{ BearerAuth: [] }],
-            requestBody: {
-              required: true,
-              content: { "application/json": { schema: { type: "object" } } }
-            },
-            responses: {
-              "200": { description: "Ảnh được tạo" },
-              "401": { description: "Thiếu Bearer token" }
-            }
-          }
-        },
-        "/v1/images/edits": {
-          post: {
-            tags: ["Native Passthrough"],
-            summary: "Native image editing (passthrough)",
-            security: [{ BearerAuth: [] }],
-            requestBody: {
-              required: true,
-              content: { "multipart/form-data": { schema: { type: "object" } } }
-            },
-            responses: {
-              "200": { description: "Ảnh sau chỉnh sửa" },
-              "401": { description: "Thiếu Bearer token" }
             }
           }
         },
