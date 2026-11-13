@@ -140,7 +140,7 @@ export function getFallbackNativeCatalog(): { models: JsonObject[] } {
       if (Array.isArray(raw.models)) {
         for (const m of raw.models) {
           const s = typeof m?.slug === "string" ? m.slug : "";
-          if (s && !s.startsWith(M365_COPILOT_MODEL_PREFIX)) {
+          if (s && !isM365ModelSlug(s)) {
             modelsMap.set(s, m);
           }
         }
@@ -281,7 +281,7 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const model = value as JsonObject;
   const modelSlug = slug(model);
-  if (!modelSlug || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX)) return false;
+  if (!modelSlug || isM365ModelSlug(modelSlug)) return false;
   // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
   // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
   // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
@@ -370,7 +370,7 @@ export function augmentNativeModelCatalog(
   const nativeModels = structuredClone(
     catalog.models.filter(model => {
       const s = slug(model);
-      return !s?.startsWith(M365_COPILOT_MODEL_PREFIX);
+      return !s || !isM365ModelSlug(s);
     }),
   );
   if (config.subagentProtocol === "compatibility-v1") {

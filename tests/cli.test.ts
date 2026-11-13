@@ -100,7 +100,7 @@ test("setup browser-interaction flags are explicit and mutually exclusive", asyn
       "setup",
       "--browser-only",
       "--automatic-browser-interaction",
-      "--zero-risk-browser-interaction",
+      "--manual-browser-interaction",
       "--acknowledge-unofficial",
     ], {
       ...process.env,
@@ -109,21 +109,6 @@ test("setup browser-interaction flags are explicit and mutually exclusive", asyn
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Choose at most one browser interaction mode");
-
-    const profileConflict = await runCli([
-      "setup",
-      "--browser-only",
-      "--zero-risk-browser-interaction",
-      "--zero-risk-pro",
-      "--zero-risk-default",
-      "--acknowledge-unofficial",
-    ], {
-      ...process.env,
-      CODEX_HOME: join(root, "codex"),
-      CODEX_CHATGPT_WEB_HOME: join(root, "app"),
-    });
-    expect(profileConflict.exitCode).toBe(1);
-    expect(profileConflict.stderr).toContain("Choose at most one Zero Risk model profile");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -140,7 +125,7 @@ test("manual setup rejects capability refresh and Bigger Context", async () => {
     const refresh = await runCli([
       "setup",
       "--browser-only",
-      "--zero-risk-browser-interaction",
+      "--manual-browser-interaction",
       "--refresh-account-capabilities",
       "--acknowledge-unofficial",
     ], env);
@@ -150,21 +135,12 @@ test("manual setup rejects capability refresh and Bigger Context", async () => {
     const bigger = await runCli([
       "setup",
       "--browser-only",
-      "--zero-risk-browser-interaction",
+      "--manual-browser-interaction",
       "--bigger-context",
       "--acknowledge-unofficial",
     ], env);
     expect(bigger.exitCode).toBe(1);
     expect(bigger.stderr).toContain("does not support Bigger Context");
-
-    const browserOnly = await runCli([
-      "setup",
-      "--browser-only",
-      "--zero-risk-browser-interaction",
-      "--acknowledge-unofficial",
-    ], env);
-    expect(browserOnly.exitCode).toBe(1);
-    expect(browserOnly.stderr).toContain("requires --full");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -230,7 +206,7 @@ test("browser check uses metadata-only launcher liveness in Zero Risk", async ()
       createdAt: new Date().toISOString(),
     })}\n`, { mode: 0o600 });
     const config = {
-      ...defaultConfig("full"),
+      ...defaultConfig("browser-only"),
       appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
       browserHost: "launcher",
       browserInteractionMode: "manual",

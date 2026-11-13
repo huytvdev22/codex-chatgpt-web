@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **047** | M365 Copilot non-streaming (`stream: false`) bỏ sót `freeformToolNames` / `toolSearchToolNames` | `m365-copilot`, `server`, `tools` | ⏳ Chờ User Test & Confirm | ./047-m365-non-stream-freeform-tool-bridge.md |
 | **046** | Mở `docs/swagger.html` qua VS Code Live Server bị lỗi CORS khi gọi `127.0.0.1:17841` | `server`, `cors`, `swagger` | ✅ Đã Confirm | ./046-swagger-live-server-cors-blocked.md |
 | **045** | ChatGPT báo `Couldn't copy to clipboard` do synthetic click không tạo trusted user activation | `chatgpt-web`, `web`, `playwright`, `clipboard` | ✅ Đã Confirm | ./045-chatgpt-clipboard-copy-requires-focus.md |
 | **044** | Tool result còn nằm trong composer ChatGPT khiến Codex treo ở trạng thái Editing files | `chatgpt-web`, `web`, `playwright` | ✅ Đã Confirm | ./044-chatgpt-tool-result-stuck-in-composer.md |

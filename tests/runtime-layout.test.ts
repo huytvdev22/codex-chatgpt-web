@@ -90,12 +90,12 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
 });
 
 test("default setup uses the fixed production connector identities", () => {
-  expect(defaultConfig("full").appName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("full").automaticAppName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("full").manualAppName).toBe(ZERO_RISK_CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("full").subagentProtocol).toBe("compatibility-v1");
-  expect(defaultConfig("full").browserInteractionMode).toBe("automatic");
-  expect(defaultConfig("full").zeroRiskProEnabled).toBe(false);
+  expect(defaultConfig("browser-only").appName).toBe(CHATGPT_CONNECTOR_NAME);
+  expect(defaultConfig("browser-only").automaticAppName).toBe(CHATGPT_CONNECTOR_NAME);
+  expect(defaultConfig("browser-only").manualAppName).toBe(ZERO_RISK_CHATGPT_CONNECTOR_NAME);
+  expect(defaultConfig("browser-only").subagentProtocol).toBe("compatibility-v1");
+  expect(defaultConfig("browser-only").browserInteractionMode).toBe("automatic");
+  expect(defaultConfig("browser-only").zeroRiskProEnabled).toBe(false);
 });
 
 test.each([
@@ -193,7 +193,7 @@ test("Zero Risk fails closed without the Launcher browser host", () => {
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
   mkdirSync(root, { recursive: true });
-  const invalid = defaultConfig("full");
+  const invalid = defaultConfig("browser-only");
   invalid.browserInteractionMode = "manual";
   invalid.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
   writeFileSync(join(root, "config.json"), `${JSON.stringify(invalid)}\n`);
@@ -317,7 +317,7 @@ test("skill attachments config defaults off, reaches the adapter, and rejects in
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
   mkdirSync(root, { recursive: true });
-  const config: Record<string, unknown> = { ...defaultConfig("full") };
+  const config: Record<string, unknown> = { ...defaultConfig("browser-only") };
   config.browserHost = "launcher";
   config.browserHostDescriptorPath = join(root, "launcher.json");
   config.tunnel = { binaryPath: join(root, "tunnel"), runtimeKeyFile: join(root, "key"),
@@ -366,7 +366,7 @@ test("stored names survive config loading without an additional naming preferenc
   process.env.CODEX_CHATGPT_WEB_HOME = root;
   mkdirSync(root, { recursive: true });
   const config = {
-    ...defaultConfig("full"), browserHost: "launcher" as const,
+    ...defaultConfig("browser-only"), browserHost: "launcher" as const,
     browserHostDescriptorPath: join(root, "launcher.json"),
     tunnel: { binaryPath: join(root, "tunnel"), tunnelId: `tunnel_${"a".repeat(32)}`,
       runtimeKeyFile: join(root, "key"), profileDir: root, profileName: "test", alias: "test" },

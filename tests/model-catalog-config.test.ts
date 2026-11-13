@@ -63,7 +63,7 @@ test("ensureManagedModelCatalogFile generates a valid catalog containing all act
   const catalogPath = join(tempDir, "test-catalog.json");
 
   try {
-    const config = defaultConfig("full");
+    const config = defaultConfig("browser-only");
     ensureManagedModelCatalogFile(config, catalogPath, true);
     expect(existsSync(catalogPath)).toBe(true);
 

@@ -66,23 +66,23 @@ describe("model catalog dùng registry chung", () => {
       .toEqual(expectedRoutes.map(route => route.slug));
   });
 
-  test("chỉ công bố một model ChatGPT Web", () => {
+  test("công bố đầy đủ các model M365 Copilot trong registry", () => {
     const models = augmentNativeModelCatalog(source(), nativeConfig)
       .models as Array<Record<string, unknown>>;
-    const chatGptModels = models.filter(model =>
-      model.slug === "chatgpt-web"
-      || String(model.slug).startsWith("chatgpt-web/")
+    const m365Models = models.filter(model =>
+      model.slug === "m365-copilot"
+      || String(model.slug).startsWith("m365-copilot/")
     );
 
-    expect(chatGptModels).toHaveLength(1);
-    expect(chatGptModels[0]).toMatchObject({
-      slug: "chatgpt-web",
-      display_name: "ChatGPT (Web)",
+    expect(m365Models).toHaveLength(2);
+    expect(m365Models[0]).toMatchObject({
+      slug: "m365-copilot/gpt-5.6",
+      display_name: "M365 - GPT 5.6",
       visibility: "list",
       default_reasoning_level: "low",
       supported_reasoning_levels: [
-        { effort: "low", description: "Normal" },
-        { effort: "high", description: "Thinking" },
+        { effort: "low", description: "Quick" },
+        { effort: "high", description: "Deeper" },
       ],
       input_modalities: ["text", "image"],
       context_window: 100_000,
@@ -121,9 +121,8 @@ describe("model catalog dùng registry chung", () => {
   test("loại catalog provider cũ trước khi build lại nên kết quả idempotent", () => {
     const polluted = source();
     (polluted.models as unknown[]).push(
-      { slug: "chatgpt-web/pro", display_name: "Legacy Pro" },
-      { slug: "chatgpt-web/luna", display_name: "Legacy Luna" },
       { slug: "m365-copilot/legacy", display_name: "Legacy M365" },
+      { slug: "m365-copilot", display_name: "Stale M365" },
     );
 
     const first = augmentNativeModelCatalog(polluted, nativeConfig);
@@ -131,9 +130,8 @@ describe("model catalog dùng registry chung", () => {
     const models = second.models as Array<Record<string, unknown>>;
     const slugs = models.map(model => String(model.slug));
 
-    expect(slugs.filter(slug => slug === "chatgpt-web")).toHaveLength(1);
-    expect(slugs).not.toContain("chatgpt-web/pro");
-    expect(slugs).not.toContain("chatgpt-web/luna");
+    expect(slugs.filter(slug => slug === "m365-copilot")).toHaveLength(1);
+    expect(slugs.filter(slug => slug === "m365-copilot/gpt-5.6")).toHaveLength(1);
     expect(slugs).not.toContain("m365-copilot/legacy");
     expect(new Set(slugs).size).toBe(slugs.length);
   });
@@ -155,16 +153,16 @@ describe("model catalog dùng registry chung", () => {
     expect(models[0]?.max_context_window).toBe(371_851);
     expect(models[1]?.max_context_window).toBe(371_851);
 
-    const chatGpt = models.find(model => model.slug === "chatgpt-web");
-    expect(chatGpt?.context_window).toBe(100_000);
-    expect(chatGpt?.max_context_window).toBe(100_000);
+    const m365 = models.find(model => model.slug === "m365-copilot/gpt-5.6");
+    expect(m365?.context_window).toBe(100_000);
+    expect(m365?.max_context_window).toBe(100_000);
   });
 
   test("không chấp nhận provider route làm native template", () => {
-    const route = requireModelRoute("chatgpt-web");
+    const route = requireModelRoute("m365-copilot");
 
     expect(() => buildProviderModel({
-      slug: "chatgpt-web",
+      slug: "m365-copilot",
       visibility: "list",
       supported_reasoning_levels: [{ effort: "low", description: "Low" }],
     }, route, nativeConfig)).toThrow("must be a native Codex model");

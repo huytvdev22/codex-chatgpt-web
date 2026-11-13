@@ -10,7 +10,6 @@ import {
   type WebRuntimeLifecycleOps,
 } from "../src/adapters/web";
 import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
-import { ChatGptWebAdapter } from "../src/adapters/chatgpt-web";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 function createParsedRequest(
@@ -277,10 +276,9 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     ]);
   });
 
-  test("6. Toàn bộ 2 Web Provider Adapters đều kế thừa WebProviderAdapter dùng chung", () => {
+  test("6. Web Provider Adapter kế thừa WebProviderAdapter dùng chung", () => {
     const adapters = [
       new M365CopilotAdapter(),
-      new ChatGptWebAdapter(),
     ];
 
     for (const adapter of adapters) {

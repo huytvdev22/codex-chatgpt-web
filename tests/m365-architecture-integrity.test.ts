@@ -5,7 +5,6 @@ import { findCircularDependencies } from "../scripts/check-circular-deps.js";
 
 describe("M365 Copilot Architecture Integrity & CI Gate", () => {
   const m365Dir = path.resolve(process.cwd(), "src/adapters/m365-copilot");
-  const chatGptDir = path.resolve(process.cwd(), "src/adapters/chatgpt-web");
   const sharedWebDir = path.resolve(process.cwd(), "src/adapters/web");
 
   test("CI GATE: Tuyệt đối không có Circular Dependency trong m365-copilot (Cycles = 0)", () => {
@@ -29,26 +28,6 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     ]);
   });
 
-  test("CI GATE: ChatGPT Web chỉ giữ các module provider và runtime entrypoint bắt buộc", () => {
-    const { graph, cycles } = findCircularDependencies(chatGptDir);
-
-    if (cycles.length > 0) {
-      console.error("\n[CI GATE ERROR] Phát hiện Circular Dependency trong ChatGPT Web:");
-      cycles.forEach((cycle: any, index: number) => {
-        console.error(`  #${index + 1}: ${cycle.join(" -> ")}`);
-      });
-    }
-
-    expect(cycles.length).toBe(0);
-    expect(Object.keys(graph).sort()).toEqual([
-      "browser-helper-main.ts",
-      "chatgpt-browser-worker.ts",
-      "conversation-store.ts",
-      "index.ts",
-      "selectors.ts",
-    ]);
-  });
-
   test("CI GATE: Shared Web Adapter layer không có cycle hoặc phụ thuộc ngược vào provider", async () => {
     const { graph, cycles } = findCircularDependencies(sharedWebDir);
     expect(cycles.length).toBe(0);
@@ -57,7 +36,6 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     const sharedModules = Object.keys(graph);
     const providerSegments = [
       "/m365-copilot/",
-      "/chatgpt-web/",
     ];
     for (const modulePath of sharedModules) {
       const source = await Bun.file(path.resolve(sharedWebDir, modulePath)).text();
@@ -70,10 +48,9 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     }
   });
 
-  test("CI GATE: Toàn bộ 2 Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
+  test("CI GATE: Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
     const providerFacades = [
       "src/adapters/m365-copilot/index.ts",
-      "src/adapters/chatgpt-web/index.ts",
     ];
     const forbiddenDirectOrchestrationCalls = [
       "startLauncherBrowserTurn(",

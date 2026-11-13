@@ -58,12 +58,14 @@ try {
       priority?: number;
     }>;
   };
-  const web = catalog.models?.filter(model => model.slug === "chatgpt-web") ?? [];
-  const expected = listModelRoutes("chatgpt-web").map(route => ({
-    slug: route.slug,
-    visibility: "list",
-    effort: route.reasoningLevels.map(level => level.effort).join(","),
-  }));
+  const web = catalog.models?.filter(model => model.slug === "m365-copilot/gpt-5.6") ?? [];
+  const expected = listModelRoutes("m365-copilot")
+    .filter(route => route.slug === "m365-copilot/gpt-5.6")
+    .map(route => ({
+      slug: route.slug,
+      visibility: "list",
+      effort: route.reasoningLevels.map(level => level.effort).join(","),
+    }));
   const actual = web.map(model => ({
     slug: model.slug,
     visibility: model.visibility,
@@ -72,13 +74,13 @@ try {
       : "",
   }));
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(`Codex did not preserve the unified ChatGPT Web model contract: ${JSON.stringify(actual)}`);
+    throw new Error(`Codex did not preserve the unified M365 Copilot model contract: ${JSON.stringify(actual)}`);
   }
   const nativeSol = catalog.models?.find(model => model.slug === "gpt-5.6-sol");
-  const chatGptWeb = catalog.models?.find(model => model.slug === "chatgpt-web");
-  if (nativeSol?.multi_agent_version !== "v1" || chatGptWeb?.multi_agent_version !== "v1") {
+  const m365Default = catalog.models?.find(model => model.slug === "m365-copilot/gpt-5.6");
+  if (nativeSol?.multi_agent_version !== "v1" || m365Default?.multi_agent_version !== "v1") {
     throw new Error(
-      `Codex did not preserve Compatibility V1 catalog metadata: ${JSON.stringify({ nativeSol, chatGptWeb })}`,
+      `Codex did not preserve Compatibility V1 catalog metadata: ${JSON.stringify({ nativeSol, m365Default })}`,
     );
   }
   const features = runCodex(["features", "list"], isolatedEnv).stdout;

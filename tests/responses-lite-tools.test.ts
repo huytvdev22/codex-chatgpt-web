@@ -39,7 +39,7 @@ function responsesLiteTools() {
 
 test("Responses Lite exposes native exec from the default functions namespace only", () => {
   const parsed = parseRequest({
-    model: "chatgpt-web/luna",
+    model: "m365-copilot/gpt-5.6",
     input: [{ type: "additional_tools", role: "developer", tools: responsesLiteTools() }],
   });
 
@@ -54,7 +54,7 @@ test("Responses Lite exposes native exec from the default functions namespace on
 });
 
 test("Responses Lite native exec survives a complete server request as one custom call", async () => {
-  const config = defaultConfig("full");
+  const config = defaultConfig("browser-only");
   config.solAvailable = false;
   config.proAvailable = false;
   const turnId = "turn_responses_lite_exec_regression";
@@ -62,7 +62,7 @@ test("Responses Lite native exec survives a complete server request as one custo
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: "chatgpt-web/luna",
+      model: "m365-copilot/gpt-5.6",
       stream: false,
       metadata: { turn_id: turnId, thread_id: "thread_responses_lite_exec_regression" },
       input: [{

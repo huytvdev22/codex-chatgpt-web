@@ -572,6 +572,8 @@ async function handleM365ResponseRequest(
     const json = buildResponseJSON(events, responseModel, {
       hideThinkingSummary: parsed.options.hideThinkingSummary,
       toolNsMap: maps.toolNsMap,
+      freeformToolNames: maps.freeformToolNames,
+      toolSearchToolNames: maps.toolSearchToolNames,
     });
     rememberCompletedResponse(json);
     return Response.json(json);
