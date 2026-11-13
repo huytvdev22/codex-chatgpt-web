@@ -2,9 +2,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { listModelRoutes } from "../src/models/model-registry";
+import { ModelRegistry } from "../src/models/model-registry";
 import { defaultConfig } from "../src/config";
-import { augmentNativeModelCatalog } from "../src/models/model-catalog";
+import { ModelCatalog } from "../src/models/model-catalog";
 
 const codex = resolve(process.argv[2] ?? "/Applications/ChatGPT.app/Contents/Resources/codex");
 function runCodex(args: string[], env = process.env): { stdout: string; stderr: string } {
@@ -36,7 +36,7 @@ const config = defaultConfig("browser-only");
 config.proAvailable = true;
 config.subagentProtocol = "compatibility-v1";
 const catalogPath = join(root, "augmented-models.json");
-writeFileSync(catalogPath, `${JSON.stringify(augmentNativeModelCatalog(sourceCatalog, config))}\n`);
+writeFileSync(catalogPath, `${JSON.stringify(ModelCatalog.getInstance().buildCatalog(config))}\n`);
 writeFileSync(join(process.env.CODEX_HOME, "config.toml"), [
   `model_catalog_json = ${JSON.stringify(catalogPath)}`,
   "",
@@ -59,7 +59,7 @@ try {
     }>;
   };
   const web = catalog.models?.filter(model => model.slug === "m365-copilot/gpt-5.6") ?? [];
-  const expected = listModelRoutes("m365-copilot")
+  const expected = ModelRegistry.getInstance().listRoutes("m365-copilot")
     .filter(route => route.slug === "m365-copilot/gpt-5.6")
     .map(route => ({
       slug: route.slug,
@@ -76,11 +76,10 @@ try {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`Codex did not preserve the unified M365 Copilot model contract: ${JSON.stringify(actual)}`);
   }
-  const nativeSol = catalog.models?.find(model => model.slug === "gpt-5.6-sol");
   const m365Default = catalog.models?.find(model => model.slug === "m365-copilot/gpt-5.6");
-  if (nativeSol?.multi_agent_version !== "v1" || m365Default?.multi_agent_version !== "v1") {
+  if (m365Default?.multi_agent_version !== "v1") {
     throw new Error(
-      `Codex did not preserve Compatibility V1 catalog metadata: ${JSON.stringify({ nativeSol, m365Default })}`,
+      `Codex did not preserve Compatibility V1 catalog metadata: ${JSON.stringify({ m365Default })}`,
     );
   }
   const features = runCodex(["features", "list"], isolatedEnv).stdout;

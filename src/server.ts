@@ -64,17 +64,14 @@ function serveUniversal(options: {
     },
   };
 }
-import {
-  buildAndSyncFallbackModelCatalog,
-  ensureManagedModelCatalogFile,
-} from "./models/model-catalog";
+import { ModelCatalog } from "./models/model-catalog";
 import {
   readCodexModelContextOverride,
   readCodexSubagentProtocol,
-  syncCodexModelCatalogConfig,
+  reconcileCodexModelCatalogConfig,
   type CodexModelContextOverride,
 } from "./codex-integration";
-import { isProviderModel } from "./models/model-registry";
+import { ModelRegistry } from "./models/model-registry";
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
 import { activeWebTurnRegistry } from "./adapters/web";
 import {
@@ -427,9 +424,8 @@ export async function modelsRequest(
 ): Promise<Response> {
   let catalog: Record<string, unknown>;
   try {
-    catalog = buildAndSyncFallbackModelCatalog(config, {
-      contextOverride: contextOverride?.(),
-    });
+    contextOverride?.();
+    catalog = ModelCatalog.getInstance().buildAndSyncCatalog(config);
   } catch (error) {
     onFailure?.(modelCatalogFailure("catalog", error));
     return formatErrorResponse(500, "server_error", error instanceof Error ? error.message : String(error));
@@ -604,7 +600,7 @@ export async function responseRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
-  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "m365-copilot")) {
+  if (typeof requestedModel === "string" && ModelRegistry.getInstance().isProviderModel(requestedModel, "m365-copilot")) {
     return await handleM365ResponseRequest(req, raw, requestedModel, options, adapterFactory);
   }
   if (typeof requestedModel === "string" && requestedModel.trim().length > 0) {
@@ -662,7 +658,7 @@ export async function compactRequest(
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
-  if (isProviderModel(raw.model, "m365-copilot")) {
+  if (ModelRegistry.getInstance().isProviderModel(raw.model, "m365-copilot")) {
     const input = Array.isArray(raw.input) ? raw.input : [];
     const headers = new Headers(req.headers);
     headers.set("content-type", "application/json");
@@ -686,8 +682,8 @@ export function startServer(
   dependencies: { adapterFactory?: WebAdapterFactory } = {},
 ): UniversalServer {
   try {
-    ensureManagedModelCatalogFile(config);
-    syncCodexModelCatalogConfig();
+    ModelCatalog.getInstance().ensureManagedCatalogFile(config);
+    reconcileCodexModelCatalogConfig();
   } catch (error) {
     console.warn(`[codex-chatgpt-web] could not sync model catalog: ${error instanceof Error ? error.message : String(error)}`);
   }

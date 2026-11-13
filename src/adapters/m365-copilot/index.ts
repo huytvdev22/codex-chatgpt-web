@@ -24,6 +24,10 @@ export {
   resolveM365CapabilityMode,
 } from "./capability-picker";
 export {
+  M365ModelProvider,
+  type M365ModelRouteDefinition,
+} from "./model-provider";
+export {
   attachFilesViaPlusMenu,
   m365ImageFilePayloads,
   PLUS_MENU_SELECTORS,

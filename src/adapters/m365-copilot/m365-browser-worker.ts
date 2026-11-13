@@ -10,8 +10,10 @@ import {
   type M365MarkdownBlock,
   FastPathStreamBuffer,
 } from "../web/protocol";
-import { ensureM365CapabilityMode } from "./capability-picker";
-import { resolveM365CapabilityMode } from "../../models/model-registry";
+import {
+  ensureM365CapabilityMode,
+  resolveM365CapabilityMode,
+} from "./capability-picker";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import {

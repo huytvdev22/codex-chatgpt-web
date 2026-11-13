@@ -944,6 +944,11 @@ function SetupSurface({
     updateState((await api!.snapshot()).state);
   });
 
+  const uninstall = () => run(async () => {
+    const result = await api!.uninstallIntegration();
+    if (!result.cancelled) updateState(result.state);
+  });
+
   return (
     <ContentSurface
       eyebrow={copy.required}
@@ -999,13 +1004,23 @@ function SetupSurface({
           complete={snapshot.state.codexCatalogVerified === true}
           description={devProfile
             ? copy.devStepInstallBody
-            : "Add Microsoft 365 Copilot models to Codex without replacing native catalog."}
+            : "Configure Codex to expose only installed adapter models (M365 Copilot)."}
           disabled={globalActionDisabled}
           index={manualInteraction ? 1 : 3}
           onAction={install}
           repeatable
           title={devProfile ? copy.devStepInstall : copy.stepInstall}
         />
+        {!devProfile && snapshot.state.coreSetupComplete ? (
+          <SettingRow
+            body={copy.uninstallIntegrationBody}
+            label={copy.uninstallIntegration}
+          >
+            <SecondaryButton disabled={globalActionDisabled} onClick={() => void uninstall()}>
+              {copy.uninstall}
+            </SecondaryButton>
+          </SettingRow>
+        ) : null}
       </div>
 
       {!devProfile && snapshot.state.codexRestartRequired ? (

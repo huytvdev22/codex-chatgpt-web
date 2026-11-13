@@ -559,3 +559,10 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   assert.equal(submitted, "Work");
   assert.equal(configureMode, "automatic");
 });
+
+test("setup shows uninstall action after core setup and calls uninstallIntegration", () => {
+  const setupSlice = appSource.slice(appSource.indexOf("function SetupSurface("), appSource.indexOf("function SettingsSurface("));
+  assert.match(setupSlice, /api!\.uninstallIntegration\(\)/);
+  assert.match(setupSlice, /label=\{copy\.uninstallIntegration\}/);
+  assert.match(setupSlice, /\{copy\.uninstall\}/);
+});

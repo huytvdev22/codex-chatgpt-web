@@ -1,12 +1,9 @@
 import assert from "node:assert";
-import {
-  isProviderModel,
-  listModelRoutes,
-  resolveM365CapabilityMode,
-} from "../src/models/model-registry.ts";
+import { ModelRegistry } from "../src/models/model-registry.ts";
 import {
   M365_CAPABILITY_SPECS,
   M365CapabilityPicker,
+  resolveM365CapabilityMode,
 } from "../src/adapters/m365-copilot/capability-picker.ts";
 
 console.log("=============================================================");
@@ -15,9 +12,10 @@ console.log("=============================================================");
 
 // 1. Kiểm tra Model Catalog M365
 console.log("\n[Test 1] Kiểm tra danh mục Model Route M365...");
-const routes = listModelRoutes("m365-copilot");
+const registry = ModelRegistry.getInstance();
+const routes = registry.listRoutes("m365-copilot");
 const isM365ModelSlug = modelId =>
-  isProviderModel(modelId, "m365-copilot");
+  registry.isProviderModel(modelId, "m365-copilot");
 console.log("Danh sách route M365:", routes.map(route => route.slug));
 
 assert(routes.length >= 2, "Danh sách routes phải có ít nhất 2 model");

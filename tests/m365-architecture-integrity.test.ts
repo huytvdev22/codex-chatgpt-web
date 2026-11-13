@@ -25,6 +25,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       "conversation-url.ts",
       "index.ts",
       "m365-browser-worker.ts",
+      "model-provider.ts",
     ]);
   });
 
@@ -83,6 +84,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.M365AgentLoop).toBeDefined();
     expect(rootModule.M365OutputTranslator).toBeDefined();
     expect(rootModule.M365BrowserWorker).toBeDefined();
+    expect(rootModule.M365ModelProvider).toBeDefined();
 
     // Normalization
     expect(rootModule.CodexPayloadNormalizer).toBeDefined();

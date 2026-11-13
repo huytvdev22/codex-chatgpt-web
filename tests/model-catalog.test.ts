@@ -1,84 +1,40 @@
 import { describe, expect, test } from "bun:test";
-import {
-  augmentNativeModelCatalog,
-  buildProviderModel,
-} from "../src/models/model-catalog";
-import {
-  listModelRoutes,
-  requireModelRoute,
-} from "../src/models/model-registry";
-
-function source(): Record<string, unknown> {
-  return {
-    models: [
-      {
-        slug: "gpt-5.6-sol",
-        display_name: "GPT-5.6 Sol",
-        description: "Native model",
-        priority: 2,
-        shell_type: "shell_command",
-        visibility: "list",
-        supported_in_api: true,
-        multi_agent_version: "v2",
-        supported_reasoning_levels: [
-          { effort: "low", description: "Low" },
-          { effort: "medium", description: "Medium" },
-          { effort: "high", description: "High" },
-        ],
-        tool_mode: "code_mode_only",
-        context_window: 300_000,
-        max_context_window: 320_000,
-        auto_compact_token_limit: 270_000,
-        comp_hash: "native-contract",
-      },
-      {
-        slug: "gpt-5.6-terra",
-        display_name: "GPT-5.6 Terra",
-        description: "Native secondary model",
-        priority: 3,
-        visibility: "list",
-        supported_in_api: true,
-        multi_agent_version: "v2",
-        supported_reasoning_levels: [
-          { effort: "low", description: "Low" },
-        ],
-      },
-    ],
-  };
-}
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AppConfig } from "../src/config";
+import { BaseModelProvider } from "../src/models/base-model-provider";
+import { ModelCatalog } from "../src/models/model-catalog";
+import { ModelRegistry } from "../src/models/model-registry";
+import type { JsonObject, ModelRouteDefinition } from "../src/models/types";
 
 const nativeConfig = {
   subagentProtocol: "native",
 } as never;
 
-describe("model catalog dùng registry chung", () => {
-  test("giữ nguyên native models và thêm tất cả route trong registry", () => {
-    const native = source();
-    const snapshot = structuredClone(native);
-    const result = augmentNativeModelCatalog(native, nativeConfig);
-    const models = result.models as Array<Record<string, unknown>>;
-    const nativeModels = snapshot.models as Array<Record<string, unknown>>;
-    const expectedRoutes = listModelRoutes();
+describe("model catalog chỉ xuất các model từ adapter qua BaseModelProvider + ModelRegistry", () => {
+  const registry = ModelRegistry.getInstance();
+  const catalog = ModelCatalog.getInstance();
 
-    expect(native).toEqual(snapshot);
-    expect(models.slice(0, nativeModels.length)).toEqual(nativeModels);
-    expect(models.slice(nativeModels.length).map(model => model.slug))
+  test("chỉ trả về đúng các route từ adapter đã đăng ký, không có native fallback", () => {
+    const result = catalog.buildCatalog(nativeConfig);
+    const expectedRoutes = registry.listRoutes();
+
+    expect(result.models.map(model => model.slug))
       .toEqual(expectedRoutes.map(route => route.slug));
+    expect(result.models.some(model => model.slug === "gpt-5.6-sol")).toBe(false);
+    expect(result.models.some(model => model.slug === "gpt-5.5")).toBe(false);
   });
 
-  test("công bố đầy đủ các model M365 Copilot trong registry", () => {
-    const models = augmentNativeModelCatalog(source(), nativeConfig)
-      .models as Array<Record<string, unknown>>;
-    const m365Models = models.filter(model =>
-      model.slug === "m365-copilot"
-      || String(model.slug).startsWith("m365-copilot/")
-    );
+  test("công bố đầy đủ các model M365 Copilot với đầy đủ metadata cho Codex", () => {
+    const models = catalog.buildCatalog(nativeConfig).models;
 
-    expect(m365Models).toHaveLength(2);
-    expect(m365Models[0]).toMatchObject({
+    expect(models).toHaveLength(2);
+    expect(models[0]).toMatchObject({
       slug: "m365-copilot/gpt-5.6",
       display_name: "M365 - GPT 5.6",
       visibility: "list",
+      supported_in_api: true,
       default_reasoning_level: "low",
       supported_reasoning_levels: [
         { effort: "low", description: "Quick" },
@@ -89,14 +45,14 @@ describe("model catalog dùng registry chung", () => {
       max_context_window: 100_000,
       effective_context_window_percent: 90,
       auto_compact_token_limit: 90_000,
+      shell_type: "unified_exec",
+      multi_agent_version: "v2",
     });
   });
 
-  test("builder chung tạo model cho mọi provider", () => {
-    const template = (source().models as Array<Record<string, unknown>>)[0]!;
-
-    for (const route of listModelRoutes()) {
-      const model = buildProviderModel(template, route, nativeConfig);
+  test("builder chung tạo model cho mọi provider từ canonical defaults", () => {
+    for (const route of registry.listRoutes()) {
+      const model = catalog.buildProviderModel(route, nativeConfig);
 
       expect(model).toMatchObject({
         slug: route.slug,
@@ -110,7 +66,6 @@ describe("model catalog dùng registry chung", () => {
         max_context_window: route.contextWindow,
         auto_compact_token_limit: route.autoCompactTokenLimit,
       });
-      expect(model).not.toHaveProperty("comp_hash");
       expect(
         (model.supported_reasoning_levels as Array<{ effort: string }>)
           .map(level => level.effort),
@@ -118,65 +73,100 @@ describe("model catalog dùng registry chung", () => {
     }
   });
 
-  test("loại catalog provider cũ trước khi build lại nên kết quả idempotent", () => {
-    const polluted = source();
-    (polluted.models as unknown[]).push(
-      { slug: "m365-copilot/legacy", display_name: "Legacy M365" },
-      { slug: "m365-copilot", display_name: "Stale M365" },
-    );
-
-    const first = augmentNativeModelCatalog(polluted, nativeConfig);
-    const second = augmentNativeModelCatalog(first, nativeConfig);
-    const models = second.models as Array<Record<string, unknown>>;
-    const slugs = models.map(model => String(model.slug));
-
-    expect(slugs.filter(slug => slug === "m365-copilot")).toHaveLength(1);
-    expect(slugs.filter(slug => slug === "m365-copilot/gpt-5.6")).toHaveLength(1);
-    expect(slugs).not.toContain("m365-copilot/legacy");
-    expect(new Set(slugs).size).toBe(slugs.length);
-  });
-
-  test("Compatibility V1 áp dụng protocol cho native và provider rows", () => {
+  test("Compatibility V1 áp dụng protocol v1 cho toàn bộ adapter models", () => {
     const config = { subagentProtocol: "compatibility-v1" } as never;
-    const models = augmentNativeModelCatalog(source(), config)
-      .models as Array<Record<string, unknown>>;
+    const models = catalog.buildCatalog(config).models;
 
     expect(models.every(model => model.multi_agent_version === "v1")).toBeTrue();
   });
 
-  test("context override chỉ nâng max_context_window của native models", () => {
-    const models = augmentNativeModelCatalog(source(), nativeConfig, {
-      contextWindow: 371_851,
-    }).models as Array<Record<string, unknown>>;
+  test("từ chối build route chưa có provider đăng ký", () => {
+    const orphanRoute: ModelRouteDefinition = {
+      slug: "unregistered/model",
+      displayName: "Orphan",
+      description: "Unregistered route",
+      contextWindow: 100_000,
+      autoCompactTokenLimit: 90_000,
+      effectiveContextWindowPercent: 90,
+      inputModalities: ["text"],
+      defaultReasoningLevel: "low",
+      reasoningLevels: [{ effort: "low", description: "Low" }],
+    };
 
-    expect(models[0]?.context_window).toBe(300_000);
-    expect(models[0]?.max_context_window).toBe(371_851);
-    expect(models[1]?.max_context_window).toBe(371_851);
-
-    const m365 = models.find(model => model.slug === "m365-copilot/gpt-5.6");
-    expect(m365?.context_window).toBe(100_000);
-    expect(m365?.max_context_window).toBe(100_000);
-  });
-
-  test("không chấp nhận provider route làm native template", () => {
-    const route = requireModelRoute("m365-copilot");
-
-    expect(() => buildProviderModel({
-      slug: "m365-copilot",
-      visibility: "list",
-      supported_reasoning_levels: [{ effort: "low", description: "Low" }],
-    }, route, nativeConfig)).toThrow("must be a native Codex model");
-  });
-
-  test("từ chối catalog không có native template hợp lệ", () => {
-    expect(() => augmentNativeModelCatalog({
-      models: [{
-        slug: "native-invalid",
-        visibility: "hide",
-        supported_reasoning_levels: [],
-      }],
-    }, nativeConfig)).toThrow(
-      "Native Codex models response has no list-visible model with reasoning metadata",
+    expect(() => catalog.buildProviderModel(orphanRoute, nativeConfig)).toThrow(
+      "No registered ModelProvider for route: unregistered/model",
     );
+  });
+
+  test("adapter mới kế thừa BaseModelProvider chỉ cần override hook cần thiết", () => {
+    class CustomWebModelProvider extends BaseModelProvider {
+      public readonly id = "custom-web";
+      public readonly exactSlugs = ["custom-web"] as const;
+      public readonly slugPrefixes = ["custom-web/"] as const;
+      public readonly routes: readonly ModelRouteDefinition[] = [
+        {
+          slug: "custom-web/pro",
+          displayName: "Custom Web Pro",
+          description: "Custom Web Adapter Model",
+          contextWindow: 128_000,
+          autoCompactTokenLimit: 110_000,
+          effectiveContextWindowPercent: 90,
+          inputModalities: ["text"],
+          defaultReasoningLevel: "low",
+          reasoningLevels: [
+            { effort: "low", description: "Fast" },
+            { effort: "high", description: "Deep" },
+          ],
+        },
+      ];
+
+      protected override buildModelOverrides(
+        _route: ModelRouteDefinition,
+        _config: AppConfig,
+      ): JsonObject {
+        return { custom_adapter_flag: true };
+      }
+
+      public override isCatalogSynced(storedProviderModels: readonly JsonObject[]): boolean {
+        return super.isCatalogSynced(storedProviderModels)
+          && storedProviderModels.every(model => model.custom_adapter_flag === true);
+      }
+    }
+
+    const customRegistry = new ModelRegistry([new CustomWebModelProvider()]);
+    const customCatalog = new ModelCatalog(customRegistry);
+    const built = customCatalog.buildCatalog(nativeConfig);
+    const customModel = built.models.find(m => m.slug === "custom-web/pro");
+
+    expect(built.models).toHaveLength(1);
+    expect(customModel).toMatchObject({
+      slug: "custom-web/pro",
+      display_name: "Custom Web Pro",
+      custom_adapter_flag: true,
+      context_window: 128_000,
+    });
+
+    const tempDir = mkdtempSync(join(tmpdir(), "custom-model-provider-"));
+    try {
+      const catalogPath = join(tempDir, "catalog.json");
+      writeFileSync(catalogPath, JSON.stringify({
+        models: [
+          {
+            slug: "custom-web/pro",
+            visibility: "list",
+            input_modalities: ["text"],
+          },
+        ],
+      }));
+
+      customCatalog.ensureManagedCatalogFile(nativeConfig, catalogPath, false);
+      const refreshed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+        models: JsonObject[];
+      };
+      const syncedCustom = refreshed.models.find(model => model.slug === "custom-web/pro");
+      expect(syncedCustom?.custom_adapter_flag).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

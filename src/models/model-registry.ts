@@ -1,129 +1,98 @@
-export type ModelReasoningEffort = "low" | "medium" | "high";
-export type ModelInputModality = "text" | "image";
-export type M365CapabilityMode =
-  | "auto"
-  | "quick"
-  | "think"
-  | "gpt-5.6-think"
-  | "gpt-5.6-quick";
+import type { BaseModelProvider } from "./base-model-provider";
+import type {
+  ModelProviderId,
+  ModelReasoningLevel,
+  ModelRouteDefinition,
+} from "./types";
+import { M365ModelProvider } from "../adapters/m365-copilot/model-provider";
 
-export interface ModelReasoningLevel {
-  effort: ModelReasoningEffort;
-  description: string;
-  mode?: M365CapabilityMode;
-}
+/**
+ * Registry trung tâm (Singleton + hỗ trợ DI khi test) quản lý toàn bộ `BaseModelProvider` đã đăng ký.
+ *
+ * Vai trò:
+ * - Cố định hoàn toàn với hạ tầng (không phụ thuộc logic riêng của từng web UI).
+ * - Khi tích hợp adapter mới, chỉ cần đăng ký instance `...ModelProvider.getInstance()` tại đây hoặc qua `register()`.
+ * - Cung cấp API tra cứu thống nhất cho `Server`, `ModelCatalog` và `CodexIntegration`.
+ */
+export class ModelRegistry {
+  private static readonly defaultInstance = new ModelRegistry([
+    M365ModelProvider.getInstance(),
+  ]);
 
-export interface ModelRouteDefinition {
-  slug: string;
-  displayName: string;
-  description: string;
-  contextWindow: number;
-  autoCompactTokenLimit: number;
-  effectiveContextWindowPercent: number;
-  inputModalities: readonly ModelInputModality[];
-  defaultReasoningLevel: ModelReasoningEffort;
-  reasoningLevels: readonly ModelReasoningLevel[];
-}
+  private readonly providers: BaseModelProvider[];
+  private readonly providerMap: Map<ModelProviderId, BaseModelProvider>;
 
-export interface ModelProviderDefinition {
-  id: ModelProviderId;
-  exactSlugs: readonly string[];
-  slugPrefixes: readonly string[];
-  routes: readonly ModelRouteDefinition[];
-}
+  constructor(providers: readonly BaseModelProvider[] = []) {
+    this.providers = [...providers];
+    this.providerMap = new Map(
+      providers.map(provider => [provider.id, provider]),
+    );
+  }
 
-export type ModelProviderId = "m365-copilot";
+  /** Trả về instance mặc định toàn cục đã nạp sẵn các adapter đang bật. */
+  public static getInstance(): ModelRegistry {
+    return ModelRegistry.defaultInstance;
+  }
 
-export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefinition>> = {
-  "m365-copilot": {
-    id: "m365-copilot",
-    exactSlugs: ["m365-copilot"],
-    slugPrefixes: ["m365-copilot/", "m365-"],
-    routes: [
-      {
-        slug: "m365-copilot/gpt-5.6",
-        displayName: "M365 - GPT 5.6",
-        description: "GPT 5.6 qua Microsoft 365 Copilot Web",
-        contextWindow: 100_000,
-        autoCompactTokenLimit: 90_000,
-        effectiveContextWindowPercent: 90,
-        inputModalities: ["text", "image"],
-        defaultReasoningLevel: "low",
-        reasoningLevels: [
-          { effort: "low", description: "Quick", mode: "gpt-5.6-quick" },
-          { effort: "high", description: "Deeper", mode: "gpt-5.6-think" },
-        ],
-      },
-      {
-        slug: "m365-copilot",
-        displayName: "M365 Copilot",
-        description: "Microsoft 365 Copilot Web",
-        contextWindow: 100_000,
-        autoCompactTokenLimit: 90_000,
-        effectiveContextWindowPercent: 90,
-        inputModalities: ["text", "image"],
-        defaultReasoningLevel: "low",
-        reasoningLevels: [
-          { effort: "low", description: "Quick", mode: "quick" },
-          { effort: "high", description: "Deeper", mode: "think" },
-        ],
-      },
-    ],
-  },
-};
+  /** Đăng ký hoặc ghi đè một `BaseModelProvider` theo `provider.id`. */
+  public register(provider: BaseModelProvider): this {
+    this.providerMap.set(provider.id, provider);
+    const existingIndex = this.providers.findIndex(item => item.id === provider.id);
+    if (existingIndex >= 0) {
+      this.providers[existingIndex] = provider;
+    } else {
+      this.providers.push(provider);
+    }
+    return this;
+  }
 
-const PROVIDER_LIST: readonly ModelProviderDefinition[] = Object.values(MODEL_PROVIDERS);
-const ALL_MODEL_ROUTES: readonly ModelRouteDefinition[] = PROVIDER_LIST.flatMap(
-  provider => provider.routes,
-);
+  /** Liệt kê toàn bộ provider hiện đang có trong registry. */
+  public listProviders(): readonly BaseModelProvider[] {
+    return this.providers;
+  }
 
-export function findModelProvider(modelId: string): ModelProviderDefinition | undefined {
-  return PROVIDER_LIST.find(provider =>
-    provider.exactSlugs.includes(modelId)
-    || provider.slugPrefixes.some(prefix => modelId.startsWith(prefix))
-  );
-}
+  /** Lấy trực tiếp provider theo `providerId` (ví dụ `"m365-copilot"`). */
+  public getProvider(providerId: ModelProviderId): BaseModelProvider | undefined {
+    return this.providerMap.get(providerId);
+  }
 
-export function isProviderModel(modelId: string, providerId: ModelProviderId): boolean {
-  return findModelProvider(modelId)?.id === providerId;
-}
+  /** Tìm provider khớp với `modelId` (dựa trên `exactSlugs` hoặc `slugPrefixes`). */
+  public findProvider(modelId: string): BaseModelProvider | undefined {
+    return this.providers.find(provider => provider.matchModelSlug(modelId));
+  }
 
-export function listModelRoutes(providerId?: ModelProviderId): readonly ModelRouteDefinition[] {
-  return providerId ? MODEL_PROVIDERS[providerId].routes : ALL_MODEL_ROUTES;
-}
+  /** Kiểm tra `modelId` có thuộc về đúng `providerId` chỉ định hay không. */
+  public isProviderModel(modelId: string, providerId: ModelProviderId): boolean {
+    return this.findProvider(modelId)?.id === providerId;
+  }
 
-export function findModelRoute(modelId: string): ModelRouteDefinition | undefined {
-  const provider = findModelProvider(modelId);
-  if (!provider) return undefined;
-  return provider.routes.find(route => route.slug === modelId);
-}
+  /** Trả về toàn bộ danh sách route model (của 1 provider hoặc tất cả provider). */
+  public listRoutes(providerId?: ModelProviderId): readonly ModelRouteDefinition[] {
+    if (providerId) {
+      return this.providerMap.get(providerId)?.routes ?? [];
+    }
+    return this.providers.flatMap(provider => provider.routes);
+  }
 
-export function requireModelRoute(modelId: string): ModelRouteDefinition {
-  const route = findModelRoute(modelId);
-  if (!route) throw new Error(`Model không tồn tại: ${modelId}`);
-  return route;
-}
+  /** Tìm đặc tả route khớp với `modelId`. */
+  public findRoute(modelId: string): ModelRouteDefinition | undefined {
+    return this.findProvider(modelId)?.findRoute(modelId);
+  }
 
-export function resolveModelReasoning(
-  route: ModelRouteDefinition,
-  requestedEffort?: string,
-): ModelReasoningLevel {
-  return route.reasoningLevels.find(level => level.effort === requestedEffort)
-    ?? route.reasoningLevels.find(level => level.effort === route.defaultReasoningLevel)
-    ?? route.reasoningLevels[0]!;
-}
+  /** Lấy đặc tả route của `modelId` hoặc ném lỗi nếu model không được adapter hỗ trợ. */
+  public requireRoute(modelId: string): ModelRouteDefinition {
+    const route = this.findRoute(modelId);
+    if (!route) throw new Error(`Model không tồn tại: ${modelId}`);
+    return route;
+  }
 
-export function resolveModelMode(
-  modelId: string,
-  requestedEffort?: string,
-): M365CapabilityMode | undefined {
-  return resolveModelReasoning(requireModelRoute(modelId), requestedEffort).mode;
-}
-
-export function resolveM365CapabilityMode(
-  modelId?: string,
-  requestedEffort?: string,
-): M365CapabilityMode {
-  if (!modelId) return "auto";
-  return resolveModelMode(modelId, requestedEffort) ?? "auto";
+  /** Phân giải mức reasoning từ yêu cầu của client hoặc quay về mức mặc định của route. */
+  public resolveReasoning(
+    route: ModelRouteDefinition,
+    requestedEffort?: string,
+  ): ModelReasoningLevel {
+    return route.reasoningLevels.find(level => level.effort === requestedEffort)
+      ?? route.reasoningLevels.find(level => level.effort === route.defaultReasoningLevel)
+      ?? route.reasoningLevels[0]!;
+  }
 }

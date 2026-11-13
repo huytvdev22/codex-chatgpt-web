@@ -41,7 +41,8 @@ import {
   splitLines,
   textFormat,
 } from "./codex-integration-document";
-import { getManagedModelCatalogPath } from "./models/model-catalog";
+import { ModelCatalog } from "./models/model-catalog";
+import { ModelRegistry } from "./models/model-registry";
 import {
   assertBuiltinModelProvider,
   assertPreservedPreviousAssignments,
@@ -362,9 +363,13 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
   const current = readFileSync(existing.configPath, "utf8");
   if ((existing.version === 4 || existing.version === 5 || existing.version === 6 || existing.version === 7 || existing.version === 8 || existing.version === 9 || existing.version === 10) && !existing.active) {
     verifyRestoredRoute(current, existing);
-    return { changed: false, active: false };
+    const stripped = stripBridgeConfigOverrides(current);
+    if (stripped.changed) {
+      writeFileSnapshot(snapshotFile(existing.configPath, { followSymlink: true }), stripped.text);
+    }
+    return { changed: stripped.changed, active: false };
   }
-  const restored = restoreManagedRoute(current, existing);
+  const restored = stripBridgeConfigOverrides(restoreManagedRoute(current, existing)).text;
   const disconnected:
     | CodexIntegrationJournal
     | LegacyCodexIntegrationJournalV9
@@ -444,6 +449,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     ...(existing.format ? { format: existing.format } : {}),
   };
   writeIntegrationState(connected, { path: existing.configPath, data: route.text }, [getCodexModelsCachePath()]);
+  syncCodexModelCatalogConfig();
   return { changed: true, active: true };
 }
 
@@ -464,6 +470,7 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   } else {
     restored = restoreManagedRoute(current, journal);
   }
+  restored = stripBridgeConfigOverrides(restored).text;
   const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
   const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
@@ -541,7 +548,7 @@ export function inspectCodexIntegration(): {
 }
 
 export function syncCodexModelCatalogConfig(
-  catalogPath: string = getManagedModelCatalogPath(),
+  catalogPath: string = ModelCatalog.getInstance().getManagedCatalogPath(),
 ): boolean {
   const configPath = getCodexConfigPath();
   if (!existsSync(configPath)) return false;
@@ -571,23 +578,61 @@ export function syncCodexModelCatalogConfig(
   }
 }
 
+function stripManagedModelCatalogLine(
+  text: string,
+  catalogPath: string = ModelCatalog.getInstance().getManagedCatalogPath(),
+): { text: string; changed: boolean } {
+  const document = parseDocument(text);
+  const existing = findTopLevelAssignment(document.lines, "model_catalog_json");
+  if (existing.present && existing.value === catalogPath && existing.index !== undefined) {
+    removeDocumentLine(document, existing.index);
+    return { text: renderDocument(document), changed: true };
+  }
+  return { text, changed: false };
+}
+
+/** Gỡ model_catalog_json do bridge quản lý và model adapter đang chọn khỏi config.toml. */
+function stripBridgeConfigOverrides(
+  text: string,
+  catalogPath: string = ModelCatalog.getInstance().getManagedCatalogPath(),
+): { text: string; changed: boolean } {
+  const withoutCatalog = stripManagedModelCatalogLine(text, catalogPath);
+  const document = parseDocument(withoutCatalog.text);
+  const model = findTopLevelAssignment(document.lines, "model");
+  if (model.present && model.value && ModelRegistry.getInstance().findProvider(model.value) !== undefined && model.index !== undefined) {
+    removeDocumentLine(document, model.index);
+    return { text: renderDocument(document), changed: true };
+  }
+  return withoutCatalog;
+}
+
 export function removeCodexModelCatalogConfig(
-  catalogPath: string = getManagedModelCatalogPath(),
+  catalogPath: string = ModelCatalog.getInstance().getManagedCatalogPath(),
 ): boolean {
   const configPath = getCodexConfigPath();
   if (!existsSync(configPath)) return false;
   try {
     const text = readFileSync(configPath, "utf8");
-    const document = parseDocument(text);
-    const existing = findTopLevelAssignment(document.lines, "model_catalog_json");
-    if (existing.present && existing.value === catalogPath && existing.index !== undefined) {
-      removeDocumentLine(document, existing.index);
+    const result = stripManagedModelCatalogLine(text, catalogPath);
+    if (result.changed) {
       const snapshot = snapshotFile(configPath, { followSymlink: true });
-      writeFileSnapshot(snapshot, renderDocument(document));
+      writeFileSnapshot(snapshot, result.text);
       return true;
     }
     return false;
   } catch {
     return false;
   }
+}
+
+/** Chỉ đồng bộ model_catalog_json khi tích hợp Codex đã cài và đang active. */
+export function reconcileCodexModelCatalogConfig(
+  catalogPath: string = ModelCatalog.getInstance().getManagedCatalogPath(),
+): boolean {
+  const journal = readJournal();
+  if (!journal) return false;
+  if (journal.version !== 2 && !managedJournalIsActive(journal)) {
+    return removeCodexModelCatalogConfig(catalogPath);
+  }
+  return syncCodexModelCatalogConfig(catalogPath);
 }

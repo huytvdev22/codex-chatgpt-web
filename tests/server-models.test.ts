@@ -22,13 +22,13 @@ test("catalog diagnostics record safe failure when contextOverride throws", asyn
   expect(failure).toEqual({ stage: "catalog", code: "ABORT_ERR" });
 });
 
-test("returns M365 Copilot models locally and applies contextOverride", async () => {
+test("returns only registered adapter models locally without native fallback", async () => {
   const request = new Request("http://127.0.0.1:17841/v1/models?client_version=1.2.3", {
     headers: { authorization: "Bearer codex-oauth-token" },
   });
   const config = defaultConfig("browser-only");
   config.subagentProtocol = "native";
-  const response = await modelsRequest(request, config, () => ({ contextWindow: 371_851 }));
+  const response = await modelsRequest(request, config);
 
   expect(response.status).toBe(200);
   const body = await response.json() as {
@@ -42,15 +42,14 @@ test("returns M365 Copilot models locally and applies contextOverride", async ()
     }>;
   };
   const slugs = body.models.map(model => model.slug);
-  expect(slugs).toContain("m365-copilot");
-  expect(slugs).toContain("m365-copilot/gpt-5.6");
+  expect(slugs).toEqual(["m365-copilot/gpt-5.6", "m365-copilot"]);
+  expect(slugs.some(slug => slug === "gpt-5.6-sol" || slug === "gpt-5.5")).toBe(false);
   expect(slugs.some(slug => slug === "chatgpt-web" || slug.startsWith("chatgpt-web/"))).toBe(false);
 
   const m365Default = body.models.find(model => model.slug === "m365-copilot");
   expect(m365Default).toBeDefined();
   expect(m365Default!.context_window).toBe(100_000);
   expect(m365Default!.max_context_window).toBe(100_000);
-  expect(body.models[0]!.max_context_window).toBe(371_851);
 });
 
 test("M365 model catalog does not expose chatgpt-web routes regardless of legacy flags", async () => {

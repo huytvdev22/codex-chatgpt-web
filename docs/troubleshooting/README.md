@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **048** | Tắt/Uninstall bridge vẫn để sót `model_catalog_json` và model adapter trong `~/.codex/config.toml` | `codex-integration`, `server`, `launcher` | ✅ Đã Confirm | ./048-uninstall-leaves-model-catalog-in-codex-config.md |
 | **047** | M365 Copilot non-streaming (`stream: false`) bỏ sót `freeformToolNames` / `toolSearchToolNames` | `m365-copilot`, `server`, `tools` | ⏳ Chờ User Test & Confirm | ./047-m365-non-stream-freeform-tool-bridge.md |
 | **046** | Mở `docs/swagger.html` qua VS Code Live Server bị lỗi CORS khi gọi `127.0.0.1:17841` | `server`, `cors`, `swagger` | ✅ Đã Confirm | ./046-swagger-live-server-cors-blocked.md |
 | **045** | ChatGPT báo `Couldn't copy to clipboard` do synthetic click không tạo trusted user activation | `chatgpt-web`, `web`, `playwright`, `clipboard` | ✅ Đã Confirm | ./045-chatgpt-clipboard-copy-requires-focus.md |
