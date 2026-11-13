@@ -265,6 +265,23 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
         metadata: { targetMenuLabel: "Qwen3.8-Max" },
       },
       {
+        slug: "qwen-web/qwen4-max-preview",
+        displayName: "Qwen4 Max Preview (Web)",
+        description: "A preview of the flagship Qwen4 model delivering state-of-the-art performance.",
+        backendModel: "Qwen4-Max-Preview",
+        contextWindow: 128_000,
+        autoCompactTokenLimit: 96_000,
+        effectiveContextWindowPercent: 95,
+        composerCharLimit: 200_000,
+        inputModalities: ["text", "image"],
+        defaultReasoningLevel: "low",
+        reasoningLevels: [
+          { effort: "low", description: "Off", mode: "normal" },
+          { effort: "high", description: "Think", mode: "thinking" },
+        ],
+        metadata: { targetMenuLabel: "Qwen4-Max-Preview" },
+      },
+      {
         slug: "qwen-web/qwen3.8-omni-flash",
         displayName: "Qwen3.8 Omni Flash (Web)",
         description: "Qwen3.8 Omni Flash qua Qwen Web, tối ưu tác vụ đa phương thức tốc độ cao.",

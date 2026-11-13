@@ -260,6 +260,7 @@ export function ensureManagedModelCatalogFile(
         const expectedVisibleQwenSlugs = [
           "qwen-web",
           "qwen-web/qwen3.7-plus",
+         "qwen-web/qwen4-max-preview",
           "qwen-web/qwen3.8-max",
           "qwen-web/qwen3.8-omni-flash",
         ];
