@@ -12,6 +12,34 @@ Codex M365 Copilot là một bridge cục bộ giúp Codex Desktop hoặc Codex 
 
 ## Kiến trúc
 
+### Khi chạy thực tế, ứng dụng gồm 3 phần
+
+Khi khởi chạy đầy đủ qua Electron Launcher, hệ thống gồm **3 phần chạy song song** (cộng thêm **Codex CLI / Desktop** ở ngoài gọi vào):
+
+```text
+[Codex CLI / Desktop]  (ứng dụng ngoài, gọi HTTP tới 127.0.0.1:17841)
+         │
+         ▼
+1. [Local Responses API Server]  (Process Bun/Node: src/server.ts)
+         │  ▲
+         │  └── HTTP Control + Bearer Token (mượn tab, heartbeat)
+         ▼
+2. [Electron Launcher & Supervisor] (Process Electron: launcher/electron/main.cjs)
+         │  ├── Giao diện React UI (launcher/src/)
+         │  ├── RuntimeSupervisor (spawn & giám sát server)
+         │  └── BrowserControlServer (control-server.cjs)
+         ▼
+3. [Embedded Browser Host] (Chromium WebContentsView trong Electron: browser-host.cjs)
+         └── Mở sẵn tab ChatGPT / M365 Copilot (giữ cookie đăng nhập)
+             & cho phép Playwright kết nối vào qua CDP để gõ/đọc kết quả
+```
+
+1. **Local Responses API Server (`src/server.ts`):** Tiến trình backend (Bun/Node) lắng nghe trên `127.0.0.1:17841`, nhận request từ Codex, định tuyến model và chạy `WebTurnEngine` + `bridgeToResponsesSSE()`.
+2. **Electron Launcher (`launcher/electron/`, `launcher/src/`):** App desktop quản lý vòng đời (tự bật/tắt server qua `RuntimeSupervisor`), hiển thị giao diện cài đặt/trạng thái và chạy `BrowserControlServer` để điều phối lượt dùng trình duyệt.
+3. **Embedded Browser Host (`launcher/electron/browser-host.cjs`):** Trình duyệt Chromium nhúng ngay trong Electron (tối đa 5 tab), giữ session đăng nhập `chatgpt.com` và `m365.cloud.microsoft`, để `WebTurnEngine` dùng Playwright thao tác trực tiếp.
+
+*(Nếu chạy CLI thuần bằng `bun run start` không qua Launcher, hệ thống chỉ chạy **Phần 1** và tự dùng `LocalBrowserRuntime` mở trình duyệt Playwright riêng khi có request.)*
+
 ### Cơ chế hoạt động theo 6 tầng (Architecture Layers)
 
 Hệ thống hoạt động như một **Local API Gateway + Browser Orchestration Engine** trên loopback (`127.0.0.1:17841`), chia thành 6 tầng rõ rệt:

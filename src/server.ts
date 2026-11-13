@@ -8,6 +8,8 @@ import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import http from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 export interface UniversalServer {
   port: number;
@@ -880,12 +882,38 @@ export function startServer(
     const actual = Buffer.from(header);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
-  const server = serveUniversal({
-    hostname: config.host,
-    port: config.port,
-    idleTimeout: 0,
-    async fetch(req) {
+  const LOOPBACK_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+  const applyLoopbackCors = (req: Request, res: Response): Response => {
+    const origin = req.headers.get("origin");
+    if (!origin || !LOOPBACK_ORIGIN_RE.test(origin)) return res;
+    const headers = new Headers(res.headers);
+    headers.set("access-control-allow-origin", origin);
+    headers.set("vary", "Origin");
+    headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+    headers.set("access-control-allow-headers", "Content-Type, Authorization");
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  };
+  const handleRequest = async (req: Request): Promise<Response> => {
+      if (req.method === "OPTIONS") {
+        return new Response(null, { status: 204 });
+      }
       const url = new URL(req.url);
+      if (req.method === "GET" && (url.pathname === "/docs" || url.pathname === "/swagger")) {
+        try {
+          const swaggerPath = resolve(import.meta.dir, "..", "docs", "swagger.html");
+          const html = readFileSync(swaggerPath, "utf8");
+          return new Response(html, {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        } catch {
+          return new Response("Swagger UI not found", { status: 404 });
+        }
+      }
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
           status: "ok",
@@ -1105,6 +1133,13 @@ export function startServer(
         );
       }
       return new Response("Not found", { status: 404 });
+  };
+  const server = serveUniversal({
+    hostname: config.host,
+    port: config.port,
+    idleTimeout: 0,
+    async fetch(req) {
+      return applyLoopbackCors(req, await handleRequest(req));
     },
   });
   function shutdown(): void {

@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codex Web GPT — Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #fafafa; }
+    .topbar-wrapper img { display: none; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    const spec = {
+      openapi: "3.0.3",
+      info: {
+        title: "Codex M365 Copilot / ChatGPT Web — Local Responses API",
+        version: "6.9.6",
+        description:
+          "Local HTTP API Gateway chạy trên 127.0.0.1:17841. Dùng trực tiếp với Web models (m365-copilot/gpt-5.6, m365-copilot, chatgpt-web) sau khi đăng nhập trong Launcher."
+      },
+      servers: [
+        { url: "http://127.0.0.1:17841", description: "Local Runtime Server (mặc định)" }
+      ],
+      tags: [
+        { name: "Health", description: "Kiểm tra trạng thái server" },
+        { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Codex & Web Providers" },
+        { name: "Native Passthrough", description: "Chuyển tiếp trực tiếp tới OpenAI/Codex (cần Bearer token)" },
+        { name: "Admin Control", description: "Endpoint điều khiển nội bộ (cần Control Bearer token)" }
+      ],
+      components: {
+        securitySchemes: {
+          BearerAuth: {
+            type: "http",
+            scheme: "bearer",
+            description: "Token Codex (cho Native Passthrough) hoặc Control Token (cho /admin/*). Không cần cho Web models."
+          }
+        }
+      },
+      paths: {
+        "/healthz": {
+          get: {
+            tags: ["Health"],
+            summary: "Kiểm tra sức khỏe server",
+            responses: {
+              "200": {
+                description: "Server đang hoạt động",
+                content: {
+                  "application/json": {
+                    example: {
+                      status: "ok",
+                      service: "codex-chatgpt-web",
+                      version: "6.9.6",
+                      port: 17841,
+                      accepting_turns: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/v1/models": {
+          get: {
+            tags: ["Responses API"],
+            summary: "Lấy danh sách model (Web Providers + Native Catalog)",
+            security: [{}, { BearerAuth: [] }],
+            responses: {
+              "200": {
+                description: "Danh sách model chuẩn OpenAI",
+                content: { "application/json": { schema: { type: "object" } } }
+              }
+            }
+          }
+        },
+        "/v1/responses": {
+          post: {
+            tags: ["Responses API"],
+            summary: "Gửi prompt tới Web Provider hoặc Native Codex",
+            description:
+              "Với Web models (m365-copilot/gpt-5.6, m365-copilot, chatgpt-web), không cần Authorization header. Đặt stream: false để nhận 1 JSON hoàn chỉnh khi test.",
+            security: [{}, { BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["model", "input"],
+                    properties: {
+                      model: { type: "string", example: "m365-copilot/gpt-5.6" },
+                      stream: { type: "boolean", default: false },
+                      previous_response_id: { type: "string", nullable: true },
+                      instructions: { type: "string", nullable: true },
+                      reasoning: {
+                        type: "object",
+                        properties: {
+                          effort: { type: "string", enum: ["low", "medium", "high"], example: "low" }
+                        }
+                      },
+                      input: {
+                        oneOf: [
+                          { type: "string" },
+                          {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              properties: {
+                                role: { type: "string", enum: ["user", "assistant", "system", "developer"] },
+                                content: { type: "string" }
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      tools: { type: "array", items: { type: "object" } }
+                    }
+                  },
+                  examples: {
+                    "M365 Copilot (Non-stream)": {
+                      value: {
+                        model: "m365-copilot/gpt-5.6",
+                        stream: false,
+                        input: [{ role: "user", content: "Xin chào, trả lời ngắn gọn 1 câu." }]
+                      }
+                    },
+                    "ChatGPT Web (Non-stream)": {
+                      value: {
+                        model: "chatgpt-web",
+                        stream: false,
+                        reasoning: { effort: "low" },
+                        input: [{ role: "user", content: "1 + 1 bằng mấy?" }]
+                      }
+                    },
+                    "M365 Copilot (SSE Stream)": {
+                      value: {
+                        model: "m365-copilot/gpt-5.6",
+                        stream: true,
+                        input: [{ role: "user", content: "Viết hàm Hello World bằng Java." }]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": {
+                description: "JSON (nếu stream=false) hoặc text/event-stream SSE (nếu stream=true)"
+              },
+              "400": { description: "Payload không hợp lệ" },
+              "409": { description: "Thiếu continuation state cho previous_response_id" },
+              "503": { description: "Server đang draining" }
+            }
+          }
+        },
+        "/v1/responses/compact": {
+          post: {
+            tags: ["Responses API"],
+            summary: "Nén ngữ cảnh hội thoại (Context Compaction)",
+            security: [{}, { BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: { type: "object" },
+                  example: {
+                    model: "m365-copilot/gpt-5.6",
+                    input: [{ role: "user", content: "Tóm tắt lại cuộc hội thoại trước đó." }]
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": { description: "Kết quả compaction" }
+            }
+          }
+        },
+        "/v1/alpha/search": {
+          post: {
+            tags: ["Native Passthrough"],
+            summary: "Native authenticated search (passthrough)",
+            security: [{ BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: { "application/json": { schema: { type: "object" } } }
+            },
+            responses: {
+              "200": { description: "Kết quả tìm kiếm từ upstream" },
+              "401": { description: "Thiếu Bearer token" }
+            }
+          }
+        },
+        "/v1/images/generations": {
+          post: {
+            tags: ["Native Passthrough"],
+            summary: "Native image generation (passthrough)",
+            security: [{ BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: { "application/json": { schema: { type: "object" } } }
+            },
+            responses: {
+              "200": { description: "Ảnh được tạo" },
+              "401": { description: "Thiếu Bearer token" }
+            }
+          }
+        },
+        "/v1/images/edits": {
+          post: {
+            tags: ["Native Passthrough"],
+            summary: "Native image editing (passthrough)",
+            security: [{ BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: { "multipart/form-data": { schema: { type: "object" } } }
+            },
+            responses: {
+              "200": { description: "Ảnh sau chỉnh sửa" },
+              "401": { description: "Thiếu Bearer token" }
+            }
+          }
+        },
+        "/admin/drain": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Ngừng nhận turn mới (drain)",
+            security: [{ BearerAuth: [] }],
+            responses: { "200": { description: "OK" }, "401": { description: "Unauthorized" } }
+          }
+        },
+        "/admin/resume": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Tiếp tục nhận turn mới (resume)",
+            security: [{ BearerAuth: [] }],
+            responses: { "200": { description: "OK" }, "401": { description: "Unauthorized" } }
+          }
+        },
+        "/admin/cancel-turn": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Hủy 1 browser turn theo traceId",
+            security: [{ BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  example: { traceId: "turn_trace_123456", reason: "manual cancel" }
+                }
+              }
+            },
+            responses: { "200": { description: "OK" }, "400": { description: "Invalid traceId" }, "401": { description: "Unauthorized" } }
+          }
+        },
+        "/admin/interrupt-turn": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Ngắt 1 HTTP turn theo threadId & turnId",
+            security: [{ BearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  example: { threadId: "thread_123456", turnId: "turn_123456" }
+                }
+              }
+            },
+            responses: { "200": { description: "OK" }, "400": { description: "Invalid ID" }, "401": { description: "Unauthorized" } }
+          }
+        },
+        "/admin/cancel-turns": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Hủy toàn bộ active turns",
+            security: [{ BearerAuth: [] }],
+            responses: { "200": { description: "OK" }, "401": { description: "Unauthorized" } }
+          }
+        },
+        "/admin/shutdown": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Tắt server an toàn (yêu cầu đã drain và không còn active turn)",
+            security: [{ BearerAuth: [] }],
+            responses: { "200": { description: "Shutting down" }, "401": { description: "Unauthorized" }, "409": { description: "Refused" } }
+          }
+        }
+      }
+    };
+
+    window.ui = SwaggerUIBundle({
+      spec,
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      presets: [SwaggerUIBundle.presets.apis]
+    });
+  </script>
+</body>
+</html>
+
