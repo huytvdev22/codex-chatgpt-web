@@ -308,8 +308,6 @@ function LauncherShell({
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
-  const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
-  const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(
     snapshot.state.browserInteractionMode === "automatic"
       && snapshot.state.coreSetupComplete === true
@@ -391,23 +389,6 @@ function LauncherShell({
     return () => media.removeEventListener("change", apply);
   }, []);
 
-  useEffect(() => {
-    const reminderAt = snapshot.state.sessionRefreshReminderAt;
-    const reminderTime = reminderAt === null ? Number.NaN : Date.parse(reminderAt);
-    if (browser?.authenticated !== true || !Number.isFinite(reminderTime)) {
-      setSessionReminderDue(false);
-      return;
-    }
-    const delay = reminderTime - Date.now();
-    if (delay <= 0) {
-      setSessionReminderDue(true);
-      return;
-    }
-    setSessionReminderDue(false);
-    const timer = window.setTimeout(() => setSessionReminderDue(true), delay);
-    return () => window.clearTimeout(timer);
-  }, [browser?.authenticated, snapshot.state.sessionRefreshReminderAt]);
-
   const activateBrowser = useCallback(async (show = false) => {
     setSurface("browser");
     await api!.setBrowserSurfaceActive(true);
@@ -436,35 +417,6 @@ function LauncherShell({
       await api!.installUpdate();
     } catch (cause) {
       setError(messageOf(cause));
-    }
-  };
-
-  const dismissSessionReminder = async () => {
-    if (sessionReminderBusy) return;
-    setSessionReminderBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.dismissSessionReminder());
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setSessionReminderBusy(false);
-    }
-  };
-
-  const logoutChatGpt = async () => {
-    if (sessionReminderBusy) return;
-    setSessionReminderBusy(true);
-    setError(null);
-    try {
-      const result = await api!.logoutChatGpt();
-      updateState(result.state);
-      navigateSurface("browser");
-      await api!.setBrowserSurfaceActive(true);
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setSessionReminderBusy(false);
     }
   };
 
@@ -594,8 +546,6 @@ function LauncherShell({
                 browserSlotRef={browserSlotRef}
                 copy={copy}
                 interactionMode={snapshot.state.browserInteractionMode}
-                operation={operation}
-                platform={snapshot.platform}
                 setError={setError}
               />
             ) : null}
@@ -634,17 +584,6 @@ function LauncherShell({
             copy={copy}
             onChange={(enabled) => void setRecommendedBiggerContext(enabled)}
             onClose={() => setBiggerContextRecommendationOpen(false)}
-          />
-        ) : null}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {sessionReminderDue && !biggerContextRecommendationOpen ? (
-          <SessionRefreshReminder
-            busy={sessionReminderBusy}
-            copy={copy}
-            onDismiss={() => void dismissSessionReminder()}
-            onLogout={() => void logoutChatGpt()}
           />
         ) : null}
       </AnimatePresence>
@@ -725,33 +664,18 @@ function BrowserSurface({
   browserSlotRef,
   copy,
   interactionMode,
-  operation,
-  platform,
   setError,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
   interactionMode: BrowserInteractionMode;
-  operation: OperationState | null;
-  platform: string;
   setError: (error: string | null) => void;
 }) {
-  const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
-  const passkeyAvailable = !manualInteraction
-    && platform === "darwin"
-    && browser?.authenticated !== true;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
   const navigationLocked = browser?.status === "running" || browser?.status === "testing";
-  const passkeyWaiting = passkeyAvailable
-    && operation?.name === "passkey-login"
-    && operation.status === "running"
-    && browser?.authenticated !== true;
-  useEffect(() => {
-    if (!passkeyWaiting) setPasskeyContinuationRequested(false);
-  }, [passkeyWaiting]);
   const navigate = async (action: "back" | "forward" | "reload") => {
     try {
       await api!.navigateBrowser(action);
@@ -792,22 +716,6 @@ function BrowserSurface({
     try {
       await api!.closeBrowserTab(tabId);
     } catch (cause) {
-      setError(messageOf(cause));
-    }
-  };
-  const openPasskeyLogin = () => {
-    if (operation?.status === "running") return;
-    setError(null);
-    void api!.openPasskeyLogin().catch(cause => setError(messageOf(cause)));
-  };
-  const continuePasskeyLogin = async () => {
-    if (!passkeyWaiting || passkeyContinuationRequested) return;
-    setPasskeyContinuationRequested(true);
-    setError(null);
-    try {
-      await api!.continuePasskeyLogin();
-    } catch (cause) {
-      setPasskeyContinuationRequested(false);
       setError(messageOf(cause));
     }
   };
@@ -898,18 +806,6 @@ function BrowserSurface({
             onClick={() => void openDevTools()}
           />
         </div>
-        {passkeyAvailable ? (
-          <button
-            className="toolbar-text-button"
-            disabled={passkeyWaiting && passkeyContinuationRequested}
-            onClick={() => void (passkeyWaiting ? continuePasskeyLogin() : openPasskeyLogin())}
-            type="button"
-          >
-            {passkeyWaiting
-              ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-              : copy.passkeySignIn}
-          </button>
-        ) : null}
         {(browser?.tabs ?? []).length > 0 ? (
           <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
             {visible ? "Hide Browser" : "Show Browser"}
@@ -934,22 +830,12 @@ function BrowserSurface({
             <h1>{manualInteraction ? copy.browserReady : copy.noActiveTask}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
-              : "Browser tabs (M365 Copilot, ChatGPT) will appear here automatically when Codex starts a turn."}</p>
+              : "Browser tabs (M365 Copilot) will appear here automatically when Codex starts a turn."}</p>
             {(browser?.tabs ?? []).length > 0 ? (
               <div className="browser-empty-actions">
-                <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
+                <PrimaryButton onClick={() => void toggle()}>
                   Show Browser
                 </PrimaryButton>
-                {passkeyAvailable ? (
-                  <SecondaryButton
-                    disabled={passkeyWaiting && passkeyContinuationRequested}
-                    onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
-                  >
-                    {passkeyWaiting
-                      ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-                      : copy.passkeySignIn}
-                  </SecondaryButton>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -1035,10 +921,8 @@ function SetupSurface({
 
   const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
   const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
-  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365));
 
   const isM365Testing = browser?.status === "testing" && isM365;
-  const isChatGptTesting = browser?.status === "testing" && !isM365;
   const isRunningTurn = browser?.status === "running";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
@@ -1055,15 +939,6 @@ function SetupSurface({
     }
   };
 
-  const openLogin = () => run(async () => {
-    await activateBrowser();
-    await api!.openLogin();
-  });
-  const smoke = () => run(async () => {
-    await activateBrowser();
-    await api!.smokeTest();
-    updateState((await api!.snapshot()).state);
-  });
   const install = () => run(async () => {
     await api!.setupCore();
     updateState((await api!.snapshot()).state);
@@ -1076,10 +951,10 @@ function SetupSurface({
         ? copy.devSetupSubtitle
         : manualInteraction
           ? copy.manualInteractionBody
-          : "Configure Microsoft 365 Copilot and ChatGPT Web to work with Codex."}
+          : "Configure Microsoft 365 Copilot to work with Codex."}
       title={devProfile ? copy.devSetupTitle : "Set up Codex Copilot"}
     >
-      {/* â”€â”€ M365 Copilot Setup Section â”€â”€ */}
+      {/* ── M365 Copilot Setup Section ── */}
       {!manualInteraction ? <>
         <SectionHeading label="M365 Copilot Setup" />
         <div className="setup-list">
@@ -1092,7 +967,6 @@ function SetupSurface({
             disabled={globalActionDisabled}
             index={1}
             onAction={() => run(async () => {
-              await api!.setProvider("m365");
               await activateBrowser();
               await api!.openLogin();
             })}
@@ -1105,8 +979,6 @@ function SetupSurface({
             disabled={globalActionDisabled || isM365Testing || !m365Authed}
             index={2}
             onAction={() => run(async () => {
-              await api!.setProvider("m365");
-              updateState((await api!.snapshot()).state);
               await activateBrowser();
               await api!.smokeTest();
               updateState((await api!.snapshot()).state);
@@ -1115,45 +987,9 @@ function SetupSurface({
             title="Run browser smoke test (M365)"
           />
         </div>
-
-        {/* â”€â”€ ChatGPT Setup Section â”€â”€ */}
-        <SectionHeading label="ChatGPT Setup" spaced />
-        <div className="setup-list">
-          <SetupRow
-            action={chatGptAuthed
-              ? copy.signedIn
-              : browser?.status === "loading" && !isM365 ? copy.checkingSignIn : copy.signIn}
-            complete={chatGptAuthed}
-            description="Sign in directly in the embedded ChatGPT browser. Login stays in this launcher's private profile."
-            disabled={globalActionDisabled}
-            index={1}
-            onAction={() => run(async () => {
-              await api!.setProvider("chatgpt");
-              await activateBrowser();
-              await api!.openLogin();
-            })}
-            title="Sign in to ChatGPT"
-          />
-          <SetupRow
-            action={snapshot.chatgptSmokePassed ? "Verify again" : "Run verify"}
-            complete={Boolean(snapshot.chatgptSmokePassed)}
-            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to ChatGPT and verify response."
-            disabled={globalActionDisabled || isChatGptTesting || !chatGptAuthed}
-            index={2}
-            onAction={() => run(async () => {
-              await api!.setProvider("chatgpt");
-              updateState((await api!.snapshot()).state);
-              await activateBrowser();
-              await api!.smokeTest();
-              updateState((await api!.snapshot()).state);
-            })}
-            repeatable={true}
-            title="Run browser smoke test (ChatGPT)"
-          />
-        </div>
       </> : null}
 
-      {/* â”€â”€ Install Section â”€â”€ */}
+      {/* ── Install Section ── */}
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} spaced />
       <div className="setup-list">
         <SetupRow
@@ -1163,7 +999,7 @@ function SetupSurface({
           complete={snapshot.state.codexCatalogVerified === true}
           description={devProfile
             ? copy.devStepInstallBody
-            : "Add Microsoft 365 Copilot and ChatGPT Web models to Codex without replacing native catalog."}
+            : "Add Microsoft 365 Copilot models to Codex without replacing native catalog."}
           disabled={globalActionDisabled}
           index={manualInteraction ? 1 : 3}
           onAction={install}
@@ -1330,30 +1166,6 @@ function SettingsSurface({
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
       <SectionHeading label={copy.general} />
       <div className="settings-list">
-        <SettingRow body="Choose active AI provider and embedded browser view" label="AI Provider">
-          <div style={{ display: "flex", gap: "8px" }}>
-            <SecondaryButton
-              disabled={busy}
-              style={{
-                borderColor: snapshot.state.selectedProvider === "m365" ? "var(--color-accent, #0078d4)" : undefined,
-                fontWeight: snapshot.state.selectedProvider === "m365" ? 600 : 400,
-              }}
-              onClick={() => void api!.setProvider("m365").then(updateState).catch((cause) => setError(messageOf(cause)))}
-            >
-              M365 Copilot
-            </SecondaryButton>
-            <SecondaryButton
-              disabled={busy}
-              style={{
-                borderColor: snapshot.state.selectedProvider === "chatgpt" ? "var(--color-accent, #10a37f)" : undefined,
-                fontWeight: snapshot.state.selectedProvider === "chatgpt" ? 600 : 400,
-              }}
-              onClick={() => void api!.setProvider("chatgpt").then(updateState).catch((cause) => setError(messageOf(cause)))}
-            >
-              ChatGPT Web
-            </SecondaryButton>
-          </div>
-        </SettingRow>
         {!devProfile ? <SettingRow body={copy.launchAtLoginBody} flushAfter label={copy.launchAtLogin}>
           <Switch
             checked={snapshot.state.autoStart}
@@ -2048,43 +1860,6 @@ function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string;
       </span>
       <button onClick={onDismiss} type="button">{copy.dismiss}</button>
     </motion.div>
-  );
-}
-
-function SessionRefreshReminder({
-  busy,
-  copy,
-  onDismiss,
-  onLogout,
-}: {
-  busy: boolean;
-  copy: Copy;
-  onDismiss: () => void;
-  onLogout: () => void;
-}) {
-  return (
-    <motion.aside
-      animate={{ opacity: 1, y: 0 }}
-      aria-live="polite"
-      className="session-refresh-reminder"
-      exit={{ opacity: 0, y: -8 }}
-      initial={{ opacity: 0, y: -8 }}
-      transition={PANEL_TRANSITION}
-    >
-      <span className="session-refresh-reminder-icon"><Icon name="alert" /></span>
-      <div className="session-refresh-reminder-copy">
-        <strong>{copy.sessionReminderTitle}</strong>
-        <p>{copy.sessionReminderBody}</p>
-      </div>
-      <div className="session-refresh-reminder-actions">
-        <button className="text-button" disabled={busy} onClick={onDismiss} type="button">
-          {copy.dismiss}
-        </button>
-        <button className="button-primary" disabled={busy} onClick={onLogout} type="button">
-          {copy.logOut}
-        </button>
-      </div>
-    </motion.aside>
   );
 }
 

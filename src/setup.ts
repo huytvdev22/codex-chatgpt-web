@@ -12,12 +12,6 @@ import {
   saveConfig,
 } from "./config";
 import {
-  browserLoginStateExists,
-  inspectBrowserLoginCapabilities,
-  loginToChatGpt,
-  storedBrowserLoginCapabilities,
-} from "./browser-login";
-import {
   installCodexIntegration,
   preflightCodexIntegration,
   readCodexSubagentProtocol,
@@ -42,7 +36,6 @@ export interface SetupOptions {
   chromeExecutablePath?: string;
   browserHostDescriptorPath?: string;
   refreshAccountCapabilities?: boolean;
-  forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
   experimentalBiggerContext?: boolean;
   experimentalSkillAttachments?: boolean;
@@ -247,9 +240,6 @@ function baseConfig(
     if (options.refreshAccountCapabilities) {
       throw new Error("Zero Risk cannot refresh account capabilities");
     }
-    if (options.forceLogin) {
-      throw new Error("Zero Risk uses the launcher's existing ChatGPT session; --login is unavailable");
-    }
     if (options.experimentalSkillAttachments === true) {
       throw new Error("Zero Risk does not support Skills as files");
     }
@@ -336,7 +326,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     throw new Error("A codex-chatgpt-web service is loaded but its configuration is missing; refusing to replace an unverifiable process");
   }
 
-  let loginCreated = false;
+  const loginCreated = false;
   let solAvailable: boolean | undefined = config.solAvailable;
   let extraHighAvailable: boolean | undefined = config.extraHighAvailable;
   let proAvailable: boolean | undefined = config.proAvailable;
@@ -344,7 +334,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     // The generic manual route is independent of account capabilities. The launcher may open the
     // authenticated surface, but setup must not inspect its model selector or infer availability.
   } else if (config.browserHost === "launcher") {
-    if (options.forceLogin) throw new Error("Launcher browser login is owned by the launcher UI; --login cannot replace it");
     const capabilities = await inspectLauncherCapabilities(
       config,
       existing,
@@ -354,41 +343,14 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     extraHighAvailable = capabilities.extraHighAvailable;
     proAvailable = capabilities.proAvailable;
   } else {
-    const stored = storedBrowserLoginCapabilities(config);
-    solAvailable = stored.solAvailable;
-    extraHighAvailable = stored.extraHighAvailable;
-    proAvailable = stored.proAvailable;
-    const loginRequired = options.forceLogin || !browserLoginStateExists(config);
-    const capabilityProbeRequired = !loginRequired
-      && (options.refreshAccountCapabilities === true
-        || existing?.browserInteractionMode === "manual"
-        || solAvailable === undefined
-        || extraHighAvailable === undefined
-        || proAvailable === undefined);
-    if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.restartService) {
-      throw new Error(
-        "Setup must verify the browser account before changing the running daemon. "
-        + "Rerun from a normal terminal with --restart-service after the active task finishes.",
-      );
-    }
-    if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && existing) await assertServiceIdle(existing);
-    if (loginRequired) {
-      const login = await loginToChatGpt(config);
-      solAvailable = login.solAvailable;
-      extraHighAvailable = login.extraHighAvailable;
-      proAvailable = login.proAvailable;
-      loginCreated = true;
-    } else if (capabilityProbeRequired) {
-      const inspected = await inspectBrowserLoginCapabilities(config);
-      solAvailable = inspected.solAvailable;
-      extraHighAvailable = inspected.extraHighAvailable;
-      proAvailable = inspected.proAvailable;
-    }
+    solAvailable = false;
+    extraHighAvailable = false;
+    proAvailable = false;
   }
   config.solAvailable = solAvailable === true;
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
-  const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || options.forceLogin));
+  const preliminaryChange = Boolean(existing && meaningfulRuntimeChange(existing, config));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
     throw new Error(
       "The daemon is currently serving a Codex task and setup would change its runtime. "

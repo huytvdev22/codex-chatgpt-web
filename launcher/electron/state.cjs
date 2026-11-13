@@ -41,9 +41,7 @@ function readState(filePath) {
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
     }
-    if (state.selectedProvider !== "m365" && state.selectedProvider !== "chatgpt") {
-      state.selectedProvider = DEFAULT_STATE.selectedProvider;
-    }
+    state.selectedProvider = "m365";
     for (const key of [
       "onboardingComplete",
       "githubOpened",

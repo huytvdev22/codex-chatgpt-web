@@ -146,25 +146,6 @@ test("manual setup rejects capability refresh and Bigger Context", async () => {
   }
 }, 20_000);
 
-test("passkey capture cannot be invoked outside the live Launcher control channel", async () => {
-  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-passkey-auth-"));
-  try {
-    const result = await runCli([
-      "login",
-      "--launcher-control",
-      "--chrome",
-      process.execPath,
-      "--storage-state",
-      join(root, "storage-state.json"),
-    ], { ...process.env });
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Launcher-controlled passkey login requires a live launcher authorization");
-    expect(existsSync(join(root, "storage-state.json"))).toBe(false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test("browser check uses metadata-only launcher liveness in Zero Risk", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-manual-browser-check-"));
   const appHome = join(root, "app");

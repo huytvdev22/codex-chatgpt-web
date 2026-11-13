@@ -2,7 +2,7 @@
   "name": "codex-chatgpt-web",
   "version": "6.9.6",
   "private": true,
-  "description": "A focused local Responses bridge that runs Codex tasks through a user-authenticated ChatGPT web session.",
+  "description": "A focused local Responses API bridge that runs Codex and OpenAI-compatible clients through Microsoft 365 Copilot.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/miuuyy/codex-chatgpt-web.git"
@@ -37,11 +37,6 @@
     "build": "bun run scripts/build-runtime-bundle.ts",
     "smoke": "bun run scripts/smoke-release.ts dist/runtime",
     "smoke:codex": "bun run scripts/smoke-codex-catalog.ts",
-    "smoke:cancel": "bun run scripts/smoke-codex-cancel.ts",
-    "smoke:interrupt": "bun run scripts/smoke-codex-interrupt.ts",
-    "smoke:subagents": "bun run scripts/smoke-codex-subagents.ts --v1 && bun run scripts/smoke-codex-subagents.ts --v2",
-    "smoke:subagents:live": "bun run scripts/smoke-codex-web-subagents.ts",
-    "smoke:environment": "bun run scripts/smoke-codex-environment.ts",
     "launcher": "bun run scripts/start-launcher.ts",
     "launcher:start": "bun run --cwd launcher build && bun run --cwd launcher start",
     "app": "bun run scripts/start-launcher.ts",
@@ -88,9 +83,8 @@
   },
   "keywords": [
     "codex",
-    "chatgpt",
+    "m365-copilot",
     "responses-api",
-    "mcp",
     "playwright"
   ],
   "license": "MIT"

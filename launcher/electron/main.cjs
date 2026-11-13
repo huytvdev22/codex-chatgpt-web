@@ -56,10 +56,7 @@ const BROWSER_HELPER_PATH = app.isPackaged
   : path.join(SOURCE_ROOT, ".launcher-runtime", "browser-helper.cjs");
 const GITHUB_URL = "https://github.com/miuuyy/codex-chatgpt-web";
 const X_URL = "https://x.com/miu21590";
-const CONNECTORS_URL = "https://chatgpt.com/#settings/Plugins";
-const TUNNELS_URL = "https://platform.openai.com/settings/organization/tunnels";
-const KEYS_URL = "https://platform.openai.com/settings/organization/api-keys";
-const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNELS_URL, KEYS_URL]);
+const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL]);
 const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
@@ -518,11 +515,11 @@ function syncFreshConversationPreference(stateStore, config) {
 
 function registerIpc({ logger, stateStore }) {
   const runtimeChannels = new Set([
-    "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
+    "launcher:setup-core", "launcher:uninstall-integration",
     "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
     "launcher:use-saved-chats", "launcher:browser-interaction-mode",
-    "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
-    "launcher:browser-passkey-login", "launcher:browser-logout", "launcher:browser-smoke",
+    "launcher:connector-name", "launcher:doctor", "launcher:cancel-turns",
+    "launcher:browser-smoke",
     "launcher:update-install", "launcher:complete-onboarding",
   ]);
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
@@ -543,12 +540,11 @@ function registerIpc({ logger, stateStore }) {
       automatic: runtimeHost ? runtimeHost.setupConnectorName() : "Codex Native2",
       manual: runtimeHost ? runtimeHost.setupConnectorName("manual") : "Codex Zero Risk",
     },
-    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL },
+    urls: { github: GITHUB_URL, x: X_URL },
     platform: process.platform,
     packaged: app.isPackaged,
     version: app.getVersion(),
     smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()),
-    chatgptSmokePassed: stateStore.read().chatgptSmokePassed === true,
     m365SmokePassed: stateStore.read().m365SmokePassed === true,
     operation: lastOperation,
     update: updateController?.getState() ?? { status: "disabled" },
@@ -606,44 +602,14 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost ? browserHost.confirmManualSent(tabId) : null);
   handle("launcher:browser-login", async () => {
     if (!browserHost) await runtimeStartup;
-    const browser = await browserHost.openLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-passkey-login", async () => {
-    const browser = await browserHost.openPasskeyLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-passkey-login-continue", () => runtimeHost.continuePasskeyLogin());
-  handle("launcher:browser-logout", async () => {
-    const browser = await browserHost.logout();
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return { browser, state };
-  });
-  handle("launcher:session-reminder-dismiss", () => {
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return state;
+    return await browserHost.openLogin();
   });
   handle("launcher:browser-smoke", async () => {
     if (stateStore.read().browserInteractionMode === "manual") {
       throw new Error("Browser smoke testing is disabled in Zero Risk mode");
     }
     const result = await browserHost.smokeTest();
-    const isM365 = browserHost.provider === "m365";
-    if (isM365) {
-      stateStore.update({ m365SmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
-    } else {
-      stateStore.update({ chatgptSmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
-    }
+    stateStore.update({ m365SmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
     smokePassedThisSession = true;
     return result;
   });
@@ -689,25 +655,15 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:setup-core", async () => {
     const setupState = stateStore.read();
     if (setupState.browserInteractionMode === "automatic") {
-      let browser = await browserHost.probeAuthentication();
+      const browser = await browserHost.probeAuthentication();
       if (!browser.authenticated) {
-        const authedProvider = (browserHost.chatGptAuthenticated || setupState.chatgptSmokePassed) ? "chatgpt"
-          : (browserHost.m365Authenticated || setupState.m365SmokePassed) ? "m365"
-          : null;
-        if (authedProvider && authedProvider !== browserHost.provider) {
-          await browserHost.switchProvider(authedProvider);
-          browser = await browserHost.probeAuthentication();
-        }
-      }
-      if (!browser.authenticated) {
-        const anyPassed = setupState.chatgptSmokePassed || setupState.m365SmokePassed || setupState.browserSmokePassed;
+        const anyPassed = setupState.m365SmokePassed || setupState.browserSmokePassed;
         if (!anyPassed) {
           if (browser.status === "error") throw new Error(browser.message);
-          const providerLabel = browserHost.provider === "m365" ? "Microsoft 365 Copilot" : "ChatGPT";
           throw new Error(
             IS_DEV_PROFILE
-              ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
-              : `Sign in to ${providerLabel} before installing the Codex integration`,
+              ? "Sign in to the isolated DEV M365 Copilot profile before configuring the harness"
+              : "Sign in to Microsoft 365 Copilot before installing the Codex integration",
           );
         }
       }
@@ -715,11 +671,10 @@ function registerIpc({ logger, stateStore }) {
     if (setupState.browserInteractionMode === "automatic"
       && !setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
-      const testLabel = browserHost.provider === "m365" ? "connection verification" : "browser smoke test";
       throw new Error(
         IS_DEV_PROFILE
           ? "Run the browser smoke test before configuring the DEV harness"
-          : `Run the ${testLabel} before installing the Codex integration`,
+          : "Run the connection verification before installing the Codex integration",
       );
     }
     const result = IS_DEV_PROFILE ? await runtimeHost.setupDevCore() : await runtimeHost.setupCore();
@@ -828,16 +783,6 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:browser-state", browserHost.snapshot());
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
-  });
-  handle("launcher:set-provider", async (_event, provider) => {
-    if (provider !== "m365" && provider !== "chatgpt") throw new Error("Invalid provider");
-    const nextState = stateStore.update({ selectedProvider: provider });
-    if (browserHost) {
-      await browserHost.switchProvider(provider);
-      send("launcher:browser-state", browserHost.snapshot());
-    }
-    send("launcher:state-changed", nextState);
-    return nextState;
   });
   handle("launcher:set-preference", (_event, key, value) => {
     const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
@@ -1049,13 +994,12 @@ async function start() {
     getUseSavedChats: () => runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithPasskey: () => runtimeHost.capturePasskeyLogin(),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
     publishState: (state) => send("launcher:browser-state", state),
     showWindow: showMainWindow,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
-    provider: stateStore.read().selectedProvider || "m365",
+    provider: "m365",
   });
   await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();

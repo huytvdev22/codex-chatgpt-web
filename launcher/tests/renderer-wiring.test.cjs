@@ -23,63 +23,6 @@ test("M365 multi-surface normal conversations are enabled without launcher confi
   assert.match(browserHostSource, /M365SurfaceManager/);
 });
 
-test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
-  const vm = require("node:vm");
-  for (const fails of [false, true]) {
-    let completeAuthentication;
-    const startupAuthenticationRefresh = new Promise(resolve => { completeAuthentication = resolve; });
-    let finishRuntimeStartup;
-    const runtimeStartup = new Promise(resolve => { finishRuntimeStartup = resolve; });
-    let startupSettled = false;
-    const calls = [];
-    const handlers = new Map();
-    const config = { mode: "full", experimentalBiggerContext: false };
-    const state = { coreSetupComplete: true, codexCatalogVerified: true };
-    const stateStore = { read: () => state, update: patch => Object.assign(state, patch) };
-    const logger = { info() {}, error() {} };
-    const context = vm.createContext({
-      runtimeStartup, finishRuntimeStartup: () => { startupSettled = true; finishRuntimeStartup(); },
-      startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false,
-      ipcMain: { on() {} }, registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler),
-      send() {}, publishOperation() {}, startCatalogVerificationMonitor() {},
-      restoreCodexRouteAfterRuntimeFailure: async () => { calls.push("recovery"); return {}; },
-      limitsController: { snapshot: () => ({ enabled: false }) },
-      runtimeSupervisor: {
-        readConfig: () => config,
-        startIfConfigured: async () => {
-          calls.push("startup");
-          if (fails) throw new Error("actual startup failure");
-          return { status: "ready" };
-        },
-      },
-      runtimeHost: {
-        upgradeManagedRuntime: async () => ({ updated: false }),
-        runtimeConfigSnapshot: () => ({ configured: true, config }),
-        connectBridgeRoute: async () => { calls.push("route"); return { changed: false }; },
-        setBiggerContext: async enabled => {
-          assert.equal(startupSettled, true, "settings must wait through startup recovery too");
-          calls.push("setting");
-          config.experimentalBiggerContext = enabled;
-          return { enabled };
-        },
-      },
-    });
-    vm.runInContext(electronMain.slice(electronMain.indexOf("function registerIpc("), electronMain.indexOf("async function requestQuit("))
-      + "\nregisterIpc({ logger, stateStore });", context);
-    const start = electronMain.indexOf("} else void (async () => {");
-    vm.runInContext(electronMain.slice(start + "} else ".length, electronMain.indexOf('  app.on("before-quit"', start)), context);
-    const setting = handlers.get("launcher:bigger-context")({}, true);
-    // Read-only UI remains usable while authentication/startup is pending.
-    assert.equal((await handlers.get("launcher:limits")()).enabled, false);
-    assert.deepEqual(calls, []);
-    completeAuthentication();
-    await setting;
-    assert.deepEqual(calls, fails ? ["startup", "recovery", "setting"] : ["startup", "route", "setting"]);
-    assert.equal(state.experimentalBiggerContext, true);
-    assert.equal(state.coreSetupComplete, !fails, "only a real startup failure may invalidate setup");
-  }
-});
-
 test("embedded ChatGPT is measured only after its animated surface mounts", () => {
   assert.match(appSource, /const \[browserSlot, setBrowserSlot\] = useState<HTMLDivElement \| null>\(null\)/);
   assert.match(appSource, /setBrowserSurfaceActive\(browserSurfaceActive\)\.then\(\(\) => \{/);
@@ -155,7 +98,7 @@ test("setup preserves session-check failures and never installs without verified
   const vm = require("node:vm");
   const source = electronMain.slice(
     electronMain.indexOf('handle("launcher:setup-core",'),
-    electronMain.indexOf('handle("launcher:setup-mcp",'),
+    electronMain.indexOf('handle("launcher:connector-name",'),
   );
   for (const dev of [false, true]) {
     let setup;
@@ -166,7 +109,7 @@ test("setup preserves session-check failures and never installs without verified
     vm.runInNewContext(source, {
       handle: (_name, handler) => { setup = handler; }, IS_DEV_PROFILE: dev,
       stateStore: { read: () => state, update() {} },
-      browserHost: { probeAuthentication: async () => browser, returnToIdle: async () => {} },
+      browserHost: { probeAuthentication: async () => browser, returnToIdle: async () => {}, provider: "m365" },
       runtimeHost: { setupCore: run, setupDevCore: run, runtimeConfigSnapshot: () => ({ config: {} }) },
       smokePassedThisSession: true, send() {}, startCatalogVerificationMonitor() {}, logger: {},
     });
@@ -280,20 +223,6 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.doesNotMatch(electronMain, /IS_DEV_PROFILE && key === "experimentalBiggerContext"/);
 });
 
-test("macOS passkey sign-in is additive to the unchanged embedded login action", () => {
-  assert.match(appSource, /openLogin/);
-  assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
-  assert.match(appSource, /const passkeyAvailable = !manualInteraction[\s\S]*?platform === "darwin"[\s\S]*?browser\?\.authenticated !== true/);
-  assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?copy\.passkeySignIn/);
-  assert.match(appSource, /className="browser-empty-actions"[\s\S]*?copy\.passkeySignIn/);
-  assert.match(appSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);
-  assert.match(preloadSource, /openPasskeyLogin:[\s\S]*?launcher:browser-passkey-login/);
-  assert.match(preloadSource, /continuePasskeyLogin:[\s\S]*?launcher:browser-passkey-login-continue/);
-  assert.match(electronMain, /launcher:browser-passkey-login[\s\S]*?browserHost\.openPasskeyLogin\(\)/);
-  assert.match(electronMain, /loginWithPasskey: \(\) => runtimeHost\.capturePasskeyLogin\(\)/);
-  assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
-});
-
 test("browser toolbar opens detached DevTools for the active embedded surface", () => {
   assert.match(
     appSource,
@@ -329,89 +258,12 @@ test("Bigger Context startup recommendation reuses the persisted setting and set
   assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*backdrop-filter:/s);
 });
 
-test("Zero Risk setup commits state after the runtime transaction and preserves manual inspection boundaries", () => {
-  const modeSwitchHandler = electronMain.slice(
-    electronMain.indexOf('handle("launcher:browser-interaction-mode"'),
-    electronMain.indexOf('handle("launcher:set-preference"'),
-  );
-  const modeTransaction = modeSwitchHandler.indexOf("await browserHost.withInteractionModeChange(");
-  const runtimeModeCommit = modeSwitchHandler.indexOf("runtimeHost.setBrowserInteractionMode(mode, afterRuntimeReady)");
-  const stateModeCommit = modeSwitchHandler.indexOf("const state = stateStore.update({");
-  assert.ok(modeTransaction >= 0 && modeTransaction < runtimeModeCommit);
-  assert.ok(runtimeModeCommit < stateModeCommit);
-
-  const mcpSetupHandler = electronMain.slice(
-    electronMain.indexOf('handle("launcher:setup-mcp"'),
-    electronMain.indexOf('handle("launcher:set-mcp-step"'),
-  );
-  const runtimeMcpCommit = mcpSetupHandler.indexOf("const runSetup = afterRuntimeReady => setup({");
-  const mcpTransaction = mcpSetupHandler.indexOf("await browserHost.withInteractionModeChange(interactionMode, runSetup)");
-  const stateMcpCommit = mcpSetupHandler.indexOf("const state = stateStore.update({");
-  assert.ok(runtimeMcpCommit >= 0 && runtimeMcpCommit < mcpTransaction);
-  assert.ok(mcpTransaction < stateMcpCommit);
-  assert.match(browserHostSource, /bindManualTurnContents\(tab\)/);
-  const manualBinding = browserHostSource.slice(
-    browserHostSource.indexOf("bindManualTurnContents(tab)"),
-    browserHostSource.indexOf("bindWebContents()"),
-  );
-  assert.doesNotMatch(manualBinding, /executeJavaScript|insertCSS|querySelector|runBrowserHelperOperation|enableDeviceEmulation/);
-  assert.match(browserHostSource, /requireAutomaticBrowserInspection\(this, "ChatGPT authentication probe"\)/);
-  assert.match(browserHostSource, /requireAutomaticBrowserInspection\(this, "ChatGPT session and capability inspection"\)/);
-  assert.match(browserHostSource, /browserInteractionModeFor\(this\) === "manual"\) return;[\s\S]*?applyViewportCss\(\)/);
-  assert.match(
-    browserHostSource,
-    /page-title-updated[\s\S]*?browserInteractionModeFor\(this\) === "manual"\) return;/,
-  );
-  assert.doesNotMatch(modeSwitchHandler, /const pending = stateStore\.update|catch \(error\)/);
-  assert.match(electronMain, /browserInteractionMode === "manual"[\s\S]*?Local Zero Risk runtime is healthy/);
-
-});
-
-test("MCP connection remains unavailable until the model catalog is verified", () => {
-  assert.match(
-    appSource,
-    /manualInteraction \|\| configuringInactiveMode \|\| snapshot\.state\.codexCatalogVerified[\s\S]*?copy\.mcpStepTwoHint[\s\S]*?copy\.mcpCatalogRequired/,
-  );
-  assert.match(appSource, /!manualInteraction && !configuringInactiveMode && !snapshot\.state\.codexCatalogVerified/);
-});
-
-test("MCP navigation remains locked while an operation is active", () => {
-  assert.match(appSource, /<McpSurface[\s\S]*?operation=\{operation\}/);
-  assert.match(appSource, /const busy = localBusy \|\| operation\?\.status === "running"/);
-  assert.match(appSource, /const safeMove = async \(next: number\) => \{\s*if \(busy\) return;/);
-  assert.match(appSource, /disabled=\{busy \|\| index > step\}/);
-});
-
 test("failed doctor reports retain every failed check", () => {
   assert.match(
     appSource,
     /report\.ok\s*\?\s*report\.checks\.slice\(-6\)\s*:\s*report\.checks\.filter\(\(check\) => check\.status !== "ok"\)/,
   );
   assert.match(appSource, /visibleChecks\.map\(\(check\) =>/);
-});
-
-test("MCP verification failures stay inside the structured setup report", () => {
-  assert.match(appSource, /next\.operation\.name !== "mcp-verification"/);
-  assert.match(appSource, /next\.name !== "mcp-verification"/);
-  assert.match(electronMain, /Finish the active Codex task before verifying the ChatGPT connector/);
-  assert.match(electronMain, /report\.checks\.filter\(\(check\) => check\.id !== "connector"\)/);
-  assert.match(electronMain, /mcp\.verification_requested/);
-  assert.match(electronMain, /launcherFocused:\s*mainWindow\?\.isFocused\(\) === true/);
-  assert.match(electronMain, /rendererFocused:\s*event\.sender\.isFocused\(\)/);
-});
-
-test("MCP verification proves runtime health before checking the connector", () => {
-  const start = electronMain.indexOf('handle("launcher:mcp-verify"');
-  const end = electronMain.indexOf('handle("launcher:doctor"', start);
-  const handler = electronMain.slice(start, end);
-
-  assert.ok(start >= 0 && end > start, "MCP verification handler must remain registered");
-  assert.match(
-    handler,
-    /Checking local runtime[\s\S]*?await runtimeHost\.doctor\(\)[\s\S]*?if \(!report\.ok\)[\s\S]*?return report;[\s\S]*?Checking ChatGPT connector[\s\S]*?await browserHost\.verifyConnector/,
-  );
-  assert.match(handler, /publishOperation\(\{ name: operationName, status: "completed"/);
-  assert.match(appSource, /operation\?\.name === "mcp-verification"/);
 });
 
 test("saved ChatGPT authentication is refreshed before setup is presented", () => {
@@ -630,15 +482,15 @@ test("fresh-conversation control is translated, disabled in Zero Risk, and invok
   }
 });
 
-test("plugin rename invalidates verification only after success and rejects active browser work", async () => {
+test("plugin rename rejects active browser work and emits updated connector names", async () => {
   const vm = require("node:vm");
   const handlers = new Map();
-  const state = { mcpSetupComplete: true, mcpGuideStep: 0 };
+  const state = {};
   const events = [];
   let fail = true, calls = 0;
   const browserHost = { activeTraceId: "busy", currentOperation: () => null };
   vm.runInNewContext(electronMain.slice(electronMain.indexOf('handle("launcher:connector-name",'),
-    electronMain.indexOf('handle("launcher:set-mcp-step",')), {
+    electronMain.indexOf('handle("launcher:autostart",')), {
     handle: (name, handler) => handlers.set(name, handler), browserHost,
     runtimeHost: {
       setConnectorNameSuffix: async () => { calls++; if (fail) throw new Error("setup failed"); return { changed: true }; },
@@ -654,12 +506,9 @@ test("plugin rename invalidates verification only after success and rejects acti
   assert.equal(calls, 0);
   browserHost.activeTraceId = null;
   await assert.rejects(rename(null, "Work"), /setup failed/);
-  assert.equal(state.mcpSetupComplete, true);
   assert.equal(events.length, 0);
   fail = false;
   await rename(null, "Work");
-  assert.equal(state.mcpSetupComplete, false);
-  assert.equal(state.mcpGuideStep, 2);
   assert.equal(events[0].channel, "launcher:connector-names-changed");
   assert.equal(events[0].body.connectorNames.manual, "Codex Zero Risk");
   assert.equal(events[1].channel, "launcher:state-changed");

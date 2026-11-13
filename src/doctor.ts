@@ -1,9 +1,8 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { AppConfig } from "./config";
 import { getConfigDir, getConfigPath, loadConfig } from "./config";
 import { join } from "node:path";
 import { inspectCodexIntegration } from "./codex-integration";
-import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
 import {
   inspectLauncherBrowserHost,
@@ -25,11 +24,6 @@ export interface DoctorReport {
   ok: boolean;
   mode?: AppConfig["mode"];
   checks: DoctorCheck[];
-}
-
-function secureFile(path: string): boolean {
-  if (process.platform === "win32") return true;
-  return (statSync(path).mode & 0o077) === 0;
 }
 
 function launcherOwnershipError(config: AppConfig, health: Record<string, unknown>): string | undefined {
@@ -135,15 +129,11 @@ export async function runDoctor(): Promise<DoctorReport> {
     } else {
       checks.push({ id: "chrome", status: "ok", message: `Chrome executable found: ${config.chromeExecutablePath}` });
     }
-    if (!browserLoginStateExists(config)) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `codex-chatgpt-web login`" });
-    } else if (!secureFile(config.storageStatePath)) {
-      checks.push({ id: "login", status: "error", message: `ChatGPT login state is readable by other users: ${config.storageStatePath}` });
-    } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login verification marker is readable by other users" });
-    } else {
-      checks.push({ id: "login", status: "ok", message: "ChatGPT login state has authenticated browser evidence" });
-    }
+    checks.push({
+      id: "browser-host",
+      status: "warning",
+      message: "Standalone browser mode active; M365 Copilot session is managed by the Launcher",
+    });
   }
 
   const codex = inspectCodexIntegration();

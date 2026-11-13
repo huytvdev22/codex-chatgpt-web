@@ -885,33 +885,23 @@ test("failed fresh-conversation setting restores every mutable setup file before
   const configPath = path.join(coreHome, "config.json");
   const journalPath = path.join(coreHome, "codex", "integration-journal.json");
   const recoveryJournalPath = path.join(coreHome, "codex", "integration-journal.recovery.json");
-  const keyPath = path.join(coreHome, "secrets", "tunnel-runtime.key");
-  const profileDir = path.join(coreHome, "tunnel", "profiles");
-  const profilePath = path.join(profileDir, "custom.yaml");
   const codexConfigPath = path.join(codexHome, "config.toml");
   const sharedDirectory = path.join(root, "shared");
   const sharedConfigPath = path.join(sharedDirectory, "config.toml");
   const codexModelsCachePath = path.join(codexHome, "models_cache.json");
   const oldConfig = {
-    mode: "full",
+    mode: "browser-only",
     browserHost: "launcher",
     browserInteractionMode: "automatic",
     experimentalFreshConversationPerTurn: false,
     releaseVersion: "0.1.16",
-    tunnel: {
-      runtimeKeyFile: keyPath,
-      profileDir,
-      profileName: "custom",
-    },
   };
-  for (const file of [configPath, journalPath, recoveryJournalPath, keyPath, profilePath, codexConfigPath, codexModelsCachePath]) {
+  for (const file of [configPath, journalPath, recoveryJournalPath, codexConfigPath, codexModelsCachePath]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
   }
   fs.writeFileSync(configPath, `${JSON.stringify(oldConfig)}\n`, { mode: 0o600 });
   fs.writeFileSync(journalPath, "old journal\n", { mode: 0o600 });
   fs.writeFileSync(recoveryJournalPath, "old recovery journal\n", { mode: 0o600 });
-  fs.writeFileSync(keyPath, "old key\n", { mode: 0o600 });
-  fs.writeFileSync(profilePath, "old profile\n", { mode: 0o600 });
   fs.mkdirSync(sharedDirectory, { mode: 0o750 });
   fs.writeFileSync(sharedConfigPath, "old codex config\n", { mode: 0o640 });
   fs.symlinkSync(sharedConfigPath, codexConfigPath);
@@ -950,8 +940,6 @@ test("failed fresh-conversation setting restores every mutable setup file before
     fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, releaseVersion: "0.2.0", experimentalFreshConversationPerTurn: true })}\n`);
     fs.writeFileSync(journalPath, "new journal\n");
     fs.writeFileSync(recoveryJournalPath, "new recovery journal\n");
-    fs.writeFileSync(keyPath, "new key\n");
-    fs.writeFileSync(profilePath, "new profile\n");
     fs.writeFileSync(codexConfigPath, "new codex config\n");
     fs.rmSync(codexModelsCachePath);
     return { code: 0, stdout: "", stderr: "" };
@@ -966,8 +954,6 @@ test("failed fresh-conversation setting restores every mutable setup file before
     assert.deepEqual(readConfig(), oldConfig);
     assert.equal(fs.readFileSync(journalPath, "utf8"), "old journal\n");
     assert.equal(fs.readFileSync(recoveryJournalPath, "utf8"), "old recovery journal\n");
-    assert.equal(fs.readFileSync(keyPath, "utf8"), "old key\n");
-    assert.equal(fs.readFileSync(profilePath, "utf8"), "old profile\n");
     assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "old codex config\n");
     assert.equal(fs.lstatSync(codexConfigPath).isSymbolicLink(), true);
     assert.equal(fs.lstatSync(codexConfigPath).ino, linkInode);
@@ -987,18 +973,16 @@ test("failed terminal migration restores removed launchd ownership before verify
   const launchAgentsDir = path.join(root, "LaunchAgents");
   const configPath = path.join(coreHome, "config.json");
   const daemonPlist = path.join(launchAgentsDir, "io.github.codex-chatgpt-web.daemon.plist");
-  const tunnelPlist = path.join(launchAgentsDir, "io.github.codex-chatgpt-web.tunnel.plist");
   const oldConfig = {
-    mode: "full",
+    mode: "browser-only",
     browserHost: "managed-chrome",
     releaseVersion: "0.1.16",
   };
-  for (const file of [configPath, daemonPlist, tunnelPlist]) {
+  for (const file of [configPath, daemonPlist]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
   }
   fs.writeFileSync(configPath, `${JSON.stringify(oldConfig)}\n`, { mode: 0o600 });
   fs.writeFileSync(daemonPlist, "old daemon plist\n", { mode: 0o600 });
-  fs.writeFileSync(tunnelPlist, "old tunnel plist\n", { mode: 0o600 });
 
   let startAttempts = 0;
   const calls = [];
@@ -1034,105 +1018,27 @@ test("failed terminal migration restores removed launchd ownership before verify
     if (args[0] === "setup") {
       fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, browserHost: "launcher", releaseVersion: "0.2.0" })}\n`);
       fs.rmSync(daemonPlist);
-      fs.rmSync(tunnelPlist);
     }
     return { code: 0, stdout: args[0] === "doctor" ? '{"ok":true}' : "", stderr: "" };
   };
 
   try {
     await assert.rejects(
-      host.runSetup("core-setup", ["setup", "--full"], {}),
+      host.runSetup("core-setup", ["setup", "--browser-only"], {}),
       /synthetic launcher startup failure$/,
     );
     assert.equal(startAttempts, 1);
     assert.deepEqual(readConfig(), oldConfig);
     assert.equal(fs.readFileSync(daemonPlist, "utf8"), "old daemon plist\n");
-    assert.equal(fs.readFileSync(tunnelPlist, "utf8"), "old tunnel plist\n");
     assert.deepEqual(calls, [
-      "setup --full --preflight-only",
-      "setup --full",
+      "setup --browser-only --preflight-only",
+      "setup --browser-only",
       "service install",
-      "tunnel start",
       "doctor --json",
     ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
-
-test("macOS passkey capture uses an isolated launcher-controlled transfer", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-passkey-runtime-"));
-  const chrome = path.join(root, "Google Chrome");
-  fs.writeFileSync(chrome, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-  const host = new RuntimeHost({
-    app: { getPath: () => root, isPackaged: false },
-    logger: { info() {}, warn() {}, error() {} },
-    sourceRoot: "/source",
-    browserDescriptorPath: path.join(root, "launcher-browser.json"),
-    platform: "darwin",
-    supervisor: {
-      readConfig: () => ({ chromeExecutablePath: chrome }),
-      readSetupConfig: () => ({ chromeExecutablePath: chrome }),
-    },
-  });
-  if (process.platform === "win32") {
-    host.passkeyChromeExecutable = () => chrome;
-  }
-  host.launcherControlEnvironment = () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "token" });
-  let invocation;
-  host.run = async (name, args, options) => {
-    invocation = { name, args, options };
-    const statePath = args[args.indexOf("--storage-state") + 1];
-    fs.writeFileSync(statePath, `${JSON.stringify({ cookies: [], origins: [] })}\n`, { mode: 0o600 });
-    fs.writeFileSync(`${statePath}.verified.json`, `${JSON.stringify({
-      version: 1,
-      captureComplete: true,
-      source: "isolated-normal-browser-profile",
-      capturedAt: new Date().toISOString(),
-    })}\n`, { mode: 0o600 });
-    return { code: 0, stdout: "", stderr: "" };
-  };
-  try {
-    const transfer = await host.capturePasskeyLogin();
-    assert.deepEqual(transfer.storageState, { cookies: [], origins: [] });
-    assert.equal(invocation.name, "passkey-login");
-    assert.deepEqual(invocation.args.slice(0, 4), ["login", "--launcher-control", "--chrome", chrome]);
-    assert.equal(invocation.options.embedded, true);
-    assert.equal(invocation.options.controlStdin, true);
-    assert.equal(invocation.options.timeoutMs, 10 * 60_000);
-    const transferRoot = path.dirname(invocation.args[invocation.args.indexOf("--storage-state") + 1]);
-    assert.equal(fs.existsSync(transferRoot), true);
-    await transfer.cleanup();
-    assert.equal(fs.existsSync(transferRoot), false);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("passkey Continue is delivered only to the active owned login child", async () => {
-  const fixture = hostFor(null).host;
-  let written = "";
-  fixture.active = "passkey-login";
-  fixture.activeChild = {
-    exitCode: null,
-    signalCode: null,
-    stdin: {
-      writable: true,
-      write(value, callback) {
-        written += value;
-        callback();
-      },
-    },
-  };
-  assert.equal(await fixture.continuePasskeyLogin(), true);
-  assert.deepEqual(JSON.parse(written), { version: 1, type: "passkey-login-continue" });
-  assert.throws(() => fixture.continuePasskeyLogin(), /No passkey sign-in is waiting/);
-});
-
-test("passkey sign-in is rejected outside macOS even if IPC is invoked directly", () => {
-  const fixture = hostFor(null).host;
-  fixture.platform = "win32";
-  assert.throws(() => fixture.passkeyChromeExecutable(), /supported only on macOS/);
 });
 
 test("skill file experiment uses the setup transaction in production and DEV, and rejects manual mode", async () => {

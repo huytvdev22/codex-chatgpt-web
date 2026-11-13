@@ -22,13 +22,7 @@ try {
   await run(["run", "audit"]);
   await run(["run", "launcher:audit"]);
   await run(["run", "check:architecture"]);
-  await run([
-    "test",
-    "tests/m365-architecture-integrity.test.ts",
-    "tests/chatgpt-web-adapter.test.ts",
-    "tests/chatgpt-conversation-store.test.ts",
-    "tests/chatgpt-web-markdown.test.ts",
-  ]);
+  await run(["test", "./tests"]);
   await run(["run", "launcher:typecheck"]);
   await run(["run", "launcher:build"]);
   await run(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);

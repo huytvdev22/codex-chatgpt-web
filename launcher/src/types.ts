@@ -103,13 +103,11 @@ export interface LauncherSnapshot {
   urls: {
     github: string;
     x: string;
-    connectors: string;
   };
   platform: string;
   packaged: boolean;
   version: string;
   smokePassed: boolean;
-  chatgptSmokePassed?: boolean;
   m365SmokePassed?: boolean;
   operation: OperationState | null;
   update: UpdateState;
@@ -133,10 +131,6 @@ export interface LauncherApi {
   copyManualPrompt(tabId: string): Promise<BrowserState>;
   confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;
-  openPasskeyLogin(): Promise<BrowserState>;
-  continuePasskeyLogin(): Promise<boolean>;
-  logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
-  dismissSessionReminder(): Promise<LauncherState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   doctor(): Promise<DoctorReport>;
   cancelTurns(): Promise<{ stdout: string }>;
@@ -153,7 +147,6 @@ export interface LauncherApi {
     credentialsRequired: boolean;
     targetMode: BrowserInteractionMode;
   }>;
-  setProvider(provider: "m365" | "chatgpt"): Promise<LauncherState>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,
