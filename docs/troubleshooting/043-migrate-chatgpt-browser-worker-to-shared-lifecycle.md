@@ -1,7 +1,7 @@
 # 043: Chuyển ChatGPT Browser Worker sang shared lifecycle
 
 ## ⚡ TL;DR
-- **Triệu chứng:** ChatGPT tự quản lý polling, heartbeat, timeout và abort, khác lifecycle dùng chung của Qwen.
+- **Triệu chứng:** ChatGPT tự quản lý polling, heartbeat, timeout và abort, khác lifecycle dùng chung của `BaseWebBrowserWorker`.
 - **Nguyên nhân gốc rễ:** `ChatGptBrowserWorker` chưa kế thừa `BaseWebBrowserWorker`.
 - **Cách sửa:** Hardening submit/response identity, chuyển sang shared lifecycle và thêm regression test.
 
@@ -47,7 +47,7 @@ Commit: `19089ff`
 
 ## User test
 
-1. Khởi động lại runtime và Launcher từ branch `refactor/chatgpt-qwen-worker-lifecycle`.
+1. Khởi động lại runtime và Launcher từ nhánh refactor worker lifecycle.
 2. Gửi prompt trong conversation ChatGPT đã có lịch sử, xác nhận không trả response cũ.
 3. Gửi hai lượt liên tiếp, xác nhận giữ nguyên conversation.
 4. Gửi response dài, xác nhận không kết thúc sớm khi đang streaming.

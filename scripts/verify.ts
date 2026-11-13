@@ -26,9 +26,6 @@ try {
     "test",
     "tests/m365-architecture-integrity.test.ts",
     "tests/chatgpt-web-adapter.test.ts",
-    "tests/gemini-web-adapter.test.ts",
-    "tests/qwen-web-adapter.test.ts",
-    "tests/qwen-conversation-store.test.ts",
     "tests/chatgpt-conversation-store.test.ts",
     "tests/chatgpt-web-markdown.test.ts",
   ]);

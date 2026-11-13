@@ -8,9 +8,7 @@ import type { ToolValidationFailure } from "./tools/tool-validator";
 
 export type WebLauncherProviderId =
   | "chatgpt"
-  | "m365"
-  | "gemini"
-  | "qwen";
+  | "m365";
 
 export type WebTurnFinalStatus = "completed" | "failed" | "aborted";
 
@@ -129,8 +127,8 @@ export interface WebResponseDriver {
 export interface WebProviderPolicies {
   /**
    * Hành vi khi có descriptorPath nhưng kết nối Launcher CDP thất bại:
-   * - "fail-closed": ném lỗi ngay (mặc định cho ChatGPT, Qwen, Google AI Studio, M365).
-   * - "fallback-local": ghi cảnh báo và chuyển sang LocalBrowserRuntime (Gemini).
+   * - "fail-closed": ném lỗi ngay (mặc định cho ChatGPT, M365).
+   * - "fallback-local": ghi cảnh báo và chuyển sang LocalBrowserRuntime.
    */
   launcherFailureMode?: "fail-closed" | "fallback-local";
 
@@ -190,11 +188,11 @@ export interface WebProviderPolicies {
 }
 
 export interface WebProviderDefinition {
-  /** Định danh chuẩn của adapter (vd: "gemini-web", "qwen-web", "chatgpt-web", "m365-copilot") */
+  /** Định danh chuẩn của adapter (vd: "chatgpt-web", "m365-copilot") */
   readonly id: string;
-  /** Tên hiển thị của trợ lý trong prompt compiler & retry loop (vd: "Gemini", "Qwen", "ChatGPT", "M365") */
+  /** Tên hiển thị của trợ lý trong prompt compiler & retry loop (vd: "ChatGPT", "M365") */
   readonly assistantName: string;
-  /** Tiền tố log vận hành (vd: "gemini-adapter") */
+  /** Tiền tố log vận hành (vd: "m365-adapter") */
   readonly logPrefix: string;
   /** Tin nhắn báo lỗi khi bị abort trước lúc bắt đầu lượt */
   readonly abortMessage?: string;

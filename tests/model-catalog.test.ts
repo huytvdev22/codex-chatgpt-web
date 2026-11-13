@@ -123,7 +123,7 @@ describe("model catalog dùng registry chung", () => {
     (polluted.models as unknown[]).push(
       { slug: "chatgpt-web/pro", display_name: "Legacy Pro" },
       { slug: "chatgpt-web/luna", display_name: "Legacy Luna" },
-      { slug: "qwen-web/think", display_name: "Legacy Qwen Think" },
+      { slug: "m365-copilot/legacy", display_name: "Legacy M365" },
     );
 
     const first = augmentNativeModelCatalog(polluted, nativeConfig);
@@ -134,7 +134,7 @@ describe("model catalog dùng registry chung", () => {
     expect(slugs.filter(slug => slug === "chatgpt-web")).toHaveLength(1);
     expect(slugs).not.toContain("chatgpt-web/pro");
     expect(slugs).not.toContain("chatgpt-web/luna");
-    expect(slugs).not.toContain("qwen-web/think");
+    expect(slugs).not.toContain("m365-copilot/legacy");
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 

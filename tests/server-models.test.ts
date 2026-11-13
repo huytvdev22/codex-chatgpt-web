@@ -69,8 +69,6 @@ test("proxies official /models auth and query, then appends grouped and legacy W
   expect(slugs).toContain("gpt-5.6-sol");
   expect(slugs).toContain("chatgpt-web");
   expect(slugs).toContain("m365-copilot");
-  expect(slugs).toContain("gemini-web");
-  expect(slugs).toContain("qwen-web");
   expect(body.models[0]!.context_window).toBe(300_000);
   expect(body.models[0]!.max_context_window).toBe(371_851);
   expect(body.models[0]!.auto_compact_token_limit).toBe(270_000);
@@ -98,7 +96,7 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
   );
   const body = await response.json() as { models: Array<{ slug: string }> };
   expect(body.models.some(model => model.slug === "chatgpt-web")).toBe(true);
-  expect(body.models.some(model => model.slug === "qwen-web")).toBe(true);
+  expect(body.models.some(model => model.slug === "m365-copilot")).toBe(true);
 });
 
 test("legacy account flags still return one unified ChatGPT Web row", async () => {
@@ -177,7 +175,7 @@ test("ChatGPT-only native catalog rows do not turn model discovery into a 502", 
   const body = await response.json() as { models: Array<{ slug: string; supported_in_api?: boolean }> };
   expect(body.models[0]).toMatchObject({ slug: "gpt-chatgpt-only", supported_in_api: false });
   expect(body.models.some(model => model.slug === "chatgpt-web")).toBe(true);
-  expect(body.models.some(model => model.slug === "qwen-web")).toBe(true);
+  expect(body.models.some(model => model.slug === "m365-copilot")).toBe(true);
 });
 
 test("API Key auth returns augmented model catalog with M365 models without calling upstream", async () => {

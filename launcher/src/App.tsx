@@ -934,7 +934,7 @@ function BrowserSurface({
             <h1>{manualInteraction ? copy.browserReady : copy.noActiveTask}</h1>
             <p>{manualInteraction
               ? copy.stepAccountBody
-              : "Browser tabs (Google AI Studio, M365 Copilot, Google Gemini, Qwen, ChatGPT) will appear here automatically when Codex starts a turn."}</p>
+              : "Browser tabs (M365 Copilot, ChatGPT) will appear here automatically when Codex starts a turn."}</p>
             {(browser?.tabs ?? []).length > 0 ? (
               <div className="browser-empty-actions">
                 <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
@@ -1034,17 +1034,11 @@ function SetupSurface({
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
 
   const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
-  const isGemini = (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini";
-  const isQwen = (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen";
   const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
-  const geminiAuthed = Boolean(browser?.geminiAuthenticated || (browser?.authenticated && isGemini));
-  const qwenAuthed = Boolean(browser?.qwenAuthenticated || (browser?.authenticated && isQwen));
-  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365 && !isGemini && !isQwen));
+  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365));
 
   const isM365Testing = browser?.status === "testing" && isM365;
-  const isGeminiTesting = browser?.status === "testing" && isGemini;
-  const isQwenTesting = browser?.status === "testing" && isQwen;
-  const isChatGptTesting = browser?.status === "testing" && !isM365 && !isGemini && !isQwen;
+  const isChatGptTesting = browser?.status === "testing" && !isM365;
   const isRunningTurn = browser?.status === "running";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
@@ -1082,7 +1076,7 @@ function SetupSurface({
         ? copy.devSetupSubtitle
         : manualInteraction
           ? copy.manualInteractionBody
-          : "Configure Microsoft 365 Copilot, Google Gemini and ChatGPT Web to work with Codex."}
+          : "Configure Microsoft 365 Copilot and ChatGPT Web to work with Codex."}
       title={devProfile ? copy.devSetupTitle : "Set up Codex Copilot"}
     >
       {/* â”€â”€ M365 Copilot Setup Section â”€â”€ */}
@@ -1122,85 +1116,13 @@ function SetupSurface({
           />
         </div>
 
-        {/* â”€â”€ Google Gemini Setup Section â”€â”€ */}
-        <SectionHeading label="Google Gemini Setup" spaced />
-        <div className="setup-list">
-          <SetupRow
-            action={geminiAuthed
-              ? copy.signedIn
-              : browser?.status === "loading" && isGemini ? copy.checkingSignIn : copy.signIn}
-            complete={geminiAuthed}
-            description="Sign in directly in the embedded Google Gemini browser. Login stays in this launcher's private profile."
-            disabled={globalActionDisabled}
-            index={1}
-            onAction={() => run(async () => {
-              await api!.setProvider("gemini");
-              await activateBrowser();
-              await api!.openLogin();
-            })}
-            title="Sign in to Google Gemini"
-          />
-          <SetupRow
-            action={snapshot.geminiSmokePassed ? "Verify again" : "Run verify"}
-            complete={Boolean(snapshot.geminiSmokePassed)}
-            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to Google Gemini and verify response."
-            disabled={globalActionDisabled || isGeminiTesting || !geminiAuthed}
-            index={2}
-            onAction={() => run(async () => {
-              await api!.setProvider("gemini");
-              updateState((await api!.snapshot()).state);
-              await activateBrowser();
-              await api!.smokeTest();
-              updateState((await api!.snapshot()).state);
-            })}
-            repeatable={true}
-            title="Run browser smoke test (Gemini)"
-          />
-        </div>
-
-        {/* ── Qwen Setup Section ── */}
-        <SectionHeading label="Qwen Setup" spaced />
-        <div className="setup-list">
-          <SetupRow
-            action={qwenAuthed
-              ? copy.signedIn
-              : browser?.status === "loading" && isQwen ? copy.checkingSignIn : copy.signIn}
-            complete={qwenAuthed}
-            description="Sign in directly in the embedded Qwen browser (chat.qwen.ai). Login stays in this launcher's private profile."
-            disabled={globalActionDisabled}
-            index={1}
-            onAction={() => run(async () => {
-              await api!.setProvider("qwen");
-              await activateBrowser();
-              await api!.openLogin();
-            })}
-            title="Sign in to Qwen"
-          />
-          <SetupRow
-            action={snapshot.qwenSmokePassed ? "Verify again" : "Run verify"}
-            complete={Boolean(snapshot.qwenSmokePassed)}
-            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to Qwen and verify response."
-            disabled={globalActionDisabled || isQwenTesting || !qwenAuthed}
-            index={2}
-            onAction={() => run(async () => {
-              await api!.setProvider("qwen");
-              updateState((await api!.snapshot()).state);
-              await activateBrowser();
-              await api!.smokeTest();
-              updateState((await api!.snapshot()).state);
-            })}
-            repeatable={true}
-            title="Run browser smoke test (Qwen)"
-          />
-        </div>
-
         {/* â”€â”€ ChatGPT Setup Section â”€â”€ */}
         <SectionHeading label="ChatGPT Setup" spaced />
         <div className="setup-list">
           <SetupRow
             action={chatGptAuthed
               ? copy.signedIn
-              : browser?.status === "loading" && !isM365 && !isGemini && !isQwen ? copy.checkingSignIn : copy.signIn}
+              : browser?.status === "loading" && !isM365 ? copy.checkingSignIn : copy.signIn}
             complete={chatGptAuthed}
             description="Sign in directly in the embedded ChatGPT browser. Login stays in this launcher's private profile."
             disabled={globalActionDisabled}
@@ -1413,32 +1335,12 @@ function SettingsSurface({
             <SecondaryButton
               disabled={busy}
               style={{
-                borderColor: snapshot.state.selectedProvider === "gemini" ? "var(--color-accent, #1a73e8)" : undefined,
-                fontWeight: snapshot.state.selectedProvider === "gemini" ? 600 : 400,
-              }}
-              onClick={() => void api!.setProvider("gemini").then(updateState).catch((cause) => setError(messageOf(cause)))}
-            >
-              Google Gemini
-            </SecondaryButton>
-            <SecondaryButton
-              disabled={busy}
-              style={{
                 borderColor: snapshot.state.selectedProvider === "m365" ? "var(--color-accent, #0078d4)" : undefined,
                 fontWeight: snapshot.state.selectedProvider === "m365" ? 600 : 400,
               }}
               onClick={() => void api!.setProvider("m365").then(updateState).catch((cause) => setError(messageOf(cause)))}
             >
               M365 Copilot
-            </SecondaryButton>
-            <SecondaryButton
-              disabled={busy}
-              style={{
-                borderColor: snapshot.state.selectedProvider === "qwen" ? "var(--color-accent, #6366f1)" : undefined,
-                fontWeight: snapshot.state.selectedProvider === "qwen" ? 600 : 400,
-              }}
-              onClick={() => void api!.setProvider("qwen").then(updateState).catch((cause) => setError(messageOf(cause)))}
-            >
-              Qwen
             </SecondaryButton>
             <SecondaryButton
               disabled={busy}

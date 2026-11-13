@@ -23,7 +23,6 @@ const {
   MANUAL_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
-  resolveChromeUserAgent,
 } = require("../electron/browser-host.cjs");
 
 test("manual prompt handoff keeps ordinary turns at one minute and compaction at two minutes", () => {
@@ -3726,9 +3725,9 @@ test("beginTurn reconciles multiple retained tabs by keeping the newest and clos
     status: "ready",
     interactionMode: "automatic",
     conversationKey: key,
-    connectorIdentity: "qwen-web",
+    connectorIdentity: "m365-copilot",
     connectorBound: true,
-    provider: "qwen",
+    provider: "m365",
     lastHeartbeatAt: 100,
     view: { webContents: { isDestroyed: () => false, setBackgroundThrottling() {} } },
   };
@@ -3738,9 +3737,9 @@ test("beginTurn reconciles multiple retained tabs by keeping the newest and clos
     status: "ready",
     interactionMode: "automatic",
     conversationKey: key,
-    connectorIdentity: "qwen-web",
+    connectorIdentity: "m365-copilot",
     connectorBound: true,
-    provider: "qwen",
+    provider: "m365",
     lastHeartbeatAt: 200,
     view: { webContents: { isDestroyed: () => false, setBackgroundThrottling() {} } },
   };
@@ -3763,9 +3762,9 @@ test("beginTurn reconciles multiple retained tabs by keeping the newest and clos
     false,
     process.pid,
     key,
-    "qwen-web",
+    "m365-copilot",
     false,
-    "qwen",
+    "m365",
   );
 
   assert.equal(lease.tabId, "newer-retained");
@@ -3774,15 +3773,4 @@ test("beginTurn reconciles multiple retained tabs by keeping the newest and clos
   assert.deepEqual(removed, ["older-retained"]);
   assert.equal(fixture.turnTabs.has("newer-retained"), true);
   assert.equal(fixture.turnTabs.has("older-retained"), false);
-});
-
-test("resolveChromeUserAgent aligns User-Agent with runtime Chromium version", () => {
-  assert.equal(
-    resolveChromeUserAgent("148.0.7700.12", "win32"),
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7700.12 Safari/537.36",
-  );
-  assert.equal(
-    resolveChromeUserAgent("invalid", "darwin"),
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-  );
 });

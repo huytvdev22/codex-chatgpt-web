@@ -23,11 +23,9 @@
 ```text
 src/models/
 ├── model-catalog.ts
+├── model-registry.ts
 ├── chatgpt-web-models.ts
-├── m365-models.ts
-├── gemini-models.ts
-├── google-ai-studio-models.ts
-└── qwen-web-models.ts
+└── m365-models.ts
 ```
 
 ## Phạm vi thay đổi

@@ -59,9 +59,6 @@ Local Responses API Server
           +-- Web provider
           |      +-- ChatGPT Web
           |      +-- Microsoft 365 Copilot
-          |      +-- Gemini Web
-          |      +-- Google AI Studio
-          |      +-- Qwen Web
           |
           +-- Native Codex passthrough
 
@@ -117,8 +114,6 @@ Provider và model route được khai báo tập trung trong `src/models/model-
 | --- | --- |
 | `chatgpt-web` | ChatGPT Web với chế độ thường hoặc suy nghĩ |
 | `m365-copilot` | Microsoft 365 Copilot Web |
-| `gemini-web` | Google Gemini Web |
-| `qwen-web` | Qwen Web |
 
 Model catalog, context window, compaction threshold, composer limit, input modality và reasoning
 level được lấy từ registry. Không nên ghi cứng model route ở module khác.

@@ -1,4 +1,4 @@
-# 041: Tinh gọn ChatGPT Web Adapter theo cấu trúc Qwen
+# 041: Tinh gọn ChatGPT Web Adapter về cấu trúc 5 file provider/runtime
 
 ## ⚡ TL;DR
 - **Triệu chứng:** `src/adapters/chatgpt-web/` còn 13 file, gồm nhiều compatibility shim và API legacy đã không còn tham gia runtime.
@@ -24,7 +24,7 @@ src/adapters/chatgpt-web/
 - `scripts/build-runtime-bundle.ts`
 - `scripts/build-browser-helper.ts`
 
-So với Qwen, ChatGPT có thêm đúng một runtime entrypoint phục vụ Launcher helper.
+ChatGPT giữ thêm đúng một runtime entrypoint (`browser-helper-main.ts`) phục vụ Launcher helper.
 
 ## File đã loại bỏ
 

@@ -22,7 +22,6 @@ describe("ChatGPT Web Adapter V2 Architecture Tests", () => {
 
     // Không nhận nhầm các adapter khác
     expect(isProviderModel("m365-copilot", "chatgpt-web")).toBe(false);
-    expect(isProviderModel("gemini-web", "chatgpt-web")).toBe(false);
     expect(isProviderModel("gpt-5", "chatgpt-web")).toBe(false);
   });
 

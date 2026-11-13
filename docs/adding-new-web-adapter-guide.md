@@ -122,7 +122,7 @@ Mỗi provider chọn tổ hợp chính sách phù hợp thay vì viết câu l�
   - `false`: Ngoại lệ có chủ đích, chỉ dùng khi worker bắt buộc tự quản lý lease theo từng attempt. M365 là trường hợp tham chiếu hiện tại.
 - **`closeLauncherConnectionOnEnd`**:
   - `true` (mặc định): Đóng kết nối Playwright CDP trong khối `finally`.
-  - `false`: Giữ kết nối mở sau khi báo `phase=end` (như Google AI Studio).
+  - `false`: Giữ kết nối mở sau khi báo `phase=end` nếu provider tái sử dụng trực tiếp session trình duyệt.
 - **`emitErrorEventOnFailure` & `rethrowError`**:
   - Quyết định việc phát sự kiện `{ type: "error" }` tại Engine hay để tầng Server xử lý ngoại lệ, tránh nhân đôi lỗi trên stream.
 - **`errorMessagePrefix` & `abortedTurnMessage`**:

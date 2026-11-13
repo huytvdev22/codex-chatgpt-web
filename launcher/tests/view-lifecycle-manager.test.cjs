@@ -57,7 +57,7 @@ test("ViewLifecycleManager lazy-loads views and destroys inactive ones cleanly",
 });
 
 test("initializePrimaryView loads IDLE_BROWSER_URL immediately without blocking startup on network I/O", async () => {
-  for (const provider of ["m365", "gemini", "qwen", "chatgpt"]) {
+  for (const provider of ["m365", "chatgpt"]) {
     const calls = [];
     let currentUrl = "about:blank";
     const contents = new EventEmitter();
@@ -238,8 +238,6 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     chatGptView: { webContents: { isDestroyed: () => false, off() {} } },
     m365View: { webContents: { isDestroyed: () => false, off() {} } },
-    geminiView: null,
-    qwenView: null,
     shellZoomShortcutBindings: new Map(),
     primaryViewManager: {
       destroy: (providerName) => destroyedProviders.push(providerName),
@@ -257,59 +255,13 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
 
   BrowserHost.prototype.releaseInactivePrimaryViews.call(fixture, "chatgpt");
 
-  assert.deepEqual(destroyedProviders, ["m365", "gemini", "qwen"]);
+  assert.deepEqual(destroyedProviders, ["m365"]);
   assert.equal(fixture.m365View, null);
   assert.notEqual(fixture.chatGptView, null);
   assert.deepEqual(removedTabs, []);
   assert.equal(fixture.turnTabs.has("m365-ready"), true);
   assert.equal(fixture.turnTabs.has("m365-running"), true);
   assert.equal(fixture.turnTabs.has("chatgpt-ready"), true);
-});
-
-test("GeminiSurfaceManager and bindGeminiTurnContents unify Gemini turn lifecycle with ChatGPT/M365/Qwen", () => {
-  const { GeminiSurfaceManager, parseGeminiConversationId } = require("../electron/gemini-surface-manager.cjs");
-  const { bindGeminiTurnContents } = require("../electron/gemini-turn-surface.cjs");
-
-  assert.equal(
-    parseGeminiConversationId("https://gemini.google.com/app/9f8e7d6c5b4a3210"),
-    "9f8e7d6c5b4a3210",
-  );
-  const manager = new GeminiSurfaceManager({ registryPath: null });
-  const key = "g".repeat(64);
-  assert.equal(manager.initialUrl(key), "https://gemini.google.com/app");
-  manager.bind(key, "9f8e7d6c5b4a3210");
-  assert.equal(manager.initialUrl(key), "https://gemini.google.com/app/9f8e7d6c5b4a3210");
-
-  const contents = new EventEmitter();
-  contents.setWindowOpenHandler = () => {};
-  contents.getURL = () => "https://gemini.google.com/app/9f8e7d6c5b4a3210";
-  contents.getTitle = () => "Google Gemini";
-  contents.isDestroyed = () => false;
-  contents.executeJavaScript = async () => true;
-
-  const tab = {
-    id: "gemini-tab-1",
-    surfaceId: "surface_gemini_1",
-    traceId: "trace_gemini_1",
-    provider: "gemini",
-    initializingSurface: false,
-    bootstrapReady: false,
-    rendererReady: false,
-    view: { webContents: contents },
-  };
-  const host = {
-    turnTabs: new Map([[tab.id, tab]]),
-    syncTurnDeviceEmulation: () => {},
-    publishState: () => {},
-    snapshot: () => ({}),
-  };
-
-  bindGeminiTurnContents(host, tab);
-  contents.emit("did-finish-load");
-
-  assert.equal(tab.bootstrapReady, true);
-  assert.equal(tab.rendererReady, true);
-  assert.equal(tab.url, "https://gemini.google.com/app/9f8e7d6c5b4a3210");
 });
 
 test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab while a turn tab is active", () => {

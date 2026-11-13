@@ -8,7 +8,7 @@
 
 /**
  * Giao thức giao tiếp thống nhất với IDE.
- * Cho phép truyền tên trợ lý (Copilot, Gemini...) với thẻ envelope cố định: webResponse.
+ * Cho phép truyền tên trợ lý (Copilot, ChatGPT...) với thẻ envelope cố định: webResponse.
  * Đây là bootstrap prompt được gửi ở lượt đầu tiên của mỗi conversation.
  */
 export function buildUnifiedToolProtocol(

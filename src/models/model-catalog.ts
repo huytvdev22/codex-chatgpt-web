@@ -16,17 +16,11 @@ type JsonObject = Record<string, unknown>;
 
 export const CHATGPT_WEB_MODEL_PREFIX = "chatgpt-web/";
 export const M365_COPILOT_MODEL_PREFIX = "m365-copilot/";
-export const GEMINI_WEB_MODEL_PREFIX = "gemini-web/";
-export const QWEN_WEB_MODEL_PREFIX = "qwen-web/";
 
 const isChatGptWebModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "chatgpt-web");
 const isM365ModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "m365-copilot");
-const isGeminiModelSlug = (slug: string): boolean =>
-  isProviderModel(slug, "gemini-web");
-const isQwenModelSlug = (slug: string): boolean =>
-  isProviderModel(slug, "qwen-web");
 
 export const DEFAULT_BASE_INSTRUCTIONS =
   "You are Codex, a coding assistant. Answer the user's questions and help them solve tasks.";
@@ -230,60 +224,11 @@ export function ensureManagedModelCatalogFile(
         const hasCurrentM365Surface =
           JSON.stringify(visibleM365Slugs) === JSON.stringify(expectedVisibleM365Slugs);
 
-        const geminiModels = Array.isArray(raw.models)
-          ? raw.models.filter((m: any) => typeof m?.slug === "string" && isGeminiModelSlug(m.slug))
-          : [];
-        const expectedVisibleGeminiSlugs = [
-          "gemini-web",
-          "gemini-web/3.1-pro",
-          "gemini-web/3.5-flash-lite",
-          "gemini-web/3.8-flash",
-          "gemini-web/4-argon",
-        ];
-        const currentVisibleGeminiSlugs = geminiModels
-          .filter((m: any) => m.visibility !== "hide")
-          .map((m: any) => m.slug)
-          .sort();
-        const hasCurrentGeminiSurface =
-          JSON.stringify(currentVisibleGeminiSlugs) === JSON.stringify(expectedVisibleGeminiSlugs);
-        const allGeminiHave3ThinkingLevels =
-          geminiModels.length >= 5 &&
-          geminiModels.every((m: any) => Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 3);
-
         const chatGptModels = Array.isArray(raw.models)
           ? raw.models.filter((m: any) => typeof m?.slug === "string" && isChatGptWebModelSlug(m.slug) && m.visibility !== "hide")
           : [];
         const hasChatGptDefault = chatGptModels.some((m: any) => m.slug === "chatgpt-web" && Array.isArray(m.supported_reasoning_levels) && m.supported_reasoning_levels.length === 2);
-        const expectedVisibleQwenSlugs = [
-          "qwen-web",
-          "qwen-web/qwen3.7-plus",
-         "qwen-web/qwen4-max-preview",
-          "qwen-web/qwen3.8-max",
-          "qwen-web/qwen3.8-omni-flash",
-        ];
-        const qwenModels = Array.isArray(raw.models)
-          ? raw.models.filter(
-              (m: any) =>
-                typeof m?.slug === "string" &&
-                isProviderModel(m.slug, "qwen-web") &&
-                m.visibility !== "hide",
-            )
-          : [];
-        const currentVisibleQwenSlugs = qwenModels
-          .map((m: any) => m.slug)
-          .sort();
-        const hasCurrentQwenSurface =
-          JSON.stringify(currentVisibleQwenSlugs) ===
-          JSON.stringify(expectedVisibleQwenSlugs);
-        const allQwenHaveReasoningLevels =
-          qwenModels.length === expectedVisibleQwenSlugs.length &&
-          qwenModels.every(
-            (m: any) =>
-              Array.isArray(m.supported_reasoning_levels) &&
-              m.supported_reasoning_levels.length === 2 &&
-              m.default_reasoning_level === "low",
-          );
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasCurrentQwenSurface || !allQwenHaveReasoningLevels) {
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasChatGptDefault) {
           shouldWrite = true;
         }
       } catch {
@@ -351,7 +296,7 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const model = value as JsonObject;
   const modelSlug = slug(model);
-  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX) || isGeminiModelSlug(modelSlug)) return false;
+  if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX) || modelSlug.startsWith(M365_COPILOT_MODEL_PREFIX)) return false;
   // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
   // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
   // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
@@ -426,8 +371,6 @@ export function buildProviderModel(
 export const buildChatGptWebModel = buildProviderModel;
 
 export const buildM365Model = buildProviderModel;
-export const buildGeminiModel = buildProviderModel;
-export const buildQwenModel = buildProviderModel;
 
 export function augmentNativeModelCatalog(
   value: unknown,
@@ -446,9 +389,7 @@ export function augmentNativeModelCatalog(
       const s = slug(model);
       return (
         !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) &&
-        !s?.startsWith(M365_COPILOT_MODEL_PREFIX) &&
-        !isGeminiModelSlug(s ?? "") &&
-        !isQwenModelSlug(s ?? "")
+        !s?.startsWith(M365_COPILOT_MODEL_PREFIX)
       );
     }),
   );

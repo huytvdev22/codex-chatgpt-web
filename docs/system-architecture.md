@@ -46,9 +46,6 @@ Local Responses API Server
           |      |
           |      +-- ChatGPT Web
           |      +-- Microsoft 365 Copilot
-          |      +-- Gemini Web
-          |      +-- Google AI Studio
-          |      +-- Qwen Web
           |
           +-- Native Codex passthrough
                  |
@@ -185,8 +182,6 @@ Model ID trong catalog là dữ liệu quyết định route của lượt gọi
 
 ```text
 m365-copilot/gpt-5.6  -> Microsoft 365 Copilot Adapter
-gemini-web/3.8-flash  -> Gemini Web Adapter
-qwen-web              -> Qwen Web Adapter
 chatgpt-web           -> ChatGPT Web Adapter
 gpt-5.6-sol           -> Native passthrough
 ```
@@ -257,10 +252,8 @@ Routing precedence hiện tại trong `responseRequest()`:
 
 ```text
 1. m365-copilot
-2. gemini-web
-3. chatgpt-web
-4. qwen-web
-5. model khác -> native Responses passthrough
+2. chatgpt-web
+3. model khác -> native Responses passthrough
 ```
 
 Routing được xác định bằng `isProviderModel()` trong `src/models/model-registry.ts`. Server không
@@ -1010,8 +1003,6 @@ Các provider ID hiện được định nghĩa:
 ```text
 chatgpt-web
 m365-copilot
-gemini-web
-qwen-web
 ```
 
 Mỗi provider định nghĩa:
@@ -1055,7 +1046,7 @@ interface ProviderAdapter {
 
 ### 5.2. Kiến trúc phân tầng `WebProviderAdapter` & `WebTurnEngine`
 
-Toàn bộ 4 Web Provider (`m365-copilot`, `chatgpt-web`, `gemini-web`, `qwen-web`) tuân theo kiến trúc phân tầng thống nhất:
+Toàn bộ 2 Web Provider (`m365-copilot`, `chatgpt-web`) tuân theo kiến trúc phân tầng thống nhất:
 
 ```text
 ProviderAdapter (src/adapters/base.ts)
@@ -1091,7 +1082,7 @@ Shared layer sở hữu toàn bộ cơ chế điều phối và giao thức dùn
 - `tools/`: chuẩn hóa tham số, kiểm tra an toàn lệnh (`SafeCommandGuard`), chính sách phê duyệt và cầu nối công cụ native-first (`WebToolBridge`).
 - `harness/`: hệ thống con tùy chọn phục vụ phát triển/đánh giá cục bộ (`M365AgentLoop`), nằm ngoài đường chạy production của `WebTurnEngine`.
 
-Các Web provider import shared layer theo một chiều. Shared layer tuyệt đối không import ngược `m365-copilot`, `chatgpt-web`, `gemini-web` hoặc `qwen-web`.
+Các Web provider import shared layer theo một chiều. Shared layer tuyệt đối không import ngược `m365-copilot` hoặc `chatgpt-web`.
 
 ### 6.2. Microsoft 365 Copilot
 
@@ -1134,28 +1125,6 @@ Thư mục: ../src/adapters/chatgpt-web/
 - `conversation-store.ts`: ủy quyền lưu trữ hội thoại qua `GenericConversationStore`.
 - `selectors.ts`: bộ selector DOM của ChatGPT.
 - `markdown.ts`: bộ chuyển đổi HTML sang Markdown.
-
-### 6.4. Gemini Web
-
-Thư mục: ../src/adapters/gemini-web/
-
-`GeminiWebAdapter` kế thừa `WebProviderAdapter`, chỉ chứa:
-
-- `index.ts`: khai báo `WebProviderDefinition` cho Gemini với chính sách `launcherFailureMode: "fallback-local"` (tự động chuyển sang `LocalBrowserRuntime` khi không kết nối được Launcher).
-- `gemini-browser-worker.ts`: điều khiển trang Gemini và trích xuất phản hồi.
-- `capability-picker.ts`: chọn mode suy luận trên UI Gemini.
-- `selectors.ts`: bộ selector DOM của Gemini.
-
-### 6.5. Qwen Web
-
-Thư mục: ../src/adapters/qwen-web/
-
-`QwenWebAdapter` kế thừa `WebProviderAdapter`, chỉ chứa:
-
-- `index.ts`: khai báo `WebProviderDefinition` cho Qwen (`launcherFailureMode: "fail-closed"`, `emitErrorEventOnFailure: false`, `rethrowError: true`), cùng phương thức `abortTurn()` và `cleanup()`.
-- `qwen-browser-worker.ts`: điều khiển trang Qwen và trích xuất phản hồi.
-- `conversation-store.ts`: ủy quyền lưu trữ hội thoại qua `GenericConversationStore`.
-- `selectors.ts`: bộ selector DOM và hàm kiểm tra `isValidQwenConversationId`.
 
 ## 7. Responses lifecycle
 
@@ -1239,8 +1208,6 @@ Provider-specific surface managers hiện có:
 
 - ../launcher/electron/chatgpt-surface-manager.cjs
 - ../launcher/electron/m365-surface-manager.cjs
-- ../launcher/electron/gemini-surface-manager.cjs
-- ../launcher/electron/qwen-surface-manager.cjs
 
 Browser host chịu trách nhiệm ownership và lifecycle. Provider adapter chịu trách nhiệm thao tác
 provider page. Không nên chuyển provider parsing vào Electron main process.

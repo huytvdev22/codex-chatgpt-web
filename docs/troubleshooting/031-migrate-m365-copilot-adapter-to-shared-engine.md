@@ -3,7 +3,7 @@
 **Trạng thái:** `✅ Đã Confirm`
 
 ## ⚡ TL;DR
-- **Triệu chứng:** `src/adapters/m365-copilot/index.ts` tự viết tay toàn bộ vòng lặp điều phối `runTurn()` (early-exit check, compile prompt, retry giao thức, loop guard, emit tool/final answer), tách biệt với 4 Web provider còn lại.
+- **Triệu chứng:** `src/adapters/m365-copilot/index.ts` tự viết tay toàn bộ vòng lặp điều phối `runTurn()` (early-exit check, compile prompt, retry giao thức, loop guard, emit tool/final answer), tách biệt với Web provider còn lại.
 - **Nguyên nhân gốc rễ:** `M365CopilotAdapter` chưa được chuyển sang kế thừa `WebProviderAdapter` và ủy quyền điều phối cho `WebTurnEngine`.
 - **Cách sửa:** Cho `M365CopilotAdapter` kế thừa `WebProviderAdapter` với `WebProviderDefinition` cấu hình đặc thù của M365 (`manageLauncherLeaseInEngine: false`, `enableEarlyExitOnFinalAnswer: true`, `enableToolLoopGuard: true`, `attachments.extractAttachments`, `executeM365Turn`), giữ nguyên 100% hành vi runtime và toàn bộ Root Facade exports.
 
@@ -16,6 +16,6 @@
 - `git diff --check`: Pass
 - `bun run check:architecture`: Pass (`0 cycles`, directionality gate pass, Root Facade exports pass)
 - `bun test tests/m365-*.test.ts`: `215 pass, 0 fail`
-- `bun test tests/web-turn-engine.test.ts tests/gemini-web-adapter.test.ts tests/qwen-web-adapter.test.ts tests/google-ai-studio.test.ts tests/chatgpt-web-adapter.test.ts tests/chatgpt-conversation-store.test.ts tests/chatgpt-web-markdown.test.ts tests/chatgpt-web-models.test.ts`: `64 pass, 0 fail`
+- `bun test tests/web-turn-engine.test.ts tests/chatgpt-web-adapter.test.ts tests/chatgpt-conversation-store.test.ts tests/chatgpt-web-markdown.test.ts tests/chatgpt-web-models.test.ts`: Pass
 - `bun run build`: Pass
 - `src/` TypeScript errors: `0`

@@ -1,7 +1,7 @@
 # 024 - Bóc tách hạ tầng Conversation Key & Generic Conversation Store sang `src/adapters/web/conversation`
 
 ## ⚡ TL;DR
-- **Triệu chứng:** Logic băm khóa hội thoại (`conversationKey`) và lưu trữ ánh xạ hội thoại ra file JSON bị lặp lại giữa M365, ChatGPT, Qwen và Google AI Studio.
+- **Triệu chứng:** Logic băm khóa hội thoại (`conversationKey`) và lưu trữ ánh xạ hội thoại ra file JSON bị lặp lại giữa M365 và ChatGPT Web.
 - **Nguyên nhân gốc rễ:** Chưa có lớp hạ tầng `conversation/` dùng chung trong `src/adapters/web/` tách biệt giữa cơ chế lưu trữ/hash với bộ validator và schema riêng của từng provider.
 - **Cách sửa:** Tạo `buildWebConversationKey` và `GenericConversationStore` tại `src/adapters/web/conversation/`, đồng thời chuyển `m365ConversationKey` sang ủy quyền qua helper chung mà không đổi kết quả hash.
 

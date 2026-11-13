@@ -1,9 +1,9 @@
-# 025 - Chuyển Conversation Store của Qwen, Google AI Studio và ChatGPT sang dùng `GenericConversationStore`
+# 025 - Chuyển Conversation Store của ChatGPT sang dùng `GenericConversationStore`
 
 ## ⚡ TL;DR
-- **Triệu chứng:** `QwenConversationStore`, `GoogleAIStudioConversationStore` và `ChatGptConversationStore` tự lặp lại ~100 dòng code đọc/ghi JSON file và tạo khóa SHA-256.
+- **Triệu chứng:** `ChatGptConversationStore` tự lặp lại ~100 dòng code đọc/ghi JSON file và tạo khóa SHA-256.
 - **Nguyên nhân gốc rễ:** Các adapter chưa tái sử dụng hạ tầng `GenericConversationStore` và `buildWebConversationKey` trong `src/adapters/web/conversation/`.
-- **Cách sửa:** Chuyển cả 3 store sang ủy quyền lưu trữ cho `GenericConversationStore` và tạo khóa qua `buildWebConversationKey`, đồng thời giữ nguyên 100% validator, URL helper, schema JSON (`conversationId` vs `promptId`) và public API của từng provider.
+- **Cách sửa:** Chuyển store sang ủy quyền lưu trữ cho `GenericConversationStore` và tạo khóa qua `buildWebConversationKey`, đồng thời giữ nguyên 100% validator, URL helper, schema JSON và public API của provider.
 
 ## Trạng thái
 
@@ -11,8 +11,6 @@
 
 ## Phạm vi thay đổi (Atomic Slice #4)
 
-- `src/adapters/qwen-web/conversation-store.ts`
-- `src/adapters/google-ai-studio/conversation-store.ts`
 - `src/adapters/chatgpt-web/conversation-store.ts`
 
 ## Xác minh

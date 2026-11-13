@@ -11,7 +11,7 @@ import type { CodexParsedRequest } from "../src/types";
 
 function makeParsedRequest(): CodexParsedRequest {
   return {
-    modelId: "qwen-web/qwen3.5-plus",
+    modelId: "m365-copilot/gpt-5.6",
     stream: true,
     options: { reasoning: "medium" } as any,
     context: {
@@ -20,7 +20,7 @@ function makeParsedRequest(): CodexParsedRequest {
       tools: [],
     },
     _rawBody: {
-      model: "qwen-web/qwen3.5-plus",
+      model: "m365-copilot/gpt-5.6",
       input: [{ role: "user", content: "Ping" }],
     },
   };
@@ -112,9 +112,9 @@ describe("POST /admin/cancel-turn & /admin/cancel-turns Contract Tests", () => {
         closeTurn: async () => {},
       };
       const definition: WebProviderDefinition = {
-        id: "qwen-web",
-        assistantName: "Qwen",
-        logPrefix: "qwen-adapter",
+        id: "m365-copilot",
+        assistantName: "M365 Copilot",
+        logPrefix: "m365-adapter",
         policies: {
           emitErrorEventOnFailure: false,
           rethrowError: true,
@@ -123,8 +123,8 @@ describe("POST /admin/cancel-turn & /admin/cancel-turns Contract Tests", () => {
           resolveConversationKey: () => `conv-${tag}`,
         },
         browser: {
-          launcherProviderId: "qwen",
-          connectorIdentity: "qwen-web",
+          launcherProviderId: "m365",
+          connectorIdentity: "m365-copilot",
           executeTurn: async ({ incoming }) => {
             if (tag === "target") {
               resolveTargetEntered();
@@ -150,8 +150,8 @@ describe("POST /admin/cancel-turn & /admin/cancel-turns Contract Tests", () => {
       return new WebTurnEngine(definition, undefined, ops);
     };
 
-    const targetTraceId = "trace_qwen_target_1";
-    const peerTraceId = "trace_qwen_peer_2";
+    const targetTraceId = "trace_m365_target_1";
+    const peerTraceId = "trace_m365_peer_2";
 
     const targetOutcome = captureOutcome(
       createEngine("target").runTurn(
@@ -223,9 +223,9 @@ describe("POST /admin/cancel-turn & /admin/cancel-turns Contract Tests", () => {
 
     const engine = new WebTurnEngine(
       {
-        id: "qwen-web",
-        assistantName: "Qwen",
-        logPrefix: "qwen-adapter",
+        id: "m365-copilot",
+        assistantName: "M365 Copilot",
+        logPrefix: "m365-adapter",
         policies: {
           emitErrorEventOnFailure: false,
           rethrowError: true,
@@ -234,8 +234,8 @@ describe("POST /admin/cancel-turn & /admin/cancel-turns Contract Tests", () => {
           resolveConversationKey: () => "conv-acquire-wait",
         },
         browser: {
-          launcherProviderId: "qwen",
-          connectorIdentity: "qwen-web",
+          launcherProviderId: "m365",
+          connectorIdentity: "m365-copilot",
           executeTurn: async () => ({ rawResponse: "" }),
         },
       },

@@ -11,8 +11,6 @@ import {
 } from "../src/adapters/web";
 import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
 import { ChatGptWebAdapter } from "../src/adapters/chatgpt-web";
-import { GeminiWebAdapter } from "../src/adapters/gemini-web";
-import { QwenWebAdapter } from "../src/adapters/qwen-web";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 function createParsedRequest(
@@ -56,7 +54,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         resolveConversationKey: () => "key-1",
       },
       browser: {
-        launcherProviderId: "gemini",
+        launcherProviderId: "m365",
         connectorIdentity: "test-web",
         executeTurn: async () => ({ rawResponse: "" }),
       },
@@ -85,7 +83,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         resolveConversationKey: () => "key-2",
       },
       browser: {
-        launcherProviderId: "gemini",
+        launcherProviderId: "m365",
         connectorIdentity: "test-web",
         executeTurn: async () => ({
           rawResponse:
@@ -121,7 +119,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         resolveConversationKey: () => "key-3",
       },
       browser: {
-        launcherProviderId: "qwen",
+        launcherProviderId: "chatgpt",
         connectorIdentity: "test-web",
         executeTurn: async () => {
           attempts += 1;
@@ -171,16 +169,16 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     const events: AdapterEvent[] = [];
 
     const definition: WebProviderDefinition = {
-      id: "qwen-web",
-      assistantName: "Qwen",
-      logPrefix: "qwen-adapter",
+      id: "m365-copilot",
+      assistantName: "M365 Copilot",
+      logPrefix: "m365-adapter",
       policies: { manageLauncherLeaseInEngine: false },
       conversation: {
         resolveConversationKey: () => "key-4",
       },
       browser: {
-        launcherProviderId: "qwen",
-        connectorIdentity: "qwen-web",
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
         executeTurn: async () => ({
           rawResponse:
             "code Codedownload <webResponse>Câu trả lời sau khi lọc rác</webResponse> trailing_noise",
@@ -279,12 +277,10 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     ]);
   });
 
-  test("6. Toàn bộ 4 Web Provider Adapters đều kế thừa WebProviderAdapter dùng chung", () => {
+  test("6. Toàn bộ 2 Web Provider Adapters đều kế thừa WebProviderAdapter dùng chung", () => {
     const adapters = [
       new M365CopilotAdapter(),
       new ChatGptWebAdapter(),
-      new GeminiWebAdapter(),
-      new QwenWebAdapter(),
     ];
 
     for (const adapter of adapters) {
@@ -354,9 +350,9 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     };
 
     const definition: WebProviderDefinition = {
-      id: "qwen-web",
-      assistantName: "Qwen",
-      logPrefix: "qwen-adapter",
+      id: "chatgpt-web",
+      assistantName: "ChatGPT",
+      logPrefix: "chatgpt-adapter",
       policies: {
         launcherFailureMode: "fail-closed",
         emitErrorEventOnFailure: false,
@@ -364,8 +360,8 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       },
       conversation: { resolveConversationKey: () => "key-lc-2" },
       browser: {
-        launcherProviderId: "qwen",
-        connectorIdentity: "qwen-web",
+        launcherProviderId: "chatgpt",
+        connectorIdentity: "chatgpt-web",
         executeTurn: async () => ({ rawResponse: "" }),
       },
     };
@@ -374,12 +370,12 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     await expect(
       engine.runTurn(createParsedRequest(), { headers: new Headers() }, () => {}),
     ).rejects.toThrow(
-      "[qwen-adapter] Không thể kết nối với Launcher browser tab.",
+      "[chatgpt-adapter] Không thể kết nối với Launcher browser tab.",
     );
     expect(localBrowserCalled).toBe(false);
   });
 
-  test("9. Lifecycle: launcherFailureMode='fallback-local' (Gemini) tự động chuyển sang LocalBrowserRuntime khi Launcher lỗi", async () => {
+  test("9. Lifecycle: launcherFailureMode='fallback-local' tự động chuyển sang LocalBrowserRuntime khi Launcher lỗi", async () => {
     const fakeLocalPage = { kind: "local-page" } as any;
     let receivedPage: any = null;
 
@@ -395,16 +391,16 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     };
 
     const definition: WebProviderDefinition = {
-      id: "gemini-web",
-      assistantName: "Gemini",
-      logPrefix: "gemini-adapter",
+      id: "m365-copilot",
+      assistantName: "M365 Copilot",
+      logPrefix: "m365-adapter",
       policies: {
         launcherFailureMode: "fallback-local",
       },
       conversation: { resolveConversationKey: () => "key-lc-3" },
       browser: {
-        launcherProviderId: "gemini",
-        connectorIdentity: "gemini-web",
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
         executeTurn: async ({ page }) => {
           receivedPage = page;
           return {
@@ -562,25 +558,25 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     };
 
     const definition: WebProviderDefinition = {
-      id: "qwen-web",
-      assistantName: "Qwen",
-      logPrefix: "qwen-adapter",
+      id: "chatgpt-web",
+      assistantName: "ChatGPT",
+      logPrefix: "chatgpt-adapter",
       policies: {
         closeLauncherConnectionOnEnd: false,
       },
       conversation: {
-        resolveConversationKey: () => "key-qwen",
+        resolveConversationKey: () => "key-conv",
         resolveEndTurnBinding: ({ activeConversationId, conversationKey }) => ({
           connectorBound: true,
           conversationId: activeConversationId || conversationKey,
         }),
       },
       browser: {
-        launcherProviderId: "qwen",
-        connectorIdentity: "qwen-web",
+        launcherProviderId: "chatgpt",
+        connectorIdentity: "chatgpt-web",
         executeTurn: async () => ({
           rawResponse:
-            "````markdown\n<webResponse>\nQwen OK\n</webResponse>\n````",
+            "````markdown\n<webResponse>\nChatGPT OK\n</webResponse>\n````",
           conversationId: "prompt-222",
         }),
       },
@@ -757,7 +753,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
   // 4.2. Error Policy Matrix
   // =========================================================================
 
-  test("14. Error Policy: emitErrorEventOnFailure=true + rethrowError=true (ChatGPT/Gemini) vừa emit error vừa ném lỗi", async () => {
+  test("14. Error Policy: emitErrorEventOnFailure=true + rethrowError=true vừa emit error vừa ném lỗi", async () => {
     const events: AdapterEvent[] = [];
     const engine = new WebTurnEngine({
       id: "chatgpt-web",
@@ -791,12 +787,12 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     ]);
   });
 
-  test("15. Error Policy: emitErrorEventOnFailure=false + rethrowError=true (Qwen/AI Studio) chỉ ném lỗi mà không emit error trùng lặp", async () => {
+  test("15. Error Policy: emitErrorEventOnFailure=false + rethrowError=true chỉ ném lỗi mà không emit error trùng lặp", async () => {
     const events: AdapterEvent[] = [];
     const engine = new WebTurnEngine({
-      id: "qwen-web",
-      assistantName: "Qwen",
-      logPrefix: "qwen-adapter",
+      id: "chatgpt-web",
+      assistantName: "ChatGPT",
+      logPrefix: "chatgpt-adapter",
       policies: {
         manageLauncherLeaseInEngine: false,
         emitErrorEventOnFailure: false,
@@ -804,10 +800,10 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       },
       conversation: { resolveConversationKey: () => "k-err-2" },
       browser: {
-        launcherProviderId: "qwen",
-        connectorIdentity: "qwen-web",
+        launcherProviderId: "chatgpt",
+        connectorIdentity: "chatgpt-web",
         executeTurn: async () => {
-          throw new Error("Qwen rate limit");
+          throw new Error("Rate limit");
         },
       },
     });
@@ -818,7 +814,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         { headers: new Headers() },
         ev => events.push(ev),
       ),
-    ).rejects.toThrow("Qwen rate limit");
+    ).rejects.toThrow("Rate limit");
 
     expect(events).toEqual([]);
   });
@@ -967,14 +963,14 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(endBindingInput?.activeConversationId).toBe("valid-lease-id");
   });
 
-  test("19. Conversation Policy: Gemini hoàn thành không có conversationId vẫn gửi connectorBound=true và không đính kèm conversationId rỗng", async () => {
+  test("19. Conversation Policy: hoàn thành không có conversationId vẫn gửi connectorBound=true và không đính kèm conversationId rỗng", async () => {
     let capturedActivity: any = null;
 
     const ops: Partial<WebRuntimeLifecycleOps> = {
-      resolveDescriptorPath: () => "/tmp/gemini-descriptor.json",
+      resolveDescriptorPath: () => "/tmp/chatgpt-descriptor.json",
       startTurn: async () => ({
         connection: { page: {} } as any,
-        surfaceId: "s-gemini",
+        surfaceId: "s-chatgpt",
         conversationId: undefined,
         reused: false,
         connectorBound: false,
@@ -987,16 +983,16 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
 
     const engine = new WebTurnEngine(
       {
-        id: "gemini-web",
-        assistantName: "Gemini",
-        logPrefix: "gemini-adapter",
-        conversation: { resolveConversationKey: () => "gemini-key" },
+        id: "chatgpt-web",
+        assistantName: "ChatGPT",
+        logPrefix: "chatgpt-adapter",
+        conversation: { resolveConversationKey: () => "chatgpt-key" },
         browser: {
-          launcherProviderId: "gemini",
-          connectorIdentity: "gemini-web",
+          launcherProviderId: "chatgpt",
+          connectorIdentity: "chatgpt-web",
           executeTurn: async () => ({
             rawResponse:
-              "````markdown\n<webResponse>\nGemini reply\n</webResponse>\n````",
+              "````markdown\n<webResponse>\nChatGPT reply\n</webResponse>\n````",
           }),
         },
       },
@@ -1034,22 +1030,22 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
 
     const engine = new WebTurnEngine(
       {
-        id: "qwen-web",
-        assistantName: "Qwen",
-        logPrefix: "qwen-adapter",
+        id: "chatgpt-web",
+        assistantName: "ChatGPT",
+        logPrefix: "chatgpt-adapter",
         conversation: {
-          resolveConversationKey: () => "qwen-fallback-key",
+          resolveConversationKey: () => "fallback-conv-key",
           resolveEndTurnBinding: ({ activeConversationId, conversationKey }) => ({
             connectorBound: true,
             conversationId: activeConversationId || conversationKey,
           }),
         },
         browser: {
-          launcherProviderId: "qwen",
-          connectorIdentity: "qwen-web",
+          launcherProviderId: "chatgpt",
+          connectorIdentity: "chatgpt-web",
           executeTurn: async () => ({
             rawResponse:
-              "````markdown\n<webResponse>\nQwen reply\n</webResponse>\n````",
+              "````markdown\n<webResponse>\nReply\n</webResponse>\n````",
           }),
         },
       },
@@ -1064,7 +1060,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     );
 
     expect(capturedActivity?.connectorBound).toBe(true);
-    expect(capturedActivity?.conversationId).toBe("qwen-fallback-key");
+    expect(capturedActivity?.conversationId).toBe("fallback-conv-key");
   });
 
   // =========================================================================
@@ -1251,9 +1247,9 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
           phase: "start",
           traceId: `trace-${scenario}`,
           helperPid: process.pid,
-          provider: "qwen",
+          provider: "m365",
           conversationKey: "conv-key-cdp-fail",
-          connectorIdentity: "qwen-web",
+          connectorIdentity: "m365-copilot",
         },
         ops: {
           readDescriptor: () => ({
@@ -1278,7 +1274,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
                 surfaceId: "a".repeat(32),
                 reused: false,
                 connectorBound: false,
-                conversationId: "qwen-conv-42",
+                conversationId: "m365-conv-42",
               };
             }
             return {};
@@ -1308,11 +1304,11 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
         phase: "end",
         traceId: `trace-${scenario}`,
         helperPid: process.pid,
-        provider: "qwen",
+        provider: "m365",
         status: scenario === "caller_aborted" ? "aborted" : "failed",
         retain: false,
         connectorBound: false,
-        conversationId: "qwen-conv-42",
+        conversationId: "m365-conv-42",
       });
       // Đảm bảo signal đã bị hủy của caller không làm AbortError khi gửi phase=end
       expect(recorded[1]?.signal).toBeUndefined();
