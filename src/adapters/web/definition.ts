@@ -10,7 +10,6 @@ export type WebLauncherProviderId =
   | "chatgpt"
   | "m365"
   | "gemini"
-  | "google-ai-studio"
   | "qwen";
 
 export type WebTurnFinalStatus = "completed" | "failed" | "aborted";
@@ -191,9 +190,9 @@ export interface WebProviderPolicies {
 }
 
 export interface WebProviderDefinition {
-  /** Định danh chuẩn của adapter (vd: "gemini-web", "qwen-web", "google-ai-studio", "chatgpt-web", "m365-copilot") */
+  /** Định danh chuẩn của adapter (vd: "gemini-web", "qwen-web", "chatgpt-web", "m365-copilot") */
   readonly id: string;
-  /** Tên hiển thị của trợ lý trong prompt compiler & retry loop (vd: "Gemini", "Qwen", "Google AI Studio", "ChatGPT", "M365") */
+  /** Tên hiển thị của trợ lý trong prompt compiler & retry loop (vd: "Gemini", "Qwen", "ChatGPT", "M365") */
   readonly assistantName: string;
   /** Tiền tố log vận hành (vd: "gemini-adapter") */
   readonly logPrefix: string;

@@ -59,7 +59,6 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       "/m365-copilot/",
       "/chatgpt-web/",
       "/gemini-web/",
-      "/google-ai-studio/",
       "/qwen-web/",
     ];
     for (const modulePath of sharedModules) {
@@ -73,12 +72,11 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     }
   });
 
-  test("CI GATE: Toàn bộ 5 Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
+  test("CI GATE: Toàn bộ 4 Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
     const providerFacades = [
       "src/adapters/m365-copilot/index.ts",
       "src/adapters/chatgpt-web/index.ts",
       "src/adapters/gemini-web/index.ts",
-      "src/adapters/google-ai-studio/index.ts",
       "src/adapters/qwen-web/index.ts",
     ];
     const forbiddenDirectOrchestrationCalls = [

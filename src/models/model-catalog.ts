@@ -18,7 +18,6 @@ export const CHATGPT_WEB_MODEL_PREFIX = "chatgpt-web/";
 export const M365_COPILOT_MODEL_PREFIX = "m365-copilot/";
 export const GEMINI_WEB_MODEL_PREFIX = "gemini-web/";
 export const QWEN_WEB_MODEL_PREFIX = "qwen-web/";
-export const GOOGLE_AI_STUDIO_DEFAULT_SLUG = "google-ai-studio";
 
 const isChatGptWebModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "chatgpt-web");
@@ -28,8 +27,6 @@ const isGeminiModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "gemini-web");
 const isQwenModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "qwen-web");
-const isGoogleAIStudioModelSlug = (slug: string): boolean =>
-  isProviderModel(slug, "google-ai-studio");
 
 export const DEFAULT_BASE_INSTRUCTIONS =
   "You are Codex, a coding assistant. Answer the user's questions and help them solve tasks.";
@@ -286,9 +283,7 @@ export function ensureManagedModelCatalogFile(
               m.supported_reasoning_levels.length === 2 &&
               m.default_reasoning_level === "low",
           );
-        const hasGoogleAIStudio = Array.isArray(raw.models) && raw.models.some((m: any) => m.slug === GOOGLE_AI_STUDIO_DEFAULT_SLUG);
-
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasCurrentQwenSurface || !allQwenHaveReasoningLevels || !hasGoogleAIStudio) {
+        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface || !hasCurrentGeminiSurface || !allGeminiHave3ThinkingLevels || !hasChatGptDefault || !hasCurrentQwenSurface || !allQwenHaveReasoningLevels) {
           shouldWrite = true;
         }
       } catch {
@@ -433,7 +428,6 @@ export const buildChatGptWebModel = buildProviderModel;
 export const buildM365Model = buildProviderModel;
 export const buildGeminiModel = buildProviderModel;
 export const buildQwenModel = buildProviderModel;
-export const buildGoogleAIStudioModel = buildProviderModel;
 
 export function augmentNativeModelCatalog(
   value: unknown,
@@ -454,8 +448,7 @@ export function augmentNativeModelCatalog(
         !s?.startsWith(CHATGPT_WEB_MODEL_PREFIX) &&
         !s?.startsWith(M365_COPILOT_MODEL_PREFIX) &&
         !isGeminiModelSlug(s ?? "") &&
-        !isQwenModelSlug(s ?? "") &&
-        !isGoogleAIStudioModelSlug(s ?? "")
+        !isQwenModelSlug(s ?? "")
       );
     }),
   );

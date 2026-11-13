@@ -84,7 +84,6 @@ import {
 import { createM365CopilotAdapter } from "./adapters/m365-copilot";
 import { createGeminiWebAdapter } from "./adapters/gemini-web";
 import { createQwenWebAdapter } from "./adapters/qwen-web";
-import { createGoogleAIStudioAdapter } from "./adapters/google-ai-studio";
 import { activeWebTurnRegistry } from "./adapters/web";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
@@ -903,87 +902,6 @@ async function handleQwenResponseRequest(
   return Response.json(json);
 }
 
-async function handleGoogleAIStudioResponseRequest(
-  req: Request,
-  raw: unknown,
-  requestedModel: string,
-  options: ResponseRequestOptions = {},
-): Promise<Response> {
-  const expanded = expandPreviousResponseInput(raw);
-  let parsed: CodexParsedRequest;
-  try {
-    parsed = parseRequest(expanded);
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
-
-  const adapter = createGoogleAIStudioAdapter();
-  const queue = new AsyncEventQueue<AdapterEvent>();
-  const abort = new AbortController();
-  if (req.signal.aborted) abort.abort();
-  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
-
-  const run = async () => {
-    try {
-      await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
-        options.onAdapterEvent?.(event);
-        queue.push(event);
-      });
-    } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
-      options.onAdapterEvent?.(event);
-      queue.push(event);
-    } finally {
-      queue.close();
-    }
-  };
-
-  const maps = toolBridgeMaps(parsed);
-  const responseModel = requestedModel;
-
-  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
-    if (options.rememberState !== false) {
-      rememberResponseState(parsed._rawBody, response, {
-        force: true,
-      });
-    }
-  };
-
-  if (parsed.stream) {
-    void run();
-    const stream = bridgeToResponsesSSE(
-      queue,
-      responseModel,
-      maps.toolNsMap,
-      maps.freeformToolNames,
-      maps.toolSearchToolNames,
-      () => abort.abort(),
-      2_000,
-      {
-        hideThinkingSummary: parsed.options.hideThinkingSummary,
-        onCompletedResponse: rememberCompletedResponse,
-      },
-    );
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
-    });
-  }
-
-  await run();
-  const events = await queue.collect();
-  const json = buildResponseJSON(events, responseModel, {
-    hideThinkingSummary: parsed.options.hideThinkingSummary,
-    toolNsMap: maps.toolNsMap,
-  });
-  rememberCompletedResponse(json);
-  return Response.json(json);
-}
-
 export async function responseRequest(
   req: Request,
   config: AppConfig,
@@ -1023,9 +941,6 @@ export async function responseRequest(
   }
   if (typeof requestedModel === "string" && isProviderModel(requestedModel, "qwen-web")) {
     return await handleQwenResponseRequest(req, raw, requestedModel, options);
-  }
-  if (typeof requestedModel === "string" && isProviderModel(requestedModel, "google-ai-studio")) {
-    return await handleGoogleAIStudioResponseRequest(req, raw, requestedModel, options);
   }
   if (typeof requestedModel === "string") {
     try {
@@ -1088,7 +1003,6 @@ export async function compactRequest(
     || isProviderModel(raw.model, "gemini-web")
     || isProviderModel(raw.model, "chatgpt-web")
     || isProviderModel(raw.model, "qwen-web")
-    || isProviderModel(raw.model, "google-ai-studio")
   ) {
     const input = Array.isArray(raw.input) ? raw.input : [];
     const headers = new Headers(req.headers);

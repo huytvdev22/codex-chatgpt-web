@@ -27,7 +27,7 @@ export interface LauncherState {
   codexCatalogVerified?: boolean;
   codexRestartRequired?: boolean;
   sessionRefreshReminderAt: string | null;
-  selectedProvider: "m365" | "chatgpt" | "gemini" | "qwen" | "google-ai-studio";
+  selectedProvider: "m365" | "chatgpt" | "gemini" | "qwen";
 }
 
 export interface BrowserState {
@@ -40,7 +40,6 @@ export interface BrowserState {
   m365Authenticated?: boolean;
   geminiAuthenticated?: boolean;
   qwenAuthenticated?: boolean;
-  googleAIStudioAuthenticated?: boolean;
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -49,7 +48,7 @@ export interface BrowserState {
   zoomFactor: number;
   activeTabId: string;
   maxTabs: number;
-  provider?: "m365" | "chatgpt" | "gemini" | "qwen" | "google-ai-studio";
+  provider?: "m365" | "chatgpt" | "gemini" | "qwen";
   tabs: BrowserTabState[];
 }
 
@@ -116,7 +115,6 @@ export interface LauncherSnapshot {
   m365SmokePassed?: boolean;
   geminiSmokePassed?: boolean;
   qwenSmokePassed?: boolean;
-  googleAIStudioSmokePassed?: boolean;
   operation: OperationState | null;
   update: UpdateState;
 }
@@ -159,7 +157,7 @@ export interface LauncherApi {
     credentialsRequired: boolean;
     targetMode: BrowserInteractionMode;
   }>;
-  setProvider(provider: "m365" | "chatgpt" | "gemini" | "qwen" | "google-ai-studio"): Promise<LauncherState>;
+  setProvider(provider: "m365" | "chatgpt" | "gemini" | "qwen"): Promise<LauncherState>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,

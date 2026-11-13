@@ -12,7 +12,6 @@ import {
 import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
 import { ChatGptWebAdapter } from "../src/adapters/chatgpt-web";
 import { GeminiWebAdapter } from "../src/adapters/gemini-web";
-import { GoogleAIStudioAdapter } from "../src/adapters/google-ai-studio";
 import { QwenWebAdapter } from "../src/adapters/qwen-web";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
@@ -168,20 +167,20 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(events[3]).toEqual({ type: "done" });
   });
 
-  test("4. Hỗ trợ sanitizeRawResponse và tolerantNaturalTextFallback cho Google AI Studio", async () => {
+  test("4. Hỗ trợ sanitizeRawResponse và tolerantNaturalTextFallback cho custom provider", async () => {
     const events: AdapterEvent[] = [];
 
     const definition: WebProviderDefinition = {
-      id: "google-ai-studio",
-      assistantName: "Google AI Studio",
-      logPrefix: "ai-studio-adapter",
+      id: "qwen-web",
+      assistantName: "Qwen",
+      logPrefix: "qwen-adapter",
       policies: { manageLauncherLeaseInEngine: false },
       conversation: {
         resolveConversationKey: () => "key-4",
       },
       browser: {
-        launcherProviderId: "google-ai-studio",
-        connectorIdentity: "google-ai-studio",
+        launcherProviderId: "qwen",
+        connectorIdentity: "qwen-web",
         executeTurn: async () => ({
           rawResponse:
             "code Codedownload <webResponse>Câu trả lời sau khi lọc rác</webResponse> trailing_noise",
@@ -280,12 +279,11 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     ]);
   });
 
-  test("6. Toàn bộ 5 Web Provider Adapters đều kế thừa WebProviderAdapter dùng chung", () => {
+  test("6. Toàn bộ 4 Web Provider Adapters đều kế thừa WebProviderAdapter dùng chung", () => {
     const adapters = [
       new M365CopilotAdapter(),
       new ChatGptWebAdapter(),
       new GeminiWebAdapter(),
-      new GoogleAIStudioAdapter(),
       new QwenWebAdapter(),
     ];
 
@@ -541,7 +539,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(heartbeatActivities[0]?.helperPid).toBe(process.pid);
   });
 
-  test("11. Lifecycle: closeLauncherConnectionOnEnd=false (Google AI Studio) gửi phase=end nhưng không đóng kết nối CDP", async () => {
+  test("11. Lifecycle: closeLauncherConnectionOnEnd=false gửi phase=end nhưng không đóng kết nối CDP", async () => {
     let endActivities: any[] = [];
     let closeCalled = false;
     const fakeConnection = { page: { kind: "studio-page" } } as any;
@@ -564,25 +562,25 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     };
 
     const definition: WebProviderDefinition = {
-      id: "google-ai-studio",
-      assistantName: "Google AI Studio",
-      logPrefix: "ai-studio-adapter",
+      id: "qwen-web",
+      assistantName: "Qwen",
+      logPrefix: "qwen-adapter",
       policies: {
         closeLauncherConnectionOnEnd: false,
       },
       conversation: {
-        resolveConversationKey: () => "key-studio",
+        resolveConversationKey: () => "key-qwen",
         resolveEndTurnBinding: ({ activeConversationId, conversationKey }) => ({
           connectorBound: true,
           conversationId: activeConversationId || conversationKey,
         }),
       },
       browser: {
-        launcherProviderId: "google-ai-studio",
-        connectorIdentity: "google-ai-studio",
+        launcherProviderId: "qwen",
+        connectorIdentity: "qwen-web",
         executeTurn: async () => ({
           rawResponse:
-            "````markdown\n<webResponse>\nStudio OK\n</webResponse>\n````",
+            "````markdown\n<webResponse>\nQwen OK\n</webResponse>\n````",
           conversationId: "prompt-222",
         }),
       },
@@ -1016,7 +1014,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect("conversationId" in capturedActivity).toBe(false);
   });
 
-  test("20. Conversation Policy: Google AI Studio fallback sang conversationKey khi chưa có promptId (activeConversationId)", async () => {
+  test("20. Conversation Policy: fallback sang conversationKey khi chưa có activeConversationId", async () => {
     let capturedActivity: any = null;
 
     const ops: Partial<WebRuntimeLifecycleOps> = {
@@ -1036,22 +1034,22 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
 
     const engine = new WebTurnEngine(
       {
-        id: "google-ai-studio",
-        assistantName: "Google AI Studio",
-        logPrefix: "ai-studio-adapter",
+        id: "qwen-web",
+        assistantName: "Qwen",
+        logPrefix: "qwen-adapter",
         conversation: {
-          resolveConversationKey: () => "studio-fallback-key",
+          resolveConversationKey: () => "qwen-fallback-key",
           resolveEndTurnBinding: ({ activeConversationId, conversationKey }) => ({
             connectorBound: true,
             conversationId: activeConversationId || conversationKey,
           }),
         },
         browser: {
-          launcherProviderId: "google-ai-studio",
-          connectorIdentity: "google-ai-studio",
+          launcherProviderId: "qwen",
+          connectorIdentity: "qwen-web",
           executeTurn: async () => ({
             rawResponse:
-              "````markdown\n<webResponse>\nStudio reply\n</webResponse>\n````",
+              "````markdown\n<webResponse>\nQwen reply\n</webResponse>\n````",
           }),
         },
       },
@@ -1066,7 +1064,7 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     );
 
     expect(capturedActivity?.connectorBound).toBe(true);
-    expect(capturedActivity?.conversationId).toBe("studio-fallback-key");
+    expect(capturedActivity?.conversationId).toBe("qwen-fallback-key");
   });
 
   // =========================================================================

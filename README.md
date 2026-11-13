@@ -118,7 +118,6 @@ Provider và model route được khai báo tập trung trong `src/models/model-
 | `chatgpt-web` | ChatGPT Web với chế độ thường hoặc suy nghĩ |
 | `m365-copilot` | Microsoft 365 Copilot Web |
 | `gemini-web` | Google Gemini Web |
-| `google-ai-studio` | Google AI Studio |
 | `qwen-web` | Qwen Web |
 
 Model catalog, context window, compaction threshold, composer limit, input modality và reasoning

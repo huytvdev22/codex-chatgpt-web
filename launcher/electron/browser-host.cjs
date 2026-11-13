@@ -2,7 +2,24 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
 const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell, session } = require("electron");
-const CHROME_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+function resolveChromeUserAgent(
+  chromeVersion = process.versions?.chrome,
+  platform = process.platform,
+) {
+  const safeVersion =
+    typeof chromeVersion === "string" &&
+    /^\d+\.\d+\.\d+\.\d+$/.test(chromeVersion.trim())
+      ? chromeVersion.trim()
+      : "134.0.0.0";
+  const platformToken =
+    platform === "darwin"
+      ? "Macintosh; Intel Mac OS X 10_15_7"
+      : platform === "linux"
+        ? "X11; Linux x86_64"
+        : "Windows NT 10.0; Win64; x64";
+  return `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${safeVersion} Safari/537.36`;
+}
+const CHROME_USER_AGENT = resolveChromeUserAgent();
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
   runBrowserHelperOperation,
@@ -37,16 +54,9 @@ const {
   normalizeGeminiConversationId,
   parseGeminiConversationId,
 } = require("./gemini-surface-manager.cjs");
-const {
-  GOOGLE_AI_STUDIO_HOME_URL,
-  GoogleAIStudioSurfaceManager,
-  normalizeGoogleAIStudioPromptId,
-  parseGoogleAIStudioPromptId,
-} = require("./google-ai-studio-surface-manager.cjs");
 const { bindM365TurnContents, markM365TurnSurface } = require("./m365-turn-surface.cjs");
 const { bindQwenTurnContents, markQwenTurnSurface } = require("./qwen-turn-surface.cjs");
 const { bindGeminiTurnContents, markGeminiTurnSurface } = require("./gemini-turn-surface.cjs");
-const { bindGoogleAIStudioTurnContents, markGoogleAIStudioTurnSurface } = require("./google-ai-studio-turn-surface.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -72,8 +82,6 @@ const GEMINI_CHAT_URL = GEMINI_HOME_URL;
 const GEMINI_ORIGIN = "https://gemini.google.com";
 const QWEN_CHAT_URL = QWEN_HOME_URL;
 const QWEN_ORIGIN = "https://chat.qwen.ai";
-const GOOGLE_AI_STUDIO_CHAT_URL = GOOGLE_AI_STUDIO_HOME_URL;
-const GOOGLE_AI_STUDIO_ORIGIN = "https://aistudio.google.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
@@ -403,13 +411,11 @@ class BrowserHost {
       "persist:codex-gemini-web-dev",
       "persist:codex-web-gpt-qwen",
       "persist:codex-web-gpt-qwen-dev",
-      "persist:codex-google-ai-studio",
-      "persist:codex-google-ai-studio-dev",
     ]);
     if (!allowedPartitions.has(partition)) {
       this.logger.warn?.("browser.unexpected_partition", { partition });
     }
-    this.provider = provider || (partition.includes("google-ai-studio") ? "google-ai-studio" : (partition.includes("qwen") ? "qwen" : (partition.includes("gemini") ? "gemini" : (partition.includes("m365") ? "m365" : "chatgpt"))));
+    this.provider = provider || (partition.includes("qwen") ? "qwen" : (partition.includes("gemini") ? "gemini" : (partition.includes("m365") ? "m365" : "chatgpt")));
     this.partition = partition;
     this.profile = profile;
     this.publishState = publishState;
@@ -421,13 +427,6 @@ class BrowserHost {
     this.chatGptSurfaceManager = new ChatGptSurfaceManager({ descriptorPath });
     this.qwenSurfaceManager = new QwenSurfaceManager({ descriptorPath });
     this.geminiSurfaceManager = new GeminiSurfaceManager({ descriptorPath });
-    this.googleAIStudioSurfaceManager = new GoogleAIStudioSurfaceManager({ descriptorPath });
-    try {
-      if (session && typeof session.fromPartition === "function") {
-        session.fromPartition("persist:codex-google-ai-studio").setUserAgent(CHROME_USER_AGENT);
-        session.fromPartition("persist:codex-google-ai-studio-dev").setUserAgent(CHROME_USER_AGENT);
-      }
-    } catch {}
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -488,34 +487,29 @@ class BrowserHost {
     this.m365SurfaceId = randomBytes(24).toString("base64url");
     this.geminiSurfaceId = randomBytes(24).toString("base64url");
     this.qwenSurfaceId = randomBytes(24).toString("base64url");
-    this.googleAIStudioSurfaceId = randomBytes(24).toString("base64url");
-    this.surfaceId = this.provider === "google-ai-studio" ? this.googleAIStudioSurfaceId : (this.provider === "qwen" ? this.qwenSurfaceId : (this.provider === "gemini" ? this.geminiSurfaceId : (this.provider === "m365" ? this.m365SurfaceId : this.chatGptSurfaceId)));
+    this.surfaceId = this.provider === "qwen" ? this.qwenSurfaceId : (this.provider === "gemini" ? this.geminiSurfaceId : (this.provider === "m365" ? this.m365SurfaceId : this.chatGptSurfaceId));
     this.chatGptAuthenticated = false;
     this.m365Authenticated = false;
     this.geminiAuthenticated = false;
     this.qwenAuthenticated = false;
-    this.googleAIStudioAuthenticated = false;
 
     this.chatGptView = null;
     this.m365View = null;
     this.geminiView = null;
     this.qwenView = null;
-    this.googleAIStudioView = null;
     this.primaryViewManager = new ViewLifecycleManager({
       window,
       logger: this.logger,
       createView: (providerName) => {
         const view = new WebContentsView({
           webPreferences: {
-            partition: providerName === "google-ai-studio"
-              ? "persist:codex-google-ai-studio"
-              : providerName === "qwen"
-                ? "persist:codex-web-gpt-qwen"
-                : providerName === "gemini"
-                  ? "persist:codex-gemini-web"
-                  : providerName === "m365"
-                    ? "persist:codex-m365-copilot"
-                    : "persist:codex-web-gpt-chatgpt",
+            partition: providerName === "qwen"
+              ? "persist:codex-web-gpt-qwen"
+              : providerName === "gemini"
+                ? "persist:codex-gemini-web"
+                : providerName === "m365"
+                  ? "persist:codex-m365-copilot"
+                  : "persist:codex-web-gpt-chatgpt",
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
@@ -523,14 +517,13 @@ class BrowserHost {
             backgroundThrottling: true,
           },
         });
-        if (providerName === "google-ai-studio" || providerName === "gemini") {
+        if (providerName === "gemini") {
           view.webContents.setUserAgent(CHROME_USER_AGENT);
         }
         return view;
       },
       onCreate: (providerName, view) => {
-        if (providerName === "google-ai-studio") this.googleAIStudioView = view;
-        else if (providerName === "qwen") this.qwenView = view;
+        if (providerName === "qwen") this.qwenView = view;
         else if (providerName === "gemini") this.geminiView = view;
         else if (providerName === "m365") this.m365View = view;
         else this.chatGptView = view;
@@ -561,9 +554,6 @@ class BrowserHost {
   }
 
   getHomeUrl() {
-    if (this.provider === "google-ai-studio") {
-      return GOOGLE_AI_STUDIO_CHAT_URL;
-    }
     if (this.provider === "qwen") {
       return QWEN_CHAT_URL;
     }
@@ -586,7 +576,6 @@ class BrowserHost {
       m365: "m365View",
       gemini: "geminiView",
       qwen: "qwenView",
-      "google-ai-studio": "googleAIStudioView",
     };
     for (const [providerName, referenceName] of Object.entries(providerRefs)) {
       if (providerName === activeProvider) continue;
@@ -604,9 +593,8 @@ class BrowserHost {
   }
 
   async switchProvider(provider) {
-    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen" && provider !== "google-ai-studio") return;
+    if (provider !== "m365" && provider !== "chatgpt" && provider !== "gemini" && provider !== "qwen") return;
     this.provider = provider;
-    const isGoogleAIStudio = provider === "google-ai-studio";
     const isM365 = provider === "m365";
     const isGemini = provider === "gemini";
     const isQwen = provider === "qwen";
@@ -621,8 +609,8 @@ class BrowserHost {
         this.bindChatGptBackendRecovery();
       }
     }
-    this.surfaceId = isGoogleAIStudio ? this.googleAIStudioSurfaceId : (isQwen ? this.qwenSurfaceId : (isGemini ? this.geminiSurfaceId : (isM365 ? this.m365SurfaceId : this.chatGptSurfaceId)));
-    this.partition = isGoogleAIStudio ? "persist:codex-google-ai-studio" : (isQwen ? "persist:codex-web-gpt-qwen" : (isGemini ? "persist:codex-gemini-web" : (isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt")));
+    this.surfaceId = isQwen ? this.qwenSurfaceId : (isGemini ? this.geminiSurfaceId : (isM365 ? this.m365SurfaceId : this.chatGptSurfaceId));
+    this.partition = isQwen ? "persist:codex-web-gpt-qwen" : (isGemini ? "persist:codex-gemini-web" : (isM365 ? "persist:codex-m365-copilot" : "persist:codex-web-gpt-chatgpt"));
 
     // Partition vẫn giữ cookie/session đăng nhập, nhưng renderer và toàn bộ DOM
     // của provider cũ phải được đóng để số tiến trình hệ điều hành giảm ngay.
@@ -633,7 +621,6 @@ class BrowserHost {
     );
 
     const currentUrl = this.view.webContents.getURL() || "";
-    const isGoogleAIStudioDomain = currentUrl.includes("aistudio.google.com") || currentUrl.includes("accounts.google.com");
     const isMicrosoftDomain = currentUrl.includes("m365.cloud.microsoft")
       || currentUrl.includes("login.microsoftonline.com")
       || currentUrl.includes("login.live.com")
@@ -642,13 +629,7 @@ class BrowserHost {
     const isGeminiDomain = currentUrl.includes("gemini.google.com") || currentUrl.includes("accounts.google.com");
     const isQwenDomain = currentUrl.includes("chat.qwen.ai") || currentUrl.includes("aliyun.com");
 
-    if (isGoogleAIStudio && !isGoogleAIStudioDomain) {
-      try {
-        await this.view.webContents.loadURL(GOOGLE_AI_STUDIO_CHAT_URL);
-      } catch (err) {
-        this.logger.error("browser.switch_provider_load_failed", { message: err instanceof Error ? err.message : String(err) });
-      }
-    } else if (isQwen && !isQwenDomain) {
+    if (isQwen && !isQwenDomain) {
       try {
         await this.view.webContents.loadURL(QWEN_CHAT_URL);
       } catch (err) {
@@ -666,7 +647,7 @@ class BrowserHost {
       } catch (err) {
         this.logger.error("browser.switch_provider_load_failed", { message: err instanceof Error ? err.message : String(err) });
       }
-    } else if (!isM365 && !isGemini && !isQwen && !isGoogleAIStudio && !isChatGptDomain) {
+    } else if (!isM365 && !isGemini && !isQwen && !isChatGptDomain) {
       try {
         await this.view.webContents.loadURL(this.getHomeUrl());
       } catch (err) {
@@ -712,10 +693,6 @@ class BrowserHost {
         this.qwenView.setBounds(this.hiddenTurnBounds());
         this.qwenView.setVisible(true);
       }
-      if (this.googleAIStudioView) {
-        this.googleAIStudioView.setBounds(this.hiddenTurnBounds());
-        this.googleAIStudioView.setVisible(true);
-      }
 
       try {
         await loadCommittedBrowserSurface(this.chatGptView.webContents, IDLE_BROWSER_URL);
@@ -754,17 +731,6 @@ class BrowserHost {
           }
         } catch (err) {
           this.logger.warn("browser.qwen_init_failed", { message: err instanceof Error ? err.message : String(err) });
-        }
-      }
-
-      if (this.googleAIStudioView) {
-        try {
-          await loadCommittedBrowserSurface(this.googleAIStudioView.webContents, GOOGLE_AI_STUDIO_CHAT_URL);
-          if (browserInteractionModeFor(this) === "automatic") {
-            await this.markOwnedSurfaceFor(this.googleAIStudioView.webContents, this.googleAIStudioSurfaceId);
-          }
-        } catch (err) {
-          this.logger.warn("browser.google_ai_studio_init_failed", { message: err instanceof Error ? err.message : String(err) });
         }
       }
     } else if (this.view) {
@@ -883,9 +849,7 @@ class BrowserHost {
         ? "Qwen Web"
         : (provider === "gemini"
           ? "Google Gemini"
-          : (provider === "google-ai-studio"
-            ? "Google AI Studio"
-            : (provider === "m365" ? "M365 Copilot" : "ChatGPT Web")));
+          : (provider === "m365" ? "M365 Copilot" : "ChatGPT Web"));
       throw new Error(
         `${providerLabel} already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the account`,
       );
@@ -895,37 +859,30 @@ class BrowserHost {
     const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
-    const isGoogleAIStudio = provider === "google-ai-studio";
     const isM365 = provider === "m365";
     const isQwen = provider === "qwen";
     const isGemini = provider === "gemini";
-    const bootstrapUrl = isGoogleAIStudio
-      ? (this.googleAIStudioSurfaceManager?.initialUrl(conversationKey) || GOOGLE_AI_STUDIO_CHAT_URL)
-      : (isM365
-        ? this.m365SurfaceManager?.initialUrl(conversationKey)
-        : (isQwen
-          ? (this.qwenSurfaceManager?.initialUrl(conversationKey) || QWEN_CHAT_URL)
-          : (isGemini
-            ? (this.geminiSurfaceManager?.initialUrl(conversationKey) || GEMINI_CHAT_URL)
-            : (this.chatGptSurfaceManager?.initialUrl(conversationKey) || resolveChatGptHomeUrl(this)))));
-    const conversationId = isGoogleAIStudio
-      ? (this.googleAIStudioSurfaceManager?.conversationId(conversationKey) || null)
-      : (isM365
-        ? this.m365SurfaceManager?.conversationId(conversationKey)
-        : (isQwen
-          ? (this.qwenSurfaceManager?.conversationId(conversationKey) || null)
-          : (isGemini
-            ? (this.geminiSurfaceManager?.conversationId(conversationKey) || null)
-            : (this.chatGptSurfaceManager?.conversationId(conversationKey) || null))));
+    const bootstrapUrl = isM365
+      ? this.m365SurfaceManager?.initialUrl(conversationKey)
+      : (isQwen
+        ? (this.qwenSurfaceManager?.initialUrl(conversationKey) || QWEN_CHAT_URL)
+        : (isGemini
+          ? (this.geminiSurfaceManager?.initialUrl(conversationKey) || GEMINI_CHAT_URL)
+          : (this.chatGptSurfaceManager?.initialUrl(conversationKey) || resolveChatGptHomeUrl(this))));
+    const conversationId = isM365
+      ? this.m365SurfaceManager?.conversationId(conversationKey)
+      : (isQwen
+        ? (this.qwenSurfaceManager?.conversationId(conversationKey) || null)
+        : (isGemini
+          ? (this.geminiSurfaceManager?.conversationId(conversationKey) || null)
+          : (this.chatGptSurfaceManager?.conversationId(conversationKey) || null)));
     const view = new WebContentsView({
       webPreferences: {
-        partition: isGoogleAIStudio
-          ? "persist:codex-google-ai-studio"
-          : (isM365
-            ? "persist:codex-m365-copilot"
-            : (isQwen
-              ? "persist:codex-web-gpt-qwen"
-              : (isGemini ? "persist:codex-gemini-web" : "persist:codex-web-gpt-chatgpt"))),
+        partition: isM365
+          ? "persist:codex-m365-copilot"
+          : (isQwen
+            ? "persist:codex-web-gpt-qwen"
+            : (isGemini ? "persist:codex-gemini-web" : "persist:codex-web-gpt-chatgpt")),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -933,7 +890,7 @@ class BrowserHost {
         backgroundThrottling: false,
       },
     });
-    if (isGoogleAIStudio || isGemini) {
+    if (isGemini) {
       view.webContents.setUserAgent(CHROME_USER_AGENT);
     }
     const tab = {
@@ -949,11 +906,11 @@ class BrowserHost {
       view,
       status: "running",
       ordinal,
-      label: `${isGoogleAIStudio ? "AI Studio" : (isM365 ? "M365" : (isQwen ? "Qwen" : (isGemini ? "Gemini" : "ChatGPT")))} ${ordinal}`,
-      pageTitle: isGoogleAIStudio ? "Google AI Studio" : (isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT"))),
+      label: `${isM365 ? "M365" : (isQwen ? "Qwen" : (isGemini ? "Gemini" : "ChatGPT"))} ${ordinal}`,
+      pageTitle: isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT")),
       url: bootstrapUrl,
       loading: true,
-      message: `${isGoogleAIStudio ? "Google AI Studio" : (isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT")))} is working`,
+      message: `${isM365 ? "M365 Copilot" : (isGemini ? "Google Gemini" : (isQwen ? "Qwen" : "ChatGPT"))} is working`,
       interactionMode: "automatic",
       initializingSurface: true,
       bootstrapReady: false,
@@ -969,8 +926,7 @@ class BrowserHost {
     this.presentTurnView(tab, false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(view.webContents);
-    if (isGoogleAIStudio) bindGoogleAIStudioTurnContents(this, tab);
-    else if (isM365) bindM365TurnContents(this, tab);
+    if (isM365) bindM365TurnContents(this, tab);
     else if (isQwen) bindQwenTurnContents(this, tab);
     else if (isGemini) bindGeminiTurnContents(this, tab);
     else this.bindTurnContents(tab);
@@ -1010,8 +966,7 @@ class BrowserHost {
           );
         }
         signal?.throwIfAborted();
-        if (tab.provider === "google-ai-studio") await markGoogleAIStudioTurnSurface(tab);
-        else if (tab.provider === "m365") await markM365TurnSurface(tab);
+        if (tab.provider === "m365") await markM365TurnSurface(tab);
         else if (tab.provider === "qwen") await markQwenTurnSurface(tab);
         else if (tab.provider === "gemini") await markGeminiTurnSurface(tab);
         else await this.markTurnTabSurface(tab);
@@ -1484,7 +1439,7 @@ class BrowserHost {
             origin: navigationOriginForLog(url),
           });
         }
-        const label = providerName === "google-ai-studio" ? "Google AI Studio" : (providerName === "qwen" ? "Qwen" : (providerName === "gemini" ? "Google Gemini" : (providerName === "m365" ? "M365 Copilot" : "ChatGPT")));
+        const label = providerName === "qwen" ? "Qwen" : (providerName === "gemini" ? "Google Gemini" : (providerName === "m365" ? "M365 Copilot" : "ChatGPT"));
         this.setState(this.activeTraceId || this.manualOperation
           ? { url, loading: true }
           : { status: "loading", message: `Opening ${label}`, url, loading: true });
@@ -1509,20 +1464,18 @@ class BrowserHost {
             return;
           }
           if (this.state?.status === "loading" && !this.activeTraceId && !this.manualOperation) {
-            const isAuth = this.provider === "google-ai-studio"
-              ? Boolean(this.googleAIStudioAuthenticated)
-              : (this.provider === "qwen"
-                ? Boolean(this.qwenAuthenticated)
-                : (this.provider === "gemini"
-                  ? Boolean(this.geminiAuthenticated)
-                  : (this.provider === "m365"
-                    ? Boolean(this.m365Authenticated)
-                    : Boolean(this.chatGptAuthenticated || this.state?.authenticated))));
+            const isAuth = this.provider === "qwen"
+              ? Boolean(this.qwenAuthenticated)
+              : (this.provider === "gemini"
+                ? Boolean(this.geminiAuthenticated)
+                : (this.provider === "m365"
+                  ? Boolean(this.m365Authenticated)
+                  : Boolean(this.chatGptAuthenticated || this.state?.authenticated)));
             this.setState({
               status: isAuth ? "ready" : "signed-out",
               message: isAuth
-                ? (this.provider === "google-ai-studio" ? "Google AI Studio is ready" : (this.provider === "qwen" ? "Qwen is ready" : (this.provider === "gemini" ? "Google Gemini is ready" : (this.provider === "m365" ? "M365 Copilot is ready" : "ChatGPT is ready"))))
-                : (this.provider === "google-ai-studio" ? "Sign in to Google AI Studio" : (this.provider === "qwen" ? "Sign in to Qwen" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT")))),
+                ? (this.provider === "qwen" ? "Qwen is ready" : (this.provider === "gemini" ? "Google Gemini is ready" : (this.provider === "m365" ? "M365 Copilot is ready" : "ChatGPT is ready")))
+                : (this.provider === "qwen" ? "Sign in to Qwen" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT"))),
               url,
               loading: false,
             });
@@ -1533,11 +1486,9 @@ class BrowserHost {
         if (providerName === "chatgpt") {
           void this.applyViewportCss?.();
         }
-        const surfaceId = providerName === "google-ai-studio"
-          ? this.googleAIStudioSurfaceId
-          : (providerName === "qwen"
-            ? this.qwenSurfaceId
-            : (providerName === "gemini" ? this.geminiSurfaceId : (providerName === "m365" ? this.m365SurfaceId : this.chatGptSurfaceId)));
+        const surfaceId = providerName === "qwen"
+          ? this.qwenSurfaceId
+          : (providerName === "gemini" ? this.geminiSurfaceId : (providerName === "m365" ? this.m365SurfaceId : this.chatGptSurfaceId));
         void this.markOwnedSurfaceFor(contents, surfaceId)
           .then(() => {
             if (this.provider === providerName) {
@@ -1576,7 +1527,7 @@ class BrowserHost {
       contents.on("page-title-updated", (_event, title) => {
         if (!isTargetActive()) return;
         if (browserInteractionModeFor(this) === "manual") return;
-        const defaultTitle = providerName === "google-ai-studio" ? "Google AI Studio" : (providerName === "qwen" ? "Qwen" : (providerName === "gemini" ? "Google Gemini" : (providerName === "m365" ? "M365 Copilot" : "ChatGPT")));
+        const defaultTitle = providerName === "qwen" ? "Qwen" : (providerName === "gemini" ? "Google Gemini" : (providerName === "m365" ? "M365 Copilot" : "ChatGPT"));
         this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : defaultTitle });
       });
       contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
@@ -1616,12 +1567,11 @@ class BrowserHost {
 
     if (singleView && singleProvider) {
       bindFor(singleView, singleProvider);
-    } else if (this.chatGptView || this.m365View || this.geminiView || this.qwenView || this.googleAIStudioView) {
+    } else if (this.chatGptView || this.m365View || this.geminiView || this.qwenView) {
       if (this.chatGptView) bindFor(this.chatGptView, "chatgpt");
       if (this.m365View) bindFor(this.m365View, "m365");
       if (this.geminiView) bindFor(this.geminiView, "gemini");
       if (this.qwenView) bindFor(this.qwenView, "qwen");
-      if (this.googleAIStudioView) bindFor(this.googleAIStudioView, "google-ai-studio");
     } else if (this.view) {
       bindFor(this.view, this.provider || "chatgpt");
     }
@@ -1743,7 +1693,6 @@ class BrowserHost {
     if (this.m365View?.webContents?.session?.cookies) sessions.add(this.m365View.webContents.session.cookies);
     if (this.geminiView?.webContents?.session?.cookies) sessions.add(this.geminiView.webContents.session.cookies);
     if (this.qwenView?.webContents?.session?.cookies) sessions.add(this.qwenView.webContents.session.cookies);
-    if (this.googleAIStudioView?.webContents?.session?.cookies) sessions.add(this.googleAIStudioView.webContents.session.cookies);
     for (const sessionCookies of sessions) {
       if (this.authenticationCookieBindings.has(sessionCookies)) continue;
       sessionCookies.on("changed", listener);
@@ -1762,7 +1711,7 @@ class BrowserHost {
         revision = this.authenticationRevision;
         const contents = this.view.webContents;
         if (contents.isDestroyed()) return;
-        if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen" || this.provider === "google-ai-studio") {
+        if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
           if (this.authenticationProbe) await this.authenticationProbe;
           if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return;
           if (revision !== this.authenticationRevision) continue;
@@ -1890,7 +1839,7 @@ class BrowserHost {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
     const manualInteraction = browserInteractionModeFor(this) === "manual";
-    const defaultTitle = this.provider === "google-ai-studio" ? "Google AI Studio" : (this.provider === "qwen" ? "Qwen" : (this.provider === "gemini" ? "Google Gemini" : (this.provider === "m365" ? "M365 Copilot" : "ChatGPT")));
+    const defaultTitle = this.provider === "qwen" ? "Qwen" : (this.provider === "gemini" ? "Google Gemini" : (this.provider === "m365" ? "M365 Copilot" : "ChatGPT"));
     const homeTab = {
       id: "home",
       traceId: null,
@@ -1939,7 +1888,6 @@ class BrowserHost {
       m365Authenticated: this.m365Authenticated,
       geminiAuthenticated: this.geminiAuthenticated,
       qwenAuthenticated: this.qwenAuthenticated,
-      googleAIStudioAuthenticated: this.googleAIStudioAuthenticated,
       tabs: includeHomeTab
         ? (this.turnTabs.size > 0
             ? [
@@ -2209,7 +2157,6 @@ class BrowserHost {
         this.m365View,
         this.geminiView,
         this.qwenView,
-        this.googleAIStudioView,
       ].filter((candidate) => candidate && candidate !== this.view);
       for (const otherView of otherViews) {
         otherView.setBounds(this.hiddenTurnBounds());
@@ -2554,7 +2501,7 @@ class BrowserHost {
   }
 
   async markOwnedSurface() {
-    if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen" || this.provider === "google-ai-studio") {
+    if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
       await this.markOwnedSurfaceFor(this.view.webContents, this.surfaceId);
       return;
     }
@@ -2580,21 +2527,14 @@ class BrowserHost {
   }
 
   async reveal(inspectSession = true) {
-    if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen" && this.provider !== "google-ai-studio" && inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
+    if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen" && inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
     if (!this.selectedTurnTab()) {
       this.homeSurfaceOpen = true;
     }
     this.show();
     const currentUrl = this.view.webContents.getURL() || "";
     if (!this.selectedTurnTab()) {
-      if (this.provider === "google-ai-studio") {
-        const isGoogleAIStudioDomain = currentUrl.includes("aistudio.google.com")
-          || currentUrl.includes("accounts.google.com");
-        if (!isGoogleAIStudioDomain || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
-          await this.view.webContents.loadURL(GOOGLE_AI_STUDIO_CHAT_URL);
-          if (inspectSession) await this.probeAuthentication();
-        }
-      } else if (this.provider === "qwen") {
+      if (this.provider === "qwen") {
         const isQwenDomain = currentUrl.includes("chat.qwen.ai") || currentUrl.includes("aliyun.com");
         if (!isQwenDomain || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
           await this.view.webContents.loadURL(QWEN_CHAT_URL);
@@ -3078,7 +3018,7 @@ class BrowserHost {
     const provider = typeof providerOrSignal === "string" ? providerOrSignal : "chatgpt";
     const signal = typeof providerOrSignal === "string" ? acquisitionSignal : providerOrSignal;
     signal?.throwIfAborted();
-    if (provider !== "chatgpt" && provider !== "m365" && provider !== "gemini" && provider !== "qwen" && provider !== "google-ai-studio") {
+    if (provider !== "chatgpt" && provider !== "m365" && provider !== "gemini" && provider !== "qwen") {
       throw new Error("Browser turn provider is invalid");
     }
     if (this.manualOperation) {
@@ -3148,7 +3088,7 @@ class BrowserHost {
       existing.traceId = traceId;
       existing.status = "running";
       existing.loading = true;
-      existing.message = `${provider === "google-ai-studio" ? "Google AI Studio" : (provider === "m365" ? "M365 Copilot" : (provider === "qwen" ? "Qwen" : (provider === "gemini" ? "Google Gemini" : "ChatGPT")))} is working`;
+      existing.message = `${provider === "m365" ? "M365 Copilot" : (provider === "qwen" ? "Qwen" : (provider === "gemini" ? "Google Gemini" : "ChatGPT"))} is working`;
       if (!reused) {
         existing.bootstrapReady = false;
         existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
@@ -3179,13 +3119,7 @@ class BrowserHost {
       error.code = "retained_conversation_unavailable";
       throw error;
     }
-    if (provider === "google-ai-studio" && this.googleAIStudioSurfaceManager) {
-      this.googleAIStudioSurfaceManager.prepareAllocation(
-        this.turnTabs,
-        conversationKey,
-        tab => this.removeTurnTab(tab, false),
-      );
-    } else if (provider === "m365") {
+    if (provider === "m365") {
       this.m365SurfaceManager?.prepareAllocation(
         this.turnTabs,
         conversationKey,
@@ -3210,7 +3144,7 @@ class BrowserHost {
         tab => this.removeTurnTab(tab, false),
       );
     }
-    const tab = (provider === "google-ai-studio" || provider === "m365" || provider === "qwen" || provider === "gemini")
+    const tab = (provider === "m365" || provider === "qwen" || provider === "gemini")
       ? await this.createTurnTab(
           traceId,
           helperPid,
@@ -3266,21 +3200,7 @@ class BrowserHost {
     const authenticationRequired = tab.authenticationRequired === true;
     if (authenticationRequired && status === "completed") status = "failed";
     let effectiveConnectorBound = connectorBound === true;
-    if (tab.provider === "google-ai-studio" && status === "completed") {
-      const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
-      const parsedId = parseGoogleAIStudioPromptId(liveUrl);
-      const rawId = conversationId || parsedId || tab.conversationId || tab.conversationKey;
-      const normalizedConversationId = normalizeGoogleAIStudioPromptId(rawId) || tab.conversationKey;
-      if (tab.conversationKey && this.googleAIStudioSurfaceManager) {
-        tab.conversationId = normalizedConversationId;
-        if (parsedId) {
-          try {
-            this.googleAIStudioSurfaceManager.bind(tab.conversationKey, parsedId);
-          } catch {}
-        }
-        effectiveConnectorBound = true;
-      }
-    } else if (tab.provider === "m365" && status === "completed") {
+    if (tab.provider === "m365" && status === "completed") {
       const normalizedConversationId = normalizeM365ConversationId(conversationId);
       if (!normalizedConversationId || !tab.conversationKey) {
         status = "failed";
@@ -3348,21 +3268,12 @@ class BrowserHost {
     }
     this.setState({
       status: this.state.authenticated ? "ready" : "signed-out",
-      message: this.state.authenticated ? "No active task" : (this.provider === "google-ai-studio" ? "Sign in to Google AI Studio" : (this.provider === "qwen" ? "Sign in to Qwen" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT")))),
+      message: this.state.authenticated ? "No active task" : (this.provider === "qwen" ? "Sign in to Qwen" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT"))),
     });
   }
 
   openLogin() {
     this.homeSurfaceOpen = true;
-    if (this.provider === "google-ai-studio") {
-      this.activateHomeSurface();
-      this.show();
-      const current = this.view.webContents.getURL();
-      if (!current.includes("aistudio.google.com") && !current.includes("accounts.google.com")) {
-        void this.view.webContents.loadURL(GOOGLE_AI_STUDIO_CHAT_URL);
-      }
-      return Promise.resolve(this.snapshot());
-    }
     if (this.provider === "qwen") {
       this.activateHomeSurface();
       this.show();
@@ -3607,10 +3518,10 @@ class BrowserHost {
           }
         });
     }
-    if (this.provider === "google-ai-studio" || this.provider === "gemini" || this.provider === "qwen") {
-      const targetView = (this.provider === "google-ai-studio" ? this.googleAIStudioView : (this.provider === "gemini" ? this.geminiView : this.qwenView)) || this.view;
-      const targetUrl = this.provider === "google-ai-studio" ? GOOGLE_AI_STUDIO_CHAT_URL : (this.provider === "gemini" ? GEMINI_CHAT_URL : QWEN_CHAT_URL);
-      const domain = this.provider === "google-ai-studio" ? "aistudio.google.com" : (this.provider === "gemini" ? "gemini.google.com" : "chat.qwen.ai");
+    if (this.provider === "gemini" || this.provider === "qwen") {
+      const targetView = (this.provider === "gemini" ? this.geminiView : this.qwenView) || this.view;
+      const targetUrl = this.provider === "gemini" ? GEMINI_CHAT_URL : QWEN_CHAT_URL;
+      const domain = this.provider === "gemini" ? "gemini.google.com" : "chat.qwen.ai";
       const currentUrl = targetView?.webContents?.getURL() || "";
       const loadPromise = !currentUrl.includes(domain)
         ? Promise.resolve(targetView?.webContents?.loadURL?.(targetUrl)).catch(() => {})
@@ -3652,79 +3563,6 @@ class BrowserHost {
   }
 
   async probeAuthentication() {
-    if (this.provider === "google-ai-studio") {
-      if (this.authenticationProbe) return this.authenticationProbe;
-      const revision = this.authenticationRevision;
-      const operation = (async () => {
-        if (!this.view || this.view.webContents.isDestroyed()) return this.snapshot();
-        let url = this.view.webContents.getURL();
-        if (!url || url === IDLE_BROWSER_URL || url === "about:blank") {
-          this.setState({
-            status: this.state.authenticated ? "ready" : "signed-out",
-            message: this.state.authenticated ? "Google AI Studio is ready" : "Sign in to Google AI Studio",
-            url,
-            title: "Google AI Studio",
-          });
-          return this.snapshot();
-        }
-        const probe = (contents) => contents.executeJavaScript(`(() => {
-          const href = location.href;
-          const isAIStudio = href.includes("aistudio.google.com");
-          const isLogin = href.includes("accounts.google.com");
-          const composer = Boolean(document.querySelector("textarea.textarea, textarea, ms-prompt-editor textarea"));
-          return {
-            url: href,
-            composer,
-            authenticated: isAIStudio && !isLogin,
-            readyState: document.readyState,
-          };
-        })()`, true).catch(() => {
-          const liveUrl = contents.getURL() || "";
-          const isAIStudio = liveUrl.includes("aistudio.google.com");
-          const isLogin = liveUrl.includes("accounts.google.com");
-          return {
-            url: liveUrl,
-            composer: false,
-            authenticated: isAIStudio && !isLogin,
-            readyState: "complete",
-          };
-        });
-        const result = await probe(this.view.webContents);
-        if (revision !== this.authenticationRevision) return this.snapshot();
-        if (result.authenticated) {
-          this.reauthenticationRequired = false;
-          this.googleAIStudioAuthenticated = true;
-          if (this.authView && !this.authView.webContents.isDestroyed()) {
-            this.closeAuthView(this.authView, true, false);
-          }
-          this.setState({
-            status: this.activeTraceId ? "running" : "ready",
-            message: this.activeTraceId ? "Google AI Studio is working" : "Google AI Studio is ready",
-            authenticated: true,
-            url: result.url,
-            title: "Google AI Studio",
-            loading: false,
-          });
-        } else {
-          this.googleAIStudioAuthenticated = false;
-          const loaded = result.readyState === "complete";
-          this.setState({
-            status: loaded ? "signed-out" : "loading",
-            message: loaded ? "Sign in to Google AI Studio" : "Waiting for Google AI Studio",
-            authenticated: false,
-            url: result.url || url,
-            title: "Google AI Studio",
-            loading: !loaded,
-          });
-        }
-        return this.snapshot();
-      })();
-      const tracked = operation.finally(() => {
-        if (this.authenticationProbe === tracked) this.authenticationProbe = null;
-      });
-      this.authenticationProbe = tracked;
-      return tracked;
-    }
     if (this.provider === "qwen") {
       if (this.authenticationProbe) return this.authenticationProbe;
       const revision = this.authenticationRevision;
@@ -4066,7 +3904,7 @@ class BrowserHost {
   }
 
   async smokeTest() {
-    if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen" && this.provider !== "google-ai-studio") {
+    if (this.provider !== "m365" && this.provider !== "gemini" && this.provider !== "qwen") {
       requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
     }
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
@@ -4081,104 +3919,6 @@ class BrowserHost {
 
   async runSmokeTest() {
     this.homeSurfaceOpen = true;
-    if (this.provider === "google-ai-studio") {
-      this.show();
-      this.activateHomeSurface();
-      await this.waitForSurfaceReady();
-      this.setState({ status: "testing", message: "Running Google AI Studio smoke test..." });
-      let currentUrl = this.view.webContents.getURL() || "";
-      if (!currentUrl || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
-        await this.view.webContents.loadURL(GOOGLE_AI_STUDIO_CHAT_URL);
-        currentUrl = this.view.webContents.getURL() || "";
-      }
-      const isAIStudio = currentUrl.includes("aistudio.google.com");
-      const isLogin = currentUrl.includes("accounts.google.com");
-      if (!isAIStudio || isLogin) {
-        throw new Error("Vui lòng đăng nhập vào Google AI Studio trước khi chạy kiểm tra!");
-      }
-
-      const editorReady = await this.view.webContents.executeJavaScript(`(async () => {
-        const maxWait = 15000;
-        const start = Date.now();
-        while (Date.now() - start < maxWait) {
-          const editor = document.querySelector('textarea.textarea, ms-prompt-editor textarea, textarea');
-          if (editor) return true;
-          await new Promise(resolve => setTimeout(resolve, 400));
-        }
-        return false;
-      })()`, true);
-
-      if (!editorReady) {
-        throw new Error("Không tìm thấy khung nhập liệu của Google AI Studio!");
-      }
-
-      const promptText = "Reply with exactly: CODEX WEB GPT READY";
-      this.setState({ status: "testing", message: "Sending smoke test prompt to Google AI Studio..." });
-
-      this.view.webContents.focus();
-      await this.view.webContents.executeJavaScript(`((text) => {
-        const editor = document.querySelector('textarea.textarea') ||
-          document.querySelector('ms-prompt-editor textarea') ||
-          document.querySelector('textarea');
-        if (editor) {
-          editor.focus();
-          editor.value = text;
-          editor.dispatchEvent(new Event("input", { bubbles: true }));
-          editor.dispatchEvent(new Event("change", { bubbles: true }));
-          return true;
-        }
-        return false;
-      })(${JSON.stringify(promptText)})`, true);
-
-      await new Promise(resolve => setTimeout(resolve, 400));
-
-      await this.view.webContents.executeJavaScript(`(() => {
-        const runBtn = document.querySelector('button.run-button, button[aria-label*="Run" i]');
-        if (runBtn && !runBtn.disabled) {
-          runBtn.click();
-          return true;
-        }
-        return false;
-      })()`, true);
-
-      this.view.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return", modifiers: ["control"] });
-      this.view.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return", modifiers: ["control"] });
-
-      this.setState({ status: "testing", message: "Waiting for Google AI Studio response..." });
-      const maxWaitMs = 60000;
-      const pollIntervalMs = 500;
-      const startTime = Date.now();
-      let passed = false;
-
-      while (Date.now() - startTime < maxWaitMs) {
-        const responseText = await this.view.webContents.executeJavaScript(`(() => {
-          const chunks = Array.from(document.querySelectorAll('ms-chat-turn, ms-prompt-chunk, ms-text-chunk'));
-          for (const chunk of chunks) {
-            const text = chunk ? (chunk.innerText || chunk.textContent || "") : "";
-            if (text.includes("CODEX WEB GPT READY")) return text;
-          }
-          const allText = document.body ? (document.body.innerText || "") : "";
-          if (allText.includes("CODEX WEB GPT READY")) {
-            return "CODEX WEB GPT READY";
-          }
-          return "";
-        })()`, true).catch(() => "");
-
-        if (responseText.includes("CODEX WEB GPT READY")) {
-          passed = true;
-          break;
-        }
-        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-      }
-
-      if (!passed) {
-        throw new Error("Google AI Studio smoke test không nhận được phản hồi 'CODEX WEB GPT READY' kịp thời. Vui lòng thử lại!");
-      }
-
-      this.logger.info("smoke.google_ai_studio_completed");
-      this.setState({ status: "ready", message: "Smoke test passed", authenticated: true });
-      return { ok: true, effort: "fast", response: "CODEX WEB GPT READY" };
-    }
     if (this.provider === "gemini") {
       this.show();
       this.activateHomeSurface();
@@ -4519,7 +4259,7 @@ class BrowserHost {
   }
 
   async runSessionInspection(detectCapabilities = false) {
-    if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen" || this.provider === "google-ai-studio") {
+    if (this.provider === "m365" || this.provider === "gemini" || this.provider === "qwen") {
       const liveUrl = (this.view && !this.view.webContents.isDestroyed()) ? this.view.webContents.getURL() : "";
       return {
         authenticated: true,
@@ -4580,22 +4320,20 @@ class BrowserHost {
       if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
       this.manualOperation = null;
       if (!this.activeTraceId && this.state) {
-        const isAuth = this.provider === "google-ai-studio"
-          ? Boolean(this.googleAIStudioAuthenticated)
-          : (this.provider === "qwen"
-            ? Boolean(this.qwenAuthenticated)
-            : (this.provider === "gemini"
-              ? Boolean(this.geminiAuthenticated)
-              : (this.provider === "m365"
-                ? Boolean(this.m365Authenticated)
-                : Boolean(this.chatGptAuthenticated || this.state?.authenticated))));
+        const isAuth = this.provider === "qwen"
+          ? Boolean(this.qwenAuthenticated)
+          : (this.provider === "gemini"
+            ? Boolean(this.geminiAuthenticated)
+            : (this.provider === "m365"
+              ? Boolean(this.m365Authenticated)
+              : Boolean(this.chatGptAuthenticated || this.state?.authenticated)));
         const currentStatus = this.state?.status;
         if (currentStatus === "loading" || currentStatus === "testing") {
           this.setState({
             status: isAuth ? "ready" : "signed-out",
             message: isAuth
-              ? (this.provider === "google-ai-studio" ? "Google AI Studio is ready" : (this.provider === "qwen" ? "Qwen is ready" : (this.provider === "gemini" ? "Google Gemini is ready" : (this.provider === "m365" ? "M365 Copilot is ready" : "ChatGPT is ready"))))
-              : (this.provider === "google-ai-studio" ? "Sign in to Google AI Studio" : (this.provider === "qwen" ? "Sign in to Qwen" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT")))),
+              ? (this.provider === "qwen" ? "Qwen is ready" : (this.provider === "gemini" ? "Google Gemini is ready" : (this.provider === "m365" ? "M365 Copilot is ready" : "ChatGPT is ready")))
+              : (this.provider === "qwen" ? "Sign in to Qwen" : (this.provider === "gemini" ? "Sign in to Google Gemini" : (this.provider === "m365" ? "Sign in to Microsoft 365 Copilot" : "Sign in to ChatGPT"))),
             loading: false,
           });
         }
@@ -4612,7 +4350,6 @@ class BrowserHost {
         ...(this.m365SurfaceId && this.m365View ? [[this.m365SurfaceId, this.m365View?.webContents]] : []),
         ...(this.geminiSurfaceId && this.geminiView ? [[this.geminiSurfaceId, this.geminiView?.webContents]] : []),
         ...(this.qwenSurfaceId && this.qwenView ? [[this.qwenSurfaceId, this.qwenView?.webContents]] : []),
-        ...(this.googleAIStudioSurfaceId && this.googleAIStudioView ? [[this.googleAIStudioSurfaceId, this.googleAIStudioView?.webContents]] : []),
         ...(this.surfaceId && this.view ? [[this.surfaceId, this.view?.webContents]] : []),
         ...[...this.turnTabs.values()].filter(tab => tab.interactionMode === "automatic")
           .map(tab => [tab.surfaceId, tab.view?.webContents || tab.view])
@@ -4638,7 +4375,6 @@ class BrowserHost {
       m365SurfaceId: this.m365SurfaceId,
       geminiSurfaceId: this.geminiSurfaceId,
       qwenSurfaceId: this.qwenSurfaceId,
-      googleAIStudioSurfaceId: this.googleAIStudioSurfaceId,
       activeSurfaceId: this.surfaceId,
       surfaceTargets,
       provider: this.provider || "chatgpt",
@@ -4714,7 +4450,6 @@ class BrowserHost {
     this.m365View = null;
     this.geminiView = null;
     this.qwenView = null;
-    this.googleAIStudioView = null;
     this.view = null;
   }
 }
@@ -4732,5 +4467,6 @@ module.exports = {
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
+  resolveChromeUserAgent,
   TEMPORARY_CHAT_URL,
 };

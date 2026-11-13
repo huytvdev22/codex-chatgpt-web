@@ -45,8 +45,7 @@ export type ModelProviderId =
   | "chatgpt-web"
   | "m365-copilot"
   | "gemini-web"
-  | "qwen-web"
-  | "google-ai-studio";
+  | "qwen-web";
 
 const CHATGPT_WEB_ROUTE: ModelRouteDefinition = {
   slug: "chatgpt-web",
@@ -297,31 +296,6 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
           { effort: "high", description: "Think", mode: "thinking" },
         ],
         metadata: { targetMenuLabel: "Qwen3.8-Omni-Flash" },
-      },
-    ],
-  },
-  "google-ai-studio": {
-    id: "google-ai-studio",
-    exactSlugs: ["google-ai-studio"],
-    slugPrefixes: ["google-ai-studio/"],
-    routes: [
-      {
-        slug: "google-ai-studio",
-        displayName: "Google AI Studio",
-        description: "Google AI Studio với Gemini Flash Latest.",
-        backendModel: "gemini-flash-latest",
-        contextWindow: 1_000_000,
-        autoCompactTokenLimit: 800_000,
-        effectiveContextWindowPercent: 90,
-        composerCharLimit: 500_000,
-        inputModalities: ["text", "image"],
-        defaultReasoningLevel: "medium",
-        reasoningLevels: [
-          { effort: "low", description: "Thấp" },
-          { effort: "medium", description: "Trung bình" },
-          { effort: "high", description: "Cao" },
-        ],
-        metadata: { urlModelParam: "gemini-flash-latest" },
       },
     ],
   },

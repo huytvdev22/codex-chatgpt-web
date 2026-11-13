@@ -20,7 +20,6 @@ const DEFAULT_STATE = Object.freeze({
   experimentalFreshConversationPerTurn: false,
   useSavedChats: false,
   browserSmokePassed: false,
-  googleAIStudioSmokePassed: false,
   browserSmokeVersion: null,
   sidebarOpen: true,
   sidebarWidth: 252,
@@ -42,7 +41,7 @@ function readState(filePath) {
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
     }
-    if (state.selectedProvider !== "m365" && state.selectedProvider !== "chatgpt" && state.selectedProvider !== "gemini" && state.selectedProvider !== "qwen" && state.selectedProvider !== "google-ai-studio") {
+    if (state.selectedProvider !== "m365" && state.selectedProvider !== "chatgpt" && state.selectedProvider !== "gemini" && state.selectedProvider !== "qwen") {
       state.selectedProvider = DEFAULT_STATE.selectedProvider;
     }
     for (const key of [
@@ -57,7 +56,6 @@ function readState(filePath) {
       "experimentalFreshConversationPerTurn",
       "useSavedChats",
       "browserSmokePassed",
-      "googleAIStudioSmokePassed",
       "sidebarOpen",
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];

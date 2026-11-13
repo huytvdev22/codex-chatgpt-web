@@ -1033,21 +1033,18 @@ function SetupSurface({
   const [localBusy, setLocalBusy] = useState(false);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
 
-  const isGoogleAIStudio = (browser?.provider || snapshot.state.selectedProvider || "m365") === "google-ai-studio";
   const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
   const isGemini = (browser?.provider || snapshot.state.selectedProvider || "m365") === "gemini";
   const isQwen = (browser?.provider || snapshot.state.selectedProvider || "m365") === "qwen";
-  const googleAIStudioAuthed = Boolean(browser?.googleAIStudioAuthenticated || (browser?.authenticated && isGoogleAIStudio));
   const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
   const geminiAuthed = Boolean(browser?.geminiAuthenticated || (browser?.authenticated && isGemini));
   const qwenAuthed = Boolean(browser?.qwenAuthenticated || (browser?.authenticated && isQwen));
-  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365 && !isGemini && !isQwen && !isGoogleAIStudio));
+  const chatGptAuthed = Boolean(browser?.chatGptAuthenticated || (browser?.authenticated && !isM365 && !isGemini && !isQwen));
 
-  const isGoogleAIStudioTesting = browser?.status === "testing" && isGoogleAIStudio;
   const isM365Testing = browser?.status === "testing" && isM365;
   const isGeminiTesting = browser?.status === "testing" && isGemini;
   const isQwenTesting = browser?.status === "testing" && isQwen;
-  const isChatGptTesting = browser?.status === "testing" && !isM365 && !isGemini && !isQwen && !isGoogleAIStudio;
+  const isChatGptTesting = browser?.status === "testing" && !isM365 && !isGemini && !isQwen;
   const isRunningTurn = browser?.status === "running";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
@@ -1161,43 +1158,7 @@ function SetupSurface({
           />
         </div>
 
-        {/* â”€â”€ Google AI Studio Setup Section â”€â”€ */}
-        <SectionHeading label="Google AI Studio Setup" spaced />
-        <div className="setup-list">
-          <SetupRow
-            action={googleAIStudioAuthed
-              ? copy.signedIn
-              : browser?.status === "loading" && isGoogleAIStudio ? copy.checkingSignIn : copy.signIn}
-            complete={googleAIStudioAuthed}
-            description="Sign in directly in the embedded Google AI Studio browser (aistudio.google.com). Login stays in this launcher's private profile."
-            disabled={globalActionDisabled}
-            index={1}
-            onAction={() => run(async () => {
-              await api!.setProvider("google-ai-studio");
-              await activateBrowser();
-              await api!.openLogin();
-            })}
-            title="Sign in to Google AI Studio"
-          />
-          <SetupRow
-            action={snapshot.googleAIStudioSmokePassed ? "Verify again" : "Run verify"}
-            complete={Boolean(snapshot.googleAIStudioSmokePassed)}
-            description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to Google AI Studio and verify response."
-            disabled={globalActionDisabled || isGoogleAIStudioTesting || !googleAIStudioAuthed}
-            index={2}
-            onAction={() => run(async () => {
-              await api!.setProvider("google-ai-studio");
-              updateState((await api!.snapshot()).state);
-              await activateBrowser();
-              await api!.smokeTest();
-              updateState((await api!.snapshot()).state);
-            })}
-            repeatable={true}
-            title="Run browser smoke test (Google AI Studio)"
-          />
-        </div>
-
-        {/* â”€â”€ Qwen Setup Section â”€â”€ */}
+        {/* ── Qwen Setup Section ── */}
         <SectionHeading label="Qwen Setup" spaced />
         <div className="setup-list">
           <SetupRow
@@ -1239,7 +1200,7 @@ function SetupSurface({
           <SetupRow
             action={chatGptAuthed
               ? copy.signedIn
-              : browser?.status === "loading" && !isM365 && !isGemini && !isQwen && !isGoogleAIStudio ? copy.checkingSignIn : copy.signIn}
+              : browser?.status === "loading" && !isM365 && !isGemini && !isQwen ? copy.checkingSignIn : copy.signIn}
             complete={chatGptAuthed}
             description="Sign in directly in the embedded ChatGPT browser. Login stays in this launcher's private profile."
             disabled={globalActionDisabled}
@@ -1449,16 +1410,6 @@ function SettingsSurface({
       <div className="settings-list">
         <SettingRow body="Choose active AI provider and embedded browser view" label="AI Provider">
           <div style={{ display: "flex", gap: "8px" }}>
-            <SecondaryButton
-              disabled={busy}
-              style={{
-                borderColor: snapshot.state.selectedProvider === "google-ai-studio" ? "var(--color-accent, #ea4335)" : undefined,
-                fontWeight: snapshot.state.selectedProvider === "google-ai-studio" ? 600 : 400,
-              }}
-              onClick={() => void api!.setProvider("google-ai-studio").then(updateState).catch((cause) => setError(messageOf(cause)))}
-            >
-              Google AI Studio
-            </SecondaryButton>
             <SecondaryButton
               disabled={busy}
               style={{

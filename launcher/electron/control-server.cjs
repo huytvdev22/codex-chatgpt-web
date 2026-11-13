@@ -179,7 +179,7 @@ class BrowserControlServer {
       if (body.connectorIdentity !== undefined && body.conversationKey === undefined) {
         throw new Error("connectorIdentity requires conversationKey");
       }
-      if (body.provider !== undefined && body.provider !== "chatgpt" && body.provider !== "m365" && body.provider !== "gemini" && body.provider !== "qwen" && body.provider !== "google-ai-studio") {
+      if (body.provider !== undefined && body.provider !== "chatgpt" && body.provider !== "m365" && body.provider !== "gemini" && body.provider !== "qwen") {
         throw new Error("provider is invalid");
       }
       if (body.conversationId !== undefined
