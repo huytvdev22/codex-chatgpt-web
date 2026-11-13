@@ -8,13 +8,13 @@ import {
   findModelProvider,
   isProviderModel,
   listModelRoutes,
-  MODEL_PROVIDERS,
   type ModelRouteDefinition,
 } from "./model-registry";
 
 type JsonObject = Record<string, unknown>;
 
-export const M365_COPILOT_MODEL_PREFIX = "m365-copilot/";
+const isJsonObject = (value: unknown): value is JsonObject =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const isM365ModelSlug = (slug: string): boolean =>
   isProviderModel(slug, "m365-copilot");
@@ -70,8 +70,22 @@ export const CANONICAL_MODEL_DEFAULTS: JsonObject = {
   input_modalities: ["text", "image"],
 };
 
+const NATIVE_FALLBACK_SHARED_FIELDS: JsonObject = {
+  shell_type: "unified_exec",
+  visibility: "list",
+  supported_in_api: true,
+  additional_speed_tiers: [],
+  service_tiers: [],
+  availability_nux: null,
+  upgrade: null,
+  effective_context_window_percent: 90,
+  input_modalities: ["text", "image"],
+  support_verbosity: true,
+};
+
 export const DEFAULT_NATIVE_FALLBACK_MODELS: JsonObject[] = [
   {
+    ...NATIVE_FALLBACK_SHARED_FIELDS,
     slug: "gpt-5.6-sol",
     display_name: "GPT-5.6 Sol",
     description: "OpenAI GPT-5.6 Sol",
@@ -82,24 +96,15 @@ export const DEFAULT_NATIVE_FALLBACK_MODELS: JsonObject[] = [
       { effort: "high", description: "High" },
       { effort: "xhigh", description: "Extra high" },
     ],
-    shell_type: "unified_exec",
-    visibility: "list",
-    supported_in_api: true,
     priority: 2,
-    additional_speed_tiers: [],
-    service_tiers: [],
-    availability_nux: null,
-    upgrade: null,
     tool_mode: "code_mode_only",
     multi_agent_version: "v2",
     context_window: 300_000,
     max_context_window: 320_000,
-    effective_context_window_percent: 90,
     auto_compact_token_limit: 270_000,
-    input_modalities: ["text", "image"],
-    support_verbosity: true,
   },
   {
+    ...NATIVE_FALLBACK_SHARED_FIELDS,
     slug: "gpt-5.5",
     display_name: "GPT-5.5",
     description: "OpenAI GPT-5.5",
@@ -107,22 +112,12 @@ export const DEFAULT_NATIVE_FALLBACK_MODELS: JsonObject[] = [
     supported_reasoning_levels: [
       { effort: "low", description: "Low" },
     ],
-    shell_type: "unified_exec",
-    visibility: "list",
-    supported_in_api: true,
     priority: 3,
-    additional_speed_tiers: [],
-    service_tiers: [],
-    availability_nux: null,
-    upgrade: null,
     tool_mode: null,
     multi_agent_version: "disabled",
     context_window: 200_000,
     max_context_window: 200_000,
-    effective_context_window_percent: 90,
     auto_compact_token_limit: 180_000,
-    input_modalities: ["text", "image"],
-    support_verbosity: true,
   },
 ];
 
@@ -136,12 +131,12 @@ export function getFallbackNativeCatalog(): { models: JsonObject[] } {
     const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");
     const cachePath = join(codexHome, "models_cache.json");
     if (existsSync(cachePath)) {
-      const raw = JSON.parse(readFileSync(cachePath, "utf8"));
-      if (Array.isArray(raw.models)) {
-        for (const m of raw.models) {
-          const s = typeof m?.slug === "string" ? m.slug : "";
-          if (s && !isM365ModelSlug(s)) {
-            modelsMap.set(s, m);
+      const raw: unknown = JSON.parse(readFileSync(cachePath, "utf8"));
+      if (isJsonObject(raw) && Array.isArray(raw.models)) {
+        for (const model of raw.models) {
+          const modelSlug = slug(model);
+          if (isJsonObject(model) && modelSlug && !isM365ModelSlug(modelSlug)) {
+            modelsMap.set(modelSlug, model);
           }
         }
       }
@@ -156,41 +151,92 @@ export function getManagedModelCatalogPath(home = getConfigDir()): string {
   return join(home, "catalog.json");
 }
 
+function normalizeCatalogModel(rawModel: unknown): JsonObject {
+  const model = isJsonObject(rawModel) ? rawModel : {};
+  const merged: JsonObject = {
+    ...structuredClone(CANONICAL_MODEL_DEFAULTS),
+    ...model,
+  };
+  const levels = Array.isArray(merged.supported_reasoning_levels)
+    ? merged.supported_reasoning_levels.filter(isJsonObject)
+    : [];
+  merged.supported_reasoning_levels = levels.length > 0
+    ? levels
+    : [{ effort: "low", description: "Low" }];
+  if (!merged.default_reasoning_level) {
+    const firstEffort = (merged.supported_reasoning_levels as JsonObject[])[0]?.effort;
+    merged.default_reasoning_level = typeof firstEffort === "string" ? firstEffort : "low";
+  }
+  if (typeof merged.context_window !== "number" || merged.context_window <= 0) {
+    merged.context_window = 200_000;
+  }
+  if (typeof merged.max_context_window !== "number" || merged.max_context_window <= 0) {
+    merged.max_context_window = merged.context_window;
+  }
+  return merged;
+}
+
 export function syncManagedModelCatalogFile(
   catalog: unknown,
   catalogPath = getManagedModelCatalogPath(),
 ): void {
   try {
-    let payload = catalog;
-    if (catalog && typeof catalog === "object" && Array.isArray((catalog as any).models)) {
-      payload = {
-        ...(catalog as any),
-        models: (catalog as any).models.map((m: any) => {
-          const merged = {
-            ...structuredClone(CANONICAL_MODEL_DEFAULTS),
-            ...m,
-          };
-          if (!Array.isArray(merged.supported_reasoning_levels) || merged.supported_reasoning_levels.length === 0) {
-            merged.supported_reasoning_levels = [{ effort: "low", description: "Low" }];
-          }
-          if (!merged.default_reasoning_level) {
-            merged.default_reasoning_level = (merged.supported_reasoning_levels[0] as any)?.effort ?? "low";
-          }
-          if (typeof merged.context_window !== "number" || merged.context_window <= 0) {
-            merged.context_window = 200_000;
-          }
-          if (typeof merged.max_context_window !== "number" || merged.max_context_window <= 0) {
-            merged.max_context_window = merged.context_window;
-          }
-          return merged;
-        }),
-      };
-    }
-    const data = JSON.stringify(payload, null, 2) + "\n";
-    atomicWriteFile(catalogPath, data);
+    const payload = isJsonObject(catalog) && Array.isArray(catalog.models)
+      ? {
+          ...catalog,
+          models: catalog.models.map(normalizeCatalogModel),
+        }
+      : catalog;
+    atomicWriteFile(catalogPath, `${JSON.stringify(payload, null, 2)}\n`);
   } catch {
     // non-fatal if cannot write
   }
+}
+
+function hasSyncedM365Surface(catalogPath: string): boolean {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(catalogPath, "utf8"));
+    if (!isJsonObject(raw) || !Array.isArray(raw.models)) return false;
+
+    const m365Models = raw.models.filter(
+      (model): model is JsonObject => isJsonObject(model) && typeof model.slug === "string" && isM365ModelSlug(model.slug),
+    );
+    if (m365Models.length === 0) return false;
+
+    const allSupportImages = m365Models.every(
+      model => Array.isArray(model.input_modalities) && model.input_modalities.includes("image"),
+    );
+    if (!allSupportImages) return false;
+
+    const visibleM365Slugs = m365Models
+      .filter(model => model.visibility !== "hide")
+      .map(model => model.slug as string)
+      .sort();
+    const expectedM365Slugs = listModelRoutes("m365-copilot")
+      .map(route => route.slug)
+      .sort();
+
+    return visibleM365Slugs.length === expectedM365Slugs.length
+      && visibleM365Slugs.every((value, index) => value === expectedM365Slugs[index]);
+  } catch {
+    return false;
+  }
+}
+
+export function buildAndSyncFallbackModelCatalog(
+  config: AppConfig,
+  options: {
+    catalogPath?: string;
+    contextOverride?: CodexModelContextOverride;
+  } = {},
+): JsonObject {
+  const catalog = augmentNativeModelCatalog(
+    getFallbackNativeCatalog(),
+    config,
+    options.contextOverride,
+  );
+  syncManagedModelCatalogFile(catalog, options.catalogPath);
+  return catalog;
 }
 
 export function ensureManagedModelCatalogFile(
@@ -199,39 +245,8 @@ export function ensureManagedModelCatalogFile(
   force = false,
 ): string {
   try {
-    let shouldWrite = force || !existsSync(catalogPath);
-    if (!shouldWrite && existsSync(catalogPath)) {
-      try {
-        const raw = JSON.parse(readFileSync(catalogPath, "utf8"));
-        const hasM365 = Array.isArray(raw.models) && raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX));
-        const allM365SupportImages = hasM365 && !raw.models.some((m: any) => typeof m?.slug === "string" && m.slug.startsWith(M365_COPILOT_MODEL_PREFIX) && (!Array.isArray(m.input_modalities) || !m.input_modalities.includes("image")));
-        const visibleM365Slugs = Array.isArray(raw.models)
-          ? raw.models
-            .filter((m: any) =>
-              typeof m?.slug === "string"
-              && isM365ModelSlug(m.slug)
-              && m.visibility !== "hide")
-            .map((m: any) => m.slug)
-            .sort()
-          : [];
-        const expectedVisibleM365Slugs = [
-          "m365-copilot",
-          "m365-copilot/gpt-5.6",
-        ];
-        const hasCurrentM365Surface =
-          JSON.stringify(visibleM365Slugs) === JSON.stringify(expectedVisibleM365Slugs);
-
-        if (!hasM365 || !allM365SupportImages || !hasCurrentM365Surface) {
-          shouldWrite = true;
-        }
-      } catch {
-        shouldWrite = true;
-      }
-    }
-    if (shouldWrite) {
-      const fallback = getFallbackNativeCatalog();
-      const catalog = augmentNativeModelCatalog(fallback, config);
-      syncManagedModelCatalogFile(catalog, catalogPath);
+    if (force || !existsSync(catalogPath) || !hasSyncedM365Surface(catalogPath)) {
+      buildAndSyncFallbackModelCatalog(config, { catalogPath });
     }
   } catch {
     // non-fatal
@@ -240,21 +255,20 @@ export function ensureManagedModelCatalogFile(
 }
 
 function object(value: unknown, label: string): JsonObject {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
-  return value as JsonObject;
+  return value;
 }
 
 function slug(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const candidate = (value as JsonObject).slug;
-  return typeof candidate === "string" ? candidate : undefined;
+  if (!isJsonObject(value)) return undefined;
+  return typeof value.slug === "string" ? value.slug : undefined;
 }
 
 function reasoningLevel(template: JsonObject, effort: string, description: string): JsonObject {
   const levels = Array.isArray(template.supported_reasoning_levels)
-    ? template.supported_reasoning_levels.filter(level => level && typeof level === "object" && !Array.isArray(level)) as JsonObject[]
+    ? template.supported_reasoning_levels.filter(isJsonObject)
     : [];
   const source = levels.find(level => level.effort === effort);
   return { ...(source ? structuredClone(source) : {}), effort, description };
@@ -269,31 +283,17 @@ function modelPriority(template: JsonObject): number | undefined {
   return value;
 }
 
-function routedModelPriority(
-  template: JsonObject,
-  _route: ModelRouteDefinition,
-  _config: AppConfig,
-): number | undefined {
-  return modelPriority(template);
-}
-
-function nativeTemplateCandidate(value: unknown, requireTools: boolean): value is JsonObject {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const model = value as JsonObject;
-  const modelSlug = slug(model);
+function nativeTemplateCandidate(value: unknown): value is JsonObject {
+  if (!isJsonObject(value)) return false;
+  const modelSlug = slug(value);
   if (!modelSlug || isM365ModelSlug(modelSlug)) return false;
-  // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
-  // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
-  // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
-  // true because this local Responses endpoint implements it.
-  if (model.visibility !== "list") return false;
-  if (!Array.isArray(model.supported_reasoning_levels)) return false;
-  return !requireTools || (typeof model.tool_mode === "string" && model.tool_mode.length > 0);
+  // Chỉ chọn model hiển thị công khai và có reasoning metadata hợp lệ làm template nền.
+  // Route provider luôn ghi đè supported_in_api = true vì local Responses endpoint xử lý trực tiếp.
+  return value.visibility === "list" && Array.isArray(value.supported_reasoning_levels);
 }
 
-function selectNativeTemplate(models: unknown[], _config: AppConfig): JsonObject {
-  const candidates = models.filter(model => nativeTemplateCandidate(model, false)) as JsonObject[];
-  const template = candidates[0];
+function selectNativeTemplate(models: unknown[]): JsonObject {
+  const template = models.find(nativeTemplateCandidate);
   if (template) return template;
   throw new Error("Native Codex models response has no list-visible model with reasoning metadata");
 }
@@ -320,7 +320,7 @@ export function buildProviderModel(
     throw new Error("Provider model template must be a native Codex model");
   }
   const multiAgentVersion = routedSubagentVersion(template, config);
-  const priority = routedModelPriority(template, route, config);
+  const priority = modelPriority(template);
   const model: JsonObject = {
     ...structuredClone(template),
     slug: route.slug,
@@ -353,8 +353,6 @@ export function buildProviderModel(
   return model;
 }
 
-export const buildM365Model = buildProviderModel;
-
 export function augmentNativeModelCatalog(
   value: unknown,
   config: AppConfig,
@@ -375,15 +373,15 @@ export function augmentNativeModelCatalog(
   );
   if (config.subagentProtocol === "compatibility-v1") {
     for (const candidate of nativeModels) {
-      if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
-        useCompatibilityV1SubagentSurface(candidate as JsonObject);
+      if (isJsonObject(candidate)) {
+        useCompatibilityV1SubagentSurface(candidate);
       }
     }
   }
   const effectiveNative = nativeModels.length > 0
     ? nativeModels
     : structuredClone(getFallbackNativeCatalog().models);
-  const template = selectNativeTemplate(effectiveNative, config);
+  const template = selectNativeTemplate(effectiveNative);
   if (contextOverride) {
     // model_context_window is a single top-level Codex setting, not a per-model one. Apply its
     // advertised maximum to every native row so switching native models cannot silently clamp the

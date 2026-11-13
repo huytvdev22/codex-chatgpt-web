@@ -7,31 +7,22 @@ export type M365CapabilityMode =
   | "gpt-5.6-think"
   | "gpt-5.6-quick";
 
-export interface ChatGptWebAccountCapabilities {
-  solAvailable: boolean;
-  extraHighAvailable?: boolean;
-  proAvailable: boolean;
-}
-
 export interface ModelReasoningLevel {
   effort: ModelReasoningEffort;
   description: string;
-  mode?: string;
+  mode?: M365CapabilityMode;
 }
 
 export interface ModelRouteDefinition {
   slug: string;
   displayName: string;
   description: string;
-  backendModel: string;
   contextWindow: number;
   autoCompactTokenLimit: number;
   effectiveContextWindowPercent: number;
-  composerCharLimit: number;
   inputModalities: readonly ModelInputModality[];
   defaultReasoningLevel: ModelReasoningEffort;
   reasoningLevels: readonly ModelReasoningLevel[];
-  metadata?: Readonly<Record<string, string>>;
 }
 
 export interface ModelProviderDefinition {
@@ -41,8 +32,7 @@ export interface ModelProviderDefinition {
   routes: readonly ModelRouteDefinition[];
 }
 
-export type ModelProviderId =
-  | "m365-copilot";
+export type ModelProviderId = "m365-copilot";
 
 export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefinition>> = {
   "m365-copilot": {
@@ -54,11 +44,9 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
         slug: "m365-copilot/gpt-5.6",
         displayName: "M365 - GPT 5.6",
         description: "GPT 5.6 qua Microsoft 365 Copilot Web",
-        backendModel: "m365-copilot-gpt5.6",
         contextWindow: 100_000,
         autoCompactTokenLimit: 90_000,
         effectiveContextWindowPercent: 90,
-        composerCharLimit: 100_000,
         inputModalities: ["text", "image"],
         defaultReasoningLevel: "low",
         reasoningLevels: [
@@ -70,11 +58,9 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
         slug: "m365-copilot",
         displayName: "M365 Copilot",
         description: "Microsoft 365 Copilot Web",
-        backendModel: "m365-copilot",
         contextWindow: 100_000,
         autoCompactTokenLimit: 90_000,
         effectiveContextWindowPercent: 90,
-        composerCharLimit: 100_000,
         inputModalities: ["text", "image"],
         defaultReasoningLevel: "low",
         reasoningLevels: [
@@ -86,8 +72,13 @@ export const MODEL_PROVIDERS: Readonly<Record<ModelProviderId, ModelProviderDefi
   },
 };
 
+const PROVIDER_LIST: readonly ModelProviderDefinition[] = Object.values(MODEL_PROVIDERS);
+const ALL_MODEL_ROUTES: readonly ModelRouteDefinition[] = PROVIDER_LIST.flatMap(
+  provider => provider.routes,
+);
+
 export function findModelProvider(modelId: string): ModelProviderDefinition | undefined {
-  return Object.values(MODEL_PROVIDERS).find(provider =>
+  return PROVIDER_LIST.find(provider =>
     provider.exactSlugs.includes(modelId)
     || provider.slugPrefixes.some(prefix => modelId.startsWith(prefix))
   );
@@ -98,8 +89,7 @@ export function isProviderModel(modelId: string, providerId: ModelProviderId): b
 }
 
 export function listModelRoutes(providerId?: ModelProviderId): readonly ModelRouteDefinition[] {
-  if (providerId) return MODEL_PROVIDERS[providerId].routes;
-  return Object.values(MODEL_PROVIDERS).flatMap(provider => provider.routes);
+  return providerId ? MODEL_PROVIDERS[providerId].routes : ALL_MODEL_ROUTES;
 }
 
 export function findModelRoute(modelId: string): ModelRouteDefinition | undefined {
@@ -123,7 +113,10 @@ export function resolveModelReasoning(
     ?? route.reasoningLevels[0]!;
 }
 
-export function resolveModelMode(modelId: string, requestedEffort?: string): string | undefined {
+export function resolveModelMode(
+  modelId: string,
+  requestedEffort?: string,
+): M365CapabilityMode | undefined {
   return resolveModelReasoning(requireModelRoute(modelId), requestedEffort).mode;
 }
 
@@ -132,14 +125,5 @@ export function resolveM365CapabilityMode(
   requestedEffort?: string,
 ): M365CapabilityMode {
   if (!modelId) return "auto";
-  const mode = resolveModelMode(modelId, requestedEffort);
-  if (
-    mode === "quick"
-    || mode === "think"
-    || mode === "gpt-5.6-think"
-    || mode === "gpt-5.6-quick"
-  ) {
-    return mode;
-  }
-  return "auto";
+  return resolveModelMode(modelId, requestedEffort) ?? "auto";
 }

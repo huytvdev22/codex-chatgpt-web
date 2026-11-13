@@ -65,10 +65,8 @@ function serveUniversal(options: {
   };
 }
 import {
-  augmentNativeModelCatalog,
+  buildAndSyncFallbackModelCatalog,
   ensureManagedModelCatalogFile,
-  getFallbackNativeCatalog,
-  syncManagedModelCatalogFile,
 } from "./models/model-catalog";
 import {
   readCodexModelContextOverride,
@@ -429,9 +427,9 @@ export async function modelsRequest(
 ): Promise<Response> {
   let catalog: Record<string, unknown>;
   try {
-    const fallback = getFallbackNativeCatalog();
-    catalog = augmentNativeModelCatalog(fallback, config, contextOverride?.());
-    syncManagedModelCatalogFile(catalog);
+    catalog = buildAndSyncFallbackModelCatalog(config, {
+      contextOverride: contextOverride?.(),
+    });
   } catch (error) {
     onFailure?.(modelCatalogFailure("catalog", error));
     return formatErrorResponse(500, "server_error", error instanceof Error ? error.message : String(error));

@@ -73,6 +73,21 @@ test("ensureManagedModelCatalogFile generates a valid catalog containing all act
 
     expect(slugs).toContain("m365-copilot/gpt-5.6");
     expect(slugs).toContain("m365-copilot");
+
+    // Khi catalog cũ thiếu "image" ở chính route gốc "m365-copilot" (không có dấu /), ensure phải rebuild lại
+    const stale = {
+      models: raw.models.map((m: Record<string, unknown>) =>
+        m.slug === "m365-copilot" ? { ...m, input_modalities: ["text"] } : m
+      ),
+    };
+    writeFileSync(catalogPath, JSON.stringify(stale, null, 2));
+    ensureManagedModelCatalogFile(config, catalogPath, false);
+
+    const repaired = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+      models: Array<{ slug: string; input_modalities?: string[] }>;
+    };
+    const rootM365 = repaired.models.find(m => m.slug === "m365-copilot");
+    expect(rootM365?.input_modalities).toEqual(["text", "image"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
