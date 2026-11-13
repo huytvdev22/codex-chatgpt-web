@@ -109,7 +109,7 @@ test("Qwen prepareAllocation rejects allocation if conversation key has an activ
     });
     const key = "c".repeat(64);
     const tabs = new Map([
-      ["active-tab", { id: "active-tab", provider: "qwen", status: "running", helperPid: process.pid, conversationKey: key }],
+      ["active-tab", { id: "active-tab", provider: "qwen", status: "running", helperPid: process.pid, conversationKey: key, lastHeartbeatAt: Date.now() }],
     ]);
 
     assert.throws(
@@ -141,6 +141,93 @@ test("Qwen prepareAllocation cleans up orphan running tabs whose helper process 
 
     assert.deepEqual(removed, ["orphan-tab"], "Must remove orphan running tab when helper process is dead");
     assert.equal(tabs.size, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Qwen prepareAllocation reclaims running tab whose heartbeat is stale even if helper process is alive", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-stale-heartbeat-"));
+  try {
+    const manager = new QwenSurfaceManager({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+      staleTurnHeartbeatMs: 1_000,
+    });
+    const key = "e".repeat(64);
+    const removed = [];
+    const tabs = new Map([
+      ["stuck-tab", {
+        id: "stuck-tab",
+        provider: "qwen",
+        status: "running",
+        helperPid: process.pid,
+        conversationKey: key,
+        lastHeartbeatAt: Date.now() - 5_000,
+      }],
+    ]);
+
+    manager.prepareAllocation(tabs, key, (tab) => {
+      removed.push(tab.id);
+      tabs.delete(tab.id);
+    });
+
+    assert.deepEqual(removed, ["stuck-tab"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Qwen waitForActiveTurn waits until the previous same-key turn releases its tab", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-wait-active-"));
+  try {
+    const manager = new QwenSurfaceManager({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+      activeTurnWaitMs: 2_000,
+      activeTurnPollMs: 10,
+    });
+    const key = "f".repeat(64);
+    const previous = {
+      id: "prev",
+      provider: "qwen",
+      status: "running",
+      traceId: "trace-old",
+      helperPid: process.pid,
+      conversationKey: key,
+      lastHeartbeatAt: Date.now(),
+    };
+    const tabs = new Map([["prev", previous]]);
+    setTimeout(() => { previous.status = "ready"; }, 50);
+
+    const released = await manager.waitForActiveTurn(tabs, key, "trace-new");
+
+    assert.equal(released, true);
+    assert.equal(previous.status, "ready");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Qwen waitForActiveTurn gives up after its bounded wait and ignores its own trace", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-wait-timeout-"));
+  try {
+    const manager = new QwenSurfaceManager({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+      activeTurnWaitMs: 50,
+      activeTurnPollMs: 10,
+    });
+    const key = "9".repeat(64);
+    const tabs = new Map([["busy", {
+      id: "busy",
+      provider: "qwen",
+      status: "running",
+      traceId: "trace-busy",
+      helperPid: process.pid,
+      conversationKey: key,
+      lastHeartbeatAt: Date.now(),
+    }]]);
+
+    assert.equal(await manager.waitForActiveTurn(tabs, key, "trace-other"), false);
+    assert.equal(await manager.waitForActiveTurn(tabs, key, "trace-busy"), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

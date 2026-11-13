@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  startLauncherBrowserTurn,
   WebProviderAdapter,
   WebTurnEngine,
   conversationGuard,
@@ -642,7 +643,13 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       undefined,
       createOps(),
     );
-    await engineOk.runTurn(createParsedRequest(), { headers: new Headers() }, () => {});
+    // Signal của request còn sống lúc gọi phase=end nhưng có thể bị hủy ngay sau
+    // khi SSE đóng; phase=end không được phụ thuộc vào nó (xem troubleshooting 047).
+    await engineOk.runTurn(
+      createParsedRequest(),
+      { headers: new Headers(), abortSignal: new AbortController().signal },
+      () => {},
+    );
 
     // 2. Failed
     const engineFail = new WebTurnEngine(
@@ -1232,5 +1239,85 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       "Max Tool Iterations Exceeded",
     );
     expect(conversationGuard.has(loopKey)).toBe(false);
+  });
+
+  test("23. Lifecycle: startLauncherBrowserTurn tự gửi phase=end giải phóng tab nếu connectBrowserHost thất bại hoặc bị hủy sau phase=start", async () => {
+    for (const scenario of ["connect_error", "caller_aborted"] as const) {
+      const recorded: Array<{ activity: any; signal: AbortSignal | undefined }> = [];
+      const controller = new AbortController();
+
+      const promise = startLauncherBrowserTurn({
+        descriptorPath: "/tmp/mock-launcher-browser.json",
+        signal: controller.signal,
+        activity: {
+          phase: "start",
+          traceId: `trace-${scenario}`,
+          helperPid: process.pid,
+          provider: "qwen",
+          conversationKey: "conv-key-cdp-fail",
+          connectorIdentity: "qwen-web",
+        },
+        ops: {
+          readDescriptor: () => ({
+            version: 3,
+            kind: "codex-web-gpt-launcher",
+            profile: "development",
+            pid: process.pid,
+            endpoint: "http://127.0.0.1:9222",
+            control: { endpoint: "http://127.0.0.1:9223", token: "tok" },
+            helper: { executable: "bun", script: "helper.ts" },
+            partition: "persist:test",
+            idleUrl: "about:blank",
+            surfaceId: "s".repeat(32),
+            surfaceTargets: {},
+            createdAt: new Date().toISOString(),
+          }),
+          isProcessRunning: () => true,
+          notifyTurn: async (_descriptorPath, activity, _timeoutMs, signal) => {
+            recorded.push({ activity, signal });
+            if (activity.phase === "start") {
+              return {
+                surfaceId: "a".repeat(32),
+                reused: false,
+                connectorBound: false,
+                conversationId: "qwen-conv-42",
+              };
+            }
+            return {};
+          },
+          connectBrowserHost: async () => {
+            if (scenario === "caller_aborted") {
+              controller.abort(new DOMException("Client disconnected", "AbortError"));
+            }
+            throw new Error(
+              scenario === "caller_aborted"
+                ? "Launcher browser acquisition cancelled"
+                : "CDP WebSocket handshake failed",
+            );
+          },
+        },
+      });
+
+      await expect(promise).rejects.toThrow(
+        scenario === "caller_aborted"
+          ? "Launcher browser acquisition cancelled"
+          : "CDP WebSocket handshake failed",
+      );
+
+      expect(recorded).toHaveLength(2);
+      expect(recorded[0]?.activity.phase).toBe("start");
+      expect(recorded[1]?.activity).toEqual({
+        phase: "end",
+        traceId: `trace-${scenario}`,
+        helperPid: process.pid,
+        provider: "qwen",
+        status: scenario === "caller_aborted" ? "aborted" : "failed",
+        retain: false,
+        connectorBound: false,
+        conversationId: "qwen-conv-42",
+      });
+      // Đảm bảo signal đã bị hủy của caller không làm AbortError khi gửi phase=end
+      expect(recorded[1]?.signal).toBeUndefined();
+    }
   });
 });

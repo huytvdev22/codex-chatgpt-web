@@ -7,6 +7,12 @@ const QWEN_HOME_URL = "https://chat.qwen.ai/";
 const QWEN_ORIGIN = "https://chat.qwen.ai";
 const QWEN_CONVERSATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_QWEN_SURFACES = 3;
+// Worker chỉ gửi heartbeat trong lúc chờ phản hồi; các bước chọn model/gõ prompt
+// có thể kéo dài, nên ngưỡng stale phải đủ rộng (Launcher reaper dùng 60s/120s).
+const STALE_TURN_HEARTBEAT_MS = 90_000;
+// Phải nhỏ hơn LAUNCHER_TURN_START_TIMEOUT_MS (30s) phía runtime.
+const ACTIVE_TURN_WAIT_MS = 20_000;
+const ACTIVE_TURN_POLL_MS = 250;
 const STORE_VERSION = 1;
 const MAX_PERSISTED_QWEN_BINDINGS = 256;
 
@@ -88,8 +94,17 @@ class QwenConversationStore {
  * Điều phối mapping conversationKey sang Qwen conversation URL (/c/<uuid>).
  */
 class QwenSurfaceManager {
-  constructor({ descriptorPath, maxSurfaces = MAX_QWEN_SURFACES } = {}) {
+  constructor({
+    descriptorPath,
+    maxSurfaces = MAX_QWEN_SURFACES,
+    staleTurnHeartbeatMs = STALE_TURN_HEARTBEAT_MS,
+    activeTurnWaitMs = ACTIVE_TURN_WAIT_MS,
+    activeTurnPollMs = ACTIVE_TURN_POLL_MS,
+  } = {}) {
     this.maxSurfaces = maxSurfaces;
+    this.staleTurnHeartbeatMs = staleTurnHeartbeatMs;
+    this.activeTurnWaitMs = activeTurnWaitMs;
+    this.activeTurnPollMs = activeTurnPollMs;
     this.store = new QwenConversationStore(
       path.join(path.dirname(descriptorPath), "qwen-conversations.json"),
     );
@@ -121,17 +136,56 @@ class QwenSurfaceManager {
     return true;
   }
 
+  /**
+   * Tab đang thực sự chạy một lượt khác: status running, helper còn sống
+   * và heartbeat chưa quá hạn. Tab running nhưng heartbeat quá hạn là orphan
+   * (bun server phục vụ nhiều lượt tuần tự nên process.pid luôn sống).
+   */
+  isLiveRunningTab(tab, now = Date.now()) {
+    return tab?.status === "running"
+      && Boolean(tab.helperPid)
+      && processRunning(tab.helperPid)
+      && now - (tab.lastHeartbeatAt ?? 0) < this.staleTurnHeartbeatMs;
+  }
+
+  activeTurnFor(turnTabs, conversationKey, traceId) {
+    if (!conversationKey) return null;
+    return this.qwenTabs(turnTabs).find(tab => (
+      tab.conversationKey === conversationKey
+      && tab.traceId !== traceId
+      && this.isLiveRunningTab(tab)
+    )) || null;
+  }
+
+  /**
+   * Khi Codex gửi lại request (vd. sau khi stream bị ngắt) trong lúc lượt cũ
+   * của cùng conversation còn đang dọn dẹp, chờ có giới hạn để lượt cũ gửi
+   * phase=end rồi tái sử dụng tab đó, thay vì từ chối ngay hoặc mở tab trùng.
+   */
+  async waitForActiveTurn(turnTabs, conversationKey, traceId, signal) {
+    const deadline = Date.now() + this.activeTurnWaitMs;
+    while (this.activeTurnFor(turnTabs, conversationKey, traceId)) {
+      signal?.throwIfAborted();
+      if (Date.now() >= deadline) return false;
+      await new Promise(resolve => setTimeout(resolve, this.activeTurnPollMs));
+    }
+    return true;
+  }
+
   prepareAllocation(turnTabs, conversationKey, removeTab) {
     const tabs = this.qwenTabs(turnTabs);
 
     // 1. Dọn dẹp tab trùng lặp của cùng conversationKey:
     // prepareAllocation chỉ được gọi khi beginTurn KHÔNG tái sử dụng được tab cũ.
-    // Nếu tab cũ đang running và helper process vẫn sống -> xung đột lượt chạy đồng thời.
-    // Nếu tab cũ là ready, error, aborted hoặc orphan running -> đóng ngay để không tích tụ tab thừa.
+    // Nếu tab cũ đang running VÀ helper process vẫn sống VÀ heartbeat gần đây
+    //   -> xung đột lượt chạy đồng thời, từ chối.
+    // Nếu tab cũ running nhưng heartbeat đã quá hạn (stale) -> tab orphaned
+    //   (do endTurn thất bại âm thầm mà bun server vẫn sống) -> đóng ngay.
+    // Nếu tab cũ là ready, error, aborted hoặc orphan running -> đóng ngay.
     if (conversationKey) {
       const existingSameKey = tabs.filter(tab => tab.conversationKey === conversationKey);
       for (const tab of existingSameKey) {
-        if (tab.status === "running" && tab.helperPid && processRunning(tab.helperPid)) {
+        if (this.isLiveRunningTab(tab)) {
           throw new Error("Qwen Web conversation is currently active with another turn; wait for it to complete");
         }
         removeTab(tab);
@@ -165,6 +219,8 @@ class QwenSurfaceManager {
 
 module.exports = {
   MAX_QWEN_SURFACES,
+  STALE_TURN_HEARTBEAT_MS,
+  ACTIVE_TURN_WAIT_MS,
   QWEN_HOME_URL,
   QwenConversationStore,
   QwenSurfaceManager,

@@ -85,6 +85,7 @@ import { createM365CopilotAdapter } from "./adapters/m365-copilot";
 import { createGeminiWebAdapter } from "./adapters/gemini-web";
 import { createQwenWebAdapter } from "./adapters/qwen-web";
 import { createGoogleAIStudioAdapter } from "./adapters/google-ai-studio";
+import { activeWebTurnRegistry } from "./adapters/web";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import { fetchNativeCodex } from "./native-network";
 import {
@@ -1129,7 +1130,7 @@ export function startServer(
   const httpTurns = new HttpTurnCounter();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
-    active_browser_turns: 0,
+    active_browser_turns: activeWebTurnRegistry.activeCount(),
   });
   const controlAuthorized = (req: Request): boolean => {
     const header = req.headers.get("authorization") ?? "";
@@ -1167,9 +1168,32 @@ export function startServer(
       }
       if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        let traceId = "";
+        let reasonText: string | undefined;
+        try {
+          const body = await req.json() as { traceId?: unknown; reason?: unknown };
+          traceId = typeof body?.traceId === "string" ? body.traceId.trim() : "";
+          if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) {
+            throw new Error("Browser turn trace id is invalid");
+          }
+          if (typeof body?.reason === "string" && body.reason.trim()) {
+            reasonText = body.reason.trim();
+          }
+        } catch (error) {
+          return Response.json(
+            { status: "error", error: error instanceof Error ? error.message : String(error) },
+            { status: 400 },
+          );
+        }
+        const cancelReason = new DOMException(
+          reasonText ? `Browser turn cancelled (${reasonText})` : "Browser turn cancelled by launcher",
+          "AbortError",
+        );
+        const cancelledBrowserTurns = activeWebTurnRegistry.cancelByTraceId(traceId, cancelReason);
         return Response.json({
           status: "ok",
-          cancelled_browser_turns: 0,
+          trace_id: traceId,
+          cancelled_browser_turns: cancelledBrowserTurns,
           cancelled_broker_turns: 0,
           cancelled_compaction_runs: 0,
           ...activity(),
@@ -1204,11 +1228,14 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         const reason = new Error("Active turn cancelled by launcher");
-        const cancelledHttpTurns = await httpTurns.cancelAll(reason);
+        const [cancelledHttpTurns, cancelledBrowserTurns] = await Promise.all([
+          httpTurns.cancelAll(reason),
+          activeWebTurnRegistry.cancelAll(reason),
+        ]);
         return Response.json({
           status: "ok",
           cancelled_http_turns: cancelledHttpTurns,
-          cancelled_browser_turns: 0,
+          cancelled_browser_turns: cancelledBrowserTurns,
           cancelled_compaction_runs: 0,
           ...activity(),
         });

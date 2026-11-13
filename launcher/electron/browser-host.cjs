@@ -3087,6 +3087,14 @@ class BrowserHost {
     if (this.userCancelledTurnOwners.has(traceId)) {
       throw new BrowserTurnCancelledError(traceId);
     }
+    if (provider === "qwen" && conversationKey && this.qwenSurfaceManager?.waitForActiveTurn) {
+      // Lượt Qwen cũ cùng conversation có thể chưa kịp gửi phase=end (Codex retry
+      // sau khi stream bị ngắt). Chờ có giới hạn để tái sử dụng tab đã retained.
+      await this.qwenSurfaceManager.waitForActiveTurn(this.turnTabs, conversationKey, traceId, signal);
+      if (this.userCancelledTurnOwners.has(traceId)) {
+        throw new BrowserTurnCancelledError(traceId);
+      }
+    }
     const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
     if (sameTrace && sameTrace.interactionMode !== "automatic") {
       throw new Error(`Browser turn ${traceId} already belongs to Zero Risk interaction`);

@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **047** | Qwen Web từ chối lượt mới: conversation is currently active with another turn | `qwen-web`, `launcher`, `electron` | ✅ Đã Confirm | [047-qwen-active-turn-rejects-retry.md](./047-qwen-active-turn-rejects-retry.md) |
 | **046** | Qwen Web mở nhiều tab cho cùng cuộc trò chuyện chạm ngưỡng 5 tab | `qwen-web`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | ./046-qwen-multi-turn-duplicate-tabs-limit.md |
 | **045** | ChatGPT báo `Couldn't copy to clipboard` do synthetic click không tạo trusted user activation | `chatgpt-web`, `web`, `playwright`, `clipboard` | ✅ Đã Confirm | ./045-chatgpt-clipboard-copy-requires-focus.md |
 | **044** | Tool result còn nằm trong composer ChatGPT khiến Codex treo ở trạng thái Editing files | `chatgpt-web`, `web`, `playwright` | ✅ Đã Confirm | ./044-chatgpt-tool-result-stuck-in-composer.md |

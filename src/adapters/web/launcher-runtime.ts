@@ -48,6 +48,13 @@ type LauncherHeartbeatActivity = Extract<
   { phase: "heartbeat" }
 >;
 
+export interface StartLauncherBrowserTurnOps {
+  readDescriptor?: typeof readLauncherBrowserHostDescriptor;
+  isProcessRunning?: typeof processRunning;
+  notifyTurn?: typeof notifyLauncherTurn;
+  connectBrowserHost?: typeof connectLauncherBrowserHost;
+}
+
 export interface StartLauncherBrowserTurnOptions {
   descriptorPath: string;
   activity: LauncherStartActivity;
@@ -57,6 +64,7 @@ export interface StartLauncherBrowserTurnOptions {
     descriptor: LauncherBrowserHostDescriptor,
     leaseSurfaceId: string | undefined,
   ) => string | undefined;
+  ops?: StartLauncherBrowserTurnOps;
 }
 
 export interface LauncherBrowserTurnSession {
@@ -75,32 +83,60 @@ export interface LauncherBrowserTurnSession {
 export async function startLauncherBrowserTurn(
   options: StartLauncherBrowserTurnOptions,
 ): Promise<LauncherBrowserTurnSession | null> {
-  const descriptor = readLauncherBrowserHostDescriptor(options.descriptorPath);
-  if (!processRunning(descriptor.pid)) return null;
+  const readDescriptor =
+    options.ops?.readDescriptor ?? readLauncherBrowserHostDescriptor;
+  const checkProcessRunning = options.ops?.isProcessRunning ?? processRunning;
+  const notifyTurn = options.ops?.notifyTurn ?? notifyLauncherTurn;
+  const connectBrowserHost =
+    options.ops?.connectBrowserHost ?? connectLauncherBrowserHost;
 
-  const lease = await notifyLauncherTurn(
+  const descriptor = readDescriptor(options.descriptorPath);
+  if (!checkProcessRunning(descriptor.pid)) return null;
+
+  const lease = await notifyTurn(
     options.descriptorPath,
     options.activity,
     undefined,
     options.signal,
   );
-  const surfaceId = options.resolveSurfaceId
-    ? options.resolveSurfaceId(descriptor, lease.surfaceId)
-    : lease.surfaceId || descriptor.surfaceId;
-  const connection = await connectLauncherBrowserHost(
-    options.descriptorPath,
-    options.connectionTimeoutMs ?? 20_000,
-    surfaceId,
-    options.signal,
-  );
+  try {
+    const surfaceId = options.resolveSurfaceId
+      ? options.resolveSurfaceId(descriptor, lease.surfaceId)
+      : lease.surfaceId || descriptor.surfaceId;
+    const connection = await connectBrowserHost(
+      options.descriptorPath,
+      options.connectionTimeoutMs ?? 20_000,
+      surfaceId,
+      options.signal,
+    );
 
-  return {
-    connection,
-    surfaceId,
-    conversationId: lease.conversationId,
-    reused: lease.reused === true,
-    connectorBound: lease.connectorBound === true,
-  };
+    return {
+      connection,
+      surfaceId,
+      conversationId: lease.conversationId,
+      reused: lease.reused === true,
+      connectorBound: lease.connectorBound === true,
+    };
+  } catch (error) {
+    // Release the started Launcher turn lease on setup/CDP failure without
+    // forwarding the caller signal so /v1/turn/end reaches Launcher cleanly.
+    await notifyTurn(
+      options.descriptorPath,
+      {
+        phase: "end",
+        traceId: options.activity.traceId,
+        helperPid: options.activity.helperPid,
+        provider: options.activity.provider,
+        status: options.signal?.aborted ? "aborted" : "failed",
+        retain: false,
+        connectorBound: false,
+        conversationId: lease.conversationId,
+      },
+      undefined,
+      undefined,
+    ).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function closeLauncherBrowserTurn(

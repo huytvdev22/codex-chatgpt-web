@@ -227,7 +227,12 @@ export async function releaseWebTurnSurface(options: {
       // terminal phase=end cleanup. Reusing an already-aborted signal here
       // prevents Launcher from releasing the running surface, so the next
       // turn cannot match a ready retained conversation and opens a new tab.
-      signal: abortSignal?.aborted ? undefined : abortSignal,
+      // Không truyền abortSignal của request: SSE stream đóng ngay sau sự kiện
+      // `done` khiến req.signal bị hủy trong lúc phase=end còn đang gửi (fetch bị
+      // AbortError), Launcher giữ tab ở trạng thái running và từ chối lượt sau
+      // ("conversation is currently active with another turn"). phase=end đã có
+      // timeout riêng (LAUNCHER_TURN_END_TIMEOUT_MS).
+      signal: undefined,
       onError: releaseErr => {
         console.warn(
           `[${definition.logPrefix}] Không thể gửi phase=end tới launcher:`,
