@@ -3699,3 +3699,78 @@ test("off-on-off fresh conversation changes retire completed history before it c
     assert.equal(fixture.turnTabs.get(manual.id), savedChats ? undefined : manual);
   }
 });
+
+test("evictOldestReclaimableTurnTab reclaims error, aborted, and orphan tabs before ready tabs", () => {
+  const readyTab = { id: "ready-tab", ordinal: 1, status: "ready", lastHeartbeatAt: 10 };
+  const errorTab = { id: "error-tab", ordinal: 2, status: "error", lastHeartbeatAt: 20 };
+  const removed = [];
+  const fixture = {
+    turnTabs: new Map([[readyTab.id, readyTab], [errorTab.id, errorTab]]),
+    removeTurnTab(tab, abortRunning) {
+      removed.push([tab.id, abortRunning]);
+      this.turnTabs.delete(tab.id);
+    },
+  };
+
+  assert.equal(BrowserHost.prototype.evictOldestReclaimableTurnTab.call(fixture), true);
+  assert.deepEqual(removed, [["error-tab", false]]);
+  assert.equal(fixture.turnTabs.has("ready-tab"), true);
+});
+
+test("beginTurn reconciles multiple retained tabs by keeping the newest and closing extras", async () => {
+  const key = "k".repeat(64);
+  const older = {
+    id: "older-retained",
+    surfaceId: "s1",
+    status: "ready",
+    interactionMode: "automatic",
+    conversationKey: key,
+    connectorIdentity: "qwen-web",
+    connectorBound: true,
+    provider: "qwen",
+    lastHeartbeatAt: 100,
+    view: { webContents: { isDestroyed: () => false, setBackgroundThrottling() {} } },
+  };
+  const newer = {
+    id: "newer-retained",
+    surfaceId: "s2",
+    status: "ready",
+    interactionMode: "automatic",
+    conversationKey: key,
+    connectorIdentity: "qwen-web",
+    connectorBound: true,
+    provider: "qwen",
+    lastHeartbeatAt: 200,
+    view: { webContents: { isDestroyed: () => false, setBackgroundThrottling() {} } },
+  };
+  const removed = [];
+  const fixture = {
+    turnTabs: new Map([[older.id, older], [newer.id, newer]]),
+    userCancelledTurnOwners: new Set(),
+    logger: { warn() {} },
+    removeTurnTab(tab, abortRunning) {
+      removed.push(tab.id);
+      this.turnTabs.delete(tab.id);
+    },
+    syncViewVisibility() {},
+    writeDescriptor() {},
+  };
+
+  const lease = await BrowserHost.prototype.beginTurn.call(
+    fixture,
+    "trace-reconcile",
+    false,
+    process.pid,
+    key,
+    "qwen-web",
+    false,
+    "qwen",
+  );
+
+  assert.equal(lease.tabId, "newer-retained");
+  assert.equal(lease.surfaceId, "s2");
+  assert.equal(lease.reused, true);
+  assert.deepEqual(removed, ["older-retained"]);
+  assert.equal(fixture.turnTabs.has("newer-retained"), true);
+  assert.equal(fixture.turnTabs.has("older-retained"), false);
+});

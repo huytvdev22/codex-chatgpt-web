@@ -73,3 +73,75 @@ test("Qwen supports up to three independent conversation surfaces by default", (
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("Qwen prepares allocation by reclaiming stale/ready tabs with the same conversation key", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-same-key-"));
+  try {
+    const manager = new QwenSurfaceManager({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+    });
+    const key = "a".repeat(64);
+    const removed = [];
+    const tabs = new Map([
+      ["old-ready", { id: "old-ready", provider: "qwen", status: "ready", conversationKey: key, lastHeartbeatAt: 100 }],
+      ["other-ready", { id: "other-ready", provider: "qwen", status: "ready", conversationKey: "b".repeat(64), lastHeartbeatAt: 200 }],
+    ]);
+
+    manager.prepareAllocation(tabs, key, (tab) => {
+      removed.push(tab.id);
+      tabs.delete(tab.id);
+    });
+
+    assert.equal(removed.includes("old-ready"), true, "Must reclaim existing tab with the same conversation key");
+    assert.equal(tabs.has("old-ready"), false);
+    assert.equal(tabs.has("other-ready"), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Qwen prepareAllocation rejects allocation if conversation key has an active running turn with alive helper", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-active-conflict-"));
+  try {
+    const manager = new QwenSurfaceManager({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+    });
+    const key = "c".repeat(64);
+    const tabs = new Map([
+      ["active-tab", { id: "active-tab", provider: "qwen", status: "running", helperPid: process.pid, conversationKey: key }],
+    ]);
+
+    assert.throws(
+      () => manager.prepareAllocation(tabs, key, () => {}),
+      /Qwen Web conversation is currently active with another turn/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Qwen prepareAllocation cleans up orphan running tabs whose helper process has exited", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-orphan-cleanup-"));
+  try {
+    const manager = new QwenSurfaceManager({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+    });
+    const key = "d".repeat(64);
+    const removed = [];
+    // PID 99999999 hầu như chắc chắn không tồn tại
+    const tabs = new Map([
+      ["orphan-tab", { id: "orphan-tab", provider: "qwen", status: "running", helperPid: 99999999, conversationKey: key }],
+    ]);
+
+    manager.prepareAllocation(tabs, key, (tab) => {
+      removed.push(tab.id);
+      tabs.delete(tab.id);
+    });
+
+    assert.deepEqual(removed, ["orphan-tab"], "Must remove orphan running tab when helper process is dead");
+    assert.equal(tabs.size, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

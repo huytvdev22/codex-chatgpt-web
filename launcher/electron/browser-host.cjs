@@ -879,8 +879,15 @@ class BrowserHost {
     signal?.throwIfAborted();
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
+      const providerLabel = provider === "qwen"
+        ? "Qwen Web"
+        : (provider === "gemini"
+          ? "Google Gemini"
+          : (provider === "google-ai-studio"
+            ? "Google AI Studio"
+            : (provider === "m365" ? "M365 Copilot" : "ChatGPT Web")));
       throw new Error(
-        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
+        `${providerLabel} already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the account`,
       );
     }
     const id = randomBytes(12).toString("base64url");
@@ -1031,7 +1038,7 @@ class BrowserHost {
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
       throw new Error(
-        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
+        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the account`,
       );
     }
     const id = randomBytes(12).toString("base64url");
@@ -1146,6 +1153,20 @@ class BrowserHost {
       .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0))[0];
     if (terminalManual) {
       this.removeTurnTab(terminalManual, false);
+      return true;
+    }
+    const deadTurn = [...this.turnTabs.values()]
+      .filter(tab => (tab.status === "error" || tab.status === "aborted") && tab.interactionMode !== "manual")
+      .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0))[0];
+    if (deadTurn) {
+      this.removeTurnTab(deadTurn, false);
+      return true;
+    }
+    const orphanTurn = [...this.turnTabs.values()]
+      .filter(tab => tab.status === "running" && tab.helperPid && !processRunning(tab.helperPid))
+      .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0))[0];
+    if (orphanTurn) {
+      this.removeTurnTab(orphanTurn, false);
       return true;
     }
     return BrowserHost.prototype.evictOldestRetainedTurnTab.call(this);
@@ -3084,7 +3105,17 @@ class BrowserHost {
       && (!connectorIdentity || tab.connectorBound === true)
     )) : [];
     if (retainedMatches.length > 1) {
-      throw new Error(`ChatGPT retained conversation ${conversationKey} owns multiple browser tabs`);
+      this.logger.warn("browser.multiple_retained_tabs_reconciled", {
+        conversationKey,
+        count: retainedMatches.length,
+      });
+      retainedMatches.sort((left, right) => (right.lastHeartbeatAt ?? 0) - (left.lastHeartbeatAt ?? 0));
+      const chosen = retainedMatches.shift();
+      for (const extra of retainedMatches) {
+        this.removeTurnTab(extra, false);
+      }
+      retainedMatches.length = 1;
+      retainedMatches[0] = chosen;
     }
     const exactRetained = retainedMatches[0];
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
@@ -3253,7 +3284,7 @@ class BrowserHost {
       }
     } else if (tab.provider === "qwen" && status === "completed") {
       const liveUrl = typeof tab.view?.webContents?.getURL === "function" ? tab.view.webContents.getURL() : undefined;
-      const rawId = conversationId || parseQwenConversationId(liveUrl) || tab.conversationId;
+      const rawId = conversationId || parseQwenConversationId(liveUrl) || tab.conversationId || (tab.conversationKey && this.qwenSurfaceManager?.conversationId(tab.conversationKey));
       const normalizedConversationId = normalizeQwenConversationId(rawId);
       if (normalizedConversationId && tab.conversationKey && this.qwenSurfaceManager) {
         tab.conversationId = this.qwenSurfaceManager.bind(tab.conversationKey, normalizedConversationId);

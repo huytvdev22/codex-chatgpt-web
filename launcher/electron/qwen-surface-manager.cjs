@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { processRunning } = require("./process-tree.cjs");
 
 const QWEN_HOME_URL = "https://chat.qwen.ai/";
 const QWEN_ORIGIN = "https://chat.qwen.ai";
@@ -87,7 +88,8 @@ class QwenConversationStore {
  * Điều phối mapping conversationKey sang Qwen conversation URL (/c/<uuid>).
  */
 class QwenSurfaceManager {
-  constructor({ descriptorPath }) {
+  constructor({ descriptorPath, maxSurfaces = MAX_QWEN_SURFACES } = {}) {
+    this.maxSurfaces = maxSurfaces;
     this.store = new QwenConversationStore(
       path.join(path.dirname(descriptorPath), "qwen-conversations.json"),
     );
@@ -106,25 +108,57 @@ class QwenSurfaceManager {
     return this.store.bind(conversationKey, conversationId);
   }
 
-  prepareAllocation(turnTabs, conversationKey, removeTab) {
-    const tabs = [...turnTabs.values()].filter(tab => tab.provider === "qwen");
-    if (tabs.some(tab => tab.conversationKey === conversationKey)) return;
+  qwenTabs(turnTabs) {
+    return [...(turnTabs?.values?.() || [])].filter(tab => tab?.provider === "qwen");
+  }
 
-    for (const reclaimable of tabs.filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")) {
-      removeTab(reclaimable);
-      tabs.splice(tabs.indexOf(reclaimable), 1);
+  evictOldestRetainedTab(turnTabs, removeTab) {
+    const candidate = this.qwenTabs(turnTabs)
+      .filter(tab => tab.status === "ready")
+      .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0))[0];
+    if (!candidate) return false;
+    removeTab(candidate);
+    return true;
+  }
+
+  prepareAllocation(turnTabs, conversationKey, removeTab) {
+    const tabs = this.qwenTabs(turnTabs);
+
+    // 1. Dọn dẹp tab trùng lặp của cùng conversationKey:
+    // prepareAllocation chỉ được gọi khi beginTurn KHÔNG tái sử dụng được tab cũ.
+    // Nếu tab cũ đang running và helper process vẫn sống -> xung đột lượt chạy đồng thời.
+    // Nếu tab cũ là ready, error, aborted hoặc orphan running -> đóng ngay để không tích tụ tab thừa.
+    if (conversationKey) {
+      const existingSameKey = tabs.filter(tab => tab.conversationKey === conversationKey);
+      for (const tab of existingSameKey) {
+        if (tab.status === "running" && tab.helperPid && processRunning(tab.helperPid)) {
+          throw new Error("Qwen Web conversation is currently active with another turn; wait for it to complete");
+        }
+        removeTab(tab);
+        const idx = tabs.indexOf(tab);
+        if (idx !== -1) tabs.splice(idx, 1);
+      }
     }
 
-    const limit = MAX_QWEN_SURFACES;
+    // 2. Dọn dẹp bất kỳ tab Qwen nào bị lỗi hoặc bị hủy (error/aborted)
+    for (const dead of tabs.filter(tab => tab.status === "error" || tab.status === "aborted")) {
+      removeTab(dead);
+      const idx = tabs.indexOf(dead);
+      if (idx !== -1) tabs.splice(idx, 1);
+    }
+
+    // 3. Đảm bảo tổng số tab Qwen không vượt quá maxSurfaces (3)
+    const limit = this.maxSurfaces;
     while (tabs.length >= limit) {
       const reclaimable = tabs
-        .filter(tab => tab.status === "ready")
+        .filter(tab => tab.status === "ready" && tab.interactionMode !== "manual")
         .sort((left, right) => (left.lastHeartbeatAt || 0) - (right.lastHeartbeatAt || 0))[0];
       if (!reclaimable) {
         throw new Error(`Qwen Web already has ${limit} active conversation surfaces`);
       }
       removeTab(reclaimable);
-      tabs.splice(tabs.indexOf(reclaimable), 1);
+      const idx = tabs.indexOf(reclaimable);
+      if (idx !== -1) tabs.splice(idx, 1);
     }
   }
 }
