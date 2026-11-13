@@ -23,7 +23,11 @@
           "Local HTTP API Gateway chạy trên 127.0.0.1:17841. Dùng trực tiếp với Web models (m365-copilot/gpt-5.6, m365-copilot, chatgpt-web) sau khi đăng nhập trong Launcher."
       },
       servers: [
-        { url: "http://127.0.0.1:17841", description: "Local Runtime Server (mặc định)" }
+        ...(window.location.port === "17841" || window.location.port === "17842"
+          ? [{ url: window.location.origin, description: "Current Running Server" }]
+          : []),
+        { url: "http://127.0.0.1:17842", description: "Source / Dev Launcher (npm run launcher:start)" },
+        { url: "http://127.0.0.1:17841", description: "Packaged App / CLI (bun run start)" }
       ],
       tags: [
         { name: "Health", description: "Kiểm tra trạng thái server" },
