@@ -23,6 +23,7 @@ or browser performance:
 - Verify compatibility with the Chromium version
   bundled in this project's Electron version.
 - Avoid unnecessary polyfills and dependencies.
+- **Browser Support:** Target Electron's bundled Chromium only; do not add cross-browser polyfills or legacy fallbacks for non-Chromium browsers.
 
 For Electron Main Process, Preload, IPC, Node.js,
 filesystem, SQLite, and background automation:
