@@ -6,8 +6,8 @@ import {
   promptCompiler,
   calculatePromptMetrics,
   UNIFIED_TOOL_PROTOCOL,
-  isPlanModeRequest,
 } from "../src/adapters/web/prompt/index";
+import { isPlanModeRequest } from "../src/adapters/web";
 import type { CodexParsedRequest } from "../src/types";
 
 function compileStatefulPrompt(parsed: CodexParsedRequest, rawBody?: unknown) {

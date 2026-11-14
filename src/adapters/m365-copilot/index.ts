@@ -10,7 +10,6 @@ export * from "../web/normalization";
 export * from "../web/prompt/index";
 export * from "../web/protocol";
 export * from "../web/tools";
-export * from "../web/harness";
 export {
   M365BrowserWorker,
   type M365TurnOptions,

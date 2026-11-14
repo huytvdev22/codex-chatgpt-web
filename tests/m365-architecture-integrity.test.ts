@@ -64,6 +64,11 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       path.resolve(process.cwd(), "src/services/responses-service.ts"),
     ).text();
     expect(responsesServiceSource.includes("adapters/web/turn-identity")).toBe(false);
+
+    // Legacy dead code modules must remain absent
+    expect(await Bun.file(path.resolve(sharedWebDir, "prompt/assembler.ts")).exists()).toBe(false);
+    expect(await Bun.file(path.resolve(sharedWebDir, "harness/index.ts")).exists()).toBe(false);
+    expect(await Bun.file(path.resolve(sharedWebDir, "conversation/conversation-store.ts")).exists()).toBe(false);
   });
 
   test("CI GATE: Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
@@ -98,7 +103,6 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     const sharedTools = await import("../src/adapters/web/tools");
 
     // Core Classes
-    expect(rootModule.M365AgentLoop).toBeDefined();
     expect(rootModule.M365OutputTranslator).toBeDefined();
     expect(rootModule.M365BrowserWorker).toBeDefined();
     expect(rootModule.M365ModelProvider).toBeDefined();

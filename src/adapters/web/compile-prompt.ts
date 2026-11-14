@@ -4,7 +4,11 @@ import {
   CodexRawPayload,
   type NormalizedCodexRequest,
 } from "./normalization";
-import { WebPromptCompiler, type PromptCompileResult } from "./prompt";
+import {
+  isImplementingPlanRequest,
+  WebPromptCompiler,
+  type PromptCompileResult,
+} from "./prompt";
 
 export interface CompileWebPromptOptions {
   assistantName: string;
@@ -38,4 +42,17 @@ export function compileWebPrompt(
     assistantName: options.assistantName,
     maxPromptChars: options.maxPromptChars,
   });
+}
+
+/**
+ * Kiểm tra yêu cầu hiện tại có đang ở Plan Mode (chỉ khảo sát và lập kế hoạch) hay không.
+ */
+export function isPlanModeRequest(parsed?: CodexParsedRequest): boolean {
+  if (!parsed || isImplementingPlanRequest(parsed)) {
+    return false;
+  }
+  const normalized = CodexPayloadNormalizer.normalize(
+    CodexRawPayload.from(parsed._rawBody || parsed),
+  );
+  return normalized.collaborationMode === "plan";
 }

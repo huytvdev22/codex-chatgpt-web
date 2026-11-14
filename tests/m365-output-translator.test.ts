@@ -7,9 +7,6 @@ import {
   PatchToolCallDetector,
   stripShellPrefix,
   BashCommandTranslator,
-  M365AgentLoop,
-  type IM365ModelClient,
-  type IToolExecutor,
 } from "../src/adapters/m365-copilot";
 
 describe("M365 Output Translator Specification Tests", () => {
@@ -307,77 +304,6 @@ describe("M365 Output Translator Specification Tests", () => {
       expect(res.tool_calls[0].function.name).toBe("read_file");
       expect(JSON.parse(res.tool_calls[0].function.arguments)).toEqual({ path: "package.json" });
     }
-  });
-
-  // ==========================================
-  // Agent Loop Test: Multi-step Execution
-  // ==========================================
-  test("Agent Loop: executes multi-turn tool calling until final answer", async () => {
-    // Giả lập M365 Model Client phản hồi qua 3 lượt:
-    // Lượt 1: M365 trả về strict tool_call git_status
-    // Lượt 2: Sau khi có kết quả git status, M365 trả về strict tool_call read_file "pom.xml"
-    // Lượt 3: Sau khi đọc pom.xml, M365 trả về Final Answer
-    const mockResponses = [
-      `<webResponse><tool_call>
-{
-  "name": "git_status",
-  "arguments": {}
-}
-</tool_call></webResponse>`,
-      `<webResponse><tool_call>
-{
-  "name": "read_file",
-  "arguments": { "path": "pom.xml" }
-}
-</tool_call></webResponse>`,
-      "<webResponse>Phân tích hoàn tất. Dự án sử dụng Java 17 và đã sửa lỗi phụ thuộc trong pom.xml.</webResponse>"
-    ];
-
-    let turn = 0;
-    const mockModelClient: IM365ModelClient = {
-      async call(_prompt) {
-        const response = mockResponses[turn] || "Xong";
-        turn++;
-        return response;
-      },
-    };
-
-    const executedTools: Array<{ name: string; args: Record<string, any> }> = [];
-    const mockToolExecutor: IToolExecutor = {
-      async execute(name, args) {
-        executedTools.push({ name, args });
-        if (name === "git_status") {
-          return "M pom.xml\n?? src/Test.java";
-        }
-        if (name === "read_file") {
-          return "<project><modelVersion>4.0.0</modelVersion><artifactId>test</artifactId></project>";
-        }
-        return "OK";
-      },
-    };
-
-    const agentLoop = new M365AgentLoop(mockModelClient, mockToolExecutor);
-
-    const result = await agentLoop.run("Kiểm tra thay đổi và phân tích pom.xml");
-
-    expect(result.status).toBe("completed");
-    expect(result.turns).toBe(3);
-    expect(result.finalAnswer).toBe("Phân tích hoàn tất. Dự án sử dụng Java 17 và đã sửa lỗi phụ thuộc trong pom.xml.");
-
-    // Xác nhận cả 2 tool đã được thực thi theo thứ tự
-    expect(executedTools.length).toBe(2);
-    expect(executedTools[0].name).toBe("git_status");
-    expect(executedTools[1].name).toBe("read_file");
-    expect(executedTools[1].args).toEqual({ path: "pom.xml" });
-
-    // Xác nhận lịch sử tin nhắn trong agent loop
-    expect(result.messages.length).toBe(6); // user, assistant(tc1), tool_result1, assistant(tc2), tool_result2, assistant(final)
-    expect(result.messages[0].role).toBe("user");
-    expect(result.messages[1].role).toBe("assistant");
-    expect(result.messages[2].role).toBe("tool_result");
-    expect(result.messages[3].role).toBe("assistant");
-    expect(result.messages[4].role).toBe("tool_result");
-    expect(result.messages[5].role).toBe("assistant");
   });
 
   // ==========================================
