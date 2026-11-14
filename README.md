@@ -34,7 +34,7 @@ Khi khởi chạy đầy đủ qua Electron Launcher, hệ thống gồm **3 ph�
              & cho phép Playwright kết nối vào qua CDP để gõ/đọc kết quả
 ```
 
-1. **Local Responses API Server (`src/server.ts`):** Tiến trình backend (Bun/Node) lắng nghe trên `127.0.0.1:17841`, nhận request từ Codex/client, kiểm tra model `m365-copilot` và chạy `WebTurnEngine` + `bridgeToResponsesSSE()`.
+1. **Local Responses API Server (`src/server.ts`, `src/controllers/`, `src/services/`):** Tiến trình backend (Bun/Node) lắng nghe trên `127.0.0.1:17841`, định tuyến request qua các Controller vào `ResponsesService`, phân giải model qua `ModelRegistry` → `AdapterRegistry` và chạy `WebTurnEngine` + `bridgeToResponsesSSE()`.
 2. **Electron Launcher (`launcher/electron/`, `launcher/src/`):** App desktop quản lý vòng đời (tự bật/tắt server qua `RuntimeSupervisor`), hiển thị giao diện cài đặt/trạng thái và chạy `BrowserControlServer` để điều phối lượt dùng trình duyệt.
 3. **Embedded Browser Host (`launcher/electron/browser-host.cjs`):** Trình duyệt Chromium nhúng ngay trong Electron, giữ session đăng nhập `m365.cloud.microsoft`, để `WebTurnEngine` dùng Playwright thao tác trực tiếp.
 
@@ -49,14 +49,15 @@ Hệ thống hoạt động như một **Local API Gateway + Browser Orchestrati
    - `serve` / `service`: Khởi chạy và quản lý tiến trình daemon server nền.
    - `doctor`: Kiểm tra sức khỏe toàn hệ thống.
 
-2. **Tầng Web / Controller (`src/server.ts`):**
-   - Hàm `serveUniversal()` mở HTTP server (ưu tiên `Bun.serve`, fallback sang `node:http`), lắng nghe 2 nhóm endpoint:
-     - **OpenAI-compatible API:** `GET /v1/models`, `POST /v1/responses`, `POST /v1/responses/compact`, `GET /docs`.
-     - **Admin / Control Endpoints:** `GET /healthz`, `POST /admin/drain`, `POST /admin/resume`, `POST /admin/cancel-turn`, `POST /admin/interrupt-turn`, `POST /admin/shutdown`.
+2. **Tầng Web Router & Controller (`src/server.ts`, `src/controllers/`):**
+   - `src/server.ts` đóng vai trò **Front Controller / Router** mỏng: mở HTTP server qua `serveUniversal()` (`src/controllers/universal-http-server.ts`), áp dụng CORS loopback, theo dõi vòng đời HTTP stream bằng `HttpTurnCounter` (`src/controllers/http-turn-counter.ts`) và điều phối request vào 3 Controller:
+     - `ModelsController` (`src/controllers/models-controller.ts`): `GET /v1/models` (đồng bộ catalog, `ETag`, metrics).
+     - `ResponsesController` (`src/controllers/responses-controller.ts`): `POST /v1/responses`, `POST /v1/responses/compact`, `GET /v1/responses` (426).
+     - `AdminController` (`src/controllers/admin-controller.ts`): `GET /docs`, `GET /healthz`, `POST /admin/drain`, `/admin/resume`, `/admin/cancel-turn`, `/admin/interrupt-turn`, `/admin/cancel-turns`, `/admin/shutdown`.
 
-3. **Tầng Routing & Service (`src/models/model-registry.ts`, `src/responses/`):**
-   - Khi nhận `POST /v1/responses`, request JSON được parse bởi `src/responses/parser.ts` và khôi phục ngữ cảnh (nếu có `previous_response_id`) qua `src/responses/state.ts`.
-   - `isProviderModel(model, "m365-copilot")` kiểm tra và định tuyến các model `m365-copilot` (`m365-copilot/...`) tới `createM365CopilotAdapter()` (`src/adapters/m365-copilot/`). Model khác sẽ bị từ chối với HTTP `400 invalid_request_error`.
+3. **Tầng Service & Registry (`src/services/responses-service.ts`, `src/models/`, `src/adapters/adapter-registry.ts`, `src/responses/`):**
+   - `ResponsesService` xử lý toàn bộ nghiệp vụ cho `/v1/responses` và `/v1/responses/compact`: khôi phục ngữ cảnh (`src/responses/state.ts`), parse request (`src/responses/parser.ts`), chạy `adapter.runTurn()` và đẩy kết quả qua `bridgeToResponsesSSE()` / `buildResponseJSON()`.
+   - Phân giải động theo đa hình: `ModelRegistry.getInstance().findProvider(model)` (`src/models/model-registry.ts`) xác định `providerId`, sau đó `AdapterRegistry.getInstance().createAdapter(providerId)` (`src/adapters/adapter-registry.ts`) khởi tạo `ProviderAdapter` tương ứng mà tầng HTTP không cần biết adapter cụ thể nào. Model không hợp lệ bị từ chối với HTTP `400 invalid_request_error` kèm danh sách provider đang bật động.
 
 4. **Tầng Core Engine: `WebTurnEngine` (`src/adapters/web/engine.ts`):**
    - Áp dụng **Template Method / Strategy Pattern**: `m365-copilot` khai báo cấu hình `WebProviderDefinition`, còn toàn bộ vòng đời xử lý nằm trong `WebTurnEngine.runTurn()`:
@@ -81,13 +82,22 @@ Hệ thống hoạt động như một **Local API Gateway + Browser Orchestrati
 codex-chatgpt-web/
 ├── src/
 │   ├── cli.ts                        # Điểm vào CLI (setup, serve, doctor, route, service...)
-│   ├── server.ts                     # HTTP server (Bun.serve / node:http), routing & /admin/*
+│   ├── server.ts                     # Front Controller / Router mỏng & facade tương thích
+│   ├── controllers/                  # Tầng HTTP Controller & tracking stream
+│   │   ├── universal-http-server.ts  # Adapter HTTP thống nhất (Bun.serve / node:http) & CORS loopback
+│   │   ├── http-turn-counter.ts      # HttpTurnCounter theo dõi & hủy HTTP/SSE streams
+│   │   ├── models-controller.ts      # ModelsController (GET /v1/models)
+│   │   ├── responses-controller.ts   # ResponsesController (POST /v1/responses, /compact)
+│   │   └── admin-controller.ts       # AdminController (/docs, /healthz, /admin/*)
+│   ├── services/
+│   │   └── responses-service.ts      # ResponsesService điều phối turn, compaction & SSE/JSON bridge
 │   ├── bridge.ts                     # Chuyển AdapterEvent -> Responses API SSE / JSON
 │   ├── service.ts                    # Quản lý daemon service & điều khiển active turns
 │   ├── setup.ts                      # Quy trình cài đặt runtime & browser host
 │   ├── codex-integration*.ts         # Đọc/ghi an toàn ~/.codex/config.toml & integration journal
 │   ├── models/
-│   │   ├── model-registry.ts         # Khai báo Web provider m365-copilot & routes
+│   │   ├── base-model-provider.ts    # Abstract BaseModelProvider (Template Method cho model catalog)
+│   │   ├── model-registry.ts         # Registry trung tâm quản lý các BaseModelProvider
 │   │   └── model-catalog.ts          # Tạo và đồng bộ model catalog cục bộ cho Codex
 │   ├── responses/
 │   │   ├── parser.ts                 # Parse request chuẩn Responses API
@@ -96,6 +106,7 @@ codex-chatgpt-web/
 │   │   └── schema.ts                 # Schema định nghĩa dữ liệu Responses API
 │   └── adapters/
 │       ├── base.ts                   # Interface ProviderAdapter
+│       ├── adapter-registry.ts       # AdapterRegistry map providerId -> ProviderAdapter factory
 │       ├── web/                      # Shared Web Turn Engine dùng chung cho Web provider
 │       │   ├── engine.ts             # WebTurnEngine (orchestrator chính)
 │       │   ├── definition.ts         # Contract cấu hình WebProviderDefinition

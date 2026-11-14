@@ -1,685 +1,66 @@
-import { httpStatusFromTerminalError } from "./lib/errors";
-import { extractCodexTurnIdentityFromBody } from "./adapters/web/turn-identity";
-import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
-import type { AppConfig } from "./config";
-import { providerConfig } from "./config";
-import { AsyncEventQueue } from "./event-queue";
-import { readJsonRequestBody } from "./http-body";
-import http from "node:http";
-import { createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-
-export interface UniversalServer {
-  port: number;
-  stop: (closeActiveConnections?: boolean) => Promise<void> | void;
-}
-
-function serveUniversal(options: {
-  hostname: string;
-  port: number;
-  idleTimeout?: number;
-  fetch: (req: Request) => Promise<Response>;
-}): UniversalServer {
-  if (typeof (globalThis as unknown as { Bun?: { serve: (opts: unknown) => UniversalServer } }).Bun !== "undefined") {
-    return (globalThis as any).Bun.serve(options);
-  }
-  const server = http.createServer(async (nodeReq, nodeRes) => {
-    try {
-      const url = new URL(nodeReq.url ?? "/", `http://${nodeReq.headers.host || options.hostname}`);
-      const bodyChunks: Buffer[] = [];
-      for await (const chunk of nodeReq) {
-        bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      const body = ["GET", "HEAD"].includes(nodeReq.method ?? "") ? undefined : Buffer.concat(bodyChunks);
-      const req = new Request(url.href, {
-        method: nodeReq.method,
-        headers: new Headers(nodeReq.headers as Record<string, string>),
-        body,
-      });
-      const res = await options.fetch(req);
-      nodeRes.writeHead(res.status, res.statusText, Object.fromEntries(res.headers.entries()));
-      if (res.body) {
-        const reader = res.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          nodeRes.write(value);
-        }
-      }
-      nodeRes.end();
-    } catch (err: unknown) {
-      if (!nodeRes.headersSent) {
-        nodeRes.writeHead(500, { "content-type": "application/json" });
-        nodeRes.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
-      }
-    }
-  });
-
-  server.listen(options.port, options.hostname);
-  return {
-    port: options.port,
-    stop: async () => {
-      await new Promise<void>(resolve => server.close(() => resolve()));
-    },
-  };
-}
+import type { ProviderAdapterFactory } from "./adapters/adapter-registry";
+import { formatErrorResponse } from "./bridge";
+import { reconcileCodexModelCatalogConfig, type CodexModelContextOverride } from "./codex-integration";
+import type { AppConfig } from "./config";
+import { AdminController } from "./controllers/admin-controller";
+import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./controllers/http-turn-counter";
+import { ModelsController, type ModelCatalogFailure } from "./controllers/models-controller";
+import { ResponsesController } from "./controllers/responses-controller";
+import { applyLoopbackCors, serveUniversal, type UniversalServer } from "./controllers/universal-http-server";
 import { ModelCatalog } from "./models/model-catalog";
-import {
-  readCodexModelContextOverride,
-  readCodexSubagentProtocol,
-  reconcileCodexModelCatalogConfig,
-  type CodexModelContextOverride,
-} from "./codex-integration";
-import { ModelRegistry } from "./models/model-registry";
-import { createM365CopilotAdapter } from "./adapters/m365-copilot";
-import { activeWebTurnRegistry } from "./adapters/web";
-import {
-  buildCompactV1Output,
-  COMPACT_PROMPT,
-  decodeCompactionSummary,
-  extractCompactUserMessages,
-} from "./responses/compaction";
-import { parseRequest } from "./responses/parser";
-import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
-import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
-import type { CodexProviderConfig } from "./types";
-import type { ProviderAdapter } from "./adapters/base";
-import { VERSION } from "./version";
+import { flushResponseState } from "./responses/state";
+import { ResponsesService, type ResponseRequestOptions } from "./services/responses-service";
 
-type HttpTrackedEndpoint = "models" | "responses" | "compact" | "unspecified";
+export { HttpTurnCounter, type HttpStreamFailureEvidence, type NativeCodexTurnIdentity } from "./controllers/http-turn-counter";
+export { type UniversalServer } from "./controllers/universal-http-server";
+export { type ResponseRequestOptions } from "./services/responses-service";
 
-export interface NativeCodexTurnIdentity {
-  threadId: string;
-  turnId: string;
-}
+const defaultModelsController = new ModelsController();
+const defaultResponsesController = new ResponsesController();
 
-export interface HttpStreamFailureEvidence {
-  httpTurnId: number;
-  endpoint: HttpTrackedEndpoint;
-  reader: "client" | "windows_lifecycle";
-  platform: NodeJS.Platform;
-  chunks: number;
-  bytes: number;
-  errorName: string;
-  errorCode: string;
-}
-
-type HttpStreamFailureReporter = (evidence: HttpStreamFailureEvidence) => void;
-
-function safeStreamErrorField(value: unknown, fallback: string): string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value)
-    ? value
-    : fallback;
-}
-
-function streamFailureEvidence(
-  error: unknown,
-  httpTurnId: number,
-  endpoint: HttpTrackedEndpoint,
-  reader: HttpStreamFailureEvidence["reader"],
-  platform: NodeJS.Platform,
-  chunks: number,
-  bytes: number,
-): HttpStreamFailureEvidence {
-  const candidate = error !== null && typeof error === "object"
-    ? error as { name?: unknown; code?: unknown }
-    : {};
-  return {
-    httpTurnId,
-    endpoint,
-    reader,
-    platform,
-    chunks,
-    bytes,
-    errorName: safeStreamErrorField(candidate.name, "Error"),
-    errorCode: safeStreamErrorField(candidate.code, "unknown"),
-  };
-}
-
-const reportHttpStreamFailure: HttpStreamFailureReporter = evidence => {
-  console.warn(`[codex-chatgpt-web] http_stream_failed ${JSON.stringify(evidence)}`);
-};
-
-function emitHttpStreamFailure(
-  reporter: HttpStreamFailureReporter,
-  evidence: HttpStreamFailureEvidence,
-): void {
-  try {
-    reporter(evidence);
-  } catch {
-    // Diagnostics are a side channel: they must never replace the source stream error or retain
-    // HTTP turn ownership after the client has already observed that failure.
-  }
-}
-
-export class HttpTurnCounter {
-  private readonly active = new Map<number, {
-    abort: AbortController;
-    done: Promise<void>;
-    finish: () => void;
-    identity?: NativeCodexTurnIdentity;
-  }>();
-  private readonly interrupted = new Map<string, unknown>();
-  private nextId = 1;
-
-  private identityKey(identity: NativeCodexTurnIdentity): string {
-    return `${identity.threadId}\u0000${identity.turnId}`;
-  }
-
-  private rememberInterrupted(identity: NativeCodexTurnIdentity, reason: unknown): void {
-    const key = this.identityKey(identity);
-    this.interrupted.delete(key);
-    this.interrupted.set(key, reason);
-    while (this.interrupted.size > 1_024) {
-      const oldest = this.interrupted.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.interrupted.delete(oldest);
-    }
-  }
-
-  constructor(private readonly reportStreamFailure: HttpStreamFailureReporter = reportHttpStreamFailure) {}
-
-  count(): number {
-    return this.active.size;
-  }
-
-  async cancelAll(reason: unknown = new Error("Active HTTP turns cancelled")): Promise<number> {
-    const turns = [...this.active.values()];
-    for (const turn of turns) {
-      if (!turn.abort.signal.aborted) turn.abort.abort(reason);
-    }
-    await Promise.all(turns.map(turn => turn.done));
-    return turns.length;
-  }
-
-  async cancelTurn(
-    identity: NativeCodexTurnIdentity,
-    reason: unknown = new DOMException("Codex turn interrupted", "AbortError"),
-  ): Promise<number> {
-    const cancellation = this.beginCancelTurn(identity, reason);
-    await cancellation.settlement;
-    return cancellation.cancelled;
-  }
-
-  beginCancelTurn(
-    identity: NativeCodexTurnIdentity,
-    reason: unknown = new DOMException("Codex turn interrupted", "AbortError"),
-  ): { cancelled: number; settlement: Promise<void> } {
-    this.rememberInterrupted(identity, reason);
-    const turns = [...this.active.values()].filter(turn => (
-      turn.identity?.threadId === identity.threadId && turn.identity.turnId === identity.turnId
-    ));
-    for (const turn of turns) {
-      if (!turn.abort.signal.aborted) turn.abort.abort(reason);
-    }
-    return {
-      cancelled: turns.length,
-      settlement: Promise.all(turns.map(turn => turn.done)).then(() => undefined),
-    };
-  }
-
-  async track(
-    run: (
-      signal: AbortSignal,
-      bindIdentity: (identity: NativeCodexTurnIdentity) => void,
-    ) => Promise<Response>,
-    clientSignal?: AbortSignal,
-    platform: NodeJS.Platform = process.platform,
-    endpoint: HttpTrackedEndpoint = "unspecified",
-  ): Promise<Response> {
-    const id = this.nextId++;
-    const abort = new AbortController();
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    const tracked: {
-      abort: AbortController;
-      done: Promise<void>;
-      finish: () => void;
-      identity?: NativeCodexTurnIdentity;
-    } = { abort, done, finish };
-    this.active.set(id, tracked);
-    let released = false;
-    let clientAbortListener: (() => void) | undefined;
-    let streamAbortListener: (() => void) | undefined;
-    const release = () => {
-      if (released) return;
-      released = true;
-      this.active.delete(id);
-      if (clientSignal && clientAbortListener) {
-        clientSignal.removeEventListener("abort", clientAbortListener);
-        clientAbortListener = undefined;
-      }
-      if (streamAbortListener) abort.signal.removeEventListener("abort", streamAbortListener);
-      finish();
-    };
-    clientAbortListener = () => abort.abort(clientSignal?.reason);
-    if (clientSignal?.aborted) abort.abort(clientSignal.reason);
-    else clientSignal?.addEventListener("abort", clientAbortListener, { once: true });
-
-    try {
-      const response = await run(abort.signal, identity => {
-        if (!identity.threadId.trim() || !identity.turnId.trim()) {
-          throw new Error("Native Codex turn identity must contain a threadId and turnId");
-        }
-        if (tracked.identity
-          && (tracked.identity.threadId !== identity.threadId || tracked.identity.turnId !== identity.turnId)) {
-          throw new Error("An HTTP request cannot change its native Codex turn identity");
-        }
-        tracked.identity = identity;
-        const interruptedReason = this.interrupted.get(this.identityKey(identity));
-        if (interruptedReason !== undefined && !abort.signal.aborted) abort.abort(interruptedReason);
-      });
-      if (!response.body) {
-        release();
-        return response;
-      }
-      if (abort.signal.aborted) {
-        await response.body.cancel(abort.signal.reason).catch(() => {});
-        release();
-        return new Response(null, { status: 499, statusText: "Client Closed Request" });
-      }
-
-      if (platform !== "win32") {
-        // Bun's async-pull teardown bug is Windows-only. On Darwin/Linux, preserve the direct
-        // pull chain: it keeps HTTP backpressure native and lets a client body cancellation reach
-        // the original SSE reader without an eagerly drained tee branch racing the socket writer.
-        const reader = response.body.getReader();
-        const reportStreamFailure = this.reportStreamFailure;
-        let chunks = 0;
-        let bytes = 0;
-        streamAbortListener = () => {
-          void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
-        };
-        abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-        const body = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            try {
-              const chunk = await reader.read();
-              if (chunk.done) {
-                release();
-                controller.close();
-                return;
-              }
-              chunks += 1;
-              bytes += chunk.value.byteLength;
-              controller.enqueue(chunk.value);
-            } catch (error) {
-              if (!abort.signal.aborted) {
-                emitHttpStreamFailure(reportStreamFailure, streamFailureEvidence(
-                  error,
-                  id,
-                  endpoint,
-                  "client",
-                  platform,
-                  chunks,
-                  bytes,
-                ));
-              }
-              release();
-              controller.error(error);
-            }
-          },
-          async cancel(reason) {
-            try {
-              await reader.cancel(reason);
-            } finally {
-              release();
-            }
-          },
-        });
-        return new Response(body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-      }
-
-      // Windows-safe Bun#32111 shape: the client gets a native tee branch,
-      // never a JS ReadableStream with async pull(). The second branch is consumed only
-      // to observe completion. The request signal releases lifecycle ownership immediately
-      // when the client disconnects and cancels the observer branch.
-      const [clientBody, lifecycleBody] = response.body.tee();
-      const reader = lifecycleBody.getReader();
-      let chunks = 0;
-      let bytes = 0;
-      streamAbortListener = () => {
-        void Promise.allSettled([
-          reader.cancel(abort.signal.reason),
-          clientBody.cancel(abort.signal.reason),
-        ]).finally(release);
-      };
-      abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-      void (async () => {
-        try {
-          for (;;) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            chunks += 1;
-            bytes += chunk.value.byteLength;
-            // Consume eagerly so the lifecycle branch never backpressures the client branch.
-          }
-        } catch (error) {
-          if (!abort.signal.aborted) {
-            emitHttpStreamFailure(this.reportStreamFailure, streamFailureEvidence(
-              error,
-              id,
-              endpoint,
-              "windows_lifecycle",
-              platform,
-              chunks,
-              bytes,
-            ));
-          }
-          // Stream failure is delivered to the client branch; lifecycle cleanup stays best-effort.
-        } finally {
-          release();
-        }
-      })();
-      return new Response(clientBody, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
-    } catch (error) {
-      release();
-      throw error;
-    }
-  }
-}
-
-type WebAdapterFactory = () => ProviderAdapter;
-
-export interface ResponseRequestOptions {
-  /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
-  rememberState?: boolean;
-  /** Observe the exact production adapter stream when invoking the handler in-process. */
-  onAdapterEvent?: (event: AdapterEvent) => void;
-  /** Bind the physical HTTP stream to the exact native Codex turn that owns it. */
-  onTurnIdentity?: (identity: NativeCodexTurnIdentity) => void;
-}
-
-interface ModelCatalogFailure {
-  stage: "config" | "request" | "transport" | "upstream" | "catalog";
-  code?: string;
-}
-
-function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
-  if (!error || typeof error !== "object") return { stage };
-  for (const source of [error, "cause" in error ? error.cause : undefined]) {
-    const code = source && typeof source === "object" && "code" in source ? source.code : undefined;
-    if (typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code)) return { stage, code };
-  }
-  const name = "name" in error ? error.name : undefined;
-  if (name === "AbortError") return { stage, code: "ABORT_ERR" };
-  if (name === "TimeoutError") return { stage, code: "ETIMEDOUT" };
-  return { stage };
-}
-
+/**
+ * Facade tương thích ngược cho `GET /v1/models` (được dùng bởi các test trực tiếp).
+ */
 export async function modelsRequest(
-  _req: Request,
+  req: Request,
   config: AppConfig,
   contextOverride?: () => CodexModelContextOverride | undefined,
   onFailure?: (failure: ModelCatalogFailure) => void,
 ): Promise<Response> {
-  let catalog: Record<string, unknown>;
-  try {
-    contextOverride?.();
-    catalog = ModelCatalog.getInstance().buildAndSyncCatalog(config);
-  } catch (error) {
-    onFailure?.(modelCatalogFailure("catalog", error));
-    return formatErrorResponse(500, "server_error", error instanceof Error ? error.message : String(error));
-  }
-  const body = JSON.stringify(catalog);
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-      "etag": `W/\"${createHash("sha256").update(body).digest("base64url")}\"`,
-    },
-  });
+  return await defaultModelsController.handleModelsRequest(req, config, contextOverride, onFailure);
 }
 
-function toolBridgeMaps(parsed: CodexParsedRequest): {
-  toolNsMap: Map<string, { namespace: string; name: string }>;
-  freeformToolNames: Set<string>;
-  toolSearchToolNames: Set<string>;
-} {
-  const toolNsMap = new Map<string, { namespace: string; name: string }>();
-  const freeformToolNames = new Set<string>();
-  const toolSearchToolNames = new Set<string>();
-  for (const tool of parsed.context.tools ?? []) {
-    if (tool.namespace) toolNsMap.set(namespacedToolName(tool.namespace, tool.name), { namespace: tool.namespace, name: tool.name });
-    if (tool.freeform) freeformToolNames.add(tool.name);
-    if (tool.toolSearch) toolSearchToolNames.add(tool.name);
-  }
-  return { toolNsMap, freeformToolNames, toolSearchToolNames };
-}
-
-async function handleM365ResponseRequest(
-  req: Request,
-  raw: unknown,
-  requestedModel: string,
-  options: ResponseRequestOptions = {},
-  adapterFactory: WebAdapterFactory = createM365CopilotAdapter,
-): Promise<Response> {
-  const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
-    ? (raw as { previous_response_id?: unknown }).previous_response_id
-    : undefined;
-  const rawObj = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
-  const requestId = typeof rawObj.id === "string" ? rawObj.id : `req_${createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 12)}`;
-  const expanded = expandPreviousResponseInput(raw);
-  if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
-    return formatErrorResponse(
-      409,
-      "invalid_request_error",
-      "Local continuation state for previous_response_id is unavailable; refusing to run M365 Copilot with partial Codex context. Compact the Codex task or start a new task before retrying.",
-    );
-  }
-
-  let parsed: CodexParsedRequest;
-  try {
-    parsed = parseRequest(expanded);
-    const identity = extractCodexTurnIdentityFromBody(expanded);
-    if (identity.threadId && identity.turnId) {
-      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-    }
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
-
-  const identity = extractCodexTurnIdentityFromBody(expanded);
-  const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
-
-  console.log(`[m365-turn] [start] requestId=${requestId} conversationId=${conversationId} turnId=${identity.turnId ?? "none"} model=${requestedModel}`);
-
-  const adapter = adapterFactory();
-  const queue = new AsyncEventQueue<AdapterEvent>();
-  const abort = new AbortController();
-  if (req.signal.aborted) abort.abort();
-  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
-
-    const run = async () => {
-      console.log(`[m365-turn] [busy] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
-      try {
-        await adapter.runTurn(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
-          options.onAdapterEvent?.(event);
-          queue.push(event);
-        });
-        console.log(`[m365-turn] [completed] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
-      } catch (error) {
-        console.error(`[m365-turn] [error] requestId=${requestId} conversationId=${conversationId} error=${error instanceof Error ? error.message : String(error)}`);
-        const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
-        options.onAdapterEvent?.(event);
-        queue.push(event);
-      } finally {
-        queue.close();
-        console.log(`[m365-turn] [idle] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()} closed=true`);
-      }
-    };
-
-    const maps = toolBridgeMaps(parsed);
-    const responseModel = requestedModel;
-
-    const rememberCompletedResponse = (response: Record<string, unknown>): void => {
-      if (options.rememberState !== false) {
-        rememberResponseState(parsed._rawBody, response, {
-          force: true,
-        });
-      }
-    };
-
-    if (parsed.stream) {
-      console.log(`[m365-stream] [open] requestId=${requestId} conversationId=${conversationId}`);
-      void run();
-      const stream = bridgeToResponsesSSE(
-        queue,
-        responseModel,
-        maps.toolNsMap,
-        maps.freeformToolNames,
-        maps.toolSearchToolNames,
-        () => {
-          console.log(`[m365-stream] [abort] requestId=${requestId} conversationId=${conversationId}`);
-          abort.abort();
-        },
-        2_000,
-        {
-          hideThinkingSummary: parsed.options.hideThinkingSummary,
-          onCompletedResponse: rememberCompletedResponse,
-          onTerminal: status => {
-            console.log(`[m365-stream] [terminal] requestId=${requestId} conversationId=${conversationId} status=${status}`);
-          },
-        },
-      );
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-          "X-Accel-Buffering": "no",
-        },
-      });
-    }
-
-    await run();
-    const events = await queue.collect();
-    const json = buildResponseJSON(events, responseModel, {
-      hideThinkingSummary: parsed.options.hideThinkingSummary,
-      toolNsMap: maps.toolNsMap,
-      freeformToolNames: maps.freeformToolNames,
-      toolSearchToolNames: maps.toolSearchToolNames,
-    });
-    rememberCompletedResponse(json);
-    return Response.json(json);
-}
-
+/**
+ * Facade tương thích ngược cho `POST /v1/responses` (được dùng bởi các test trực tiếp).
+ */
 export async function responseRequest(
   req: Request,
   _config: AppConfig,
-  adapterFactory: WebAdapterFactory = createM365CopilotAdapter,
+  adapterFactory?: ProviderAdapterFactory,
   options: ResponseRequestOptions = {},
 ): Promise<Response> {
-  let raw: unknown;
-  try {
-    raw = await readJsonRequestBody(req);
-  } catch (error) {
-    return formatErrorResponse(
-      400,
-      "invalid_request_error",
-      error instanceof Error ? error.message : "Request body must be valid JSON",
-    );
-  }
-  const requestedModel = raw && typeof raw === "object" && !Array.isArray(raw)
-    ? (raw as { model?: unknown }).model
-    : undefined;
-  try {
-    const identity = extractCodexTurnIdentityFromBody(raw);
-    if (identity.threadId && identity.turnId) {
-      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-    }
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
-  if (typeof requestedModel === "string" && ModelRegistry.getInstance().isProviderModel(requestedModel, "m365-copilot")) {
-    return await handleM365ResponseRequest(req, raw, requestedModel, options, adapterFactory);
-  }
-  if (typeof requestedModel === "string" && requestedModel.trim().length > 0) {
-    return formatErrorResponse(
-      400,
-      "invalid_request_error",
-      `Unsupported model '${requestedModel}'. Only m365-copilot models are enabled.`,
-    );
-  }
-  return formatErrorResponse(400, "invalid_request_error", "Missing or invalid model parameter");
+  return await defaultResponsesController.handleResponses(req, options, adapterFactory);
 }
 
+/**
+ * Facade tương thích ngược cho `POST /v1/responses/compact` (được dùng bởi các test trực tiếp).
+ */
 export async function compactRequest(
   req: Request,
-  config: AppConfig,
-  adapterFactory: WebAdapterFactory = createM365CopilotAdapter,
+  _config: AppConfig,
+  adapterFactory?: ProviderAdapterFactory,
   options: Pick<ResponseRequestOptions, "onTurnIdentity"> = {},
 ): Promise<Response> {
-  let raw: Record<string, unknown>;
-  try {
-    const parsed = await readJsonRequestBody(req);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
-    raw = parsed as Record<string, unknown>;
-  } catch (error) {
-    return formatErrorResponse(
-      400,
-      "invalid_request_error",
-      error instanceof Error ? error.message : "Compaction request body must be a JSON object",
-    );
-  }
-  const headerTurnMetadata = req.headers.get("x-codex-turn-metadata");
-  if (headerTurnMetadata) {
-    const existingMetadata = raw.client_metadata;
-    const clientMetadata = existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
-      ? existingMetadata as Record<string, unknown>
-      : {};
-    raw = {
-      ...raw,
-      client_metadata: {
-        ...clientMetadata,
-        // `/responses/compact` carries native turn authority in this canonical Codex header,
-        // unlike ordinary `/responses` payloads where the same value also appears in the body.
-        "x-codex-turn-metadata": headerTurnMetadata,
-      },
-    };
-  }
-  try {
-    const identity = extractCodexTurnIdentityFromBody(raw);
-    if (identity.threadId && identity.turnId) {
-      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-    }
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
-  if (typeof raw.model !== "string" || !raw.model) {
-    return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
-  }
-  if (ModelRegistry.getInstance().isProviderModel(raw.model, "m365-copilot")) {
-    const input = Array.isArray(raw.input) ? raw.input : [];
-    const headers = new Headers(req.headers);
-    headers.set("content-type", "application/json");
-    const internal = new Request("http://127.0.0.1/v1/responses", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
-      signal: req.signal,
-    });
-    return await responseRequest(internal, config, adapterFactory, options);
-  }
-  return formatErrorResponse(
-    400,
-    "invalid_request_error",
-    `Unsupported model '${raw.model}'. Only m365-copilot models are enabled.`,
-  );
+  return await defaultResponsesController.handleCompact(req, options, adapterFactory);
 }
 
+/**
+ * Khởi chạy HTTP server cục bộ và định tuyến request tới các Controller tương ứng.
+ */
 export function startServer(
   config: AppConfig,
-  dependencies: { adapterFactory?: WebAdapterFactory } = {},
+  dependencies: { adapterFactory?: ProviderAdapterFactory } = {},
 ): UniversalServer {
   try {
     ModelCatalog.getInstance().ensureManagedCatalogFile(config);
@@ -687,264 +68,17 @@ export function startServer(
   } catch (error) {
     console.warn(`[codex-chatgpt-web] could not sync model catalog: ${error instanceof Error ? error.message : String(error)}`);
   }
+
   const startedAt = Date.now();
   let draining = false;
   let shutdownPromise: Promise<void> | undefined;
-  let successfulModelCatalogRequests = 0;
-  let lastSuccessfulModelCatalogRequestAt: string | null = null;
-  let modelCatalogRequests = 0;
-  let lastModelCatalogResult: {
-    request: number; at: string; status: number; failure?: ModelCatalogFailure;
-  } | null = null;
+
   const httpTurns = new HttpTurnCounter();
-  const activity = () => ({
-    active_http_turns: httpTurns.count(),
-    active_browser_turns: activeWebTurnRegistry.activeCount(),
-  });
-  const controlAuthorized = (req: Request): boolean => {
-    const header = req.headers.get("authorization") ?? "";
-    const expected = Buffer.from(`Bearer ${config.controlToken}`);
-    const actual = Buffer.from(header);
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
-  };
-  const LOOPBACK_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
-  const applyLoopbackCors = (req: Request, res: Response): Response => {
-    const origin = req.headers.get("origin");
-    if (!origin || !LOOPBACK_ORIGIN_RE.test(origin)) return res;
-    const headers = new Headers(res.headers);
-    headers.set("access-control-allow-origin", origin);
-    headers.set("vary", "Origin");
-    headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
-    headers.set("access-control-allow-headers", "Content-Type, Authorization");
-    return new Response(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers,
-    });
-  };
-  const handleRequest = async (req: Request): Promise<Response> => {
-      if (req.method === "OPTIONS") {
-        return new Response(null, { status: 204 });
-      }
-      const url = new URL(req.url);
-      if (req.method === "GET" && (url.pathname === "/docs" || url.pathname === "/swagger")) {
-        try {
-          const swaggerPath = resolve(import.meta.dir, "..", "docs", "swagger.html");
-          const html = readFileSync(swaggerPath, "utf8");
-          return new Response(html, {
-            status: 200,
-            headers: { "content-type": "text/html; charset=utf-8" },
-          });
-        } catch {
-          return new Response("Swagger UI not found", { status: 404 });
-        }
-      }
-      if (req.method === "GET" && url.pathname === "/healthz") {
-        return Response.json({
-          status: "ok",
-          service: "codex-chatgpt-web",
-          version: VERSION,
-          mode: config.mode,
-          pid: process.pid,
-          port: config.port,
-          uptime: (Date.now() - startedAt) / 1_000,
-          accepting_turns: !draining,
-          successful_model_catalog_requests: successfulModelCatalogRequests,
-          last_successful_model_catalog_request_at: lastSuccessfulModelCatalogRequestAt,
-          model_catalog_requests: modelCatalogRequests,
-          last_model_catalog_result: lastModelCatalogResult,
-          ...activity(),
-        });
-      }
-      if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        draining = url.pathname === "/admin/drain";
-                return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        let traceId = "";
-        let reasonText: string | undefined;
-        try {
-          const body = await req.json() as { traceId?: unknown; reason?: unknown };
-          traceId = typeof body?.traceId === "string" ? body.traceId.trim() : "";
-          if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) {
-            throw new Error("Browser turn trace id is invalid");
-          }
-          if (typeof body?.reason === "string" && body.reason.trim()) {
-            reasonText = body.reason.trim();
-          }
-        } catch (error) {
-          return Response.json(
-            { status: "error", error: error instanceof Error ? error.message : String(error) },
-            { status: 400 },
-          );
-        }
-        const cancelReason = new DOMException(
-          reasonText ? `Browser turn cancelled (${reasonText})` : "Browser turn cancelled by launcher",
-          "AbortError",
-        );
-        const cancelledBrowserTurns = activeWebTurnRegistry.cancelByTraceId(traceId, cancelReason);
-        return Response.json({
-          status: "ok",
-          trace_id: traceId,
-          cancelled_browser_turns: cancelledBrowserTurns,
-          cancelled_broker_turns: 0,
-          cancelled_compaction_runs: 0,
-          ...activity(),
-        });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/interrupt-turn") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        let identity: NativeCodexTurnIdentity;
-        try {
-          const body = await req.json() as { threadId?: unknown; turnId?: unknown };
-          const threadId = typeof body?.threadId === "string" ? body.threadId.trim() : "";
-          const turnId = typeof body?.turnId === "string" ? body.turnId.trim() : "";
-          if (!/^[A-Za-z0-9_-]{6,128}$/.test(threadId) || !/^[A-Za-z0-9_-]{6,128}$/.test(turnId)) {
-            throw new Error("native Codex threadId or turnId is invalid");
-          }
-          identity = { threadId, turnId };
-        } catch (error) {
-          return Response.json(
-            { status: "error", error: error instanceof Error ? error.message : String(error) },
-            { status: 400 },
-          );
-        }
-        const reason = new DOMException("Codex turn interrupted", "AbortError");
-        const httpCancellation = httpTurns.beginCancelTurn(identity, reason);
-        return Response.json({
-          status: "ok",
-          cancelled_http_turns: httpCancellation.cancelled,
-          cancelled_browser_turns: 0,
-          cancelled_compaction_runs: 0,
-        });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        const reason = new Error("Active turn cancelled by launcher");
-        const [cancelledHttpTurns, cancelledBrowserTurns] = await Promise.all([
-          httpTurns.cancelAll(reason),
-          activeWebTurnRegistry.cancelAll(reason),
-        ]);
-        return Response.json({
-          status: "ok",
-          cancelled_http_turns: cancelledHttpTurns,
-          cancelled_browser_turns: cancelledBrowserTurns,
-          cancelled_compaction_runs: 0,
-          ...activity(),
-        });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/shutdown") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        const current = activity();
-        if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0) {
-          return Response.json(
-            {
-              status: "refused",
-              accepting_turns: !draining,
-              ...current,
-            },
-            { status: 409 },
-          );
-        }
-        setTimeout(shutdown, 0);
-        return Response.json({ status: "ok", accepting_turns: false, ...current });
-      }
-      if (req.method === "GET" && url.pathname === "/v1/models") {
-        if (draining) {
-          return formatErrorResponse(
-            503,
-            "server_error",
-            "codex-chatgpt-web is draining for a requested service operation",
-          );
-        }
-        return httpTurns.track(async signal => {
-          const request = ++modelCatalogRequests;
-          const started = Date.now();
-          const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
-            const result = { request, at: new Date().toISOString(), status: response.status, ...(failure ? { failure } : {}) };
-            // An older, slower request must not replace a newer completed result.
-            if (!lastModelCatalogResult || request > lastModelCatalogResult.request) lastModelCatalogResult = result;
-            if (!response.ok) {
-              try {
-                console.warn(`[codex-chatgpt-web] model_catalog_failed ${JSON.stringify({ ...result, elapsedMs: Date.now() - started })}`);
-              } catch { /* Logging must not replace the catalog result. */ }
-            }
-            return response;
-          };
-          let catalogConfig: AppConfig;
-          try {
-            catalogConfig = {
-              ...config,
-              subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol),
-            };
-          } catch (error) {
-            return recordResult(formatErrorResponse(
-              500,
-              "server_error",
-              `Could not resolve the installed subagent protocol: ${error instanceof Error ? error.message : String(error)}`,
-            ), modelCatalogFailure("config", error));
-          }
-          let failure: ModelCatalogFailure | undefined;
-          const response = await modelsRequest(
-            new Request(req, { signal }),
-            catalogConfig,
-            readCodexModelContextOverride,
-            value => { failure = value; },
-          );
-          if (response.ok) {
-            successfulModelCatalogRequests += 1;
-            lastSuccessfulModelCatalogRequestAt = new Date().toISOString();
-          }
-          return recordResult(response, failure);
-        }, req.signal, process.platform, "models");
-      }
-      if (req.method === "GET" && url.pathname === "/v1/responses") {
-        return new Response("Responses WebSocket transport is not enabled on this local route", {
-          status: 426,
-          headers: { "content-type": "text/plain; charset=utf-8" },
-        });
-      }
-      if (req.method === "POST" && url.pathname === "/v1/responses") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(
-          (signal, bindIdentity) => responseRequest(
-            new Request(req, { signal }),
-            config,
-            dependencies.adapterFactory,
-            { onTurnIdentity: bindIdentity },
-          ),
-          req.signal,
-          process.platform,
-          "responses",
-        );
-      }
-      if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(
-          (signal, bindIdentity) => compactRequest(
-            new Request(req, { signal }),
-            config,
-            dependencies.adapterFactory,
-            { onTurnIdentity: bindIdentity },
-          ),
-          req.signal,
-          process.platform,
-          "compact",
-        );
-      }
-      return new Response("Not found", { status: 404 });
-  };
-  const server = serveUniversal({
-    hostname: config.host,
-    port: config.port,
-    idleTimeout: 0,
-    async fetch(req) {
-      return applyLoopbackCors(req, await handleRequest(req));
-    },
-  });
-  function shutdown(): void {
+  const modelsController = new ModelsController();
+  const responsesController = new ResponsesController(new ResponsesService());
+
+  let server!: UniversalServer;
+  const shutdown = (): void => {
     if (shutdownPromise) return;
     draining = true;
     flushResponseState();
@@ -954,7 +88,95 @@ export function startServer(
       process.exitCode = 1;
       console.error(`[codex-chatgpt-web] server shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
     });
-  }
+  };
+
+  const adminController = new AdminController({
+    config,
+    startedAt,
+    swaggerPath: resolve(import.meta.dir, "..", "docs", "swagger.html"),
+    httpTurns,
+    getModelsMetrics: () => modelsController.getMetricsSnapshot(),
+    isDraining: () => draining,
+    setDraining: next => { draining = next; },
+    shutdown,
+  });
+
+  const handleRequest = async (req: Request): Promise<Response> => {
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204 });
+    }
+
+    const url = new URL(req.url);
+    if (req.method === "GET" && (url.pathname === "/docs" || url.pathname === "/swagger")) {
+      return adminController.handleDocs();
+    }
+    if (req.method === "GET" && url.pathname === "/healthz") {
+      return adminController.handleHealthz();
+    }
+    if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
+      return adminController.handleDrainToggle(req, url.pathname === "/admin/drain");
+    }
+    if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
+      return await adminController.handleCancelTurn(req);
+    }
+    if (req.method === "POST" && url.pathname === "/admin/interrupt-turn") {
+      return await adminController.handleInterruptTurn(req);
+    }
+    if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
+      return await adminController.handleCancelTurns(req);
+    }
+    if (req.method === "POST" && url.pathname === "/admin/shutdown") {
+      return adminController.handleShutdown(req);
+    }
+    if (req.method === "GET" && url.pathname === "/v1/models") {
+      return await modelsController.handleRoute(req, config, httpTurns, draining);
+    }
+    if (req.method === "GET" && url.pathname === "/v1/responses") {
+      return responsesController.handleUnsupportedGet();
+    }
+    if (req.method === "POST" && url.pathname === "/v1/responses") {
+      if (draining) {
+        return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+      }
+      return httpTurns.track(
+        (signal, bindIdentity) => responsesController.handleResponses(
+          new Request(req, { signal }),
+          { onTurnIdentity: bindIdentity },
+          dependencies.adapterFactory,
+        ),
+        req.signal,
+        process.platform,
+        "responses",
+      );
+    }
+    if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
+      if (draining) {
+        return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+      }
+      return httpTurns.track(
+        (signal, bindIdentity) => responsesController.handleCompact(
+          new Request(req, { signal }),
+          { onTurnIdentity: bindIdentity },
+          dependencies.adapterFactory,
+        ),
+        req.signal,
+        process.platform,
+        "compact",
+      );
+    }
+
+    return new Response("Not found", { status: 404 });
+  };
+
+  server = serveUniversal({
+    hostname: config.host,
+    port: config.port,
+    idleTimeout: 0,
+    async fetch(req) {
+      return applyLoopbackCors(req, await handleRequest(req));
+    },
+  });
+
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   return server;

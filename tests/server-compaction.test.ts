@@ -82,7 +82,7 @@ test("compactRequest preserves canonical Codex turn metadata from the header", a
   });
 });
 
-test("compactRequest rejects missing or non-m365 models with HTTP 400", async () => {
+test("compactRequest rejects missing or unsupported models with HTTP 400", async () => {
   const config = defaultConfig("browser-only");
   for (const model of ["chatgpt-web/luna", "gpt-5.6-sol"]) {
     const response = await compactRequest(
@@ -97,7 +97,7 @@ test("compactRequest rejects missing or non-m365 models with HTTP 400", async ()
     expect(await response.json()).toMatchObject({
       error: {
         type: "invalid_request_error",
-        message: `Unsupported model '${model}'. Only m365-copilot models are enabled.`,
+        message: `Unsupported model '${model}'. Enabled providers: m365-copilot.`,
       },
     });
   }
