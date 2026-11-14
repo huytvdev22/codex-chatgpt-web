@@ -1,9 +1,9 @@
 
 import type { CodexTool } from "../../../types";
 import { SafeCommandGuard } from "./safe-command-guard";
-import { normalizeM365ToolArguments } from "./argument-normalizer";
-import { decodeM365Content } from "./content-decoder";
-import { validateM365ToolCall } from "./tool-validator";
+import { normalizeWebToolArguments } from "./argument-normalizer";
+import { decodeWebContent } from "./content-decoder";
+import { validateWebToolCall } from "./tool-validator";
 import { buildCodexExecCommandArguments } from "./approval-policy";
 
 export { SafeCommandGuard } from "./safe-command-guard";
@@ -133,17 +133,17 @@ export class WebToolBridge {
     clientTools: CodexTool[] = []
   ): WebMappedToolCall {
 
-    const normalized = normalizeM365ToolArguments(raw.name, raw.arguments);
+    const normalized = normalizeWebToolArguments(raw.name, raw.arguments);
     const toolName = normalized.name;
     let parsedArgs: Record<string, any> = normalized.arguments;
     if (toolName === "write_file") {
-      parsedArgs.content = decodeM365Content(parsedArgs.content, {
+      parsedArgs.content = decodeWebContent(parsedArgs.content, {
         encoding: String(parsedArgs.content_encoding || "plain"),
       });
       delete parsedArgs.content_encoding;
     }
 
-    const validation = validateM365ToolCall(toolName, parsedArgs, clientTools);
+    const validation = validateWebToolCall(toolName, parsedArgs, clientTools);
     if (!validation.ok) {
       if (validation.code === "UNKNOWN_TOOL") {
         throw new Error(

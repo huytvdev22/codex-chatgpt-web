@@ -1,17 +1,22 @@
-export type M365ContentEncoding = "plain" | "base64";
+export type WebContentEncoding = "plain" | "base64";
+/** @deprecated Dùng `WebContentEncoding` thay thế. */
+export type M365ContentEncoding = WebContentEncoding;
 
 export interface DecodeContentOptions {
-  encoding?: M365ContentEncoding | string;
+  encoding?: WebContentEncoding | string;
 }
 
 /** Decode đúng một lần theo encoding khai báo; không suy luận bằng extension hay escape heuristic. */
-export function decodeM365Content(value: unknown, options: DecodeContentOptions = {}): string {
+export function decodeWebContent(value: unknown, options: DecodeContentOptions = {}): string {
   const content = typeof value === "string" ? value : String(value ?? "");
   const encoding = options.encoding || "plain";
   if (encoding === "plain") return content;
   if (encoding === "base64") return Buffer.from(content, "base64").toString("utf8");
-  throw new Error(`Unsupported M365 content encoding: ${encoding}`);
+  throw new Error(`Unsupported Web content encoding: ${encoding}`);
 }
+
+/** @deprecated Dùng `decodeWebContent` thay thế. */
+export const decodeM365Content = decodeWebContent;
 
 export interface NormalizeFileContentOptions {
   unescapeNewlines?: boolean;

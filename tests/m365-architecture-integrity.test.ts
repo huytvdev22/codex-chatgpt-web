@@ -59,6 +59,11 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     ).text();
     expect(semanticDetectorSource.includes("m365HtmlToMarkdown(")).toBe(false);
 
+    const outputTranslatorSource = await Bun.file(
+      path.resolve(sharedWebDir, "protocol/output-translator.ts"),
+    ).text();
+    expect(outputTranslatorSource.includes("[M365 RAW RESPONSE]")).toBe(false);
+
     // Service layer không phụ thuộc trực tiếp vào web adapter internals cho turn identity
     const responsesServiceSource = await Bun.file(
       path.resolve(process.cwd(), "src/services/responses-service.ts"),
@@ -131,14 +136,20 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     // Shared Web Adapter facade (both neutral Web* and M365* compatibility aliases)
     expect(sharedNormalization.CodexPayloadNormalizer).toBeDefined();
     expect(sharedNormalization.CodexRawPayload).toBeDefined();
+    expect(sharedPrompt.WebPromptCompiler).toBeDefined();
     expect(sharedPrompt.M365PromptCompiler).toBeDefined();
     expect(sharedPrompt.promptCompiler).toBeDefined();
+    expect(sharedProtocol.WebOutputTranslator).toBeDefined();
+    expect(sharedProtocol.WebToolCallDetector).toBeDefined();
     expect(sharedProtocol.parseStrictWebResponse).toBeDefined();
     expect(sharedProtocol.parseStrictM365Response).toBeDefined();
     expect(sharedProtocol.webHtmlToMarkdown).toBeDefined();
     expect(sharedProtocol.SemanticMarkdownBuffer).toBeDefined();
     expect(sharedTools.WebToolBridge).toBeDefined();
     expect(sharedTools.M365ToolBridge).toBeDefined();
+    expect(sharedTools.normalizeWebToolArguments).toBeDefined();
+    expect(sharedTools.decodeWebContent).toBeDefined();
+    expect(sharedTools.validateWebToolCall).toBeDefined();
     expect(sharedTools.AtomicFileWriter).toBeDefined();
   });
 });

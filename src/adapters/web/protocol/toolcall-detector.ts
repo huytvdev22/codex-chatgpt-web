@@ -7,13 +7,16 @@ export interface ParsedToolCall {
 }
 
 /**
- * M365ToolCallDetector phát hiện cú pháp tool call <tool_call>...</tool_call> từ luồng streaming.
+ * WebToolCallDetector phát hiện cú pháp tool call <tool_call>...</tool_call> từ luồng streaming.
  * Hỗ trợ nhận diện partial chunks, streaming incremental, unescape Turndown markdown escapes (\_ -> _),
  * và loại bỏ code fences nếu có.
  */
-export interface M365ToolCallDetectorOptions {
+export interface WebToolCallDetectorOptions {
   renderThinkingInText?: boolean;
 }
+
+/** @deprecated Dùng `WebToolCallDetectorOptions` thay thế. */
+export type M365ToolCallDetectorOptions = WebToolCallDetectorOptions;
 
 /**
  * Các loại marker có thể xuất hiện khi detector đang ở trạng thái văn bản thường (ngoài mọi khối nội bộ).
@@ -192,7 +195,7 @@ function cleanPrefixBeforeBlock(prefix: string): string {
   return withoutFences.trim() ? withoutFences.trimEnd() : "";
 }
 
-export class M365ToolCallDetector {
+export class WebToolCallDetector {
   private buffer = "";
   private inToolCall = false;
   private toolContent = "";
@@ -202,9 +205,9 @@ export class M365ToolCallDetector {
   private thoughtContent = "";
   private renderedThinking = false;
   private detectedToolCall: ParsedToolCall | null = null;
-  private options: M365ToolCallDetectorOptions;
+  private options: WebToolCallDetectorOptions;
 
-  constructor(options?: M365ToolCallDetectorOptions) {
+  constructor(options?: WebToolCallDetectorOptions) {
     this.options = options || {};
   }
 
@@ -767,5 +770,8 @@ export function autoHealHtmlMangledTags(text: string): string {
 
   return healed;
 }
+
+/** @deprecated Dùng `WebToolCallDetector` thay thế. */
+export const M365ToolCallDetector = WebToolCallDetector;
 
 export { chatGptHtmlToMarkdown, htmlToMarkdown };

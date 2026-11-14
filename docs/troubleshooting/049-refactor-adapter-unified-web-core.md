@@ -19,3 +19,4 @@
 - **Phase 2 (`f974046`):** Tách `M365DomObserver` và `M365ClipboardSalvage`; gỡ `waitForCompletion()` override khỏi `M365BrowserWorker` để chạy chung polling + heartbeat qua `BaseWebBrowserWorker`.
 - **Phase 3 (`7b81162`):** Tách `WebTurnLoopGuard`, chuyển pure parser turn-identity sang `src/responses/turn-identity.ts`, trung tính hóa tên hàm/log tại `src/adapters/web/`.
 - **Phase 4 (`82036c9`):** Xóa `prompt/assembler.ts`, `harness/`, `conversation-store.ts`, chuyển toàn bộ test sang `compileWebPrompt` & `WebTurnLoopGuard`.
+- **Dọn dẹp hậu kiểm:** Trung tính hóa `WebOutputTranslator` (`[WEB RAW RESPONSE]`), `WebToolCallDetector`, `WebMarkdownBuffer`, `src/adapters/web/tools/` (`normalizeWebToolArguments`, `decodeWebContent`, `validateWebToolCall`) kèm `@deprecated` alias tương thích ngược; đồng bộ `docs/system-architecture.md` và `docs/adding-new-web-adapter-guide.md`.

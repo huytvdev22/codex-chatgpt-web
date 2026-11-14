@@ -1,7 +1,7 @@
 import type { CodexTool } from "../../../types";
 import {
-  normalizeM365ToolArguments,
-  validateM365ToolCall,
+  normalizeWebToolArguments,
+  validateWebToolCall,
   type ToolValidationFailure,
 } from "../tools";
 import type {
@@ -28,11 +28,11 @@ export function validateWebProtocolResponse(
   if (result.kind !== "tool_calls") return result;
 
   for (const call of result.calls) {
-    const normalizedCall = normalizeM365ToolArguments(
+    const normalizedCall = normalizeWebToolArguments(
       call.name,
       call.arguments,
     );
-    const validation = validateM365ToolCall(
+    const validation = validateWebToolCall(
       normalizedCall.name,
       normalizedCall.arguments,
       clientTools,
