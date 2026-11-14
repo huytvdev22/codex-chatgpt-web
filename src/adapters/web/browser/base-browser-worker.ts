@@ -156,6 +156,29 @@ export abstract class BaseWebBrowserWorker<
     _options: TOptions,
   ): Promise<void> {}
 
+  /**
+   * Quyết định có áp dụng idle timeout ở observation hiện tại hay không.
+   * Provider có thể tạm hoãn idle timeout trong lúc model đang suy nghĩ/sinh nội dung.
+   */
+  protected shouldEnforceIdleTimeout(
+    _observation: TObservation,
+    _options: TOptions,
+  ): boolean {
+    return true;
+  }
+
+  /**
+   * Cho phép provider xử lý hoặc cứu hộ observation cuối cùng khi hết thời gian chờ.
+   * Trả về undefined để ném lỗi timeout chuẩn mặc định.
+   */
+  protected onWaitTimeout(
+    _error: BrowserHardTimeoutError | BrowserIdleTimeoutError,
+    _lastObservation: TObservation | undefined,
+    _options: TOptions,
+  ): TObservation | undefined {
+    return undefined;
+  }
+
   protected abstract navigate(
     page: Page,
     options: TOptions,
@@ -231,6 +254,7 @@ export abstract class BaseWebBrowserWorker<
     let lastHeartbeatAt = startedAt - heartbeatIntervalMs;
     let lastActivityKey: string | undefined;
     let lastRenderedText = "";
+    let lastObservation: TObservation | undefined;
     let isFirstObservation = true;
 
     while (true) {
@@ -255,7 +279,14 @@ export abstract class BaseWebBrowserWorker<
 
       if (now - startedAt >= hardTimeoutMs) {
         await this.stopGeneration(page).catch(() => false);
-        throw new BrowserHardTimeoutError(hardTimeoutMs);
+        const hardTimeoutError = new BrowserHardTimeoutError(hardTimeoutMs);
+        const fallback = this.onWaitTimeout(
+          hardTimeoutError,
+          lastObservation,
+          options,
+        );
+        if (fallback) return fallback;
+        throw hardTimeoutError;
       }
 
       if (
@@ -272,11 +303,12 @@ export abstract class BaseWebBrowserWorker<
         baseline,
         options,
       );
+      lastObservation = observation;
       const activityKey =
         observation.activityKey ??
         `${observation.isGenerating}:${observation.text}`;
 
-      if (activityKey !== lastActivityKey) {
+      if (activityKey !== lastActivityKey || !this.shouldEnforceIdleTimeout(observation, options)) {
         lastActivityKey = activityKey;
         lastActivityAt = now;
       }
@@ -299,9 +331,19 @@ export abstract class BaseWebBrowserWorker<
         return observation;
       }
 
-      if (now - lastActivityAt >= idleTimeoutMs) {
+      if (
+        this.shouldEnforceIdleTimeout(observation, options) &&
+        now - lastActivityAt >= idleTimeoutMs
+      ) {
         await this.stopGeneration(page).catch(() => false);
-        throw new BrowserIdleTimeoutError(idleTimeoutMs);
+        const idleTimeoutError = new BrowserIdleTimeoutError(idleTimeoutMs);
+        const fallback = this.onWaitTimeout(
+          idleTimeoutError,
+          lastObservation,
+          options,
+        );
+        if (fallback) return fallback;
+        throw idleTimeoutError;
       }
 
       await page.waitForTimeout(pollingIntervalMs);

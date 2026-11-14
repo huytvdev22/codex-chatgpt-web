@@ -1,13 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { M365BrowserWorker } from "../src/adapters/m365-copilot/m365-browser-worker";
 
 const workerPath = path.resolve(
   process.cwd(),
   "src/adapters/m365-copilot/m365-browser-worker.ts",
 );
+const observerPath = path.resolve(
+  process.cwd(),
+  "src/adapters/m365-copilot/m365-dom-observer.ts",
+);
 
 async function readWorkerSource(): Promise<string> {
   return await Bun.file(workerPath).text();
+}
+
+async function readObserverSource(): Promise<string> {
+  return await Bun.file(observerPath).text();
 }
 
 describe("M365 browser worker migration contract", () => {
@@ -76,46 +85,27 @@ describe("M365 browser worker migration contract", () => {
     expect(visibleEditorIndex).toBeGreaterThan(attachmentIndex);
   });
 
-  test("worker kế thừa shared base, extraction và observer đều đã được tách", async () => {
+  test("worker kế thừa shared base, DOM observer và copy salvage đã được tách", async () => {
     const source = await readWorkerSource();
 
     expect(source).toContain(
       "export class M365BrowserWorker extends BaseWebBrowserWorker",
     );
-    expect(source).not.toContain(
-      "M365 observeResponse compatibility hook must not run before polling migration is complete",
-    );
-    expect(source).not.toContain(
-      "M365 extractCompletedResponse compatibility hook must not run before polling migration is complete",
-    );
+    expect(source).toContain("private readonly domObserver = new M365DomObserver();");
+    expect(source).toContain("private readonly clipboardSalvage = new M365ClipboardSalvage();");
+    expect(source).toContain("protected override async beforeObserveResponse(");
     expect(source).toContain("protected async observeResponse(");
-    expect(source).toContain(
-      "responseState.pendingStatus = status as M365ResponseDomStatus;",
-    );
-    expect(source).toContain(
-      "const observation = await this.observeResponse(",
-    );
-    expect(source).toContain(
-      "protected async extractCompletedResponse(",
-    );
-    expect(source).toContain("protected async waitForCompletion(");
+    expect(source).toContain("protected override shouldEnforceIdleTimeout(");
+    expect(source).toContain("protected override onWaitTimeout(");
+    expect(source).toContain("protected async extractCompletedResponse(");
+    expect(source).not.toContain("protected async waitForCompletion(");
     expect(source).not.toContain("public async executeTurn(");
   });
 
-  test("M365 polling override dùng turn runtime state còn orchestration thuộc shared lifecycle", async () => {
+  test("M365 polling dùng shared BaseWebBrowserWorker.waitForCompletion và runtime state tách riêng", async () => {
     const source = await readWorkerSource();
-    const pollingStart = source.indexOf("protected async waitForCompletion(");
-    const pollingSource = source.slice(pollingStart);
 
-    expect(pollingSource).toContain(
-      "const responseState = this.getResponseRuntimeState(page);",
-    );
-    expect(pollingSource).not.toContain(
-      "const markdownBuffer = new M365MarkdownBuffer();",
-    );
-    expect(pollingSource).not.toContain(
-      "const fastPathBuffer = new FastPathStreamBuffer();",
-    );
+    expect(source).not.toContain("protected async waitForCompletion(");
     expect(source).not.toContain("public async executeTurn(");
     expect(source).toContain("protected async initializeTurnState(");
     expect(source).toContain("protected async cleanupTurnState(");
@@ -124,20 +114,26 @@ describe("M365 browser worker migration contract", () => {
       "this.responseStates.set(page, this.createResponseRuntimeState());",
     );
     expect(source).toContain("this.clearTurnRuntimeState(page);");
+    expect(source).toContain("this.domObserver.captureStatus(");
+    expect(source).toContain("this.domObserver.applyStatus(");
+    expect(source).toContain("this.clipboardSalvage.tryExtractCodeViaCopyButton(");
   });
 
   test("response runtime state gom đủ dữ liệu để tách observeResponse và extraction", async () => {
-    const source = await readWorkerSource();
+    const [workerSource, observerSource] = await Promise.all([
+      readWorkerSource(),
+      readObserverSource(),
+    ]);
 
-    expect(source).toContain("interface M365ResponseRuntimeState {");
-    expect(source).toContain(
+    expect(observerSource).toContain("export interface M365ResponseRuntimeState {");
+    expect(observerSource).toContain(
       "markdownBuffer: InstanceType<typeof M365MarkdownBuffer>;",
     );
-    expect(source).toContain("fastPathBuffer: FastPathStreamBuffer;");
-    expect(source).toContain("lastFastPathText: string;");
-    expect(source).toContain("lastBlocks: M365MarkdownBlock[];");
-    expect(source).toContain("lastStatus: M365ResponseDomStatus | null;");
-    expect(source).toContain(
+    expect(observerSource).toContain("fastPathBuffer: FastPathStreamBuffer;");
+    expect(observerSource).toContain("lastFastPathText: string;");
+    expect(observerSource).toContain("lastBlocks: M365MarkdownBlock[];");
+    expect(observerSource).toContain("lastStatus: M365ResponseDomStatus | null;");
+    expect(workerSource).toContain(
       "private readonly responseStates = new WeakMap<",
     );
   });
@@ -163,20 +159,114 @@ describe("M365 browser worker migration contract", () => {
   });
 
   test("M365 semantic buffers giữ ownership streaming delta khi chuyển sang shared lifecycle", async () => {
-    const source = await readWorkerSource();
+    const [workerSource, observerSource] = await Promise.all([
+      readWorkerSource(),
+      readObserverSource(),
+    ]);
 
-    expect(source).toContain(
-      "protected shouldEmitObservationDelta(",
-    );
-    expect(source).toContain(
+    expect(workerSource).toContain("protected shouldEmitObservationDelta(");
+    expect(workerSource).toContain(
       "M365MarkdownBuffer và FastPathStreamBuffer đã phát semantic delta",
     );
-    expect(source).toContain("return false;");
-    expect(source).toContain(
+    expect(workerSource).toContain("return false;");
+    expect(observerSource).toContain(
       "const delta = responseState.fastPathBuffer.observe(",
     );
-    expect(source).toContain(
+    expect(observerSource).toContain(
       "const delta = responseState.markdownBuffer.observe(",
     );
+  });
+
+  test("M365BrowserWorker thực thi polling qua BaseWebBrowserWorker.waitForCompletion và gọi heartbeat", async () => {
+    let heartbeatCalls = 0;
+    let pollCalls = 0;
+
+    class TestM365BrowserWorker extends M365BrowserWorker {
+      protected override async navigate(): Promise<void> {}
+      protected override async prepareProvider(): Promise<void> {}
+      protected override async captureResponseBaseline() {
+        return { aiCount: 0, count: 0, lastText: "", lastHtml: "" };
+      }
+      protected override async insertPrompt(): Promise<void> {}
+      protected override async submitPrompt(): Promise<void> {}
+      protected override async stopGeneration(): Promise<boolean> {
+        return true;
+      }
+      protected override async resolveConversationId(): Promise<string> {
+        return "conv-heartbeat-1";
+      }
+      protected override shouldDelayFirstObservation(): boolean {
+        return false;
+      }
+    }
+
+    const worker = new TestM365BrowserWorker();
+    (worker as any).domObserver = {
+      createRuntimeState: () => ({
+        markdownBuffer: { observe: () => "", finish: () => ({ markdown: "", delta: "" }) },
+        fastPathBuffer: { observe: () => "", finish: () => ({ markdown: "", delta: "" }), getText: () => "" },
+        fastPathActive: false,
+        lastFastPathText: "",
+        seenGenerating: false,
+        hasSeenGenerating: false,
+        completedCandidateAt: null,
+        stableCycles: 0,
+        lastTextChangeAt: Date.now(),
+        lastBlocks: [],
+        attempts: 0,
+        lastStatus: null,
+        pendingStatus: null,
+      }),
+      captureStatus: async () => ({
+        isGenerating: pollCalls === 0,
+        blocks: [{ key: "p::hi#1", tag: "p", html: "<p>Hello</p>", text: "Hello", streamable: false }],
+        isNew: true,
+        hasContent: true,
+        detectedWebError: "",
+        fastPathRawText: null,
+        isInputActionsIdle: pollCalls > 0,
+      }),
+      applyStatus: async (_page: any, state: any, status: any) => {
+        pollCalls += 1;
+        state.lastBlocks = status.blocks;
+        state.lastStatus = status;
+        return {
+          text: "Hello",
+          isGenerating: status.isGenerating,
+          isCompleted: pollCalls >= 2,
+          activityKey: `poll-${pollCalls}`,
+          status,
+          blocks: status.blocks,
+          fastPathActive: false,
+          timedOut: false,
+        };
+      },
+    };
+    (worker as any).clipboardSalvage = {
+      tryExtractCodeViaCopyButton: async () => null,
+    };
+
+    const fakePage: any = {
+      url: () => "https://m365.cloud.microsoft/chat/conversation/conv-heartbeat-1",
+      waitForTimeout: async () => {},
+      locator: () => ({ count: async () => 0 }),
+    };
+
+    const result = await worker.executeTurn(fakePage, {
+      prompt: "hello",
+      conversationKey: "conv-heartbeat-1",
+      pollingIntervalMs: 1,
+      heartbeatIntervalMs: 5,
+      idleTimeoutMs: 5_000,
+      hardTimeoutMs: 10_000,
+      heartbeat: async () => {
+        heartbeatCalls += 1;
+      },
+    });
+
+    expect(result.conversationId).toBe("conv-heartbeat-1");
+    expect(result.rawResponse).toBe("Hello");
+    expect(pollCalls).toBe(2);
+    expect(heartbeatCalls).toBeGreaterThanOrEqual(1);
   });
 });

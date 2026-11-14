@@ -25,6 +25,8 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       "conversation-url.ts",
       "index.ts",
       "m365-browser-worker.ts",
+      "m365-clipboard-salvage.ts",
+      "m365-dom-observer.ts",
       "model-provider.ts",
     ]);
   });

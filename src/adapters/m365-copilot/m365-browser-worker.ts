@@ -1,15 +1,11 @@
 import type { Locator, Page } from "playwright-core";
 import {
   BaseWebBrowserWorker,
+  BrowserHardTimeoutError,
+  BrowserIdleTimeoutError,
   type BaseBrowserRunOptions,
   type BrowserCompletionContext,
 } from "../web/browser";
-import {
-  m365HtmlToMarkdown,
-  M365MarkdownBuffer,
-  type M365MarkdownBlock,
-  FastPathStreamBuffer,
-} from "../web/protocol";
 import {
   ensureM365CapabilityMode,
   resolveM365CapabilityMode,
@@ -21,6 +17,13 @@ import {
   parseM365ConversationId,
   waitForM365ConversationId,
 } from "./conversation-url";
+import { M365ClipboardSalvage } from "./m365-clipboard-salvage";
+import {
+  M365DomObserver,
+  type M365ResponseBaseline,
+  type M365ResponseObservation,
+  type M365ResponseRuntimeState,
+} from "./m365-dom-observer";
 
 export interface M365BrowserRunOptions extends BaseBrowserRunOptions {
   conversationKey?: string;
@@ -56,465 +59,6 @@ export type M365TurnResult = {
   conversationId: string;
 };
 
-interface M365ResponseBaseline {
-  aiCount: number;
-  count: number;
-  lastText: string;
-  lastHtml: string;
-}
-
-interface M365ResponseDomStatus {
-  isGenerating: boolean;
-  blocks: M365MarkdownBlock[];
-  rawHtml?: string;
-  isNew: boolean;
-  hasContent: boolean;
-  detectedWebError: string;
-  fastPathRawText: string | null;
-  isInputActionsIdle?: boolean;
-}
-
-interface M365ResponseObservation {
-  text: string;
-  isGenerating: boolean;
-  isCompleted: boolean;
-  activityKey: string;
-  status: M365ResponseDomStatus;
-  blocks: M365MarkdownBlock[];
-  fastPathActive: boolean;
-  timedOut: boolean;
-}
-
-interface M365ResponseRuntimeState {
-  markdownBuffer: InstanceType<typeof M365MarkdownBuffer>;
-  fastPathBuffer: FastPathStreamBuffer;
-  fastPathActive: boolean;
-  lastFastPathText: string;
-  seenGenerating: boolean;
-  hasSeenGenerating: boolean;
-  completedCandidateAt: number | null;
-  stableCycles: number;
-  lastTextChangeAt: number;
-  lastBlocks: M365MarkdownBlock[];
-  attempts: number;
-  lastStatus: M365ResponseDomStatus | null;
-  pendingStatus: M365ResponseDomStatus | null;
-}
-
-/**
- * Thử trích xuất toàn bộ mã nguồn/văn bản từ khối Scriptor Code Block thông qua nút Copy Code.
- *
- * Đối với các phản hồi dài (>70 dòng), Microsoft Copilot sử dụng cơ chế DOM Virtualization,
- * chỉ hiển thị một phần dòng trong DOM và giấu phần còn lại trong spacer div. Nút copy-button
- * kết nối trực tiếp với model dữ liệu trong bộ nhớ của editor nên luôn chứa 100% nội dung gốc.
- *
- * Kỹ thuật: Cài hook vào navigator.clipboard.writeText để hứng text ngay lập tức mà không cần
- * xin quyền đọc Clipboard từ hệ điều hành.
- */
-async function tryExtractCodeViaCopyButton(page: any): Promise<string | null> {
-  console.log("\n[m365-worker] [copy-salvage] ========================================================");
-  console.log("[m365-worker] [copy-salvage] BẮT ĐẦU QUY TRÌNH CỨU HỘ MÃ NGUỒN QUA NÚT COPY CODE");
-  console.log("[m365-worker] [copy-salvage] ========================================================");
-
-  try {
-    // Đảm bảo cửa sổ và tab có Focus để Chromium cho phép truy cập Clipboard API
-    await page.bringToFront().catch(() => { });
-    await page.evaluate(() => {
-      try {
-        window.focus();
-        if (document.body) document.body.focus();
-      } catch { }
-    }).catch(() => { });
-
-    // BƯỚC 1: Cấp quyền Clipboard CDP và cài đặt Hook đón nhận nội dung
-    console.log("[m365-worker] [copy-salvage] [Bước 1/5] Đang cấp quyền Clipboard CDP & cài đặt Window Hook...");
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => { });
-
-    await page.evaluate(() => {
-      const win = window as any;
-      win.__m365_last_copied_code = null;
-      const origWriteText = navigator.clipboard ? navigator.clipboard.writeText : null;
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText = async (text: string) => {
-          win.__m365_last_copied_code = text;
-          try {
-            if (origWriteText) return await origWriteText.call(navigator.clipboard, text);
-          } catch {
-            return Promise.resolve();
-          }
-        };
-      }
-      const onCopy = (e: ClipboardEvent) => {
-        const text = e.clipboardData?.getData("text/plain") || window.getSelection()?.toString();
-        if (text) win.__m365_last_copied_code = text;
-      };
-      document.addEventListener("copy", onCopy, { capture: true });
-    });
-    console.log("[m365-worker] [copy-salvage] [Bước 1/5] Đã thiết lập Clipboard Hook & quyền CDP thành công.");
-
-    // BƯỚC 2: Định vị chính xác TIN NHẮN AI MỚI NHẤT và kiểm tra trạng thái Code Block
-    console.log("[m365-worker] [copy-salvage] [Bước 2/5] Đang định vị tin nhắn AI mới nhất và kiểm tra trạng thái Code Block...");
-    const blockState = await page.evaluate(() => {
-      // 1. Lọc tất cả tin nhắn AI
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-        ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-      )).filter(el => {
-        if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) return false;
-        const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
-        if (ariaLabel.includes("you said") || ariaLabel.includes("bạn đã nói")) return false;
-        return true;
-      });
-      const aiList = candidates.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-
-      // 2. Định vị TIN NHẮN MỚI NHẤT (ưu tiên tin nhắn không có data-codex-turn-baseline)
-      const freshList = aiList.filter(m => !m.hasAttribute("data-codex-turn-baseline"));
-      const targetMsg = (freshList.length > 0 ? freshList[freshList.length - 1] : aiList[aiList.length - 1]) || document.body;
-      const isFresh = freshList.length > 0;
-
-      // 3. Tìm Code Block container CUỐI CÙNG trong tin nhắn mục tiêu
-      const codeBlocks = Array.from(targetMsg.querySelectorAll<HTMLElement>(
-        ".scriptor-component-code-block, [class*='code-block' i], [data-testid='one-copilot-code-identity'], .djlfcDli"
-      ));
-      const targetBlock = codeBlocks.length > 0 ? codeBlocks[codeBlocks.length - 1] : targetMsg;
-
-      // 4. Lấy các nút scoped CHẶT CHẼ vào targetBlock / targetMsg (TUYỆT ĐỐI không dùng document.querySelector toàn trang)
-      const codeCopyBtn = targetBlock.querySelector<HTMLButtonElement>(
-        "button#copy-button, button[aria-label='Copy code']"
-      );
-
-      const previewToggleBtn = targetBlock.querySelector<HTMLButtonElement>(
-        "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code'], button[aria-label='Preview'], button[aria-label*='Code' i], button[aria-label*='Preview' i]"
-      );
-
-      const visualCopyBtn = targetBlock.querySelector<HTMLButtonElement>(
-        "button#copy-visual-button, button[aria-label='Copy']"
-      );
-
-      const toggleAria = (previewToggleBtn?.getAttribute("aria-label") || "").toLowerCase();
-      // Nếu nút toggle có label "preview": nghĩa là hiện tại ĐANG ở Code View (bấm vào sẽ chuyển sang Preview)
-      // Nếu nút toggle có label "code": nghĩa là hiện tại ĐANG ở Preview View (bấm vào sẽ chuyển sang Code)
-      const isCurrentlyInCodeView = Boolean(codeCopyBtn) || toggleAria.includes("preview");
-      const isCurrentlyInPreview = toggleAria.includes("code") || Boolean(visualCopyBtn);
-
-      return {
-        totalAiMessages: aiList.length,
-        isFreshMessage: isFresh,
-        hasCodeCopyBtn: !!codeCopyBtn,
-        codeCopyLabel: codeCopyBtn ? (codeCopyBtn.getAttribute("aria-label") || codeCopyBtn.id) : null,
-        hasPreviewToggle: !!previewToggleBtn,
-        previewToggleLabel: previewToggleBtn ? (previewToggleBtn.getAttribute("aria-label") || previewToggleBtn.id) : null,
-        hasVisualCopyBtn: !!visualCopyBtn,
-        isCurrentlyInCodeView,
-        isCurrentlyInPreview,
-      };
-    });
-
-    console.log(`[m365-worker] [copy-salvage] [Bước 2/5] Đã nhắm vào tin nhắn AI mới nhất (Tổng: ${blockState.totalAiMessages} tin nhắn, Tin nhắn mới: ${blockState.isFreshMessage}).`);
-
-    if (blockState.isCurrentlyInCodeView && blockState.hasCodeCopyBtn) {
-      console.log(`[m365-worker] [copy-salvage] [Bước 2/5] Code Block ĐÃ Ở CHẾ ĐỘ CODE VIEW (nút copy: "${blockState.codeCopyLabel}").`);
-    } else if (blockState.isCurrentlyInPreview || blockState.hasPreviewToggle) {
-      console.log(`[m365-worker] [copy-salvage] [Bước 2/5] Code Block ĐANG Ở CHẾ ĐỘ PREVIEW (chỉ copy được ảnh). Cần click nút toggle "${blockState.previewToggleLabel}" của tin nhắn mới nhất để chuyển sang Code.`);
-    } else {
-      console.log("[m365-worker] [copy-salvage] [Bước 2/5] Không phát hiện toggle trực tiếp, sẽ quét và click nút ở cuối trang.");
-    }
-
-    // BƯỚC 3: Chuyển sang Chế độ Code (nếu đang ở Preview) và chờ Monaco Editor mount
-    let hasCodeEditorReady = blockState.isCurrentlyInCodeView && blockState.hasCodeCopyBtn;
-    if (!hasCodeEditorReady) {
-      console.log("[m365-worker] [copy-salvage] [Bước 3/5] Đang kích hoạt click vào nút chuyển chế độ của tin nhắn mới nhất...");
-
-      // 3.1. Click in-page DOM dispatch trên chính nút toggle của tin nhắn mới nhất
-      const domToggleClicked = await page.evaluate(() => {
-        const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-        )).filter(el => {
-          if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) return false;
-          const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-          return !aria.includes("you said") && !aria.includes("bạn đã nói");
-        });
-        const aiList = candidates.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-        const freshList = aiList.filter(m => !m.hasAttribute("data-codex-turn-baseline"));
-        const targetMsg = (freshList.length > 0 ? freshList[freshList.length - 1] : aiList[aiList.length - 1]) || document.body;
-
-        const toggleBtn = targetMsg.querySelector<HTMLButtonElement>(
-          "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code'], button[aria-label*='Code' i]"
-        ) || Array.from(document.querySelectorAll<HTMLButtonElement>(
-          "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code'], button[aria-label*='Code' i]"
-        )).pop();
-
-        if (toggleBtn) {
-          toggleBtn.scrollIntoView({ block: "center", inline: "center" });
-          toggleBtn.focus();
-          toggleBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-          toggleBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-          toggleBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
-          toggleBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-          toggleBtn.click();
-          return true;
-        }
-        return false;
-      });
-
-      if (domToggleClicked) {
-        console.log("[m365-worker] [copy-salvage] [Bước 3/5] Đã phát sự kiện click chuyển chế độ vào tin nhắn mới nhất thành công.");
-      } else {
-        // Fallback Playwright locator
-        const toggleLocator = page.locator(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']").last().locator(
-          "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code']"
-        ).last();
-        if (await toggleLocator.count() > 0) {
-          await toggleLocator.click({ timeout: 2000, force: true }).catch(() => { });
-          console.log("[m365-worker] [copy-salvage] [Bước 3/5] Đã click nút toggle qua Playwright locator.");
-        }
-      }
-
-      // 3.2. Chờ Monaco Code Editor render và hiển thị button#copy-button trong tin nhắn mới nhất
-      console.log("[m365-worker] [copy-salvage] [Bước 3/5] Đang chờ Monaco/Scriptor Code Editor render và xuất hiện button#copy-button...");
-      const waitStart = Date.now();
-      const maxWaitMs = 4000;
-      while (Date.now() - waitStart < maxWaitMs) {
-        await page.waitForTimeout(100);
-        const checkReady = await page.evaluate(() => {
-          const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-            ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-          )).filter(el => {
-            if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) return false;
-            const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-            return !aria.includes("you said") && !aria.includes("bạn đã nói");
-          });
-          const aiList = candidates.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-          const freshList = aiList.filter(m => !m.hasAttribute("data-codex-turn-baseline"));
-          const targetMsg = (freshList.length > 0 ? freshList[freshList.length - 1] : aiList[aiList.length - 1]) || document.body;
-
-          const copyBtn = targetMsg.querySelector<HTMLButtonElement>("button#copy-button, button[aria-label='Copy code']");
-          const toggleBtn = targetMsg.querySelector<HTMLButtonElement>("button#preview-toggle-button, button[data-automation-id='codePreviewToggle']");
-          const toggleLabel = (toggleBtn?.getAttribute("aria-label") || "").toLowerCase();
-          return Boolean(copyBtn || toggleLabel.includes("preview"));
-        });
-
-        if (checkReady) {
-          hasCodeEditorReady = true;
-          const elapsedMs = Date.now() - waitStart;
-          console.log(`[m365-worker] [copy-salvage] [Bước 3/5] THÀNH CÔNG: Monaco Code Editor đã sẵn sàng sau ${elapsedMs}ms!`);
-          // CỰC KỲ QUAN TRỌNG: Chờ thêm 500ms để React hoàn tất hydrate và Monaco nạp xong model vào bộ nhớ
-          await page.waitForTimeout(500);
-          break;
-        }
-        const elapsed = Date.now() - waitStart;
-        if (elapsed % 600 < 100) {
-          console.log(`[m365-worker] [copy-salvage] [Bước 3/5] Đang đợi editor mount... (${elapsed}ms)`);
-        }
-      }
-    }
-
-    // BƯỚC 4: THỬ TRÍCH XUẤT ĐA TẦNG (Multi-tier Extraction)
-    console.log("[m365-worker] [copy-salvage] [Bước 4/5] Đang kích hoạt trích xuất đa tầng (React Fiber, Monaco Global, CDP Click)...");
-
-    // 4.1. Tầng A: Thử đọc trực tiếp từ React Fiber Props của component (nhanh và không phụ thuộc Clipboard)
-    const reactFiberResult = await page.evaluate(() => {
-      try {
-        const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-        )).filter(el => {
-          if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) return false;
-          const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-          return !aria.includes("you said") && !aria.includes("bạn đã nói");
-        });
-        const aiList = candidates.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-        const freshList = aiList.filter(m => !m.hasAttribute("data-codex-turn-baseline"));
-        const targetMsg = (freshList.length > 0 ? freshList[freshList.length - 1] : aiList[aiList.length - 1]) || document.body;
-
-        const nodes = [targetMsg, ...Array.from(targetMsg.querySelectorAll<HTMLElement>("*"))];
-        for (const el of nodes) {
-          const fiberKey = Object.keys(el).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-          if (!fiberKey) continue;
-          let fiber = (el as any)[fiberKey];
-          let depth = 0;
-          while (fiber && depth < 20) {
-            const p = fiber.memoizedProps;
-            if (p) {
-              for (const propName of ["code", "text", "content", "value", "rawCode", "fileContent"]) {
-                if (typeof p[propName] === "string" && p[propName].length > 100 && /<(?:web|m365)Response\b|<custom_tool_call|\*{3}\s*Begin Patch/i.test(p[propName])) {
-                  return { text: p[propName], source: `React Fiber Props (${propName})` };
-                }
-              }
-            }
-            fiber = fiber.return;
-            depth++;
-          }
-        }
-      } catch { }
-      return null;
-    });
-
-    if (reactFiberResult && reactFiberResult.text.trim().length > 0) {
-      console.log(`[m365-worker] [copy-salvage] [Bước 4/5] THÀNH CÔNG RỰC RỠ: Trích xuất trực tiếp qua [${reactFiberResult.source}] (${reactFiberResult.text.length} ký tự)!`);
-      return reactFiberResult.text.trim();
-    }
-
-    // 4.2. Tầng B: Thử đọc từ Monaco Editor Global Model
-    const monacoResult = await page.evaluate(() => {
-      try {
-        const win = window as any;
-        if (win.monaco?.editor?.getModels) {
-          const models = win.monaco.editor.getModels();
-          for (let i = models.length - 1; i >= 0; i--) {
-            const val = models[i].getValue();
-            if (val && val.length > 100 && /<(?:web|m365)Response\b|<custom_tool_call|\*{3}\s*Begin Patch/i.test(val)) {
-              return { text: val, source: `Monaco Editor Model [${i}]` };
-            }
-          }
-        }
-      } catch { }
-      return null;
-    });
-
-    if (monacoResult && monacoResult.text.trim().length > 0) {
-      console.log(`[m365-worker] [copy-salvage] [Bước 4/5] THÀNH CÔNG RỰC RỠ: Trích xuất trực tiếp qua [${monacoResult.source}] (${monacoResult.text.length} ký tự)!`);
-      return monacoResult.text.trim();
-    }
-
-    // 4.3. Tầng C: Kích hoạt click nút Copy Code của tin nhắn mới nhất
-    console.log("[m365-worker] [copy-salvage] [Bước 4/5] Đang kích hoạt click vào nút Copy Code của tin nhắn mới nhất...");
-
-    // C1: In-Page DOM Dispatch với đầy đủ chuỗi Pointer & Mouse Event
-    const domCopyClicked = await page.evaluate(() => {
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-        ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-      )).filter(el => {
-        if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) return false;
-        const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-        return !aria.includes("you said") && !aria.includes("bạn đã nói");
-      });
-      const aiList = candidates.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-      const freshList = aiList.filter(m => !m.hasAttribute("data-codex-turn-baseline"));
-      const targetMsg = (freshList.length > 0 ? freshList[freshList.length - 1] : aiList[aiList.length - 1]) || document.body;
-
-      const codeCopyBtn = targetMsg.querySelector<HTMLButtonElement>(
-        "button#copy-button, button[aria-label='Copy code']"
-      ) || Array.from(document.querySelectorAll<HTMLButtonElement>(
-        "button#copy-button, button[aria-label='Copy code']"
-      )).pop();
-
-      if (codeCopyBtn) {
-        codeCopyBtn.scrollIntoView({ block: "center", inline: "center" });
-        codeCopyBtn.focus();
-        codeCopyBtn.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-        codeCopyBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-        codeCopyBtn.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
-        codeCopyBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-        codeCopyBtn.click();
-        return true;
-      }
-      return false;
-    });
-
-    if (domCopyClicked) {
-      console.log("[m365-worker] [copy-salvage] [Bước 4/5] Đã phát sự kiện click DOM vào button#copy-button của tin nhắn mới nhất.");
-    }
-
-    // C2: Playwright Locator Click
-    try {
-      const lastCopyLocator = page.locator(".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']").last().locator(
-        "button#copy-button, button[aria-label='Copy code']"
-      ).last();
-      if (await lastCopyLocator.count() > 0) {
-        await lastCopyLocator.scrollIntoViewIfNeeded().catch(() => { });
-        await lastCopyLocator.click({ delay: 50, force: true }).catch(() => { });
-        console.log("[m365-worker] [copy-salvage] [Bước 4/5] Đã click nút copy qua Playwright Locator trên tin nhắn cuối cùng.");
-      }
-    } catch { }
-
-    // BƯỚC 5: Đón nhận mã nguồn từ Clipboard Hook / System Clipboard
-    console.log("[m365-worker] [copy-salvage] [Bước 5/5] Đang đón nhận mã nguồn từ Clipboard Hook & Clipboard hệ thống...");
-    const readStart = Date.now();
-    let copiedText: string | null = null;
-    let readSource = "";
-
-    while (Date.now() - readStart < 3500) {
-      await page.waitForTimeout(100);
-
-      const hookResult = await page.evaluate(async () => {
-        const win = window as any;
-        if (typeof win.__m365_last_copied_code === "string" && win.__m365_last_copied_code.length > 0) {
-          return { text: win.__m365_last_copied_code, source: "Window Hook (writeText)" };
-        }
-        try {
-          if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
-            const sys = await navigator.clipboard.readText();
-            if (sys && sys.trim().length > 0) {
-              return { text: sys, source: "System Clipboard (readText)" };
-            }
-          }
-        } catch { }
-        return null;
-      });
-
-      if (hookResult && typeof hookResult.text === "string" && hookResult.text.trim().length > 0) {
-        copiedText = hookResult.text.trim();
-        readSource = hookResult.source;
-        break;
-      }
-    }
-
-    if (copiedText && copiedText.length > 0) {
-      const lineCount = copiedText.split(/\r?\n/).length;
-      const hasOpenEnvelope = /<(?:web|m365)Response\b/i.test(copiedText);
-      const hasCloseEnvelope = /<\/(?:web|m365)Response\s*>/i.test(copiedText);
-      const hasPatchMarker = /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(copiedText);
-
-      console.log(`[m365-worker] [copy-salvage] [Bước 5/5] THÀNH CÔNG RỰC RỠ qua nguồn: [${readSource}]!`);
-      console.log(`[m365-worker] [copy-salvage] -> Thu thập được: ${copiedText.length} ký tự, ${lineCount} dòng mã nguồn.`);
-      console.log(`[m365-worker] [copy-salvage] -> Kiểm tra cú pháp: có envelope mở: ${hasOpenEnvelope}, có envelope đóng: ${hasCloseEnvelope}, có patch marker: ${hasPatchMarker}.`);
-      console.log("[m365-worker] [copy-salvage] ========================================================\n");
-      return copiedText;
-    }
-
-    // 4.4. Tầng D: Fallback trích xuất trực tiếp từ các dòng DOM Virtualized [data-line-index]
-    console.log("[m365-worker] [copy-salvage] [Bước 5/5] Clipboard rỗng, kích hoạt cứu hộ Fallback từ DOM [data-line-index]...");
-    const domLinesResult = await page.evaluate(() => {
-      try {
-        const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-        )).filter(el => {
-          if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) return false;
-          const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-          return !aria.includes("you said") && !aria.includes("bạn đã nói");
-        });
-        const aiList = candidates.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-        const freshList = aiList.filter(m => !m.hasAttribute("data-codex-turn-baseline"));
-        const targetMsg = (freshList.length > 0 ? freshList[freshList.length - 1] : aiList[aiList.length - 1]) || document.body;
-
-        const lineEls = Array.from(targetMsg.querySelectorAll<HTMLElement>("[data-line-index]"));
-        if (lineEls.length > 10) {
-          lineEls.sort((a, b) => {
-            const idxA = parseInt(a.getAttribute("data-line-index") || "0", 10);
-            const idxB = parseInt(b.getAttribute("data-line-index") || "0", 10);
-            return idxA - idxB;
-          });
-          const joined = lineEls.map(el => el.textContent || "").join("\n");
-          if (joined.length > 100) return joined;
-        }
-      } catch { }
-      return null;
-    });
-
-    if (domLinesResult && domLinesResult.trim().length > 0) {
-      console.log(`[m365-worker] [copy-salvage] [Bước 5/5] THÀNH CÔNG: Đã trích xuất ${domLinesResult.trim().length} ký tự từ DOM [data-line-index]!`);
-      console.log("[m365-worker] [copy-salvage] ========================================================\n");
-      return domLinesResult.trim();
-    }
-
-    console.warn("[m365-worker] [copy-salvage] [Bước 5/5] THẤT BẠI: Hết 3.5s chờ nhưng không thu thập được code.");
-    console.log("[m365-worker] [copy-salvage] ========================================================\n");
-    return null;
-  } catch (err: any) {
-    console.warn(`[m365-worker] [copy-salvage] Ngoại lệ không mong muốn: ${err?.message || err}`);
-    return null;
-  }
-}
-
 /**
  * Thực thi một lượt hội thoại với Microsoft 365 Copilot nhúng trong Launcher Desktop
  * thông qua Page do WebTurnEngine cấp, đồng nhất contract với các Web Adapter khác.
@@ -530,6 +74,8 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   protected readonly defaultIdleTimeoutMs = 30_000;
   protected readonly defaultPollingIntervalMs = 250;
   protected readonly defaultHeartbeatIntervalMs = 10_000;
+  private readonly domObserver = new M365DomObserver();
+  private readonly clipboardSalvage = new M365ClipboardSalvage();
   private readonly activeEditors = new WeakMap<Page, Locator>();
   private readonly retainedConversationIds = new WeakMap<Page, string>();
   private readonly responseStates = new WeakMap<
@@ -538,21 +84,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   >();
 
   private createResponseRuntimeState(): M365ResponseRuntimeState {
-    return {
-      markdownBuffer: new M365MarkdownBuffer({ htmlToMarkdown: m365HtmlToMarkdown }),
-      fastPathBuffer: new FastPathStreamBuffer(),
-      fastPathActive: false,
-      lastFastPathText: "",
-      seenGenerating: false,
-      hasSeenGenerating: false,
-      completedCandidateAt: null,
-      stableCycles: 0,
-      lastTextChangeAt: Date.now(),
-      lastBlocks: [],
-      attempts: 0,
-      lastStatus: null,
-      pendingStatus: null,
-    };
+    return this.domObserver.createRuntimeState();
   }
 
   private getResponseRuntimeState(page: Page): M365ResponseRuntimeState {
@@ -636,11 +168,50 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     return false;
   }
 
-  protected shouldDelayFirstObservation(
+  protected override shouldDelayFirstObservation(
     _options: M365BrowserRunOptions,
   ): boolean {
     // Compatibility polling cũ luôn chờ 250ms sau submit trước lần đọc DOM đầu tiên.
     return true;
+  }
+
+  protected override async beforeObserveResponse(
+    page: Page,
+    baseline: M365ResponseBaseline,
+    _options: M365BrowserRunOptions,
+  ): Promise<void> {
+    const responseState = this.getResponseRuntimeState(page);
+    responseState.attempts++;
+    responseState.pendingStatus = await this.domObserver.captureStatus(
+      page,
+      baseline,
+    );
+  }
+
+  protected override shouldEnforceIdleTimeout(
+    observation: M365ResponseObservation,
+    _options: M365BrowserRunOptions,
+  ): boolean {
+    // Không ngắt idle timeout trong lúc Copilot Web vẫn đang hiển thị trạng thái generating.
+    return !observation.isGenerating;
+  }
+
+  protected override onWaitTimeout(
+    error: BrowserHardTimeoutError | BrowserIdleTimeoutError,
+    lastObservation: M365ResponseObservation | undefined,
+    _options: M365BrowserRunOptions,
+  ): M365ResponseObservation | undefined {
+    if (lastObservation?.status.hasContent) {
+      console.warn(
+        `[m365-worker] [timeout] ${error.message} — trả về nội dung đã thu thập để tiếp tục salvage.`,
+      );
+      return {
+        ...lastObservation,
+        timedOut: true,
+      };
+    }
+
+    return undefined;
   }
 
   protected async observeResponse(
@@ -657,7 +228,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     }
 
     responseState.pendingStatus = null;
-    return await this.applyResponseStatus(
+    return await this.domObserver.applyStatus(
       page,
       responseState,
       status,
@@ -737,7 +308,9 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       console.log(
         "[m365-worker] [salvage-eval] -> Phát hiện response cần cứu hộ hoặc có Code Block trên trang. Kích hoạt tryExtractCodeViaCopyButton...",
       );
-      const copiedCode = await tryExtractCodeViaCopyButton(page);
+      const copiedCode = await this.clipboardSalvage.tryExtractCodeViaCopyButton(
+        page,
+      );
       if (copiedCode) {
         const copiedHasClose =
           /<\/(?:web|m365)Response\s*>/i.test(copiedCode);
@@ -791,175 +364,6 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       `[m365-worker] [completed] totalChars=${fullMarkdown.length} finalStatus=completed timedOut=${context.observation.timedOut}`,
     );
     return fullMarkdown;
-  }
-
-  private createResponseObservation(
-    responseState: M365ResponseRuntimeState,
-    timedOut: boolean,
-  ): M365ResponseObservation {
-    const status =
-      responseState.lastStatus ||
-      ({
-        isGenerating: false,
-        blocks: responseState.lastBlocks,
-        isNew: responseState.lastBlocks.length > 0,
-        hasContent:
-          responseState.lastBlocks.length > 0 ||
-          responseState.lastFastPathText.length > 0,
-        detectedWebError: "",
-        fastPathRawText: responseState.lastFastPathText || null,
-      } satisfies M365ResponseDomStatus);
-    const text = responseState.fastPathActive
-      ? responseState.lastFastPathText
-      : responseState.lastBlocks.map(block => block.text).join("\n");
-
-    return {
-      text,
-      isGenerating: status.isGenerating,
-      isCompleted: !status.isGenerating && status.hasContent,
-      activityKey: [
-        status.isGenerating,
-        responseState.fastPathActive,
-        responseState.lastFastPathText.length,
-        responseState.lastBlocks
-          .map(block => `${block.key}:${block.text.length}`)
-          .join("|"),
-      ].join(":"),
-      status,
-      blocks: responseState.lastBlocks,
-      fastPathActive: responseState.fastPathActive,
-      timedOut,
-    };
-  }
-
-  private async applyResponseStatus(
-    page: Page,
-    responseState: M365ResponseRuntimeState,
-    status: M365ResponseDomStatus,
-    options: M365BrowserRunOptions,
-  ): Promise<M365ResponseObservation> {
-    const stableCompletionMs = 500;
-
-    if (status.isGenerating) {
-      responseState.hasSeenGenerating = true;
-      responseState.seenGenerating = true;
-      responseState.completedCandidateAt = null;
-    } else if (
-      responseState.hasSeenGenerating &&
-      responseState.completedCandidateAt === null
-    ) {
-      responseState.completedCandidateAt = Date.now();
-    }
-
-    if (status.detectedWebError) {
-      throw new Error(`[M365 Web Error] ${status.detectedWebError}`);
-    }
-
-    if (
-      responseState.attempts === 80 &&
-      !responseState.seenGenerating &&
-      status.blocks.length === 0
-    ) {
-      console.warn(
-        "[m365-worker] [warning] Sau 20s vẫn chưa nhận được phản hồi từ M365 (có thể nút Gửi chưa được kích hoạt hoặc mạng chậm).",
-      );
-    }
-
-    if (responseState.attempts % 4 === 0) {
-      await page
-        .evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight);
-          document
-            .querySelectorAll(
-              "[role='group'][aria-label='Code Preview'], .monaco-scrollable-element, .scriptor-component-code-block",
-            )
-            .forEach(element => {
-              try {
-                const scrollElement = element as HTMLElement;
-                const maxScroll =
-                  scrollElement.scrollHeight - scrollElement.clientHeight;
-                if (
-                  maxScroll > 0 &&
-                  scrollElement.scrollTop < maxScroll
-                ) {
-                  scrollElement.scrollTop = Math.min(
-                    maxScroll,
-                    scrollElement.scrollTop + 350,
-                  );
-                }
-              } catch {}
-            });
-        })
-        .catch(() => {});
-    }
-
-    if (
-      typeof status.fastPathRawText === "string" &&
-      status.fastPathRawText.length > 0
-    ) {
-      responseState.fastPathActive = true;
-      responseState.lastFastPathText = status.fastPathRawText;
-      const delta = responseState.fastPathBuffer.observe(
-        responseState.lastFastPathText,
-      );
-      if (delta) {
-        options.onChunk?.(delta);
-        responseState.lastTextChangeAt = Date.now();
-        responseState.stableCycles = 0;
-      } else {
-        responseState.stableCycles++;
-      }
-    } else if (
-      !responseState.fastPathActive &&
-      status.blocks.length > 0
-    ) {
-      responseState.lastBlocks = status.blocks;
-      const delta = responseState.markdownBuffer.observe(
-        responseState.lastBlocks,
-      );
-      if (delta) {
-        options.onChunk?.(delta);
-        responseState.lastTextChangeAt = Date.now();
-        responseState.stableCycles = 0;
-      } else {
-        responseState.stableCycles++;
-      }
-    }
-
-    responseState.lastStatus = status;
-
-    const combinedText = responseState.fastPathActive
-      ? responseState.lastFastPathText
-      : responseState.lastBlocks.map(block => block.text).join(" ");
-    const timeSinceChange = Date.now() - responseState.lastTextChangeAt;
-    const isVeryShortInitialText = combinedText.trim().length < 120;
-    const minGraceMs = isVeryShortInitialText ? 3_000 : 1_500;
-    const requiredStableCycles = isVeryShortInitialText ? 6 : 2;
-    const isStopDismissedStable =
-      responseState.hasSeenGenerating &&
-      !status.isGenerating &&
-      responseState.completedCandidateAt !== null &&
-      Date.now() - responseState.completedCandidateAt >= stableCompletionMs;
-    const isInputIdle =
-      Boolean(status.isInputActionsIdle) &&
-      !status.isGenerating &&
-      responseState.stableCycles >= requiredStableCycles;
-    const isCompleted =
-      status.hasContent &&
-      !status.isGenerating &&
-      (isInputIdle || isStopDismissedStable) &&
-      timeSinceChange >= minGraceMs;
-
-    const observation = this.createResponseObservation(responseState, false);
-    observation.isCompleted = isCompleted;
-
-    if (isCompleted) {
-      console.log(
-        `[m365-worker] [completed] attempts=${responseState.attempts} hasSeenGenerating=${responseState.hasSeenGenerating} isInputIdle=${isInputIdle} timeSinceChange=${timeSinceChange}ms fastPath=${responseState.fastPathActive}`,
-      );
-    }
-
-    return observation;
   }
 
   /**
@@ -1102,72 +506,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     page: Page,
     _options?: M365BrowserRunOptions,
   ): Promise<M365ResponseBaseline> {
-    return await page.evaluate(() => {
-      const candidates = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']",
-        ),
-      );
-      const aiList: HTMLElement[] = [];
-
-      for (const element of candidates) {
-        if (
-          element.matches("[data-content='user-message']") ||
-          element.querySelector("[data-content='user-message']")
-        ) {
-          continue;
-        }
-
-        const ariaLabel = (
-          element.getAttribute("aria-label") || ""
-        ).toLowerCase();
-        if (
-          ariaLabel.includes("you said") ||
-          ariaLabel.includes("bạn đã nói")
-        ) {
-          continue;
-        }
-
-        const explicitAi = element.matches(
-          ".fai-CopilotMessage, [data-content='ai-message']",
-        );
-        const hasAiMarkers = Boolean(
-          element.querySelector(
-            ".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']",
-          ),
-        );
-        const heading = element.querySelector(
-          ".fai-CopilotMessage__accessibleHeading, [class*='heading' i], h2, h3, h4",
-        );
-        const copilotHeading = (
-          heading?.textContent || ""
-        ).toLowerCase().includes("copilot");
-
-        if (explicitAi || hasAiMarkers || copilotHeading) {
-          aiList.push(element);
-        }
-      }
-
-      const aiMessages = aiList.filter(
-        (message, index, all) =>
-          !all.some(
-            (other, otherIndex) =>
-              otherIndex !== index && other.contains(message),
-          ),
-      );
-
-      aiMessages.forEach(message => {
-        message.setAttribute("data-codex-turn-baseline", "true");
-      });
-
-      const latestMessage = aiMessages[aiMessages.length - 1] || null;
-      return {
-        aiCount: aiMessages.length,
-        count: aiMessages.length,
-        lastText: (latestMessage?.textContent || "").trim(),
-        lastHtml: latestMessage?.innerHTML || "",
-      };
-    });
+    return await this.domObserver.captureBaseline(page);
   }
 
   /**
@@ -1377,420 +716,5 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         `[m365-worker] Không thể xác nhận prompt đã được gửi sau 10 lần thử (editorLength=${remainingText.length}).`,
       );
     }
-  }
-
-  protected async waitForCompletion(
-    page: Page,
-    beforeState: M365ResponseBaseline,
-    options: M365BrowserRunOptions,
-  ): Promise<M365ResponseObservation> {
-    const responseState = this.getResponseRuntimeState(page);
-    const stableCompletionMs = 500;
-    const maxAttempts = 2400; // 2400 * 250ms = 600 giây (10 phút) tối đa
-    const pollIntervalMs = 250;
-
-    while (responseState.attempts < maxAttempts) {
-      if (options.signal?.aborted) {
-        await this.stopGeneration(page).catch(() => false);
-        throw new DOMException("M365 Copilot turn aborted by client", "AbortError");
-      }
-
-      await page.waitForTimeout(pollIntervalMs);
-      responseState.attempts++;
-
-      // Trích xuất các khối ngữ nghĩa (Semantic Blocks) đã được làm sạch và chuẩn hóa khối code
-      const status = await page.evaluate((before) => {
-        const stopBtn = document.querySelector(
-          'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]'
-        );
-        const editor = document.querySelector(
-          '#m365-chat-editor-target-element, .fai-BebopLiteChatInput [role="textbox"], .fai-ChatInput [role="textbox"], div[contenteditable="true"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), [role="textbox"]:not([aria-readonly="true"]):not([aria-label*="Code editor" i]), textarea:not([aria-readonly="true"])'
-        );
-        const editorDisabled = editor?.getAttribute("aria-disabled") === "true";
-
-        // Lọc danh sách tin nhắn AI độc quyền (loại trừ hoàn toàn User message)
-        const candidates = Array.from(document.querySelectorAll<HTMLElement>(
-          ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']"
-        ));
-        const aiList: HTMLElement[] = [];
-        for (const el of candidates) {
-          if (el.matches("[data-content='user-message']") || el.querySelector("[data-content='user-message']")) {
-            continue;
-          }
-          const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
-          if (ariaLabel.includes("you said") || ariaLabel.includes("bạn đã nói")) {
-            continue;
-          }
-          const isExplicitAi = el.matches(".fai-CopilotMessage, [data-content='ai-message']");
-          const hasAiMarkers = Boolean(
-            el.querySelector(".fai-CopilotMessage, [data-content='ai-message'], [data-testid='markdown-reply'], .fai-CopilotMessage__content, .fai-Shimmer, [role='progressbar']")
-          );
-          const heading = el.querySelector(".fai-CopilotMessage__accessibleHeading, [class*='heading' i], h2, h3, h4");
-          const headingText = (heading?.textContent || "").toLowerCase();
-          const isCopilotHeading = headingText.includes("copilot");
-
-          if (isExplicitAi || hasAiMarkers || isCopilotHeading) {
-            aiList.push(el);
-          }
-        }
-        const aiMessages = aiList.filter((msg, idx, all) => !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)));
-
-        // Quét thông báo lỗi hệ thống hoặc quota từ M365 Web
-        let detectedWebError = "";
-        const errorEl = document.querySelector(
-          '[data-testid="error-message"], .fai-ErrorMessage, [role="alert"], [class*="errorMessage" i], [class*="error-banner" i]'
-        );
-        if (errorEl && errorEl.textContent?.trim()) {
-          const errText = errorEl.textContent.trim();
-          if (/something went wrong|try again|reached the limit|limit exceeded|đã xảy ra lỗi|vượt quá giới hạn/i.test(errText)) {
-            detectedWebError = errText;
-          }
-        }
-
-        const baselineCount = typeof before.aiCount === "number" ? before.aiCount : before.count;
-
-        if (aiMessages.length === 0) {
-          return { isGenerating: Boolean(stopBtn), blocks: [], isNew: false, hasContent: false, detectedWebError, fastPathRawText: null };
-        }
-
-        const lastMsg = aiMessages[aiMessages.length - 1] as HTMLElement;
-        const currentLastText = lastMsg ? (lastMsg.textContent?.trim() || "") : "";
-        const currentLastHtml = lastMsg ? (lastMsg.innerHTML || "") : "";
-        const isGenerating = Boolean(stopBtn);
-
-        // Nhận diện tin nhắn cũ (Stateful Safe Guard chống đọc nhầm tin nhắn lượt trước):
-        // Phần tử cuối cùng CHỈ bị coi là tin nhắn cũ khi hội tụ đủ 3 điều kiện:
-        // 1. baselineCount > 0 (chế độ có hội thoại trước đó)
-        // 2. Mang thuộc tính baseline (đã tồn tại trong DOM từ trước khi gửi prompt)
-        // 3. VÀ nội dung (text & html) hoàn toàn không đổi so với thời điểm trước khi gửi prompt.
-        // Bất kỳ sự thay đổi nào (text mới, element mới không có baseline attribute, hoặc count tăng)
-        // đều xác nhận tin nhắn hiện tại thuộc về lượt mới, chống chịu 100% hiện tượng Virtual Scrolling / DOM Recycling.
-        const isCancellationMessage = /(?:I've stopped generating|stopped generating the response|đã dừng tạo phản hồi|dừng tạo câu trả lời)/i.test(currentLastText);
-        const isMarkedBaseline = Boolean(lastMsg && (lastMsg.hasAttribute("data-codex-turn-baseline") || lastMsg.closest("[data-codex-turn-baseline]")));
-        const isContentUnchanged = Boolean(
-          (!before.lastText || currentLastText === before.lastText) &&
-          (!before.lastHtml || currentLastHtml === before.lastHtml)
-        );
-        const isLastMsgOld = (baselineCount > 0 && isMarkedBaseline && isContentUnchanged) || isCancellationMessage;
-
-        if (isLastMsgOld) {
-          const isEditorBusy = isGenerating || editorDisabled;
-          return {
-            isGenerating: isEditorBusy,
-            blocks: [],
-            rawHtml: "",
-            isNew: false,
-            hasContent: false,
-            detectedWebError,
-            fastPathRawText: null,
-          };
-        }
-
-        // Ưu tiên cao nhất: lấy markdown-reply có type="Chat" hoặc có text (bỏ qua thẻ Progress rỗng)
-        const markdownReplies = Array.from(lastMsg.querySelectorAll('[data-testid="markdown-reply"]')) as HTMLElement[];
-        const replyEl = markdownReplies.find(el => el.getAttribute("data-message-type") === "Chat" && el.textContent?.trim())
-          || markdownReplies.reverse().find(el => el.textContent?.trim()) || null;
-        const contentEl = replyEl || (lastMsg.querySelector(".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content") || lastMsg) as HTMLElement;
-
-        // 1. Quét các khối code trên LIVE DOM trước khi clone để lấy chính xác text (có newline + indent) và language
-        // Quét trên cả lastMsg lẫn contentEl để không bao giờ bỏ sót khối Code Preview nếu nó là sibling bên ngoài markdown-reply
-        const codeBlockQuery = "div[role='group'][aria-label='Code Preview'], .scriptor-component-code-block, [class*='scriptor-component-code-block']";
-        const searchRoots = [lastMsg, contentEl].filter(Boolean) as HTMLElement[];
-        const allLiveCodeElements: HTMLElement[] = [];
-        searchRoots.forEach(root => {
-          root.querySelectorAll(codeBlockQuery).forEach(el => allLiveCodeElements.push(el as HTMLElement));
-        });
-        const liveCodeBlocks = allLiveCodeElements.filter((el, idx, all) => all.indexOf(el) === idx && !all.some(other => other !== el && other.contains(el)));
-
-        // Kiểm tra Monaco model trực tiếp trên window nếu có
-        let monacoModelsText: string[] = [];
-        try {
-          const win = window as any;
-          const models = win.monaco?.editor?.getModels?.();
-          if (Array.isArray(models) && models.length > 0) {
-            monacoModelsText = models.map((m: any) => typeof m.getValue === "function" ? m.getValue() : "").filter(Boolean);
-          }
-        } catch { }
-
-        // Khởi tạo bộ nhớ đệm tích lũy dòng code theo data-line-index trên window theo từng block để chống mất dòng khi virtual scrolling
-        const win = window as any;
-        if (!win.__m365_code_lines_cache_by_block) {
-          win.__m365_code_lines_cache_by_block = new Map<number, Map<number, string>>();
-        }
-
-        const codeData = liveCodeBlocks.map((block, blockIdx) => {
-          const langEl = block.querySelector("[data-testid='one-copilot-code-identity'] span, [class*='code-identity' i] span");
-          let lang = langEl?.textContent?.trim().toLowerCase() || "";
-          if (lang === "plain text" || lang === "text") lang = "plain";
-
-          let blockCache = win.__m365_code_lines_cache_by_block.get(blockIdx);
-          if (!blockCache) {
-            blockCache = new Map<number, string>();
-            win.__m365_code_lines_cache_by_block.set(blockIdx, blockCache);
-          }
-
-          // Lấy chính xác code từ các thẻ data-line-index
-          const lineEls = Array.from(block.querySelectorAll("[data-line-index]"));
-          let codeText = "";
-          if (lineEls.length > 0) {
-            // Tích lũy các dòng vào cache trên window theo line index
-            lineEls.forEach((el) => {
-              const idxAttr = el.getAttribute("data-line-index");
-              if (idxAttr !== null) {
-                const idx = parseInt(idxAttr, 10);
-                if (!isNaN(idx)) {
-                  blockCache.set(idx, (el.textContent || "").replace(/\u00a0/g, " "));
-                }
-              }
-            });
-
-            // Ghép lại toàn bộ các dòng từ dòng nhỏ nhất đến dòng lớn nhất từng thấy
-            const keys = (Array.from(blockCache.keys()) as number[]).sort((a, b) => a - b);
-            if (keys.length > 0) {
-              const minIdx = keys[0];
-              const maxIdx = keys[keys.length - 1];
-              const assembled: string[] = [];
-              for (let i = minIdx; i <= maxIdx; i++) {
-                assembled.push(blockCache.get(i) ?? "");
-              }
-              codeText = assembled.join("\n");
-            } else {
-              codeText = lineEls.map(el => (el.textContent || "").replace(/\u00a0/g, " ")).join("\n");
-            }
-          } else {
-            const findRoot = block.querySelector("[data-virtualized-code-find-root='true'], [role='textbox'][aria-label*='Code editor' i]") || block.lastElementChild;
-            codeText = (findRoot ? (findRoot as HTMLElement).innerText : (block as HTMLElement).innerText || "").replace(/\u00a0/g, " ");
-          }
-
-          // Ưu tiên Monaco model nếu model có nội dung dài hơn hoặc hoàn chỉnh hơn
-          if (monacoModelsText[blockIdx] && monacoModelsText[blockIdx].length >= codeText.length) {
-            codeText = monacoModelsText[blockIdx];
-          }
-
-          codeText = codeText.replace(/^\n+|\n+$/g, "");
-          return { lang, codeText };
-        });
-
-        // Fast-Path: Nhận diện khối code từ Scriptor Editor
-        let fastPathRawText: string | null = null;
-        if (codeData.length === 1) {
-          // Nếu chỉ có 1 khối code duy nhất, luôn lấy nội dung của khối đó làm fastPathRawText bất kể lang là gì
-          fastPathRawText = codeData[0].codeText;
-        } else if (codeData.length > 1) {
-          // Nếu có nhiều khối code, ưu tiên khối markdown/plain hoặc khối có nội dung dài nhất
-          const mdBlock = codeData.find(b => b.lang === "markdown" || b.lang === "md" || b.lang === "plain" || !b.lang);
-          fastPathRawText = mdBlock ? mdBlock.codeText : codeData.reduce((prev, curr) => curr.codeText.length > prev.codeText.length ? curr : prev).codeText;
-        }
-
-        // 2. Clone content element để thao tác dọn dẹp
-        const clone = contentEl.cloneNode(true) as HTMLElement;
-
-        // Thay thế các code block trong clone bằng cấu trúc pre/code chuẩn markdown
-        const allClonedCodeElements = Array.from(clone.querySelectorAll(codeBlockQuery)) as HTMLElement[];
-        const clonedCodeBlocks = allClonedCodeElements.filter((el, _, all) => !all.some(other => other !== el && other.contains(el)));
-
-        clonedCodeBlocks.forEach((block, idx) => {
-          const data = codeData[idx];
-          if (!data) return;
-
-          const pre = document.createElement("pre");
-          const code = document.createElement("code");
-          if (data.lang) {
-            code.className = `language-${data.lang}`;
-          }
-          code.textContent = data.codeText;
-          pre.appendChild(code);
-
-          // Chỉ thay thế đúng chính phần tử container khối code, TUYỆT ĐỐI không thay thế parentElement!
-          block.replaceWith(pre);
-        });
-
-        // Hỗ trợ nếu có thẻ pre thông thường
-        clone.querySelectorAll("pre").forEach(pre => {
-          if (!pre.querySelector("code")) {
-            const code = document.createElement("code");
-            code.textContent = pre.textContent || "";
-            pre.textContent = "";
-            pre.appendChild(code);
-          }
-        });
-
-        // 3. Xoá toàn bộ status, progress, buttons, toolbar, svg và heading Copilot said thừa
-        clone.querySelectorAll(
-          "[role='status'], [role='progressbar'], .fai-Shimmer, [class*='shimmer' i], .fai-StatusMessage, .fai-BebopMessageStatus, [role='toolbar'], .fai-CopilotMessage__actions, .fai-CopilotMessage__accessibleHeading, button, svg"
-        ).forEach(el => el.remove());
-
-        // Nếu không có replyEl (fallback), lọc các cụm từ status nếu còn sót trong các thẻ div/span
-        if (!replyEl) {
-          const statusPhrases = [
-            "checking that now", "taking a look", "getting things ready", "digging in",
-            "working on it", "searching the web", "searching work data", "searching",
-            "thinking", "generating response", "putting it together", "putting things together",
-            "gathering thoughts", "looking through your files",
-            "đang xem xét", "đang kiểm tra", "đang chuẩn bị", "đang tìm kiếm",
-            "đang đào sâu", "đang xử lý", "đang suy nghĩ", "đang tạo câu trả lời", "đang tổng hợp"
-          ];
-          clone.querySelectorAll("div, span, p").forEach(el => {
-            const text = el.textContent?.trim().toLowerCase() || "";
-            for (const phrase of statusPhrases) {
-              if (text.startsWith(phrase) && text.length < phrase.length + 35) {
-                el.remove();
-                break;
-              }
-            }
-          });
-        }
-
-        // 4. Phân rã thành các Semantic Blocks bảo toàn 100% Text Nodes và thẻ <br>
-        const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code", "ul", "ol", "hr", "blockquote", "table"]);
-        const rawBlocks: Array<{ tag: string; html: string; text: string }> = [];
-        const inlineNodes: Node[] = [];
-
-        /**
-         * Đẩy toàn bộ văn bản nội dòng (inline text delta) đang chờ ra ngoài callback stream.
-         */
-        function flushInline() {
-          if (inlineNodes.length === 0) return;
-          const temp = document.createElement("p");
-          for (const n of inlineNodes) {
-            temp.appendChild(n.cloneNode(true));
-          }
-          inlineNodes.length = 0;
-          const text = temp.textContent?.trim() || "";
-          if (text.length > 0) {
-            rawBlocks.push({
-              tag: "p",
-              html: temp.outerHTML,
-              text,
-            });
-          }
-        }
-
-        /**
-         * Duyệt đệ quy và trích xuất nội dung văn bản hoặc khối Markdown từ DOM node của tin nhắn Copilot.
-         */
-        function processNode(node: Node) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            const el = node as HTMLElement;
-            const tag = el.tagName.toLowerCase();
-            if (blockTags.has(tag)) {
-              flushInline();
-              const text = el.textContent?.trim() || "";
-              if (text.length > 0 || tag === "hr") {
-                // Bảo toàn thẻ code độc lập để parser nhận diện chính xác
-                const html = tag === "code" ? `<pre>${el.outerHTML}</pre>` : el.outerHTML;
-                rawBlocks.push({
-                  tag: tag === "code" ? "pre" : tag,
-                  html,
-                  text,
-                });
-              }
-              return;
-            }
-            // Nếu là thẻ div/section chứa các block con, duyệt sâu vào các con
-            const hasNestedBlocks = Boolean(el.querySelector(Array.from(blockTags).join(",")));
-            if (hasNestedBlocks) {
-              flushInline();
-              Array.from(el.childNodes).forEach(child => processNode(child));
-              flushInline();
-              return;
-            }
-          }
-          // Mọi node khác (Text node, <br>, <span>, <strong>, <a>...) gom vào inlineNodes
-          inlineNodes.push(node);
-        }
-
-        Array.from(clone.childNodes).forEach(child => processNode(child));
-        flushInline();
-
-        const allStatusPhrases = [
-          "checking that now", "taking a look", "getting things ready", "digging in",
-          "working on it", "searching the web", "searching work data", "searching",
-          "thinking", "generating response", "putting it together", "putting things together",
-          "gathering thoughts", "looking through your files",
-          "đang xem xét", "đang kiểm tra", "đang chuẩn bị", "đang tìm kiếm",
-          "đang đào sâu", "đang xử lý", "đang suy nghĩ", "đang tạo câu trả lời", "đang tổng hợp"
-        ];
-
-        const filteredBlocks = rawBlocks.filter(b => {
-          const t = b.text.trim().toLowerCase();
-          const isStatus = allStatusPhrases.some(sp => t.startsWith(sp) && t.length < sp.length + 35);
-          return (b.text.length > 0 && !isStatus) || b.tag === "hr";
-        });
-
-        // Sinh khóa Block ổn định (Semantic Signature Key) chống nhảy lệch offset và chống lặp tiêu đề
-        const signatureOccurrences = new Map<string, number>();
-        const blocks = filteredBlocks.map((b, idx) => {
-          const snippet = b.text.trim().slice(0, 50).replace(/\s+/g, " ");
-          const signature = `${b.tag}::${snippet}`;
-          const occurrence = (signatureOccurrences.get(signature) || 0) + 1;
-          signatureOccurrences.set(signature, occurrence);
-          const stableKey = `${signature}#${occurrence}`;
-
-          return {
-            key: stableKey,
-            tag: b.tag,
-            html: b.html,
-            text: b.text,
-            streamable: idx < filteredBlocks.length - 1, // Khối đã hoàn tất vì đã xuất hiện khối kế tiếp
-          };
-        });
-
-        // Trạng thái 1 (IDLE): Trong .fai-BebopLiteChatInput__actions hoàn toàn không còn bất kỳ button submit nào
-        const actionsEl = document.querySelector('.fai-BebopLiteChatInput__actions');
-        const hasSubmitBtn = Boolean(actionsEl?.querySelector('button[type="submit"], .fai-SendButton'));
-        const isInputActionsIdle = Boolean(actionsEl) && !hasSubmitBtn && !stopBtn;
-
-        const rawHtml = clone.innerHTML || "";
-        const hasContent = (blocks.length > 0 || Boolean(fastPathRawText && fastPathRawText.length > 0)) && !isCancellationMessage;
-        const isNew = !isLastMsgOld;
-        return { isGenerating, blocks, rawHtml, isNew, hasContent, detectedWebError, fastPathRawText, isInputActionsIdle };
-      }, beforeState);
-
-      responseState.pendingStatus = status as M365ResponseDomStatus;
-      const observation = await this.observeResponse(
-        page,
-        beforeState,
-        options,
-      );
-      if (
-        observation.isCompleted ||
-        this.shouldStopPolling(observation, options)
-      ) {
-        break;
-      }
-
-      // Dynamic Liveness Timeout:
-      // Nếu đã chạm mốc maxAttempts nhưng M365 vẫn đang sinh (isGenerating) hoặc văn bản vừa thay đổi trong vòng 30s:
-      // Tiếp tục gia hạn thời gian chờ để không bao giờ cắt cụt câu trả lời lớn đang sinh dở
-      if (responseState.attempts >= maxAttempts) {
-        const timeSinceLastChange =
-          Date.now() - responseState.lastTextChangeAt;
-        const isActivelyGenerating = status.isGenerating || timeSinceLastChange < 30_000;
-        if (
-          isActivelyGenerating &&
-          responseState.attempts < maxAttempts + 2400
-        ) { // Gia hạn thêm tối đa 10 phút nếu vẫn sinh
-          if (responseState.attempts % 40 === 0) {
-            console.log(`[m365-worker] [extended-liveness] Model vẫn đang tích cực sinh phản hồi (${Math.round(timeSinceLastChange / 1000)}s kể từ token gần nhất), tiếp tục chờ...`);
-          }
-        } else {
-          break;
-        }
-      }
-    }
-
-    const timedOut =
-      responseState.attempts >= maxAttempts &&
-      (responseState.lastStatus?.isGenerating ||
-        Date.now() - responseState.lastTextChangeAt >= 30_000);
-    if (timedOut) {
-      console.warn(`[m365-worker] [timeout] Đã đạt ngưỡng tối đa ${Math.round(responseState.attempts * pollIntervalMs / 1000)}s chờ M365 kết thúc.`);
-    }
-
-    return this.createResponseObservation(
-      responseState,
-      timedOut,
-    );
   }
 }
