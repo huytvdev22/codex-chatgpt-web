@@ -1,5 +1,5 @@
-import { chatGptHtmlToMarkdown } from "../markdown";
-export { chatGptHtmlToMarkdown };
+import { chatGptHtmlToMarkdown, htmlToMarkdown } from "../markdown";
+export { chatGptHtmlToMarkdown, htmlToMarkdown };
 
 export const STATUS_PATTERNS = [
   /^(?:Taking a look|Checking that now|Getting things ready|Digging in|Working on it|Searching the web|Searching work data|Searching|Thinking|Generating response|Putting it together|Putting things together|Gathering thoughts|Looking through your files)[.…\s]*/i,
@@ -37,7 +37,7 @@ export function webHtmlToMarkdown(
   options: WebHtmlToMarkdownOptions = {},
 ): string {
   if (!html || !html.trim()) return "";
-  let md = chatGptHtmlToMarkdown(html).trim();
+  let md = htmlToMarkdown(html).trim();
 
   const prefixes = options.leadingPrefixes ?? [];
   for (const prefix of prefixes) {

@@ -147,20 +147,20 @@ export class WebToolBridge {
     if (!validation.ok) {
       if (validation.code === "UNKNOWN_TOOL") {
         throw new Error(
-          `[M365 Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
+          `[Web Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
         );
       }
-      throw new Error(`[M365 Tool Validation Error] ${validation.code}: ${validation.message}`);
+      throw new Error(`[Web Tool Validation Error] ${validation.code}: ${validation.message}`);
     }
 
     const hasExactTool = clientTools.some((t) => t.name === toolName || t.name === raw.name);
 
-    // Native-first forwarding: M365 chỉ chuẩn hóa và kiểm tra giao thức, còn Codex runtime
+    // Native-first forwarding: Web adapter chỉ chuẩn hóa và kiểm tra giao thức, còn Codex runtime
     // chịu trách nhiệm thực thi tool, xử lý hệ điều hành, sandbox, approval và UI lifecycle.
     // Không hạ cấp các semantic tools như read_file/list_dir thành shell command.
     if (!hasExactTool) {
       throw new Error(
-        `[M365 Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
+        `[Web Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
       );
     }
 
@@ -169,7 +169,7 @@ export class WebToolBridge {
       const patch = String(parsedArgs.input).trim();
       parsedArgs = { ...parsedArgs, input: patch };
 
-      console.log(`[M365 TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);
+      console.log(`[WEB TOOL BRIDGE] Mapped apply_patch -> native apply_patch (diff widget enabled)`);
       return {
         name: "apply_patch",
         arguments: JSON.stringify({ input: patch }),
@@ -185,13 +185,13 @@ export class WebToolBridge {
       const commandValidation = SafeCommandGuard.validateShellCommand(cmd);
       if (!commandValidation.allowed) {
         throw new Error(
-          `[M365 Safe Command Error] ${commandValidation.rule}: ${commandValidation.message} ${commandValidation.guidance}`
+          `[Web Safe Command Error] ${commandValidation.rule}: ${commandValidation.message} ${commandValidation.guidance}`
         );
       }
       parsedArgs = buildCodexExecCommandArguments(parsedArgs, cmd);
     }
 
-    console.log(`[M365 TOOL BRIDGE] Forwarded ${toolName} -> native ${toolName}`);
+    console.log(`[WEB TOOL BRIDGE] Forwarded ${toolName} -> native ${toolName}`);
     return {
       name: toolName,
       arguments: JSON.stringify(parsedArgs),

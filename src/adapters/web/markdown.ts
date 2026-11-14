@@ -140,10 +140,13 @@ function linkObsidianWikiLinks(markdown: string): string {
   }).join("\n");
 }
 
-export function chatGptHtmlToMarkdown(html: string): string {
+export function htmlToMarkdown(html: string): string {
   if (!html.trim()) return "";
   return linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim();
 }
+
+/** @deprecated Dùng htmlToMarkdown từ layer dùng chung. */
+export const chatGptHtmlToMarkdown = htmlToMarkdown;
 
 export interface ChatGptMarkdownSegment {
   key: string;
@@ -418,7 +421,7 @@ export class ChatGptMarkdownBuffer {
   }
 
   private commit(segment: ChatGptMarkdownSegment): string {
-    const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+    const block = this.transform(htmlToMarkdown(segment.html));
     if (!block) return "";
     const separator = this.markdown
       ? segment.group !== undefined && segment.group === this.lastGroup ? "\n" : "\n\n"

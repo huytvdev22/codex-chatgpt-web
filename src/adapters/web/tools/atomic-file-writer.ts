@@ -164,7 +164,7 @@ export class AtomicFileWriter implements IAtomicFileWriter {
    */
   createStagingFile(content: string | Buffer, prefix = "codex_staging_"): StagingFileResult {
 
-    const stagingDir = path.join(os.tmpdir(), "codex_m365_staging");
+    const stagingDir = path.join(os.tmpdir(), "codex_web_staging");
     fs.mkdirSync(stagingDir, { recursive: true });
 
     const contentBuffer = Buffer.isBuffer(content) ? content : Buffer.from(content, "utf8");

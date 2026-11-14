@@ -49,6 +49,21 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       expect(source.includes("one-copilot-code-identity")).toBe(false);
       expect(source.includes("scriptor-component-code-block")).toBe(false);
     }
+
+    // Shared compiler & semantic detector phải trung tính provider
+    const compilerSource = await Bun.file(path.resolve(sharedWebDir, "prompt/compiler.ts")).text();
+    expect(compilerSource.includes("Microsoft 365 Copilot")).toBe(false);
+
+    const semanticDetectorSource = await Bun.file(
+      path.resolve(sharedWebDir, "protocol/semantic-detector.ts"),
+    ).text();
+    expect(semanticDetectorSource.includes("m365HtmlToMarkdown(")).toBe(false);
+
+    // Service layer không phụ thuộc trực tiếp vào web adapter internals cho turn identity
+    const responsesServiceSource = await Bun.file(
+      path.resolve(process.cwd(), "src/services/responses-service.ts"),
+    ).text();
+    expect(responsesServiceSource.includes("adapters/web/turn-identity")).toBe(false);
   });
 
   test("CI GATE: Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {

@@ -1,5 +1,5 @@
 
-import { chatGptHtmlToMarkdown } from "../markdown";
+import { chatGptHtmlToMarkdown, htmlToMarkdown } from "../markdown";
 
 export interface ParsedToolCall {
   name: string;
@@ -768,4 +768,4 @@ export function autoHealHtmlMangledTags(text: string): string {
   return healed;
 }
 
-export { chatGptHtmlToMarkdown };
+export { chatGptHtmlToMarkdown, htmlToMarkdown };
