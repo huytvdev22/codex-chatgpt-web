@@ -58,7 +58,7 @@ describe("M365 Copilot Image Attachments (Phương án 1)", () => {
     expect(normalized.images).toBeDefined();
     expect(normalized.images).toHaveLength(1);
     expect(normalized.images![0]!.mimeType).toBe("image/png");
-    expect(normalized.images![0]!.ref).toBe("m365-img-1");
+    expect(normalized.images![0]!.ref).toBe("web-img-1");
   });
 
   test("3. m365ImageFilePayloads chuyển đổi chính xác sang cấu trúc Playwright payload", () => {

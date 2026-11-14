@@ -1,15 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import {
-  compileM365Prompt,
+  compileWebPrompt,
   isPlanModeRequest,
   isImplementingPlanRequest,
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
+  IMPLEMENT_PLAN_CONTINUATION_PROMPT,
   TOOL_REMINDER_PROMPT,
   SHORT_OUTPUT_FORMAT_ANCHOR,
-} from "../src/adapters/web/prompt";
+  SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
+} from "../src/adapters/web";
 import { M365OutputTranslator } from "../src/adapters/web/protocol";
 import type { CodexParsedRequest } from "../src/types";
+
+function compileM365PromptViaWebCompiler(
+  parsed: CodexParsedRequest,
+  isNewConversation = true,
+): string {
+  return compileWebPrompt(parsed, {
+    assistantName: "M365",
+    isNewConversation,
+  }).finalPrompt;
+}
 
 describe("M365 Plan Mode Support", () => {
   test("isPlanModeRequest detects plan mode from developer collaboration_mode block", () => {
@@ -119,14 +131,14 @@ describe("M365 Plan Mode Support", () => {
     expect(isImplementingPlanRequest(parsed)).toBe(true);
     expect(isPlanModeRequest(parsed)).toBe(false);
 
-    const prompt = compileM365Prompt(parsed, false);
+    const prompt = compileM365PromptViaWebCompiler(parsed, false);
     expect(prompt).not.toContain(PLAN_MODE_PROMPT);
     expect(prompt).toContain(IMPLEMENT_PLAN_PROMPT);
     expect(prompt).toContain("Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý");
     expect(prompt).toContain("apply_patch");
   });
 
-  test("compileM365Prompt injects PLAN_MODE_PROMPT and strict rules when plan mode is active", () => {
+  test("compileWebPrompt injects PLAN_MODE_PROMPT and strict rules when plan mode is active", () => {
     const parsed: CodexParsedRequest = {
       modelId: "m365-copilot/gpt-5",
       stream: false,
@@ -147,13 +159,13 @@ describe("M365 Plan Mode Support", () => {
       },
     };
 
-    const prompt = compileM365Prompt(parsed, true);
+    const prompt = compileM365PromptViaWebCompiler(parsed, true);
     expect(prompt).toContain(PLAN_MODE_PROMPT);
     expect(prompt).toContain("<proposed_plan>");
     expect(prompt).toContain("TUYỆT ĐỐI KHÔNG CHỈNH SỬA CODE");
   });
 
-  test("compileM365Prompt urges proposed_plan after toolResult instead of edit tools in plan mode", () => {
+  test("compileWebPrompt urges proposed_plan after toolResult instead of edit tools in plan mode", () => {
     const parsed: CodexParsedRequest = {
       modelId: "m365-copilot/gpt-5",
       stream: false,
@@ -182,10 +194,11 @@ describe("M365 Plan Mode Support", () => {
       },
     };
 
-    const prompt = compileM365Prompt(parsed, true);
+    const prompt = compileM365PromptViaWebCompiler(parsed, false);
     expect(prompt).toContain("<proposed_plan>");
     expect(prompt).toContain("chưa sửa code (chưa dùng apply_patch/write_file)");
-    expect(prompt).toContain("xuất bản kế hoạch bọc trong thẻ");
+    expect(prompt).toContain("xuất bản kế hoạch hoàn chỉnh");
+    expect(prompt).toContain(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
   });
 
   test("M365OutputTranslator treats proposed_plan response as final_answer even with sample code blocks", () => {
@@ -212,7 +225,7 @@ node math.test.js
     }
   });
 
-  test("compileM365Prompt injects TOOL_REMINDER_PROMPT during toolResult turns to prevent Copilot refusal", () => {
+  test("compileWebPrompt injects TOOL_REMINDER_PROMPT during toolResult turns to prevent Copilot refusal", () => {
     const parsed: CodexParsedRequest = {
       modelId: "m365-copilot/gpt-5",
       stream: false,
@@ -236,7 +249,7 @@ node math.test.js
       },
     };
 
-    const prompt = compileM365Prompt(parsed, false);
+    const prompt = compileM365PromptViaWebCompiler(parsed, false);
     // Khi có toolResult, BẮT BUỘC phải có TOOL_REMINDER_PROMPT để Copilot không bị mất ngữ cảnh tool
     expect(prompt).toContain(TOOL_REMINDER_PROMPT);
     expect(prompt).toContain("nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé");
@@ -244,7 +257,7 @@ node math.test.js
     expect(prompt).toContain("apply_patch");
   });
 
-  test("compileM365Prompt provides greenfield and write_file guidance when implementing approved plan", () => {
+  test("compileWebPrompt provides apply_patch guidance when implementing approved plan with toolResult", () => {
     const parsed: CodexParsedRequest = {
       modelId: "m365-copilot/gpt-5",
       stream: false,
@@ -268,11 +281,10 @@ node math.test.js
       },
     };
 
-    const prompt = compileM365Prompt(parsed, false);
-    expect(prompt).toContain(IMPLEMENT_PLAN_PROMPT);
-    expect(prompt).toContain("Luôn dùng <custom_tool_call name=\"apply_patch\">");
-    expect(prompt).toContain("write_file");
-    expect(prompt).toContain(TOOL_REMINDER_PROMPT);
+    const prompt = compileM365PromptViaWebCompiler(parsed, false);
+    expect(prompt).toContain(IMPLEMENT_PLAN_CONTINUATION_PROMPT);
+    expect(prompt).toContain("Luôn dùng <custom_tool_call name=\"apply_patch\">".slice(-20));
+    expect(prompt).toContain("<custom_tool_call name=\"apply_patch\">");
     expect(prompt).toContain(SHORT_OUTPUT_FORMAT_ANCHOR);
   });
 });

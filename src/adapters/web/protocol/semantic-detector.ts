@@ -22,14 +22,31 @@ export type M365MarkdownBlock = SemanticMarkdownBlock;
  * 3. Tuyệt đối không stream dở dang khối code block để tránh gãy vỡ cú pháp Markdown (fences).
  * 4. Đảm bảo tính toàn vẹn và không bao giờ bị lệch chỉ mục chuỗi (index offset misalignment).
  */
+export interface SemanticMarkdownBufferOptions {
+  transform?: (md: string) => string;
+  htmlToMarkdown?: (html: string) => string;
+}
+
 export class SemanticMarkdownBuffer {
   private readonly committedKeys = new Set<string>();
   private markdown = "";
   private pendingBlocks: SemanticMarkdownBlock[] = [];
+  private readonly transform: (md: string) => string;
+  private readonly htmlToMarkdown: (html: string) => string;
 
   constructor(
-    private readonly transform: (md: string) => string = md => md,
-  ) {}
+    transformOrOptions:
+      | ((md: string) => string)
+      | SemanticMarkdownBufferOptions = {},
+  ) {
+    if (typeof transformOrOptions === "function") {
+      this.transform = transformOrOptions;
+      this.htmlToMarkdown = webHtmlToMarkdown;
+    } else {
+      this.transform = transformOrOptions.transform ?? (md => md);
+      this.htmlToMarkdown = transformOrOptions.htmlToMarkdown ?? webHtmlToMarkdown;
+    }
+  }
 
   observe(blocks: SemanticMarkdownBlock[]): string {
     this.pendingBlocks = blocks;
@@ -85,7 +102,7 @@ export class SemanticMarkdownBuffer {
     ) {
       rawMd = block.text.trim();
     } else {
-      rawMd = m365HtmlToMarkdown(block.html).trim();
+      rawMd = this.htmlToMarkdown(block.html).trim();
     }
     const cleanMd = normalizeMarkdownFences(this.transform(rawMd).trim());
     this.committedKeys.add(block.key);

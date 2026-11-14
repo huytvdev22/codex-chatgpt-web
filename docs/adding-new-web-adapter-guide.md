@@ -40,9 +40,9 @@ Khảo sát DOM website
    - Không lưu cookie, access token, nội dung hội thoại hoặc thông tin đăng nhập vào mã nguồn và tài liệu.
 
 2. **Tạo provider adapter**
-   - Tạo thư mục `src/adapters/<provider>/` với facade `index.ts` và browser worker.
-   - Chỉ thêm `selectors.ts`, capability picker, conversation store hoặc attachment handler khi giao diện provider cần các chức năng tương ứng.
-   - Browser worker chịu trách nhiệm thao tác DOM, chờ stream hoàn tất và trả về `rawResponse` cùng `conversationId` nếu có.
+   - Tạo thư mục `src/adapters/<provider>/` với facade `index.ts` (khai báo `WebProviderDefinition`) và browser worker kế thừa `BaseWebBrowserWorker` (`src/adapters/web/browser/base-browser-worker.ts`).
+   - Chỉ thêm `selectors.ts`, DOM observer, clipboard salvage, capability picker hoặc attachment handler khi giao diện provider cần các chức năng tương ứng.
+   - Browser worker kế thừa `waitForCompletion()` từ `BaseWebBrowserWorker` để dùng chung vòng lặp chờ ổn định DOM, heartbeat và tín hiệu abort; provider chỉ implement phần thao tác DOM, đọc `rawResponse` và trả về `conversationId` nếu có.
 
 3. **Khai báo contract dùng chung**
    - Tạo `WebProviderDefinition` với conversation, browser và các driver tùy chọn.
@@ -70,8 +70,8 @@ Khảo sát DOM website
 
 | Tầng | Sở hữu | Tuyệt đối KHÔNG chứa |
 | :--- | :--- | :--- |
-| **Shared Layer** (`src/adapters/web/`) | - Điều phối vòng đời lượt chạy (`WebTurnEngine`, `runtime-lifecycle.ts`)<br>- Chuẩn hóa payload & biên dịch prompt (`normalization/`, `prompt/`)<br>- Giao thức `<webResponse>`, parser, validator, format-retry, event emission (`protocol/`)<br>- Chuẩn hóa & ánh xạ công cụ (`tools/`, `WebToolBridge`)<br>- Chống lặp vô hạn & lưu trữ hội thoại (`execution/`, `conversation/`) | - Selector DOM hoặc URL của bất kỳ provider nào<br>- Logic nhánh `if (provider === ...)`<br>- Import ngược từ `src/adapters/<provider>/` |
-| **Provider Layer** (`src/adapters/<provider>/`) | - `index.ts`: Khai báo `WebProviderDefinition` & kế thừa `WebProviderAdapter`<br>- `browser-worker.ts`: Điều khiển trang, gửi prompt, đọc `rawResponse`<br>- `capability-picker.ts`: Chọn model / mức tư duy trên UI<br>- `selectors.ts` & `conversation-store.ts`: Selector, URL và khóa hội thoại | - Tự viết lại `runTurn()`<br>- Tự quản lý Launcher lifecycle, trừ ngoại lệ được phê duyệt với `manageLauncherLeaseInEngine: false` (M365 là trường hợp tham chiếu)<br>- Tự gọi parser, validator, retry hay emit event giao thức |
+| **Shared Layer** (`src/adapters/web/`) | - Điều phối vòng đời lượt chạy (`WebTurnEngine`, `runtime-lifecycle.ts`)<br>- Chuẩn hóa payload 1 lần & biên dịch prompt trung tính (`normalization/`, `prompt/`, `compile-prompt.ts`)<br>- Khung chờ browser worker (`BaseWebBrowserWorker`)<br>- Giao thức `<webResponse>`, parser, validator, format-retry, `WebOutputTranslator`, `WebToolCallDetector`, event emission (`protocol/`)<br>- Chuẩn hóa & ánh xạ công cụ (`tools/`, `WebToolBridge`)<br>- Chống lặp vô hạn & dẫn xuất khóa hội thoại (`execution/WebTurnLoopGuard`, `conversation/`) | - Selector DOM hoặc URL của bất kỳ provider nào<br>- Logic nhánh `if (provider === ...)`<br>- Import ngược từ `src/adapters/<provider>/` |
+| **Provider Layer** (`src/adapters/<provider>/`) | - `index.ts`: Khai báo `WebProviderDefinition` (gồm `policies.maxPromptChars`, `attachments.maxInputImages`) & kế thừa `WebProviderAdapter`<br>- `*-browser-worker.ts`: Kế thừa `BaseWebBrowserWorker`, chỉ implement thao tác UI trang đích & đọc `rawResponse`<br>- `capability-picker.ts`: Chọn model / mức tư duy trên UI<br>- `selectors.ts` & `conversation-url.ts` / `conversation-key.ts`: Selector, URL và khóa hội thoại | - Tự viết lại `runTurn()`, prompt compiler, payload normalization hay vòng lặp chờ stream/heartbeat<br>- Tự quản lý Launcher lifecycle, trừ ngoại lệ được phê duyệt với `manageLauncherLeaseInEngine: false` (M365 là trường hợp tham chiếu)<br>- Tự gọi parser, validator, retry hay emit event giao thức |
 
 ---
 
@@ -81,12 +81,11 @@ Một provider được mô tả trọn vẹn qua 5 nhóm driver trong `src/adap
 
 1. **`conversation` (`WebConversationDriver`)**:
    - Xác định khóa hội thoại ổn định bằng `buildWebConversationKey` hoặc hàm conversation-key đặc thù của provider.
-   - Dùng `GenericConversationStore` khi cần ánh xạ khóa nội bộ sang `conversationId` của website.
    - Quyết định khi nào tái sử dụng hội thoại cũ (`resolveState`) và khi nào gắn kết surface vào Launcher lúc kết thúc lượt (`resolveEndTurnBinding`).
 2. **`capability` (`WebCapabilityPickerDriver`)**:
    - Ánh xạ mức suy luận từ Codex (`low` / `medium` / `high`) sang chế độ tương ứng trên giao diện Web.
 3. **`attachments` (`WebAttachmentDriver` - tuỳ chọn)**:
-   - Trích xuất hình ảnh đính kèm ở lần gửi đầu tiên (`attempt === 0`). Không gửi lại ảnh ở các vòng retry định dạng.
+   - Khai báo `maxInputImages` và trích xuất hình ảnh đính kèm ở lần gửi đầu tiên (`attempt === 0`). Không gửi lại ảnh ở các vòng retry định dạng.
 4. **`browser` (`WebBrowserDriver`)**:
    - Nhận `Page` từ Engine, thực thi thao tác trên DOM (chọn capability -> đính kèm ảnh -> điền composer -> gửi -> trích xuất câu trả lời) và chỉ trả về `{ rawResponse, conversationId }`.
    - Bắt buộc khai báo `launcherProviderId` và `connectorIdentity` để Launcher định tuyến đúng provider và surface.

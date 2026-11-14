@@ -1,4 +1,5 @@
 import type { Page } from "playwright-core";
+import type { CodexParsedRequest } from "../../types";
 import type { LauncherBrowserConnection } from "../../launcher-browser-host";
 import {
   closeLauncherBrowserTurn,
@@ -176,6 +177,9 @@ export async function releaseWebTurnSurface(options: {
   finalStatus: WebTurnFinalStatus;
   activeConversationId?: string;
   conversationKey?: string;
+  parsed?: CodexParsedRequest;
+  hasPriorAssistantReply?: boolean;
+  hasToolResults?: boolean;
   abortSignal?: AbortSignal;
   ops?: Partial<WebRuntimeLifecycleOps>;
 }): Promise<void> {
@@ -186,6 +190,9 @@ export async function releaseWebTurnSurface(options: {
     finalStatus,
     activeConversationId,
     conversationKey,
+    parsed,
+    hasPriorAssistantReply,
+    hasToolResults,
     abortSignal,
   } = options;
   const ops: WebRuntimeLifecycleOps = {
@@ -203,10 +210,14 @@ export async function releaseWebTurnSurface(options: {
           finalStatus,
           activeConversationId,
           conversationKey,
+          parsed,
+          hasPriorAssistantReply,
+          hasToolResults,
         })
       : {
           connectorBound: finalStatus === "completed",
           conversationId: activeConversationId,
+          retain: true,
         };
 
     await ops.endTurn({
@@ -217,7 +228,7 @@ export async function releaseWebTurnSurface(options: {
         helperPid: process.pid,
         provider: definition.browser.launcherProviderId,
         status: finalStatus,
-        retain: true,
+        retain: binding.retain ?? true,
         connectorBound: binding.connectorBound,
         ...(binding.conversationId
           ? { conversationId: binding.conversationId }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BashCommandDetector, M365OutputTranslator, XmlToolCallDetector } from "../src/adapters/web/protocol";
-import { compileM365Prompt, TOOL_REMINDER_PROMPT } from "../src/adapters/web/prompt";
+import { compileWebPrompt } from "../src/adapters/web";
 import {
   M365CopilotAdapter,
   conversationGuard,
@@ -179,8 +179,11 @@ git reset --hard HEAD
       options: {},
     };
 
-    // 4a. compileM365Prompt: Không chứa nội dung toolResult cũ và không nạp lại assistant cuối
-    const prompt = compileM365Prompt(parsedFinalAnswer, false);
+    // 4a. compileWebPrompt: Không chứa nội dung toolResult cũ và không nạp lại assistant cuối
+    const prompt = compileWebPrompt(parsedFinalAnswer, {
+      assistantName: "M365",
+      isNewConversation: false,
+    }).finalPrompt;
     expect(prompt).not.toContain("FILE_CONTENT_A");
     expect(prompt).not.toContain("<tool_result>\nFILE_CONTENT_A");
 

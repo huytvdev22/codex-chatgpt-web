@@ -175,7 +175,7 @@ function validateExecCommand(args: Record<string, unknown>): ToolValidationResul
 }
 
 /** Validate tool inventory và các trường bắt buộc sau normalization, trước mapping/execution. */
-export function validateM365ToolCall(
+export function validateWebToolCall(
   name: string,
   args: Record<string, unknown>,
   clientTools: CodexTool[] = []
@@ -234,5 +234,8 @@ export function validateM365ToolCall(
       return { ok: true };
   }
 }
+
+/** @deprecated Dùng `validateWebToolCall` thay thế. */
+export const validateM365ToolCall = validateWebToolCall;
 
 export { BRIDGE_TOOLS };

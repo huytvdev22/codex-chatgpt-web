@@ -5,7 +5,6 @@ export * from "./protocol";
 export * from "./tools";
 export * from "./execution";
 export * from "./conversation";
-export * from "./harness";
 export * from "./definition";
 export * from "./runtime-lifecycle";
 export * from "./engine";

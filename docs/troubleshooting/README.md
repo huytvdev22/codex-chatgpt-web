@@ -5,6 +5,9 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **051** | Turndown thoát ký tự Markdown (`\_`, `\*`, `\[`) làm hỏng JSON Structured Output trên M365 | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | ./051-m365-turndown-escaped-json-schema.md |
+| **050** | Tối ưu prompt Structured Output (`json_schema`) và tự đóng tab phụ sinh tiêu đề | `core`, `web`, `m365-copilot`, `launcher` | ⏳ Chờ User Test & Confirm | ./050-m365-structured-output-and-ephemeral-tab.md |
+| **049** | Hợp nhất Unified Web Core và tách mỏng Web Transport Adapter (`src/adapters/web` + `m365-copilot`) | `core`, `web`, `m365-copilot`, `architecture` | ⏳ Chờ User Test & Confirm | ./049-refactor-adapter-unified-web-core.md |
 | **048** | Tắt/Uninstall bridge vẫn để sót `model_catalog_json` và model adapter trong `~/.codex/config.toml` | `codex-integration`, `server`, `launcher` | ✅ Đã Confirm | ./048-uninstall-leaves-model-catalog-in-codex-config.md |
 | **047** | M365 Copilot non-streaming (`stream: false`) bỏ sót `freeformToolNames` / `toolSearchToolNames` | `m365-copilot`, `server`, `tools` | ⏳ Chờ User Test & Confirm | ./047-m365-non-stream-freeform-tool-bridge.md |
 | **046** | Mở `docs/swagger.html` qua VS Code Live Server bị lỗi CORS khi gọi `127.0.0.1:17841` | `server`, `cors`, `swagger` | ✅ Đã Confirm | ./046-swagger-live-server-cors-blocked.md |

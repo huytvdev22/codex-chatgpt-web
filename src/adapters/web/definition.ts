@@ -2,7 +2,10 @@ import type { Page } from "playwright-core";
 import type { IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest, CodexUsage } from "../../types";
 import type { LauncherBrowserHostDescriptor } from "../../launcher-browser-host";
-import type { NormalizedImageAttachment } from "./normalization/canonical-types";
+import type {
+  NormalizedCodexRequest,
+  NormalizedImageAttachment,
+} from "./normalization/canonical-types";
 import type { WebProtocolErrorCode } from "./protocol/strict-response-parser";
 import type { ToolValidationFailure } from "./tools/tool-validator";
 
@@ -20,6 +23,7 @@ export interface WebConversationStateResolution {
 export interface WebEndTurnBindingResolution {
   connectorBound: boolean;
   conversationId?: string;
+  retain?: boolean;
 }
 
 export interface WebConversationDriver {
@@ -32,6 +36,7 @@ export interface WebConversationDriver {
     parsed: CodexParsedRequest;
     incoming: IncomingMeta;
     threadId?: string;
+    turnTraceId?: string;
   }): string | undefined;
 
   resolveState?(context: {
@@ -54,6 +59,9 @@ export interface WebConversationDriver {
     finalStatus: WebTurnFinalStatus;
     activeConversationId?: string;
     conversationKey?: string;
+    parsed?: CodexParsedRequest;
+    hasPriorAssistantReply?: boolean;
+    hasToolResults?: boolean;
   }): WebEndTurnBindingResolution;
 }
 
@@ -62,9 +70,12 @@ export interface WebCapabilityPickerDriver {
 }
 
 export interface WebAttachmentDriver {
+  /** Số lượng ảnh tối đa adapter hỗ trợ trong một lượt (mặc định 3). */
+  maxInputImages?: number;
   extractAttachments?(context: {
     parsed: CodexParsedRequest;
     attempt: number;
+    normalized?: NormalizedCodexRequest;
   }): NormalizedImageAttachment[];
 }
 
@@ -79,6 +90,7 @@ export interface WebBrowserTurnExecutionInput {
   existingConversationId?: string;
   launcherReused: boolean;
   isNewConversation: boolean;
+  retain?: boolean;
   attachments: NormalizedImageAttachment[];
   turnTraceId: string;
   /**
@@ -179,6 +191,11 @@ export interface WebProviderPolicies {
   enableToolLoopGuard?: boolean;
 
   /**
+   * Ngưỡng độ dài tối đa của prompt sau khi biên dịch trước khi cắt tỉa (mặc định 95_000).
+   */
+  maxPromptChars?: number;
+
+  /**
    * Cấu hình tạo traceId cho lượt tương tác.
    */
   traceIdOptions?: {
@@ -200,6 +217,7 @@ export interface WebProviderDefinition {
   readonly compilePrompt?: (
     parsed: CodexParsedRequest,
     isNewConversation: boolean,
+    normalized?: NormalizedCodexRequest,
   ) => string;
 
   readonly conversation: WebConversationDriver;

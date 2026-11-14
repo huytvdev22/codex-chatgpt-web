@@ -140,12 +140,15 @@ function linkObsidianWikiLinks(markdown: string): string {
   }).join("\n");
 }
 
-export function chatGptHtmlToMarkdown(html: string): string {
+export function htmlToMarkdown(html: string): string {
   if (!html.trim()) return "";
   return linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim();
 }
 
-export interface ChatGptMarkdownSegment {
+/** @deprecated Dùng htmlToMarkdown từ layer dùng chung. */
+export const chatGptHtmlToMarkdown = htmlToMarkdown;
+
+export interface WebMarkdownSegment {
   key: string;
   tag?: string;
   html: string;
@@ -157,12 +160,12 @@ export interface ChatGptMarkdownSegment {
   streamable: boolean;
 }
 
-interface ChatGptMarkdownCandidate extends ChatGptMarkdownSegment {
+interface WebMarkdownCandidate extends WebMarkdownSegment {
   changedAt: number;
   streamableAt?: number;
 }
 
-interface CommittedChatGptMarkdownSegment {
+interface CommittedWebMarkdownSegment {
   key: string;
   tag?: string;
   text: string;
@@ -171,7 +174,7 @@ interface CommittedChatGptMarkdownSegment {
   sourceEnd?: number;
 }
 
-export class ChatGptMarkdownConsistencyError extends Error {
+export class WebMarkdownConsistencyError extends Error {
   constructor(message: string, readonly diagnostic?: {
     reason: "text_changed" | "link_target_changed" | "block_order_changed" | "source_range_overlap";
     observedStart?: number;
@@ -182,40 +185,40 @@ export class ChatGptMarkdownConsistencyError extends Error {
     committedTextChars: number;
   }) {
     super(message);
-    this.name = "ChatGptMarkdownConsistencyError";
+    this.name = "WebMarkdownConsistencyError";
   }
 }
 
 /**
- * Converts structurally completed ChatGPT DOM blocks into an append-only Markdown stream.
+ * Converts structurally completed Web DOM blocks into an append-only Markdown stream.
  *
- * ChatGPT can rewrite old HTML while hydrating citations and controls, so a character prefix is
- * not a safe commit boundary. It can also virtualize an already-rendered prefix, so later DOM
+ * Web UIs can rewrite old HTML while hydrating citations and controls, so a character prefix is
+ * not a safe commit boundary. They can also virtualize an already-rendered prefix, so later DOM
  * snapshots are partial observations rather than the response ledger. The browser supplies source
  * ranges for semantic blocks and marks a block streamable only after a following block exists.
  * Once committed, a missing prefix is harmless; changing text at a committed source range remains
  * an explicit protocol error because Responses deltas cannot be retracted.
  */
-export class ChatGptMarkdownBuffer {
-  private readonly candidates = new Map<string, ChatGptMarkdownCandidate>();
-  private readonly committed: CommittedChatGptMarkdownSegment[] = [];
-  private latest: ChatGptMarkdownSegment[] = [];
+export class WebMarkdownBuffer {
+  private readonly candidates = new Map<string, WebMarkdownCandidate>();
+  private readonly committed: CommittedWebMarkdownSegment[] = [];
+  private latest: WebMarkdownSegment[] = [];
   private markdown = "";
   private lastGroup: string | undefined;
-  private consistencyError: ChatGptMarkdownConsistencyError | undefined;
+  private consistencyError: WebMarkdownConsistencyError | undefined;
 
   constructor(
     private readonly transform: (markdown: string) => string = markdown => markdown,
     private readonly stabilityMs = 750,
   ) {
     if (!Number.isFinite(stabilityMs) || stabilityMs < 0) {
-      throw new Error("ChatGPT Markdown stability window must be a non-negative finite number");
+      throw new Error("Web Markdown stability window must be a non-negative finite number");
     }
   }
 
-  observe(segments: ChatGptMarkdownSegment[], now = Date.now()): string {
+  observe(segments: WebMarkdownSegment[], now = Date.now()): string {
     const reconciled = this.reconcile(segments);
-    if (reconciled instanceof ChatGptMarkdownConsistencyError) {
+    if (reconciled instanceof WebMarkdownConsistencyError) {
       this.consistencyError = reconciled;
       return "";
     }
@@ -283,11 +286,11 @@ export class ChatGptMarkdownBuffer {
   }
 
   private reconcile(
-    segments: ChatGptMarkdownSegment[],
-  ): ChatGptMarkdownSegment[] | ChatGptMarkdownConsistencyError {
+    segments: WebMarkdownSegment[],
+  ): WebMarkdownSegment[] | WebMarkdownConsistencyError {
     if (this.committed.length === 0 || segments.length === 0) return segments;
 
-    const pending: ChatGptMarkdownSegment[] = [];
+    const pending: WebMarkdownSegment[] = [];
     const lastRangedCommitted = this.committed
       .filter(segment => segment.sourceEnd !== undefined)
       .at(-1);
@@ -299,8 +302,8 @@ export class ChatGptMarkdownBuffer {
     for (const segment of segments) {
       if (segment.sourceStart !== undefined) {
         if (previousSourceStart !== undefined && segment.sourceStart <= previousSourceStart) {
-          return new ChatGptMarkdownConsistencyError(
-            "ChatGPT final DOM exposed non-monotonic source ranges",
+          return new WebMarkdownConsistencyError(
+            "Web provider final DOM exposed non-monotonic source ranges",
           );
         }
         previousSourceStart = segment.sourceStart;
@@ -335,8 +338,8 @@ export class ChatGptMarkdownBuffer {
 
       const followsVisibleCommittedTail = highestCommittedIndex === this.committed.length - 1;
       if (!followsVisibleCommittedTail && !this.matchesLatestPending(segment)) {
-        return new ChatGptMarkdownConsistencyError(
-          "ChatGPT final DOM could not be aligned with text already streamed to Codex",
+        return new WebMarkdownConsistencyError(
+          "Web provider final DOM could not be aligned with text already streamed to Codex",
         );
       }
       sawPending = true;
@@ -346,7 +349,7 @@ export class ChatGptMarkdownBuffer {
     return pending;
   }
 
-  private committedIndex(segment: ChatGptMarkdownSegment): number | undefined {
+  private committedIndex(segment: WebMarkdownSegment): number | undefined {
     const exact = this.committed.findIndex(committed => (
       segment.sourceStart !== undefined && committed.sourceStart !== undefined
         ? segment.sourceStart === committed.sourceStart && segment.tag === committed.tag
@@ -366,7 +369,7 @@ export class ChatGptMarkdownBuffer {
     return semanticMatches.length === 1 ? semanticMatches[0]!.index : undefined;
   }
 
-  private matchesLatestPending(segment: ChatGptMarkdownSegment): boolean {
+  private matchesLatestPending(segment: WebMarkdownSegment): boolean {
     const exact = this.latest.filter(candidate => (
       segment.sourceStart !== undefined && candidate.sourceStart !== undefined
         ? segment.sourceStart === candidate.sourceStart && segment.tag === candidate.tag
@@ -381,13 +384,13 @@ export class ChatGptMarkdownBuffer {
     )).length === 1;
   }
 
-  private candidateId(segment: ChatGptMarkdownSegment): string {
+  private candidateId(segment: WebMarkdownSegment): string {
     return segment.sourceStart !== undefined
       ? `source:${segment.sourceStart}:${segment.tag ?? ""}`
       : `key:${segment.key}`;
   }
 
-  private committedSegment(segment: ChatGptMarkdownSegment): CommittedChatGptMarkdownSegment {
+  private committedSegment(segment: WebMarkdownSegment): CommittedWebMarkdownSegment {
     return {
       key: segment.key,
       ...(segment.tag ? { tag: segment.tag } : {}),
@@ -399,12 +402,12 @@ export class ChatGptMarkdownBuffer {
   }
 
   private changedCommittedBlockError(
-    reason: NonNullable<ChatGptMarkdownConsistencyError["diagnostic"]>["reason"],
-    observed: ChatGptMarkdownSegment,
-    committed: CommittedChatGptMarkdownSegment,
-  ): ChatGptMarkdownConsistencyError {
-    return new ChatGptMarkdownConsistencyError(
-      "ChatGPT changed a completed text block that was already streamed to Codex",
+    reason: NonNullable<WebMarkdownConsistencyError["diagnostic"]>["reason"],
+    observed: WebMarkdownSegment,
+    committed: CommittedWebMarkdownSegment,
+  ): WebMarkdownConsistencyError {
+    return new WebMarkdownConsistencyError(
+      "Web provider changed a completed text block that was already streamed to Codex",
       {
         reason,
         observedStart: observed.sourceStart,
@@ -417,8 +420,8 @@ export class ChatGptMarkdownBuffer {
     );
   }
 
-  private commit(segment: ChatGptMarkdownSegment): string {
-    const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+  private commit(segment: WebMarkdownSegment): string {
+    const block = this.transform(htmlToMarkdown(segment.html));
     if (!block) return "";
     const separator = this.markdown
       ? segment.group !== undefined && segment.group === this.lastGroup ? "\n" : "\n\n"
@@ -429,3 +432,10 @@ export class ChatGptMarkdownBuffer {
     return delta;
   }
 }
+
+/** @deprecated Dùng `WebMarkdownSegment` thay thế. */
+export type ChatGptMarkdownSegment = WebMarkdownSegment;
+/** @deprecated Dùng `WebMarkdownConsistencyError` thay thế. */
+export const ChatGptMarkdownConsistencyError = WebMarkdownConsistencyError;
+/** @deprecated Dùng `WebMarkdownBuffer` thay thế. */
+export const ChatGptMarkdownBuffer = WebMarkdownBuffer;

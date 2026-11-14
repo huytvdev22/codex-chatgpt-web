@@ -65,9 +65,12 @@ export interface NormalizedExecutionPolicy {
 }
 
 /**
- * Số lượng hình ảnh tối đa M365 Copilot cho phép trong 1 lượt nhắn.
+ * Số lượng hình ảnh mặc định tối đa cho phép trong 1 lượt nhắn của Web adapter.
  */
-export const M365_MAX_INPUT_IMAGES = 3;
+export const DEFAULT_MAX_INPUT_IMAGES = 3;
+
+/** @deprecated Dùng `DEFAULT_MAX_INPUT_IMAGES` hoặc cấu hình trên `WebAttachmentDriver.maxInputImages`. */
+export const M365_MAX_INPUT_IMAGES = DEFAULT_MAX_INPUT_IMAGES;
 
 /**
  * Đính kèm hình ảnh đã được chuẩn hóa (Canonical Image Attachment).

@@ -1,22 +1,21 @@
 import { hasActualPriorAssistantReply, type IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { compileWebPrompt } from "./compile-prompt";
+import { CodexPayloadNormalizer, CodexRawPayload } from "./normalization";
+import { isStructuredJsonOutputTurn } from "./prompt";
 import {
   parseStrictWebResponse,
   type StrictWebResponseResult,
 } from "./protocol/strict-response-parser";
+import { parseAndValidateJsonSchemaResponse } from "./protocol/json-schema-response";
 import { validateWebProtocolResponse } from "./protocol/validate-response";
 import { runWebProtocolRetry } from "./protocol/retry-response";
 import { emitWebProtocolResponse } from "./protocol/emit-response";
-import { WebToolBridge } from "./tools/tool-bridge";
 import {
-  cleanExpiredConversationGuards,
   conversationGuard,
-  getMaxIdenticalToolCalls,
   isAssistantFinalAnswer,
-  MAX_TOOL_ITERATIONS,
-  stableToolFingerprint,
-} from "./execution/turn-guard";
+  WebTurnLoopGuard,
+} from "./execution";
 import {
   activeWebTurnRegistry,
   resolveWebThreadId,
@@ -38,6 +37,8 @@ import {
  * cho tất cả các Web Provider theo cấu hình WebProviderDefinition.
  */
 export class WebTurnEngine {
+  private readonly loopGuard = new WebTurnLoopGuard();
+
   constructor(
     private readonly definition: WebProviderDefinition,
     private readonly localBrowser?: LocalBrowserRuntime,
@@ -57,6 +58,11 @@ export class WebTurnEngine {
       );
     }
 
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+      ...this.definition.policies?.traceIdOptions,
+    });
+
     const threadId = this.definition.conversation.resolveThreadId
       ? this.definition.conversation.resolveThreadId(parsed, incoming)
       : resolveWebThreadId(parsed._rawBody, parsed, incoming.headers);
@@ -66,6 +72,7 @@ export class WebTurnEngine {
         parsed,
         incoming,
         threadId,
+        turnTraceId,
       });
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(
@@ -91,11 +98,6 @@ export class WebTurnEngine {
         return;
       }
     }
-
-    const turnTraceId = resolveWebTurnTraceId({
-      headers: incoming.headers,
-      ...this.definition.policies?.traceIdOptions,
-    });
 
     const turnRegistration = activeWebTurnRegistry.register(
       turnTraceId,
@@ -134,11 +136,33 @@ export class WebTurnEngine {
       const { existingConversationId, isNewConversation } = stateResolution;
       let activeConversationId = existingConversationId;
 
+      const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+      const normalized = CodexPayloadNormalizer.normalize(rawPayload, {
+        maxImages: this.definition.attachments?.maxInputImages,
+      });
+      const hasToolResults = normalized.trailingToolResults.length > 0;
+      const structuredOutputFormat = isStructuredJsonOutputTurn(parsed, hasToolResults)
+        ? parsed.options.outputFormat
+        : undefined;
+      const retainTurn = this.definition.conversation.resolveEndTurnBinding
+        ? (this.definition.conversation.resolveEndTurnBinding({
+            finalStatus: "completed",
+            activeConversationId,
+            conversationKey,
+            parsed,
+            hasPriorAssistantReply,
+            hasToolResults,
+          }).retain ?? true)
+        : true;
+
       const initialPrompt = this.definition.compilePrompt
-        ? this.definition.compilePrompt(parsed, isNewConversation)
+        ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
         : compileWebPrompt(parsed, {
             assistantName: this.definition.assistantName,
             isNewConversation,
+            maxPromptChars: this.definition.policies?.maxPromptChars,
+            maxInputImages: this.definition.attachments?.maxInputImages,
+            normalized,
           }).finalPrompt;
 
       const reasoningEffort = this.definition.capability?.resolveReasoningEffort
@@ -159,6 +183,7 @@ export class WebTurnEngine {
           initialPrompt,
           maxRetries,
           providerName: this.definition.assistantName,
+          outputFormat: structuredOutputFormat,
           abortSignal: turnRegistration.signal,
           execute: async ({ attempt, prompt }) => {
             totalPromptChars += prompt.length;
@@ -166,8 +191,11 @@ export class WebTurnEngine {
               ? this.definition.attachments.extractAttachments({
                   parsed,
                   attempt,
+                  normalized,
                 })
-              : [];
+              : attempt === 0
+                ? (normalized.images ?? [])
+                : [];
 
             const result = await this.definition.browser.executeTurn({
               page: acquired.page,
@@ -180,6 +208,7 @@ export class WebTurnEngine {
               existingConversationId: activeConversationId,
               launcherReused: acquired.launcherReused,
               isNewConversation: attempt === 0 ? isNewConversation : false,
+              retain: retainTurn,
               attachments,
               turnTraceId,
               heartbeat: acquired.heartbeat,
@@ -202,6 +231,13 @@ export class WebTurnEngine {
             lastRaw = this.definition.response?.sanitizeRawResponse
               ? this.definition.response.sanitizeRawResponse(result.rawResponse)
               : result.rawResponse;
+
+            if (structuredOutputFormat) {
+              return parseAndValidateJsonSchemaResponse(
+                lastRaw,
+                structuredOutputFormat,
+              );
+            }
 
             let parsedProtocol: StrictWebResponseResult =
               parseStrictWebResponse(lastRaw);
@@ -257,82 +293,19 @@ export class WebTurnEngine {
             })
           : undefined;
 
-        if (this.definition.policies?.enableToolLoopGuard) {
-          if (protocolResult.kind === "tool_calls") {
-            const clientTools = parsed.context.tools || [];
-            const mappedCalls = protocolResult.calls.map(rawCall => ({
-              rawCall,
-              mapped: WebToolBridge.mapToolCall(rawCall, clientTools),
-            }));
-
-            cleanExpiredConversationGuards();
-            const cKey =
-              conversationKey ||
-              `transient_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
-            const guardState = conversationGuard.get(cKey) || {
-              toolIterations: 0,
-              identicalToolCount: 0,
-              updatedAt: Date.now(),
-            };
-
-            guardState.toolIterations += 1;
-            guardState.updatedAt = Date.now();
-            const currentFingerprint = mappedCalls
-              .map(c => stableToolFingerprint(c.mapped.name, c.mapped.arguments))
-              .sort()
-              .join("|");
-
-            if (currentFingerprint === guardState.lastToolFingerprint) {
-              guardState.identicalToolCount += 1;
-            } else {
-              guardState.lastToolFingerprint = currentFingerprint;
-              guardState.identicalToolCount = 1;
-            }
-
-            conversationGuard.set(cKey, guardState);
-
-            const currentToolName = mappedCalls[0]?.mapped.name || "unknown";
-            const maxIdenticalAllowed = getMaxIdenticalToolCalls(currentToolName);
-            if (guardState.identicalToolCount >= maxIdenticalAllowed) {
-              console.warn(
-                `[${this.definition.logPrefix}] Ngắt vòng lặp: Công cụ ${currentToolName} bị gọi lặp lại ${maxIdenticalAllowed} lần liên tiếp.`,
-              );
-              conversationGuard.delete(cKey);
-              emit({
-                type: "text_delta",
-                text: `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${currentToolName}\` đã được yêu cầu lặp lại ${maxIdenticalAllowed} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
-              });
-              emit({
-                type: "done",
-                stopReason: "stop",
-                endTurn: true,
-                usage,
-              });
-              finalStatus = "completed";
-              return;
-            }
-
-            if (guardState.toolIterations > MAX_TOOL_ITERATIONS) {
-              console.warn(
-                `[${this.definition.logPrefix}] Ngắt vòng lặp: Vượt quá giới hạn tối đa ${MAX_TOOL_ITERATIONS} lượt gọi công cụ trong phiên.`,
-              );
-              conversationGuard.delete(cKey);
-              emit({
-                type: "text_delta",
-                text: `\n\n> [!WARNING]\n> **Giới hạn an toàn (Max Tool Iterations Exceeded):** Đã chạm ngưỡng tối đa ${MAX_TOOL_ITERATIONS} lượt thực thi công cụ liên tiếp trong phiên. Hệ thống tự động kết thúc để bảo vệ tài nguyên.`,
-              });
-              emit({
-                type: "done",
-                stopReason: "stop",
-                endTurn: true,
-                usage,
-              });
-              finalStatus = "completed";
-              return;
-            }
-          } else if (conversationKey) {
-            conversationGuard.delete(conversationKey);
-          }
+        if (
+          this.definition.policies?.enableToolLoopGuard &&
+          this.loopGuard.evaluate({
+            protocolResult,
+            clientTools: parsed.context.tools || [],
+            conversationKey,
+            logPrefix: this.definition.logPrefix,
+            emit,
+            usage,
+          })
+        ) {
+          finalStatus = "completed";
+          return;
         }
 
         emitWebProtocolResponse({
@@ -388,6 +361,9 @@ export class WebTurnEngine {
           finalStatus,
           activeConversationId,
           conversationKey,
+          parsed,
+          hasPriorAssistantReply,
+          hasToolResults,
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });

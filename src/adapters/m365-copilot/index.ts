@@ -1,6 +1,8 @@
-import type { ProviderAdapter } from "../base";
-import { promptCompiler } from "../web/prompt/index";
+import { randomUUID } from "node:crypto";
+import { hasActualPriorAssistantReply, type ProviderAdapter } from "../base";
+import type { CodexParsedRequest } from "../../types";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
+import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { M365BrowserWorker } from "./m365-browser-worker";
 import { m365ConversationKey } from "./conversation-key";
 import { type ToolValidationFailure } from "../web/tools";
@@ -11,7 +13,6 @@ export * from "../web/normalization";
 export * from "../web/prompt/index";
 export * from "../web/protocol";
 export * from "../web/tools";
-export * from "../web/harness";
 export {
   M365BrowserWorker,
   type M365TurnOptions,
@@ -42,6 +43,22 @@ export {
   waitForM365ConversationId,
 } from "./conversation-url";
 
+function isEphemeralStructuredTurn(
+  parsed?: CodexParsedRequest,
+  hasPriorAssistantReply?: boolean,
+  hasToolResults?: boolean,
+): boolean {
+  if (!parsed) return false;
+  const priorAssistant =
+    hasPriorAssistantReply ??
+    hasActualPriorAssistantReply(parsed.context?.messages);
+  const trailingTools =
+    hasToolResults ??
+    parsed.context?.messages?.some(message => message.role === "toolResult") ??
+    false;
+  return isStructuredJsonOutputTurn(parsed, trailingTools) && !priorAssistant;
+}
+
 function resolveM365MaxFormatRetries(): number {
   const configuredRetries = Number.parseInt(
     process.env.M365_FORMAT_MAX_RETRIES || "3",
@@ -67,15 +84,6 @@ export class M365CopilotAdapter extends WebProviderAdapter {
       assistantName: "M365",
       logPrefix: "m365-adapter",
       abortMessage: "M365 Copilot turn aborted before start",
-      compilePrompt: (parsed, isNewConversation) => {
-        const payload = CodexRawPayload.from(parsed._rawBody || parsed);
-        const normalized = CodexPayloadNormalizer.normalize(payload);
-        return promptCompiler.compile({
-          normalized,
-          parsed,
-          isNewConversation,
-        }).finalPrompt;
-      },
       policies: {
         launcherFailureMode: "fail-closed",
         enableEarlyExitOnFinalAnswer: true,
@@ -85,9 +93,16 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         rethrowError: false,
         abortedTurnMessage: "M365 Copilot turn aborted",
         maxFormatRetries: resolveM365MaxFormatRetries,
+        maxPromptChars: 95_000,
       },
       conversation: {
-        resolveConversationKey: ({ parsed, incoming }) => {
+        resolveConversationKey: ({ parsed, incoming, turnTraceId }) => {
+          if (isEphemeralStructuredTurn(parsed)) {
+            return m365ConversationKey(
+              parsed,
+              `ephemeral:${turnTraceId || randomUUID()}`,
+            );
+          }
           const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
           const rawConversationKey =
             incoming.headers.get("x-codex-conversation-key") ||
@@ -107,17 +122,40 @@ export class M365CopilotAdapter extends WebProviderAdapter {
             !leaseConversationId,
         }),
         onConversationUpdated: ({ conversationId }) => conversationId,
-        resolveEndTurnBinding: ({ finalStatus, activeConversationId }) => ({
-          connectorBound:
-            finalStatus === "completed" && Boolean(activeConversationId),
-          conversationId: activeConversationId,
-        }),
+        resolveEndTurnBinding: ({
+          finalStatus,
+          activeConversationId,
+          parsed,
+          hasPriorAssistantReply,
+          hasToolResults,
+        }) => {
+          if (
+            isEphemeralStructuredTurn(
+              parsed,
+              hasPriorAssistantReply,
+              hasToolResults,
+            )
+          ) {
+            return {
+              connectorBound: false,
+              retain: false,
+            };
+          }
+          return {
+            connectorBound:
+              finalStatus === "completed" && Boolean(activeConversationId),
+            conversationId: activeConversationId,
+            retain: true,
+          };
+        },
       },
       attachments: {
-        extractAttachments: ({ parsed, attempt }) => {
+        maxInputImages: 3,
+        extractAttachments: ({ parsed, attempt, normalized }) => {
           if (attempt !== 0) return [];
+          if (normalized) return normalized.images ?? [];
           const payload = CodexRawPayload.from(parsed._rawBody || parsed);
-          return CodexPayloadNormalizer.normalize(payload).images ?? [];
+          return CodexPayloadNormalizer.normalize(payload, { maxImages: 3 }).images ?? [];
         },
       },
       browser: {
@@ -135,6 +173,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
           existingConversationId,
           launcherReused,
           isNewConversation,
+          retain,
           attachments,
           heartbeat,
         }) => {
@@ -152,6 +191,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
             existingConversationId,
             launcherReused,
             isNewConversation: attempt === 0 ? isNewConversation : false,
+            retain,
             heartbeat,
             modelSlug: parsed.modelId,
             reasoning: parsed.options.reasoning,

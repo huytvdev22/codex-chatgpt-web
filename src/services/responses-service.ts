@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
-import { extractCodexTurnIdentityFromBody } from "../adapters/web/turn-identity";
+import { extractCodexTurnIdentityFromBody } from "../responses/turn-identity";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "../bridge";
 import { AsyncEventQueue } from "../event-queue";
 import type { BaseModelProvider } from "../models/base-model-provider";

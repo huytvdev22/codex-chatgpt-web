@@ -15,4 +15,8 @@ export {
   isReadOnlyTool,
   getMaxIdenticalToolCalls,
 } from "./turn-guard";
+export {
+  WebTurnLoopGuard,
+  type WebTurnLoopGuardInput,
+} from "./web-turn-loop-guard";
 

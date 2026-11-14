@@ -33,7 +33,7 @@ export function validateCommandApproval(
     && requested !== "require_escalated"
   ) {
     throw new Error(
-      "[M365 Tool Approval Error] sandbox_permissions must be use_default or require_escalated."
+      "[Web Tool Approval Error] sandbox_permissions must be use_default or require_escalated."
     );
   }
 
@@ -46,7 +46,7 @@ export function validateCommandApproval(
     : "";
   if (!justification) {
     throw new Error(
-      "[M365 Tool Approval Error] justification is required for require_escalated."
+      "[Web Tool Approval Error] justification is required for require_escalated."
     );
   }
 
@@ -60,7 +60,7 @@ export function validateCommandApproval(
       )
     ) {
       throw new Error(
-        "[M365 Tool Approval Error] prefix_rule must be a non-empty string array."
+        "[Web Tool Approval Error] prefix_rule must be a non-empty string array."
       );
     }
     prefixRule = args.prefix_rule.map(part => String(part).trim());

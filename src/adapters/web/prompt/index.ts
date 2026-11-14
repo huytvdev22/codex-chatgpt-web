@@ -1,5 +1,7 @@
 export {
   buildUnifiedToolProtocol,
+  buildStructuredJsonOutputProtocol,
+  buildJsonSchemaRetryPrompt,
   buildShortOutputFormatAnchor,
   buildShortOutputFormatPlanAnchor,
   buildPureConversationAnchor,
@@ -10,10 +12,13 @@ export {
   TOOL_ERROR_FEEDBACK_PROMPT,
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
+  WEB_IMAGE_ATTACHMENT_HINT,
   M365_IMAGE_ATTACHMENT_HINT,
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   PURE_CONVERSATION_ANCHOR,
+  STRUCTURED_JSON_OUTPUT_ANCHOR,
+  type StructuredJsonPromptOptions,
 } from "./templates";
 
 export {
@@ -32,8 +37,14 @@ export {
   renderCompactDynamicToolDeclarations,
   calculatePromptMetrics,
   sanitizeCodexInstructions,
+  DEFAULT_MAX_WEB_PROMPT_CHARS,
+  WebPromptCompiler,
   M365PromptCompiler,
   promptCompiler,
+  truncateToolResult,
+  isImplementingPlanRequest,
+  isStructuredJsonOutputTurn,
+  type WebPromptCompilerOptions,
   type PromptSectionMetrics,
   type PromptAuditData,
   type PromptCompileInput,
@@ -46,10 +57,3 @@ export {
   type FormatRetryOptions,
   type M365FormatRetryOptions,
 } from "./templates";
-
-export {
-  truncateToolResult,
-  compileM365Prompt,
-  isPlanModeRequest,
-  isImplementingPlanRequest,
-} from "./assembler";

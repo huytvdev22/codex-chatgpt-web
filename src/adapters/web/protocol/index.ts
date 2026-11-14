@@ -1,4 +1,5 @@
 export * from "./strict-response-parser";
+export * from "./json-schema-response";
 export * from "./validate-response";
 export * from "./retry-response";
 export * from "./emit-response";
@@ -7,7 +8,9 @@ export * from "./html-to-markdown";
 export * from "./semantic-detector";
 export * from "./fast-path-stream-buffer";
 export {
+  WebToolCallDetector,
   M365ToolCallDetector,
+  type WebToolCallDetectorOptions,
   type M365ToolCallDetectorOptions,
   type ParsedToolCall,
   sanitizeJsonControlChars,

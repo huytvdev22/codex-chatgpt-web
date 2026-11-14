@@ -25,6 +25,8 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       "conversation-url.ts",
       "index.ts",
       "m365-browser-worker.ts",
+      "m365-clipboard-salvage.ts",
+      "m365-dom-observer.ts",
       "model-provider.ts",
     ]);
   });
@@ -47,6 +49,31 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       expect(source.includes("one-copilot-code-identity")).toBe(false);
       expect(source.includes("scriptor-component-code-block")).toBe(false);
     }
+
+    // Shared compiler & semantic detector phải trung tính provider
+    const compilerSource = await Bun.file(path.resolve(sharedWebDir, "prompt/compiler.ts")).text();
+    expect(compilerSource.includes("Microsoft 365 Copilot")).toBe(false);
+
+    const semanticDetectorSource = await Bun.file(
+      path.resolve(sharedWebDir, "protocol/semantic-detector.ts"),
+    ).text();
+    expect(semanticDetectorSource.includes("m365HtmlToMarkdown(")).toBe(false);
+
+    const outputTranslatorSource = await Bun.file(
+      path.resolve(sharedWebDir, "protocol/output-translator.ts"),
+    ).text();
+    expect(outputTranslatorSource.includes("[M365 RAW RESPONSE]")).toBe(false);
+
+    // Service layer không phụ thuộc trực tiếp vào web adapter internals cho turn identity
+    const responsesServiceSource = await Bun.file(
+      path.resolve(process.cwd(), "src/services/responses-service.ts"),
+    ).text();
+    expect(responsesServiceSource.includes("adapters/web/turn-identity")).toBe(false);
+
+    // Legacy dead code modules must remain absent
+    expect(await Bun.file(path.resolve(sharedWebDir, "prompt/assembler.ts")).exists()).toBe(false);
+    expect(await Bun.file(path.resolve(sharedWebDir, "harness/index.ts")).exists()).toBe(false);
+    expect(await Bun.file(path.resolve(sharedWebDir, "conversation/conversation-store.ts")).exists()).toBe(false);
   });
 
   test("CI GATE: Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
@@ -81,7 +108,6 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     const sharedTools = await import("../src/adapters/web/tools");
 
     // Core Classes
-    expect(rootModule.M365AgentLoop).toBeDefined();
     expect(rootModule.M365OutputTranslator).toBeDefined();
     expect(rootModule.M365BrowserWorker).toBeDefined();
     expect(rootModule.M365ModelProvider).toBeDefined();
@@ -110,14 +136,20 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     // Shared Web Adapter facade (both neutral Web* and M365* compatibility aliases)
     expect(sharedNormalization.CodexPayloadNormalizer).toBeDefined();
     expect(sharedNormalization.CodexRawPayload).toBeDefined();
+    expect(sharedPrompt.WebPromptCompiler).toBeDefined();
     expect(sharedPrompt.M365PromptCompiler).toBeDefined();
     expect(sharedPrompt.promptCompiler).toBeDefined();
+    expect(sharedProtocol.WebOutputTranslator).toBeDefined();
+    expect(sharedProtocol.WebToolCallDetector).toBeDefined();
     expect(sharedProtocol.parseStrictWebResponse).toBeDefined();
     expect(sharedProtocol.parseStrictM365Response).toBeDefined();
     expect(sharedProtocol.webHtmlToMarkdown).toBeDefined();
     expect(sharedProtocol.SemanticMarkdownBuffer).toBeDefined();
     expect(sharedTools.WebToolBridge).toBeDefined();
     expect(sharedTools.M365ToolBridge).toBeDefined();
+    expect(sharedTools.normalizeWebToolArguments).toBeDefined();
+    expect(sharedTools.decodeWebContent).toBeDefined();
+    expect(sharedTools.validateWebToolCall).toBeDefined();
     expect(sharedTools.AtomicFileWriter).toBeDefined();
   });
 });

@@ -1,4 +1,5 @@
-import { buildM365FormatRetryPrompt } from "../prompt";
+import type { CodexJsonSchemaOutputFormat } from "../../../types";
+import { buildFormatRetryPrompt } from "../prompt";
 import type { StrictWebResponseResult } from "./strict-response-parser";
 
 export type SuccessfulWebProtocolResult = Exclude<
@@ -16,6 +17,7 @@ export interface RunWebProtocolRetryOptions {
   initialPrompt: string;
   maxRetries: number;
   providerName: string;
+  outputFormat?: CodexJsonSchemaOutputFormat;
   abortSignal?: AbortSignal;
   execute: (
     context: WebProtocolRetryAttempt,
@@ -59,9 +61,10 @@ export async function runWebProtocolRetry(
 
     options.onProtocolError?.(lastResult, context);
     if (attempt < options.maxRetries) {
-      attemptPrompt = buildM365FormatRetryPrompt({
+      attemptPrompt = buildFormatRetryPrompt({
         code: lastResult.code,
         message: lastResult.message,
+        outputFormat: options.outputFormat,
       });
     }
   }

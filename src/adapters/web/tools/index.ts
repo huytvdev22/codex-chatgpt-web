@@ -19,6 +19,8 @@ export {
 } from "./tool-bridge";
 
 export {
+  normalizeWebToolArguments,
+  normalizeWebToolName,
   normalizeM365ToolArguments,
   normalizeM365ToolName,
   TOOL_NAME_ALIASES,
@@ -26,14 +28,17 @@ export {
 } from "./argument-normalizer";
 
 export {
+  decodeWebContent,
   decodeM365Content,
   normalizeFileContent as normalizeFileContentExact,
   type DecodeContentOptions,
+  type WebContentEncoding,
   type M365ContentEncoding,
   type NormalizeFileContentOptions,
 } from "./content-decoder";
 
 export {
+  validateWebToolCall,
   validateM365ToolCall,
   BRIDGE_TOOLS,
   type ToolValidationResult,

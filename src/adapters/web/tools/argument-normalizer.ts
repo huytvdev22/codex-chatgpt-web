@@ -25,7 +25,7 @@ export interface NormalizedToolArguments {
   arguments: Record<string, unknown>;
 }
 
-export function normalizeM365ToolName(name: string): string {
+export function normalizeWebToolName(name: string): string {
   const raw = name.trim();
   const withoutNamespace = raw.startsWith("functions.") ? raw.slice("functions.".length) : raw;
   const lower = withoutNamespace.toLowerCase();
@@ -46,11 +46,11 @@ function parseArguments(argumentsValue: Record<string, unknown> | string): Recor
 }
 
 /** Chuẩn hóa alias cấu trúc; tuyệt đối không decode hay sửa nội dung file/patch. */
-export function normalizeM365ToolArguments(
+export function normalizeWebToolArguments(
   name: string,
   argumentsValue: Record<string, unknown> | string
 ): NormalizedToolArguments {
-  const normalizedName = normalizeM365ToolName(name);
+  const normalizedName = normalizeWebToolName(name);
   const args = parseArguments(argumentsValue);
 
   if (normalizedName === "exec_command" || normalizedName === "run_command") {
@@ -67,5 +67,10 @@ export function normalizeM365ToolArguments(
 
   return { name: normalizedName, arguments: args };
 }
+
+/** @deprecated Dùng `normalizeWebToolName` thay thế. */
+export const normalizeM365ToolName = normalizeWebToolName;
+/** @deprecated Dùng `normalizeWebToolArguments` thay thế. */
+export const normalizeM365ToolArguments = normalizeWebToolArguments;
 
 export { TOOL_NAME_ALIASES };

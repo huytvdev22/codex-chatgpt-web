@@ -48,7 +48,7 @@ export {
 };
 
 /**
- * Trích xuất các khối nhận thức (Thinking & Narrative) từ phản hồi của M365
+ * Trích xuất các khối nhận thức (Thinking & Narrative) từ phản hồi của Web Provider
  */
 export function extractCognitiveBlocks(rawText: string): {
   thinking?: string;
@@ -92,11 +92,11 @@ export function extractCognitiveBlocks(rawText: string): {
  * Lớp chính Output Translator điều phối toàn bộ quá trình nhận diện và dịch
  * Tuân thủ Dependency Inversion (DIP) & Single Responsibility (SRP)
  */
-export class M365OutputTranslator {
+export class WebOutputTranslator {
   private readonly detectors: IToolCallDetector[] = [];
 
   /**
-   * Khởi tạo bộ biên dịch đầu ra của M365 Copilot với danh sách các detector đăng ký.
+   * Khởi tạo bộ biên dịch đầu ra của Web Provider với danh sách các detector đăng ký.
    */
   constructor(customDetectors?: IToolCallDetector[]) {
 
@@ -112,7 +112,7 @@ export class M365OutputTranslator {
   }
 
   /**
-   * Phương thức dịch phản hồi thô từ M365 thành TranslationResult
+   * Phương thức dịch phản hồi thô từ Web Provider thành TranslationResult
    * Hỗ trợ dịch đồng thời nhiều tool call (Parallel / Multi-tool calls)
    * và bóc tách các khối nhận thức (Thinking & Narrative)
    */
@@ -121,7 +121,7 @@ export class M365OutputTranslator {
     const rawPreview = rawResponse.length > 2000
       ? `${rawResponse.slice(0, 1000)}\n... [TRUNCATED ${rawResponse.length - 1500} chars for privacy] ...\n${rawResponse.slice(-500)}`
       : rawResponse;
-    console.log("\n[M365 RAW RESPONSE]");
+    console.log("\n[WEB RAW RESPONSE]");
     console.log(rawPreview);
 
     // Tự động lột bỏ lớp vỏ code block ngoài cùng (````markdown ... ```` hoặc ```...```)
@@ -190,7 +190,7 @@ export class M365OutputTranslator {
 
     let diagnosticWarning = "";
     if (hasUnclosedXml) {
-      diagnosticWarning = "Phát hiện thẻ <tool_call> chưa được đóng hoàn chỉnh từ M365 (thiếu </tool_call>). Codex dừng do nhận kết quả là văn bản thường.";
+      diagnosticWarning = "Phát hiện thẻ <tool_call> chưa được đóng hoàn chỉnh từ Web Provider (thiếu </tool_call>). Codex dừng do nhận kết quả là văn bản thường.";
     } else if (hasSuspiciousXml) {
       diagnosticWarning = "Phát hiện khối <tool_call> hoàn chỉnh nhưng parse JSON thất bại. Codex bị dừng xử lý và chuyển sang Final Answer vì lý do này.";
     } else if (hasSuspiciousPatch) {
@@ -214,7 +214,7 @@ export class M365OutputTranslator {
         : {
           parseDiagnostics: {
             terminalReason: "model_final_answer",
-            warningMessage: "M365 Copilot hoàn tất câu trả lời dạng văn bản kết luận (Final Answer).",
+            warningMessage: "Web Provider hoàn tất câu trả lời dạng văn bản kết luận (Final Answer).",
           },
         }),
     };
@@ -232,3 +232,6 @@ export class M365OutputTranslator {
     return { content: result.content };
   }
 }
+
+/** @deprecated Dùng `WebOutputTranslator` thay thế. */
+export const M365OutputTranslator = WebOutputTranslator;
