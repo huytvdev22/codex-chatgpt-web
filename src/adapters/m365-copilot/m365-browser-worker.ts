@@ -539,7 +539,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
 
   private createResponseRuntimeState(): M365ResponseRuntimeState {
     return {
-      markdownBuffer: new M365MarkdownBuffer(),
+      markdownBuffer: new M365MarkdownBuffer({ htmlToMarkdown: m365HtmlToMarkdown }),
       fastPathBuffer: new FastPathStreamBuffer(),
       fastPathActive: false,
       lastFastPathText: "",

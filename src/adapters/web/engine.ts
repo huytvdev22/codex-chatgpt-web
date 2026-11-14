@@ -1,6 +1,7 @@
 import { hasActualPriorAssistantReply, type IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { compileWebPrompt } from "./compile-prompt";
+import { CodexPayloadNormalizer, CodexRawPayload } from "./normalization";
 import {
   parseStrictWebResponse,
   type StrictWebResponseResult,
@@ -134,11 +135,19 @@ export class WebTurnEngine {
       const { existingConversationId, isNewConversation } = stateResolution;
       let activeConversationId = existingConversationId;
 
+      const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
+      const normalized = CodexPayloadNormalizer.normalize(rawPayload, {
+        maxImages: this.definition.attachments?.maxInputImages,
+      });
+
       const initialPrompt = this.definition.compilePrompt
-        ? this.definition.compilePrompt(parsed, isNewConversation)
+        ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
         : compileWebPrompt(parsed, {
             assistantName: this.definition.assistantName,
             isNewConversation,
+            maxPromptChars: this.definition.policies?.maxPromptChars,
+            maxInputImages: this.definition.attachments?.maxInputImages,
+            normalized,
           }).finalPrompt;
 
       const reasoningEffort = this.definition.capability?.resolveReasoningEffort
@@ -166,8 +175,11 @@ export class WebTurnEngine {
               ? this.definition.attachments.extractAttachments({
                   parsed,
                   attempt,
+                  normalized,
                 })
-              : [];
+              : attempt === 0
+                ? (normalized.images ?? [])
+                : [];
 
             const result = await this.definition.browser.executeTurn({
               page: acquired.page,

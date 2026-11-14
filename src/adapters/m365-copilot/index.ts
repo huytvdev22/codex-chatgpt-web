@@ -1,5 +1,4 @@
 import type { ProviderAdapter } from "../base";
-import { promptCompiler } from "../web/prompt/index";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
 import { M365BrowserWorker } from "./m365-browser-worker";
 import { m365ConversationKey } from "./conversation-key";
@@ -67,15 +66,6 @@ export class M365CopilotAdapter extends WebProviderAdapter {
       assistantName: "M365",
       logPrefix: "m365-adapter",
       abortMessage: "M365 Copilot turn aborted before start",
-      compilePrompt: (parsed, isNewConversation) => {
-        const payload = CodexRawPayload.from(parsed._rawBody || parsed);
-        const normalized = CodexPayloadNormalizer.normalize(payload);
-        return promptCompiler.compile({
-          normalized,
-          parsed,
-          isNewConversation,
-        }).finalPrompt;
-      },
       policies: {
         launcherFailureMode: "fail-closed",
         enableEarlyExitOnFinalAnswer: true,
@@ -85,6 +75,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         rethrowError: false,
         abortedTurnMessage: "M365 Copilot turn aborted",
         maxFormatRetries: resolveM365MaxFormatRetries,
+        maxPromptChars: 95_000,
       },
       conversation: {
         resolveConversationKey: ({ parsed, incoming }) => {
@@ -114,10 +105,12 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         }),
       },
       attachments: {
-        extractAttachments: ({ parsed, attempt }) => {
+        maxInputImages: 3,
+        extractAttachments: ({ parsed, attempt, normalized }) => {
           if (attempt !== 0) return [];
+          if (normalized) return normalized.images ?? [];
           const payload = CodexRawPayload.from(parsed._rawBody || parsed);
-          return CodexPayloadNormalizer.normalize(payload).images ?? [];
+          return CodexPayloadNormalizer.normalize(payload, { maxImages: 3 }).images ?? [];
         },
       },
       browser: {

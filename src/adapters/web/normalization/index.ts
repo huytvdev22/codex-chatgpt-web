@@ -1,4 +1,5 @@
 export {
+  DEFAULT_MAX_INPUT_IMAGES,
   M365_MAX_INPUT_IMAGES,
   type NormalizedToolIdentity,
   type NormalizedFunctionTool,

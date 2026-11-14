@@ -11,7 +11,7 @@ import {
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   PURE_CONVERSATION_ANCHOR,
-  M365_IMAGE_ATTACHMENT_HINT,
+  WEB_IMAGE_ATTACHMENT_HINT,
 } from "./templates";
 
 /**
@@ -135,7 +135,7 @@ export class ConversationScenarioBuilder {
         if (input.priorHistoryText) taskBlocks.push(input.priorHistoryText);
         if (input.toolResultsText) taskBlocks.push(input.toolResultsText);
         if (input.userInstructionText) taskBlocks.push(input.userInstructionText);
-        if (input.hasImages) taskBlocks.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) taskBlocks.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         taskBlocks.push(
           input.isPlanMode ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR : SHORT_OUTPUT_FORMAT_ANCHOR
@@ -155,7 +155,7 @@ export class ConversationScenarioBuilder {
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
         break;
@@ -172,7 +172,7 @@ export class ConversationScenarioBuilder {
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
         break;
@@ -188,7 +188,7 @@ export class ConversationScenarioBuilder {
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
         break;
@@ -204,7 +204,7 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
         break;
@@ -219,7 +219,7 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
         break;
@@ -236,7 +236,7 @@ export class ConversationScenarioBuilder {
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
         break;
@@ -252,7 +252,7 @@ export class ConversationScenarioBuilder {
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
         break;
@@ -268,7 +268,7 @@ export class ConversationScenarioBuilder {
 
         if (input.toolResultsText) sections.push(input.toolResultsText);
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
         break;
@@ -283,7 +283,7 @@ export class ConversationScenarioBuilder {
         sections.push(input.actionContractText);
 
         if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(M365_IMAGE_ATTACHMENT_HINT);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
 
         sections.push(PURE_CONVERSATION_ANCHOR);
         break;

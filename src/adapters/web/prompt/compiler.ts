@@ -5,7 +5,6 @@ import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
-  M365_IMAGE_ATTACHMENT_HINT,
   buildUnifiedToolProtocol,
   UNIFIED_TOOL_PROTOCOL as UNIFIED_TOOL_PROTOCOL_TEMPLATE,
   MINIMAL_TOOL_PROTOCOL as MINIMAL_TOOL_PROTOCOL_TEMPLATE,
@@ -16,7 +15,7 @@ import {
 import { conversationScenarioBuilder } from "./conversation-scenario-builder";
 import { hasActualPriorAssistantReply } from "../../base";
 
-const MAX_M365_PROMPT_CHARS = 95_000;
+export const DEFAULT_MAX_WEB_PROMPT_CHARS = 95_000;
 const MAX_COMPACT_TOOL_DESCRIPTION_CHARS = 320;
 const MAX_FULL_TOOL_DESCRIPTION_CHARS = 1_200;
 
@@ -255,7 +254,10 @@ Khi sửa các dòng gần nhau, hãy gộp vào 1 hunk @@ duy nhất và giữ 
  * codex_tool_inventory của ChatGPT Web. M365 phải gọi đúng qualifiedName
  * và truyền arguments theo đúng JSON Schema được quảng bá.
  */
-export function renderDynamicToolDeclarations(tools: NormalizedTool[] = []): string {
+export function renderDynamicToolDeclarations(
+  tools: NormalizedTool[] = [],
+  assistantName: string = "trợ lý web",
+): string {
   if (tools.length === 0) {
     return "[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]\n\nHiện không có công cụ nào khả dụng cho lượt này.";
   }
@@ -362,7 +364,7 @@ Dưới đây là các công cụ mà script trên máy mình đã kết nối s
 - Với công cụ dạng function: xuất thẻ <tool_call> kèm JSON arguments đúng tham số.
 - Với công cụ freeform (apply_patch): xuất trong <custom_tool_call name="apply_patch"> (không bọc trong JSON).
 - Nếu đã có công cụ đọc/sửa file phù hợp, bạn ưu tiên dùng hơn là chạy lệnh shell exec_command nhé.
-- Bạn không cần dùng các công cụ tìm kiếm web hay python nội bộ của M365, cứ dùng các công cụ dưới đây để thao tác trực tiếp trên máy mình.
+- Bạn không cần dùng các công cụ tìm kiếm web hay python nội bộ của ${assistantName}, cứ dùng các công cụ dưới đây để thao tác trực tiếp trên máy mình.
 
 ${inventory}
 
@@ -439,6 +441,7 @@ export interface PromptCompileInput {
   isImplementingPlan?: boolean;
   isNewConversation?: boolean;
   assistantName?: string;
+  maxPromptChars?: number;
 }
 
 export interface PromptCompileResult {
@@ -553,19 +556,18 @@ export function isImplementingPlanRequest(parsed?: CodexParsedRequest): boolean 
   return false;
 }
 
-/**
- * Trình biên dịch Prompt duy nhất (Unified M365 Prompt Compiler)
- * Loại bỏ hoàn toàn mâu thuẫn Plan Mode / Default Mode.
- * Rút gọn mạnh permissions + sandbox instructions.
- * Sử dụng format tool duy nhất và render dynamic tools.
- * Ghi nhận log: planMode, collaborationMode, finalPromptLength.
- */
-export class M365PromptCompiler {
-  constructor(readonly options?: { assistantName?: string }) {}
+export interface WebPromptCompilerOptions {
+  assistantName?: string;
+  maxPromptChars?: number;
+}
 
-  /**
-   * Thực hiện xử lý M365PromptCompiler.compile cho quy trình M365 Copilot Adapter.
-   */
+/**
+ * Trình biên dịch Prompt dùng chung cho toàn bộ Web Adapter (Unified Web Prompt Compiler).
+ * Tham số hóa tên trợ lý và ngưỡng độ dài tối đa theo từng provider.
+ */
+export class WebPromptCompiler {
+  constructor(readonly options?: WebPromptCompilerOptions) {}
+
   compile(input: PromptCompileInput): PromptCompileResult {
     const { normalized, parsed } = input;
 
@@ -592,9 +594,12 @@ export class M365PromptCompiler {
       isNewConversation = !hasPriorAssistant && !hasToolResults;
     }
 
+    const assistantName = input.assistantName || this.options?.assistantName || "Copilot";
+    const maxPromptChars = input.maxPromptChars ?? this.options?.maxPromptChars ?? DEFAULT_MAX_WEB_PROMPT_CHARS;
+
     // 2. Chuẩn bị các thành phần nội dung ngữ cảnh đã được làm sạch
     const actionContractText = isNewConversation
-      ? renderDynamicToolDeclarations(normalized.activeCodingTools)
+      ? renderDynamicToolDeclarations(normalized.activeCodingTools, assistantName)
       : renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
 
     let environmentText = "";
@@ -704,7 +709,6 @@ export class M365PromptCompiler {
       ? formatUserInputAnswers(userInputToolResult.output)
       : undefined;
 
-    const assistantName = input.assistantName || this.options?.assistantName || "Copilot";
     const fullToolProtocol = buildUnifiedToolProtocol(assistantName);
 
     // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
@@ -729,13 +733,13 @@ export class M365PromptCompiler {
 
     let finalPrompt = scenarioResult.finalPrompt;
 
-    // 4. Budget Guard: Cắt tỉa nếu vượt quá ngưỡng an toàn của M365 (95,000 ký tự)
-    if (finalPrompt.length > MAX_M365_PROMPT_CHARS) {
-      const headLimit = 25_000;
-      const tailLimit = MAX_M365_PROMPT_CHARS - headLimit - 200;
+    // 4. Budget Guard: Cắt tỉa nếu vượt quá ngưỡng an toàn được cấu hình cho adapter
+    if (finalPrompt.length > maxPromptChars) {
+      const headLimit = Math.min(25_000, Math.floor(maxPromptChars * 0.3));
+      const tailLimit = Math.max(0, maxPromptChars - headLimit - 200);
       const head = finalPrompt.slice(0, headLimit);
-      const tail = finalPrompt.slice(-tailLimit);
-      finalPrompt = `${head}\n\n... [Một số ngữ cảnh cũ được rút gọn để tối ưu độ dài cho M365 Copilot] ...\n\n${tail}`;
+      const tail = tailLimit > 0 ? finalPrompt.slice(-tailLimit) : "";
+      finalPrompt = `${head}\n\n... [Một số ngữ cảnh cũ được rút gọn để tối ưu độ dài cho ${assistantName}] ...\n\n${tail}`;
     }
 
     console.log(
@@ -781,7 +785,10 @@ export class M365PromptCompiler {
   }
 }
 
-export const promptCompiler = new M365PromptCompiler();
+/** @deprecated Dùng `WebPromptCompiler`. */
+export const M365PromptCompiler = WebPromptCompiler;
+
+export const promptCompiler = new WebPromptCompiler();
 
 export {
   UNIFIED_TOOL_PROTOCOL_TEMPLATE as UNIFIED_TOOL_PROTOCOL,

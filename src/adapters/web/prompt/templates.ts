@@ -165,9 +165,12 @@ export const OUTPUT_FORMAT_HINTS = {
 /**
  * Lời nhắc chỉ dẫn cho AI khi có hình ảnh đính kèm trong lượt hội thoại
  */
-export const M365_IMAGE_ATTACHMENT_HINT = `[HÌNH ẢNH ĐÍNH KÈM]
+export const WEB_IMAGE_ATTACHMENT_HINT = `[HÌNH ẢNH ĐÍNH KÈM]
 Tin nhắn này có đính kèm hình ảnh thực tế trong khung chat.
 Bạn quan sát trực tiếp hình ảnh đính kèm để phân tích giao diện, mã nguồn, biểu đồ hoặc lỗi giúp mình nhé.`;
+
+/** @deprecated Dùng `WEB_IMAGE_ATTACHMENT_HINT`. */
+export const M365_IMAGE_ATTACHMENT_HINT = WEB_IMAGE_ATTACHMENT_HINT;
 
 /**
  * Lời nhắc định dạng đầu ra chốt hạ súc tích ở cuối prompt.

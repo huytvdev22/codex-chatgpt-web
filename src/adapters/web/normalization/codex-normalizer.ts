@@ -6,7 +6,7 @@ import type {
   CodexRawContentBlock,
 } from "./codex-raw-payload";
 import {
-  M365_MAX_INPUT_IMAGES,
+  DEFAULT_MAX_INPUT_IMAGES,
   type NormalizedCodexRequest,
   type NormalizedTool,
   type NormalizedToolResult,
@@ -14,6 +14,13 @@ import {
   type NormalizedExecutionPolicy,
   type NormalizedImageAttachment,
 } from "./canonical-types";
+
+export interface CodexNormalizeOptions {
+  /** Giới hạn tối đa số lượng ảnh giữ lại trong 1 lượt (mặc định 3). */
+  maxImages?: number;
+  /** Tiền tố định danh `ref` cho ảnh đính kèm (mặc định `"web-img"`). */
+  imageRefPrefix?: string;
+}
 
 export class CodexPayloadNormalizer {
   /**
@@ -392,7 +399,10 @@ export class CodexPayloadNormalizer {
   /**
    * Chuẩn hóa toàn bộ request từ CodexRawPayload sang NormalizedCodexRequest.
    */
-  static normalize(rawPayload: CodexRawPayload): NormalizedCodexRequest {
+  static normalize(
+    rawPayload: CodexRawPayload,
+    options?: CodexNormalizeOptions,
+  ): NormalizedCodexRequest {
 
     const rawContextMsgs = (rawPayload as any).context?.messages || (rawPayload.extra as any)?.context?.messages;
     const input = (rawPayload.input && rawPayload.input.length > 0)
@@ -562,10 +572,10 @@ export class CodexPayloadNormalizer {
       toolChoice: rawPayload.tool_choice,
     };
 
-    const images = this.extractImages(rawPayload);
+    const images = this.extractImages(rawPayload, options);
 
     return {
-      model: rawPayload.model || "m365-copilot/think",
+      model: rawPayload.model || "",
       stream: rawPayload.stream ?? true,
       threadId: rawPayload.getThreadId(),
       turnId: rawPayload.getTurnId(),
@@ -663,7 +673,12 @@ export class CodexPayloadNormalizer {
   /**
    * Trích xuất và chuẩn hóa danh sách hình ảnh từ raw input hoặc context messages.
    */
-  static extractImages(rawPayload: CodexRawPayload): NormalizedImageAttachment[] {
+  static extractImages(
+    rawPayload: CodexRawPayload,
+    options: CodexNormalizeOptions = {},
+  ): NormalizedImageAttachment[] {
+    const maxImages = options.maxImages ?? DEFAULT_MAX_INPUT_IMAGES;
+    const imageRefPrefix = options.imageRefPrefix ?? "web-img";
     const images: NormalizedImageAttachment[] = [];
     const imageExtensions: Record<string, string> = {
       "image/png": "png",
@@ -688,7 +703,7 @@ export class CodexPayloadNormalizer {
         if (buf.length === 0 || buf.length > 20_000_000) return;
         const idx = images.length + 1;
         images.push({
-          ref: `m365-img-${idx}`,
+          ref: `${imageRefPrefix}-${idx}`,
           name: `image-${idx}.${ext}`,
           mimeType: mediaType,
           dataUrl: url,
@@ -768,11 +783,11 @@ export class CodexPayloadNormalizer {
       }
     }
 
-    if (images.length > M365_MAX_INPUT_IMAGES) {
+    if (images.length > maxImages) {
       console.warn(
-        `[m365-normalizer] Số lượng ảnh trong lượt (${images.length}) vượt quá giới hạn ${M365_MAX_INPUT_IMAGES} của M365 Copilot. Chỉ giữ lại ${M365_MAX_INPUT_IMAGES} ảnh đầu tiên.`
+        `[web-normalizer] Số lượng ảnh trong lượt (${images.length}) vượt quá giới hạn ${maxImages}. Chỉ giữ lại ${maxImages} ảnh đầu tiên.`
       );
-      return images.slice(0, M365_MAX_INPUT_IMAGES);
+      return images.slice(0, maxImages);
     }
 
     return images;
