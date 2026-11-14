@@ -56,7 +56,7 @@ export const CHAT_SELECTORS = {
 export type M365TurnOptions = M365BrowserRunOptions;
 export type M365TurnResult = {
   rawResponse: string;
-  conversationId: string;
+  conversationId?: string;
 };
 
 /**
@@ -132,11 +132,14 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     console.error("[m365-worker] [error]", error);
   }
 
-  protected createResult(result: {
-    rawResponse: string;
-    conversationId?: string;
-  }): M365TurnResult {
-    if (!result.conversationId) {
+  protected createResult(
+    result: {
+      rawResponse: string;
+      conversationId?: string;
+    },
+    options?: M365BrowserRunOptions,
+  ): M365TurnResult {
+    if (!result.conversationId && options?.retain !== false) {
       throw new Error(
         "M365 completed turn did not resolve a conversation ID",
       );
@@ -144,7 +147,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
 
     return {
       rawResponse: result.rawResponse,
-      conversationId: result.conversationId,
+      ...(result.conversationId ? { conversationId: result.conversationId } : {}),
     };
   }
 
@@ -539,7 +542,15 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   protected async resolveConversationId(
     page: Page,
     options: M365BrowserRunOptions,
-  ): Promise<string> {
+  ): Promise<string | undefined> {
+    if (options.retain === false) {
+      return (
+        parseM365ConversationId(page.url()) ||
+        this.retainedConversationIds.get(page) ||
+        options.existingConversationId?.toLowerCase()
+      );
+    }
+
     const conversationId =
       parseM365ConversationId(page.url()) ||
       (await waitForM365ConversationId(page)) ||

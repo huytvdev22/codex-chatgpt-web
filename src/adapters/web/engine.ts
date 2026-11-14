@@ -2,10 +2,12 @@ import { hasActualPriorAssistantReply, type IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { compileWebPrompt } from "./compile-prompt";
 import { CodexPayloadNormalizer, CodexRawPayload } from "./normalization";
+import { isStructuredJsonOutputTurn } from "./prompt";
 import {
   parseStrictWebResponse,
   type StrictWebResponseResult,
 } from "./protocol/strict-response-parser";
+import { parseAndValidateJsonSchemaResponse } from "./protocol/json-schema-response";
 import { validateWebProtocolResponse } from "./protocol/validate-response";
 import { runWebProtocolRetry } from "./protocol/retry-response";
 import { emitWebProtocolResponse } from "./protocol/emit-response";
@@ -56,6 +58,11 @@ export class WebTurnEngine {
       );
     }
 
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+      ...this.definition.policies?.traceIdOptions,
+    });
+
     const threadId = this.definition.conversation.resolveThreadId
       ? this.definition.conversation.resolveThreadId(parsed, incoming)
       : resolveWebThreadId(parsed._rawBody, parsed, incoming.headers);
@@ -65,6 +72,7 @@ export class WebTurnEngine {
         parsed,
         incoming,
         threadId,
+        turnTraceId,
       });
 
     const hasPriorAssistantReply = hasActualPriorAssistantReply(
@@ -90,11 +98,6 @@ export class WebTurnEngine {
         return;
       }
     }
-
-    const turnTraceId = resolveWebTurnTraceId({
-      headers: incoming.headers,
-      ...this.definition.policies?.traceIdOptions,
-    });
 
     const turnRegistration = activeWebTurnRegistry.register(
       turnTraceId,
@@ -137,6 +140,20 @@ export class WebTurnEngine {
       const normalized = CodexPayloadNormalizer.normalize(rawPayload, {
         maxImages: this.definition.attachments?.maxInputImages,
       });
+      const hasToolResults = normalized.trailingToolResults.length > 0;
+      const structuredOutputFormat = isStructuredJsonOutputTurn(parsed, hasToolResults)
+        ? parsed.options.outputFormat
+        : undefined;
+      const retainTurn = this.definition.conversation.resolveEndTurnBinding
+        ? (this.definition.conversation.resolveEndTurnBinding({
+            finalStatus: "completed",
+            activeConversationId,
+            conversationKey,
+            parsed,
+            hasPriorAssistantReply,
+            hasToolResults,
+          }).retain ?? true)
+        : true;
 
       const initialPrompt = this.definition.compilePrompt
         ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
@@ -166,6 +183,7 @@ export class WebTurnEngine {
           initialPrompt,
           maxRetries,
           providerName: this.definition.assistantName,
+          outputFormat: structuredOutputFormat,
           abortSignal: turnRegistration.signal,
           execute: async ({ attempt, prompt }) => {
             totalPromptChars += prompt.length;
@@ -190,6 +208,7 @@ export class WebTurnEngine {
               existingConversationId: activeConversationId,
               launcherReused: acquired.launcherReused,
               isNewConversation: attempt === 0 ? isNewConversation : false,
+              retain: retainTurn,
               attachments,
               turnTraceId,
               heartbeat: acquired.heartbeat,
@@ -212,6 +231,13 @@ export class WebTurnEngine {
             lastRaw = this.definition.response?.sanitizeRawResponse
               ? this.definition.response.sanitizeRawResponse(result.rawResponse)
               : result.rawResponse;
+
+            if (structuredOutputFormat) {
+              return parseAndValidateJsonSchemaResponse(
+                lastRaw,
+                structuredOutputFormat,
+              );
+            }
 
             let parsedProtocol: StrictWebResponseResult =
               parseStrictWebResponse(lastRaw);
@@ -335,6 +361,9 @@ export class WebTurnEngine {
           finalStatus,
           activeConversationId,
           conversationKey,
+          parsed,
+          hasPriorAssistantReply,
+          hasToolResults,
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });

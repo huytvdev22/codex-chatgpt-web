@@ -23,6 +23,7 @@ export interface WebConversationStateResolution {
 export interface WebEndTurnBindingResolution {
   connectorBound: boolean;
   conversationId?: string;
+  retain?: boolean;
 }
 
 export interface WebConversationDriver {
@@ -35,6 +36,7 @@ export interface WebConversationDriver {
     parsed: CodexParsedRequest;
     incoming: IncomingMeta;
     threadId?: string;
+    turnTraceId?: string;
   }): string | undefined;
 
   resolveState?(context: {
@@ -57,6 +59,9 @@ export interface WebConversationDriver {
     finalStatus: WebTurnFinalStatus;
     activeConversationId?: string;
     conversationKey?: string;
+    parsed?: CodexParsedRequest;
+    hasPriorAssistantReply?: boolean;
+    hasToolResults?: boolean;
   }): WebEndTurnBindingResolution;
 }
 
@@ -85,6 +90,7 @@ export interface WebBrowserTurnExecutionInput {
   existingConversationId?: string;
   launcherReused: boolean;
   isNewConversation: boolean;
+  retain?: boolean;
   attachments: NormalizedImageAttachment[];
   turnTraceId: string;
   /**

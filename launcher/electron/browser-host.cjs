@@ -3011,7 +3011,7 @@ class BrowserHost {
     const authenticationRequired = tab.authenticationRequired === true;
     if (authenticationRequired && status === "completed") status = "failed";
     let effectiveConnectorBound = connectorBound === true;
-    if (tab.provider === "m365" && status === "completed") {
+    if (tab.provider === "m365" && status === "completed" && retain) {
       const normalizedConversationId = normalizeM365ConversationId(conversationId);
       if (!normalizedConversationId || !tab.conversationKey) {
         status = "failed";

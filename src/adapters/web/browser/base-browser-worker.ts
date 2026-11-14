@@ -7,6 +7,7 @@ export interface BaseBrowserRunOptions {
   heartbeat?: () => Promise<void>;
   conversationId?: string;
   isNewConversation?: boolean;
+  retain?: boolean;
   hardTimeoutMs?: number;
   idleTimeoutMs?: number;
   pollingIntervalMs?: number;
@@ -102,10 +103,13 @@ export abstract class BaseWebBrowserWorker<
       );
       const conversationId = await this.resolveConversationId(page, options);
 
-      return this.createResult({
-        rawResponse: rawResponse || observation.text,
-        ...(conversationId ? { conversationId } : {}),
-      });
+      return this.createResult(
+        {
+          rawResponse: rawResponse || observation.text,
+          ...(conversationId ? { conversationId } : {}),
+        },
+        options,
+      );
     } catch (error) {
       await this.handleExecutionError(error, page, options);
       throw error;
@@ -224,7 +228,10 @@ export abstract class BaseWebBrowserWorker<
 
   protected abstract stopGeneration(page: Page): Promise<boolean>;
 
-  protected createResult(result: BaseBrowserTurnResult): TResult {
+  protected createResult(
+    result: BaseBrowserTurnResult,
+    _options?: TOptions,
+  ): TResult {
     return result as TResult;
   }
 

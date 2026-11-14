@@ -213,6 +213,90 @@ test("endTurn preserves older ready automatic tabs and syncs visibility when ret
   assert.equal(visibilitySynced, 1);
 });
 
+test("endTurn closes ephemeral M365 tab without persisting binding when retain is false", async () => {
+  const removed = [];
+  const bindCalls = [];
+  const mainM365Tab = {
+    id: "tab-m365-main",
+    provider: "m365",
+    traceId: "trace_main",
+    status: "running",
+    interactionMode: "automatic",
+    conversationKey: "a".repeat(64),
+  };
+  const ephemeralTitleTab = {
+    id: "tab-m365-title",
+    provider: "m365",
+    traceId: "trace_title",
+    helperPid: 999,
+    status: "running",
+    interactionMode: "automatic",
+    conversationKey: "d".repeat(64),
+    connectorIdentity: "m365-copilot",
+    view: {
+      webContents: {
+        isDestroyed: () => false,
+        setBackgroundThrottling: () => {},
+        getURL: () => "https://m365.cloud.microsoft/chat",
+      },
+    },
+  };
+
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map([
+      [mainM365Tab.id, mainM365Tab],
+      [ephemeralTitleTab.id, ephemeralTitleTab],
+    ]),
+    closedTurnOwners: new Map(),
+    userCancelledTurnOwners: new Map(),
+    selectedTabId: ephemeralTitleTab.id,
+    m365SurfaceManager: {
+      bind(key, conversationId) {
+        bindCalls.push({ key, conversationId });
+        return conversationId;
+      },
+    },
+    syncPowerSaveBlocker() {},
+    removeTurnTab(candidate, abortRunning) {
+      removed.push([candidate.id, abortRunning]);
+      this.turnTabs.delete(candidate.id);
+      if (this.selectedTabId === candidate.id) {
+        this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
+      }
+    },
+    syncViewVisibility() {},
+    writeDescriptor() {},
+    publishState() {},
+    snapshot: () => ({ tabs: [] }),
+    hide() {
+      assert.fail("hide must not be called while main M365 turn is active");
+    },
+    logger: { info() {} },
+  });
+  Object.defineProperty(fixture, "activeTraceId", {
+    get: () => mainM365Tab.traceId,
+    configurable: true,
+  });
+
+  await BrowserHost.prototype.endTurn.call(
+    fixture,
+    ephemeralTitleTab.traceId,
+    ephemeralTitleTab.helperPid,
+    "completed",
+    false,
+    undefined,
+    false,
+    false,
+    undefined,
+  );
+
+  assert.deepEqual(bindCalls, []);
+  assert.deepEqual(removed, [["tab-m365-title", false]]);
+  assert.equal(fixture.turnTabs.has("tab-m365-title"), false);
+  assert.equal(fixture.turnTabs.has("tab-m365-main"), true);
+  assert.equal(fixture.selectedTabId, "tab-m365-main");
+});
+
 test("releaseInactivePrimaryViews destroys inactive primary views while preserving turnTabs in unified Browser workspace", () => {
   const destroyedProviders = [];
   const removedTabs = [];

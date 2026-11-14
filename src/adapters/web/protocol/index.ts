@@ -1,4 +1,5 @@
 export * from "./strict-response-parser";
+export * from "./json-schema-response";
 export * from "./validate-response";
 export * from "./retry-response";
 export * from "./emit-response";

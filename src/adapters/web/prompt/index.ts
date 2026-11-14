@@ -1,5 +1,7 @@
 export {
   buildUnifiedToolProtocol,
+  buildStructuredJsonOutputProtocol,
+  buildJsonSchemaRetryPrompt,
   buildShortOutputFormatAnchor,
   buildShortOutputFormatPlanAnchor,
   buildPureConversationAnchor,
@@ -15,6 +17,8 @@ export {
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   PURE_CONVERSATION_ANCHOR,
+  STRUCTURED_JSON_OUTPUT_ANCHOR,
+  type StructuredJsonPromptOptions,
 } from "./templates";
 
 export {
@@ -39,6 +43,7 @@ export {
   promptCompiler,
   truncateToolResult,
   isImplementingPlanRequest,
+  isStructuredJsonOutputTurn,
   type WebPromptCompilerOptions,
   type PromptSectionMetrics,
   type PromptAuditData,

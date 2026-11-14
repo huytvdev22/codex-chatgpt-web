@@ -6,6 +6,8 @@
  * Quản lý độc lập nội dung Prompt Engineering khỏi logic biên dịch ngữ cảnh.
  */
 
+import type { CodexJsonSchemaOutputFormat } from "../../../types";
+
 /**
  * Giao thức giao tiếp thống nhất với IDE.
  * Cho phép truyền tên trợ lý (Copilot, ChatGPT...) với thẻ envelope cố định: webResponse.
@@ -286,18 +288,74 @@ Nhắc nhẹ định dạng để script của mình đọc không bị vấp nh
 
 export const PURE_CONVERSATION_ANCHOR = buildPureConversationAnchor();
 
+export interface StructuredJsonPromptOptions {
+  assistantName: string;
+  schemaName: string;
+  strict: boolean;
+  schema: unknown;
+}
+
+/**
+ * Prompt gọn nhẹ dành riêng cho các lượt yêu cầu Structured Output (`json_schema`),
+ * bỏ qua hoàn toàn hướng dẫn IDE bridge / tool call cồng kềnh.
+ */
+export function buildStructuredJsonOutputProtocol(
+  options: StructuredJsonPromptOptions,
+): string {
+  const serializedSchema = JSON.stringify(options.schema, null, 2);
+  return `Chào ${options.assistantName}, ở lượt này hệ thống cần kết quả dữ liệu có cấu trúc (Structured Output) để xử lý tự động theo JSON Schema "${options.schemaName}" (strict=${options.strict}):
+
+\`\`\`json
+${serializedSchema}
+\`\`\`
+
+Quy tắc bắt buộc khi trả lời:
+1. Chỉ xuất DUY NHẤT 1 đối tượng JSON hợp lệ khớp chính xác với JSON Schema ở trên (đúng tên trường, đúng kiểu dữ liệu và đầy đủ các trường \`required\`).
+2. Có thể đặt JSON thuần trực tiếp hoặc bọc trong duy nhất 1 khối \`\`\`json ... \`\`\`.
+3. TUYỆT ĐỐI KHÔNG xuất dạng YAML, danh sách gạch đầu dòng, lời chào, thẻ XML, hay văn bản giải thích bên ngoài JSON.`;
+}
+
+export const STRUCTURED_JSON_OUTPUT_ANCHOR = `[CHỐT ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]:
+Chỉ trả về DUY NHẤT 1 JSON hợp lệ khớp chính xác với JSON Schema đã cung cấp (ví dụ trong khối \`\`\`json ... \`\`\`). Không kèm YAML hay bất kỳ chữ giải thích nào khác.`;
+
 /**
  * Các tùy chọn và hàm tạo yêu cầu format retry khi AI gửi phản hồi lệch quy ước
  */
 export interface FormatRetryOptions {
   code: string;
   message: string;
+  outputFormat?: CodexJsonSchemaOutputFormat;
 }
 
 export type M365FormatRetryOptions = FormatRetryOptions;
 
+/**
+ * Tạo prompt nhắc AI xuất lại đúng định dạng JSON theo schema khi phản hồi trước sai cấu trúc JSON/Schema.
+ */
+export function buildJsonSchemaRetryPrompt(options: {
+  message: string;
+  outputFormat: CodexJsonSchemaOutputFormat;
+}): string {
+  const serializedSchema = JSON.stringify(options.outputFormat.schema, null, 2);
+  return `Phản hồi vừa rồi của bạn chưa đúng định dạng JSON hợp lệ theo JSON Schema "${options.outputFormat.name}" nên hệ thống chưa đọc được:
+- Lỗi phát hiện: ${options.message}
+
+Bạn vui lòng chỉ trả về DUY NHẤT 1 khối JSON hợp lệ tuân thủ đúng schema sau (KHÔNG viết YAML, KHÔNG viết lời giải thích, KHÔNG kèm thẻ XML):
+
+\`\`\`json
+${serializedSchema}
+\`\`\``;
+}
+
 /** Tạo follow-up yêu cầu AI phát lại cùng nội dung theo đúng chuẩn format webResponse, tuyệt đối không tiếp tục tác vụ. */
 export function buildFormatRetryPrompt(options: FormatRetryOptions): string {
+  if (options.code === "INVALID_JSON_SCHEMA_OUTPUT" && options.outputFormat) {
+    return buildJsonSchemaRetryPrompt({
+      message: options.message,
+      outputFormat: options.outputFormat,
+    });
+  }
+
   if (options.code === "UNKNOWN_TOOL") {
     return `Bạn ơi, công cụ bạn vừa yêu cầu gọi không tồn tại hoặc không được Codex IDE hỗ trợ ở phiên làm việc này (chưa có công cụ nào được chạy cả):
 - Điểm bị vấp: [${options.code}] ${options.message}

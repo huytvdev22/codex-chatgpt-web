@@ -5,6 +5,7 @@ import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   TOOL_REMINDER_PROMPT,
+  buildStructuredJsonOutputProtocol,
   buildUnifiedToolProtocol,
   UNIFIED_TOOL_PROTOCOL as UNIFIED_TOOL_PROTOCOL_TEMPLATE,
   MINIMAL_TOOL_PROTOCOL as MINIMAL_TOOL_PROTOCOL_TEMPLATE,
@@ -556,6 +557,13 @@ export function isImplementingPlanRequest(parsed?: CodexParsedRequest): boolean 
   return false;
 }
 
+export function isStructuredJsonOutputTurn(
+  parsed?: CodexParsedRequest,
+  hasToolResults = false,
+): boolean {
+  return parsed?.options?.outputFormat?.type === "json_schema" && !hasToolResults;
+}
+
 export interface WebPromptCompilerOptions {
   assistantName?: string;
   maxPromptChars?: number;
@@ -596,11 +604,16 @@ export class WebPromptCompiler {
 
     const assistantName = input.assistantName || this.options?.assistantName || "Copilot";
     const maxPromptChars = input.maxPromptChars ?? this.options?.maxPromptChars ?? DEFAULT_MAX_WEB_PROMPT_CHARS;
+    const structuredOutputFormat = isStructuredJsonOutputTurn(parsed, hasToolResults)
+      ? parsed?.options?.outputFormat
+      : undefined;
 
     // 2. Chuẩn bị các thành phần nội dung ngữ cảnh đã được làm sạch
-    const actionContractText = isNewConversation
-      ? renderDynamicToolDeclarations(normalized.activeCodingTools, assistantName)
-      : renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
+    const actionContractText = structuredOutputFormat
+      ? ""
+      : isNewConversation
+        ? renderDynamicToolDeclarations(normalized.activeCodingTools, assistantName)
+        : renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
 
     let environmentText = "";
     if (normalized.environmentContext) {
@@ -709,10 +722,23 @@ export class WebPromptCompiler {
       ? formatUserInputAnswers(userInputToolResult.output)
       : undefined;
 
-    const fullToolProtocol = buildUnifiedToolProtocol(assistantName);
+    const structuredJsonOutputProtocol = structuredOutputFormat
+      ? buildStructuredJsonOutputProtocol({
+          assistantName,
+          schemaName: structuredOutputFormat.name,
+          strict: structuredOutputFormat.strict,
+          schema: structuredOutputFormat.schema,
+        })
+      : undefined;
+
+    const fullToolProtocol = structuredOutputFormat
+      ? ""
+      : buildUnifiedToolProtocol(assistantName);
 
     // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
     const scenarioResult = conversationScenarioBuilder.buildTurnPrompt({
+      isStructuredJsonOutput: Boolean(structuredOutputFormat),
+      structuredJsonOutputProtocol,
       isNewConversation,
       isPlanMode,
       isImplementingPlan,

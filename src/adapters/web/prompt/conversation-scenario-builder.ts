@@ -11,6 +11,7 @@ import {
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   PURE_CONVERSATION_ANCHOR,
+  STRUCTURED_JSON_OUTPUT_ANCHOR,
   WEB_IMAGE_ATTACHMENT_HINT,
 } from "./templates";
 
@@ -18,6 +19,7 @@ import {
  * Các kịch bản hội thoại thực tế của người dùng với AI
  */
 export type ConversationScenario =
+  | "STRUCTURED_JSON_OUTPUT"      // Lượt yêu cầu Structured Output (json_schema) gọn nhẹ, không nạp bridge tool protocol
   | "FIRST_HANDSHAKE"             // Turn 1: Khởi tạo phiên mới toanh, giới thiệu script cầu nối
   | "PLAN_INITIATION"            // Turn bật /plan (chưa có kết quả tool)
   | "PLAN_SURVEY_CONTINUATION"   // Turn tiếp theo trong Plan Mode có kết quả tool khảo sát đọc file
@@ -30,6 +32,7 @@ export type ConversationScenario =
   | "PURE_CONVERSATION";         // Lượt đàm thoại, trao đổi, hỏi đáp liên tục (không có tool result)
 
 export interface ScenarioBuilderInput {
+  isStructuredJsonOutput?: boolean;
   isNewConversation: boolean;
   isPlanMode: boolean;
   isImplementingPlan: boolean;
@@ -39,6 +42,7 @@ export interface ScenarioBuilderInput {
   userInputAnswersText?: string;
 
   // Dữ liệu nội dung các khối
+  structuredJsonOutputProtocol?: string;
   fullToolProtocol?: string;
   actionContractText: string;
   environmentText?: string;
@@ -60,6 +64,7 @@ export interface ScenarioBuildResult {
  * Nhận diện chính xác kịch bản hội thoại hiện tại
  */
 export function detectConversationScenario(input: {
+  isStructuredJsonOutput?: boolean;
   isNewConversation: boolean;
   isPlanMode: boolean;
   isImplementingPlan: boolean;
@@ -67,6 +72,10 @@ export function detectConversationScenario(input: {
   hasToolErrors?: boolean;
   hasUserInputAnswer?: boolean;
 }): ConversationScenario {
+  if (input.isStructuredJsonOutput) {
+    return "STRUCTURED_JSON_OUTPUT";
+  }
+
   if (input.isNewConversation) {
     return "FIRST_HANDSHAKE";
   }
@@ -98,6 +107,7 @@ export function detectConversationScenario(input: {
 export class ConversationScenarioBuilder {
   buildTurnPrompt(input: ScenarioBuilderInput): ScenarioBuildResult {
     const scenario = detectConversationScenario({
+      isStructuredJsonOutput: input.isStructuredJsonOutput,
       isNewConversation: input.isNewConversation,
       isPlanMode: input.isPlanMode,
       isImplementingPlan: input.isImplementingPlan,
@@ -110,6 +120,18 @@ export class ConversationScenarioBuilder {
     let openingSection = "";
 
     switch (scenario) {
+      case "STRUCTURED_JSON_OUTPUT": {
+        // Lượt Structured Output (vd: sinh tiêu đề json_schema): chỉ gửi schema + ngữ cảnh yêu cầu, bỏ toàn bộ bridge tool protocol
+        openingSection = input.structuredJsonOutputProtocol || "";
+        if (openingSection) sections.push(openingSection);
+        if (input.systemPromptText) sections.push(input.systemPromptText);
+        if (input.priorHistoryText) sections.push(input.priorHistoryText);
+        if (input.userInstructionText) sections.push(input.userInstructionText);
+        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
+        sections.push(STRUCTURED_JSON_OUTPUT_ANCHOR);
+        break;
+      }
+
       case "FIRST_HANDSHAKE": {
         // Turn 1: Thỏa thuận ban đầu, giới thiệu script cầu nối và toàn bộ kho công cụ
         openingSection = input.fullToolProtocol || UNIFIED_TOOL_PROTOCOL;
