@@ -311,12 +311,12 @@ ${serializedSchema}
 
 Quy tắc bắt buộc khi trả lời:
 1. Chỉ xuất DUY NHẤT 1 đối tượng JSON hợp lệ khớp chính xác với JSON Schema ở trên (đúng tên trường, đúng kiểu dữ liệu và đầy đủ các trường \`required\`).
-2. Có thể đặt JSON thuần trực tiếp hoặc bọc trong duy nhất 1 khối \`\`\`json ... \`\`\`.
+2. Ưu tiên đặt toàn bộ JSON bên trong DUY NHẤT 1 khối code \`\`\`json ... \`\`\` (hoặc xuất JSON thuần hợp lệ).
 3. TUYỆT ĐỐI KHÔNG xuất dạng YAML, danh sách gạch đầu dòng, lời chào, thẻ XML, hay văn bản giải thích bên ngoài JSON.`;
 }
 
 export const STRUCTURED_JSON_OUTPUT_ANCHOR = `[CHỐT ĐỊNH DẠNG ĐẦU RA BẮT BUỘC]:
-Chỉ trả về DUY NHẤT 1 JSON hợp lệ khớp chính xác với JSON Schema đã cung cấp (ví dụ trong khối \`\`\`json ... \`\`\`). Không kèm YAML hay bất kỳ chữ giải thích nào khác.`;
+Chỉ trả về DUY NHẤT 1 JSON hợp lệ khớp chính xác với JSON Schema đã cung cấp (ưu tiên bọc trong khối \`\`\`json ... \`\`\`). Không kèm YAML hay bất kỳ chữ giải thích nào khác.`;
 
 /**
  * Các tùy chọn và hàm tạo yêu cầu format retry khi AI gửi phản hồi lệch quy ước

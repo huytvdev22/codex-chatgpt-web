@@ -115,6 +115,51 @@ describe("Web Adapter Structured Output (json_schema) & Ephemeral Utility Tab", 
       format,
     );
     expect(withProsePrefix.kind).toBe("final_answer");
+
+    const guardianFormat = {
+      type: "json_schema" as const,
+      name: "codex_output_schema",
+      strict: false,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          risk_level: { type: "string", enum: ["low", "medium", "high", "critical"] },
+          user_authorization: { type: "string", enum: ["unknown", "low", "medium", "high"] },
+          outcome: { type: "string", enum: ["allow", "deny"] },
+          rationale: { type: "string" },
+        },
+        required: ["outcome"],
+      },
+    };
+    const turndownEscapedGuardian =
+      '{"risk\\_level":"low","user\\_authorization":"high","outcome":"allow","rationale":"Commit \\`git commit\\` for src/\\*.ts \\[1\\]"}';
+    const guardianParsed = parseAndValidateJsonSchemaResponse(
+      turndownEscapedGuardian,
+      guardianFormat,
+    );
+    expect(guardianParsed.kind).toBe("final_answer");
+    if (guardianParsed.kind === "final_answer") {
+      expect(JSON.parse(guardianParsed.content)).toEqual({
+        risk_level: "low",
+        user_authorization: "high",
+        outcome: "allow",
+        rationale: "Commit `git commit` for src/*.ts [1]",
+      });
+    }
+
+    const consecutiveAndBackslash = parseAndValidateJsonSchemaResponse(
+      '{"risk\\_level":"low","outcome":"allow","rationale":"Pattern \\_\\[\\*\\] and literal C:\\\\\\\\a_b"}',
+      guardianFormat,
+    );
+    expect(consecutiveAndBackslash.kind).toBe("final_answer");
+    if (consecutiveAndBackslash.kind === "final_answer") {
+      expect(JSON.parse(consecutiveAndBackslash.content)).toEqual({
+        risk_level: "low",
+        outcome: "allow",
+        rationale: "Pattern _[*] and literal C:\\\\a_b",
+      });
+    }
   });
 
   test("Phase 2: parseAndValidateJsonSchemaResponse từ chối YAML, thiếu trường hoặc thừa field ngoài schema", () => {

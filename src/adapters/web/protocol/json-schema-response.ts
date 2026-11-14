@@ -23,10 +23,23 @@ function unwrapCandidateText(rawResponse: string): string {
   return current.trim();
 }
 
+const TURNDOWN_MARKDOWN_ESCAPE_RE =
+  /(?<!\\)((?:\\\\)*)\\([_*[\]()#~+\-.!<>`])/g;
+
+function unescapeTurndownMarkdown(text: string): string {
+  return text.replace(TURNDOWN_MARKDOWN_ESCAPE_RE, "$1$2");
+}
+
 function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false } {
   try {
     return { ok: true, value: JSON.parse(text) };
   } catch {
+    const healed = unescapeTurndownMarkdown(text);
+    if (healed !== text) {
+      try {
+        return { ok: true, value: JSON.parse(healed) };
+      } catch {}
+    }
     return { ok: false };
   }
 }
@@ -100,6 +113,15 @@ function parseJsonValue(rawResponse: string): { ok: true; value: unknown } | { o
   if (balanced) {
     const parsedSlice = tryParseJson(balanced);
     if (parsedSlice.ok) return parsedSlice;
+  }
+
+  const healedCleaned = unescapeTurndownMarkdown(cleaned);
+  if (healedCleaned !== cleaned) {
+    const balancedHealed = extractBalancedJsonSlice(healedCleaned);
+    if (balancedHealed) {
+      const parsedHealedSlice = tryParseJson(balancedHealed);
+      if (parsedHealedSlice.ok) return parsedHealedSlice;
+    }
   }
 
   return {
