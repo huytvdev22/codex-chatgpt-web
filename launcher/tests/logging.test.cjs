@@ -9,7 +9,7 @@ const {
   installProcessDiagnosticGuards,
   registerLoggedIpc,
   sanitize,
-} = require("../electron/logging.cjs");
+} = require("../electron/infra/logging.cjs");
 
 test("launcher logs redact tunnel ids, runtime keys, and bearer credentials", () => {
   assert.deepEqual(sanitize({

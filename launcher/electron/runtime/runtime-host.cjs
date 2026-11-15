@@ -2,7 +2,6 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const { spawn } = require("node:child_process");
-const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
   connectorNameForDevSetup,
   connectorNameForSetup,
@@ -11,17 +10,17 @@ const {
   isLegacyConnectorName,
   validateConnectorName,
   validateConnectorNameSuffix,
-} = require("./connector-identity.cjs");
+} = require("../infra/connector-identity.cjs");
 const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-command.cjs");
-const { redactText } = require("./logging.cjs");
+const { redactText } = require("../infra/logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
-const { windowsTrustEnvironment } = require("./windows-trust.cjs");
+const { windowsTrustEnvironment } = require("../infra/windows-trust.cjs");
+const { SetupTransaction } = require("./setup-transaction.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 10 * 1024 * 1024;
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
-const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 function collect(stream, chunks, onLine, onError) {
   let buffered = "";
   let bytes = 0;
@@ -69,72 +68,6 @@ function usableExecutable(candidate, platform = process.platform) {
   }
 }
 
-function captureRegularFile(filePath, { followSymlink = false } = {}) {
-  let stat;
-  try {
-    stat = fs.lstatSync(filePath);
-  } catch (error) {
-    if (error?.code === "ENOENT") return { path: filePath, exists: false };
-    throw error;
-  }
-  let symlink;
-  if (followSymlink && stat.isSymbolicLink()) {
-    symlink = { link: fs.readlinkSync(filePath), target: fs.realpathSync(filePath) };
-    stat = fs.lstatSync(symlink.target);
-  }
-  if (!stat.isFile()) {
-    throw new Error(`Setup checkpoint path is not a regular file: ${filePath}`);
-  }
-  if (stat.size > MAX_CHECKPOINT_FILE_BYTES) {
-    throw new Error(`Setup checkpoint file exceeds ${MAX_CHECKPOINT_FILE_BYTES} bytes: ${filePath}`);
-  }
-  return {
-    path: filePath,
-    exists: true,
-    data: fs.readFileSync(symlink?.target ?? filePath),
-    mode: stat.mode & 0o777,
-    ...(symlink ? { symlink } : {}),
-  };
-}
-
-function checkpointWritePath(snapshot) {
-  if (!snapshot.symlink) return snapshot.path;
-  if (!fs.lstatSync(snapshot.path).isSymbolicLink()
-    || fs.readlinkSync(snapshot.path) !== snapshot.symlink.link
-    || fs.realpathSync(snapshot.path) !== snapshot.symlink.target) {
-    throw new Error(`Codex config symlink changed during setup: ${snapshot.path}`);
-  }
-  return snapshot.symlink.target;
-}
-
-function restoreRegularFile(snapshot, platform = process.platform) {
-  if (!snapshot.exists) {
-    fs.rmSync(snapshot.path, { force: true });
-    return;
-  }
-  const writePath = checkpointWritePath(snapshot);
-  writePrivateFileAtomic(writePath, snapshot.data, snapshot.symlink
-    ? { mode: snapshot.mode, protectDirectory: false }
-    : undefined);
-  if (platform !== "win32") fs.chmodSync(writePath, snapshot.mode);
-}
-
-function regularFileChanged(snapshot, platform = process.platform) {
-  let filePath;
-  try { filePath = checkpointWritePath(snapshot); } catch { return true; }
-  let stat;
-  try {
-    stat = fs.lstatSync(filePath);
-  } catch (error) {
-    if (error?.code === "ENOENT") return snapshot.exists;
-    throw error;
-  }
-  if (!snapshot.exists || !stat.isFile()) return true;
-  if (platform !== "win32" && (stat.mode & 0o777) !== snapshot.mode) return true;
-  if (stat.size > MAX_CHECKPOINT_FILE_BYTES) return true;
-  return !fs.readFileSync(filePath).equals(snapshot.data);
-}
-
 function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = false } = {}) {
   let result;
   try {
@@ -172,7 +105,6 @@ class RuntimeHost {
     platform = process.platform,
     publishOperation,
     supervisor,
-    getBrowserInteractionMode = () => "automatic",
   }) {
     this.app = app;
     this.logger = logger;
@@ -199,10 +131,10 @@ class RuntimeHost {
       : path.join(os.homedir(), "Library", "LaunchAgents");
     this.publishOperation = publishOperation;
     this.supervisor = supervisor;
-    this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.active = null;
     this.activeChild = null;
     this.lifecycleOperation = null;
+    this.setupTransaction = new SetupTransaction(this);
     this.cleanupEphemeralSecrets();
   }
 
@@ -211,24 +143,6 @@ class RuntimeHost {
       && this.activeChild.exitCode === null
       && this.activeChild.signalCode === null;
     return this.lifecycleOperation || this.active || (stuckChild ? "previous runtime process shutdown" : null);
-  }
-
-  browserInteractionMode() {
-    const mode = this.getBrowserInteractionMode();
-    if (mode !== "automatic" && mode !== "manual") {
-      throw new Error("Launcher browser interaction mode is invalid");
-    }
-    return mode;
-  }
-
-  browserInteractionArgs({ refreshCapabilities = false, mode = this.browserInteractionMode() } = {}) {
-    if (mode !== "automatic" && mode !== "manual") {
-      throw new Error("Launcher browser interaction mode is invalid");
-    }
-    return [
-      mode === "manual" ? "--manual-browser-interaction" : "--automatic-browser-interaction",
-      ...(mode === "automatic" && refreshCapabilities ? ["--refresh-account-capabilities"] : []),
-    ];
   }
 
   assertProductionProfile(operation) {
@@ -316,103 +230,23 @@ class RuntimeHost {
   }
 
   captureSetupCheckpoint(snapshot) {
-    if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
-      throw new Error("Launcher runtime supervisor has no absolute configuration path for setup rollback");
-    }
-    const coreHome = this.supervisor.coreHome
-      || path.dirname(this.supervisor.configPath);
-    const paths = new Set([
-      this.supervisor.configPath,
-      path.join(coreHome, "codex", "integration-journal.json"),
-      path.join(coreHome, "codex", "integration-journal.recovery.json"),
-      path.join(this.codexHome, "config.toml"),
-      path.join(this.codexHome, "models_cache.json"),
-    ]);
-    if (snapshot.owner === "external" && this.platform === "darwin") {
-      paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.daemon.plist"));
-    }
-    return [...paths].map(filePath => captureRegularFile(filePath, {
-      followSymlink: filePath === path.join(this.codexHome, "config.toml"),
-    }));
+    return this.setupTransaction.capture(snapshot);
   }
 
   setupCheckpointChanged(checkpoint) {
-    return checkpoint ? checkpoint.some(snapshot => regularFileChanged(snapshot, this.platform)) : false;
+    return this.setupTransaction.hasChanged(checkpoint);
   }
 
   restoreSetupCheckpoint(checkpoint) {
-    if (!checkpoint) return;
-    const failures = [];
-    for (const snapshot of [...checkpoint].reverse()) {
-      try {
-        restoreRegularFile(snapshot, this.platform);
-      } catch (error) {
-        failures.push(`${snapshot.path}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    if (failures.length > 0) {
-      throw new Error(`Setup checkpoint restoration failed: ${failures.join("; ")}`);
-    }
+    return this.setupTransaction.restore(checkpoint);
   }
 
-  async restorePreviousRuntime(snapshot, operationName, { repairExternal = false } = {}) {
-    const current = this.runtimeConfigSnapshot();
-    if (current.owner !== snapshot.owner || current.serialized !== snapshot.serialized) {
-      throw new Error(
-        "Runtime configuration changed before the operation failed; refusing to describe the current runtime as the previous installation",
-      );
-    }
-    if (snapshot.owner === "external") {
-      if (repairExternal) {
-        if (this.platform !== "darwin") {
-          throw new Error("Terminal-managed runtime repair is supported only on macOS");
-        }
-        await this.run(operationName, ["service", "install"], {
-          embedded: true,
-          message: "Restoring the previous terminal-managed daemon",
-          successMessage: "Previous terminal-managed daemon restored",
-          timeoutMs: 75_000,
-        });
-      }
-      await this.run(operationName, ["doctor", "--json"], {
-        message: "Verifying the previous terminal-managed runtime",
-        successMessage: "Previous terminal-managed runtime is still healthy",
-        timeoutMs: 75_000,
-      });
-      return;
-    }
-    const runtime = await this.supervisor.startIfConfigured();
-    const expected = snapshot.configured ? "ready" : "not-configured";
-    if (runtime.status !== expected) {
-      throw new Error(
-        `Previous runtime recovery returned ${runtime.status}; expected ${expected}${runtime.detail ? `: ${runtime.detail}` : ""}`,
-      );
-    }
+  async restorePreviousRuntime(snapshot, operationName, options) {
+    return this.setupTransaction.restorePreviousRuntime(snapshot, operationName, options);
   }
 
   async rollbackFirstSetup(checkpoint) {
-    const changed = this.setupCheckpointChanged(checkpoint);
-    let stopError;
-    try {
-      await this.supervisor.stopForSetup();
-    } catch (error) {
-      stopError = error;
-    }
-    let restoreError;
-    try {
-      this.restoreSetupCheckpoint(checkpoint);
-    } catch (error) {
-      restoreError = error;
-    }
-    this.supervisor.clearState();
-    if (stopError || restoreError) {
-      const failures = [
-        stopError ? `stopping the incomplete runtime failed: ${stopError instanceof Error ? stopError.message : String(stopError)}` : null,
-        restoreError ? (restoreError instanceof Error ? restoreError.message : String(restoreError)) : null,
-      ].filter(Boolean);
-      throw new Error(failures.join("; "));
-    }
-    return changed;
+    return this.setupTransaction.rollbackFirstSetup(checkpoint);
   }
 
   async run(name, args, options = {}) {
@@ -693,23 +527,22 @@ class RuntimeHost {
 
   browserConnectorName() {
     const current = this.runtimeConfigSnapshot();
-    if (this.launcherProfile === "development" && !current.config?.automaticAppName) {
+    if (this.launcherProfile === "development") {
       return connectorNameForDevSetup(current.config?.appName);
     }
     if (!current.configured) return CURRENT_CONNECTOR_NAME;
     return connectorNameForSetup(current.config?.appName);
   }
 
-  setupConnectorName(mode = "automatic") {
-    if (mode !== "automatic" && mode !== "manual") throw new Error("Invalid interaction mode");
+  setupConnectorName() {
     const current = this.runtimeConfigSnapshot().config;
-    const defaultName = mode === "manual" ? "Codex Zero Risk"
-      : this.launcherProfile === "development" ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
-    const stored = mode === "manual" ? current?.manualAppName : current?.automaticAppName;
-    if (stored !== undefined) return isLegacyConnectorName(stored) ? defaultName : validateConnectorName(stored);
-    if (mode !== "manual" && current?.browserInteractionMode !== "manual" && current?.appName) {
-      return this.launcherProfile === "development" ? connectorNameForDevSetup(current.appName)
-        : connectorNameForSetup(current.appName);
+    const defaultName = this.launcherProfile === "development" ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
+    const stored = current?.appName;
+    if (stored !== undefined) {
+      if (isLegacyConnectorName(stored) || stored === "Codex Zero Risk") return defaultName;
+      return this.launcherProfile === "development"
+        ? connectorNameForDevSetup(stored)
+        : connectorNameForSetup(stored);
     }
     return defaultName;
   }
@@ -718,17 +551,12 @@ class RuntimeHost {
     const suffix = validateConnectorNameSuffix(value);
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Set up the launcher before changing the plugin name");
-    const mode = this.browserInteractionMode();
     const name = `Codex ${suffix}`;
-    if (name === this.setupConnectorName(mode)) return { changed: false };
-    if (name === this.setupConnectorName(mode === "manual" ? "automatic" : "manual")) {
-      throw new Error("Automatic and Zero Risk connector names must differ");
-    }
+    if (name === this.setupConnectorName()) return { changed: false };
     const args = [
       ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
       "--browser-only",
       "--browser-host-descriptor", this.browserDescriptorPath,
-      ...this.browserInteractionArgs(),
       "--connector-name-suffix", suffix,
       "--acknowledge-unofficial",
       ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
@@ -811,18 +639,12 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const existing = this.runtimeConfigSnapshot();
     const mode = existing.mode;
-    const interactionMode = existing.configured
-      ? existing.config?.browserInteractionMode ?? this.browserInteractionMode()
-      : this.browserInteractionMode();
     const args = [
       "setup",
       "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      ...this.browserInteractionArgs({
-        mode: interactionMode,
-        refreshCapabilities: interactionMode === "automatic",
-      }),
+      "--refresh-account-capabilities",
       "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
@@ -842,19 +664,13 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const existing = this.runtimeConfigSnapshot();
     const mode = existing.mode;
-    const interactionMode = existing.configured
-      ? existing.config?.browserInteractionMode ?? this.browserInteractionMode()
-      : "automatic";
     const args = [
       "dev",
       "setup",
       "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      ...this.browserInteractionArgs({
-        mode: interactionMode,
-        refreshCapabilities: interactionMode === "automatic",
-      }),
+      "--refresh-account-capabilities",
       "--acknowledge-unofficial",
     ];
     const result = await this.runDevSetup("dev-profile-setup", args, {
@@ -879,7 +695,6 @@ class RuntimeHost {
         "--browser-only",
         "--browser-host-descriptor",
         this.browserDescriptorPath,
-        ...this.browserInteractionArgs(),
         "--acknowledge-unofficial",
         contextFlag,
       ];
@@ -896,7 +711,6 @@ class RuntimeHost {
       "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      ...this.browserInteractionArgs(),
       "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
@@ -914,15 +728,11 @@ class RuntimeHost {
   async setSkillAttachments(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Initialize the runtime before changing Skills as files");
-    if (current.config?.browserInteractionMode === "manual") {
-      throw new Error("Skills as files is unavailable in Zero Risk mode");
-    }
     const development = this.launcherProfile === "development";
     const args = [
       ...(development ? ["dev", "setup"] : ["setup"]),
       "--browser-only",
       "--browser-host-descriptor", this.browserDescriptorPath,
-      ...this.browserInteractionArgs(),
       "--acknowledge-unofficial",
       ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
       enabled === true ? "--skill-attachments" : "--inline-skills",
@@ -943,15 +753,11 @@ class RuntimeHost {
     if (typeof enabled !== "boolean") throw new Error("Fresh conversation preference must be a boolean");
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Initialize the runtime before changing browser conversation retention");
-    if ((current.config?.browserInteractionMode ?? "automatic") !== "automatic") {
-      throw new Error("New browser chats per turn are unavailable in Zero Risk mode");
-    }
     const development = this.launcherProfile === "development";
     const args = [
       ...(development ? ["dev", "setup"] : ["setup"]),
       "--browser-only",
       "--browser-host-descriptor", this.browserDescriptorPath,
-      ...this.browserInteractionArgs(),
       "--acknowledge-unofficial",
       ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
       enabled ? "--fresh-conversation" : "--retained-conversation",
@@ -977,7 +783,6 @@ class RuntimeHost {
       ...(development ? ["dev", "setup"] : ["setup"]),
       "--browser-only",
       "--browser-host-descriptor", this.browserDescriptorPath,
-      ...this.browserInteractionArgs(),
       "--acknowledge-unofficial",
       ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
       enabled ? "--saved-chats" : "--temporary-chats",
@@ -1000,7 +805,6 @@ class RuntimeHost {
     const existing = this.runtimeConfigSnapshot();
     const currentVersion = this.app.getVersion();
     const connectorMigrationRequired = isLegacyConnectorName(validateConnectorName(existing.config?.appName));
-    const interactionMode = existing.config?.browserInteractionMode ?? "automatic";
     if (existing.owner !== "launcher"
       || (existing.config?.releaseVersion === currentVersion
         && !connectorMigrationRequired)) {
@@ -1013,7 +817,7 @@ class RuntimeHost {
       this.browserDescriptorPath,
       // A release may repair capability detection. Reusing the previous result can
       // keep eligible models disabled even after the corrected probe is installed.
-      ...this.browserInteractionArgs({ mode: interactionMode, refreshCapabilities: true }),
+      "--refresh-account-capabilities",
       "--acknowledge-unofficial",
       "--restart-service",
     ];
@@ -1032,43 +836,6 @@ class RuntimeHost {
     };
   }
 
-  async setBrowserInteractionMode(mode, afterRuntimeReady) {
-    if (mode !== "automatic" && mode !== "manual") {
-      throw new Error("Browser interaction mode must be automatic or manual");
-    }
-    const current = this.runtimeConfigSnapshot();
-    if (!current.configured) {
-      throw new Error("Install the Codex integration before changing browser interaction mode");
-    }
-    const args = [
-      ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
-      "--browser-only",
-      "--browser-host-descriptor",
-      this.browserDescriptorPath,
-      ...this.browserInteractionArgs({ mode, refreshCapabilities: true }),
-      "--acknowledge-unofficial",
-      ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
-      mode === "automatic" && current.config?.experimentalBiggerContext === true
-        ? "--bigger-context"
-        : "--standard-context",
-    ];
-    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
-    const options = {
-      message: mode === "manual"
-        ? "Enabling manual browser interaction"
-        : "Enabling automatic browser interaction",
-      successMessage: mode === "manual"
-        ? `Manual browser interaction enabled${this.launcherProfile === "production" ? "; restart Codex" : ""}`
-        : `Automatic browser interaction enabled${this.launcherProfile === "production" ? "; restart Codex" : ""}`,
-      timeoutMs: CORE_SETUP_TIMEOUT_MS,
-      afterRuntimeReady,
-    };
-    const result = this.launcherProfile === "development"
-      ? await this.runDevSetup("browser-interaction-mode", args, options)
-      : await this.runSetup("browser-interaction-mode", args, options);
-    return { configured: true, mode, stdout: result.stdout };
-  }
-
   async runDevSetup(name, args, options) {
     if (this.launcherProfile !== "development") {
       throw new Error("DEV setup transaction requires the isolated DEV launcher");
@@ -1081,86 +848,7 @@ class RuntimeHost {
   }
 
   async runSetup(name, args, options) {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const previousRuntime = this.runtimeConfigSnapshot();
-    const checkpoint = this.captureSetupCheckpoint(previousRuntime);
-    this.lifecycleOperation = name;
-    let setupCommandStarted = false;
-    let runtimeTransitionStarted = false;
-    try {
-      if (this.launcherProfile === "production") {
-        await this.run(name, [...args, "--preflight-only"], {
-          ...options,
-          message: "Validating Codex configuration before changing the runtime",
-          successMessage: "Codex configuration is ready for setup",
-          timeoutMs: options.timeoutMs || CORE_SETUP_TIMEOUT_MS,
-        });
-      }
-      runtimeTransitionStarted = true;
-      if (previousRuntime.owner === "external") this.supervisor.prepareExternalMigration();
-      else await this.supervisor.stopForSetup();
-      setupCommandStarted = true;
-      const result = await this.run(name, args, options);
-      const runtime = await this.supervisor.startIfConfigured();
-      if (runtime.status !== "ready") {
-        throw new Error(`Setup completed, but the launcher-owned runtime is ${runtime.status}: ${runtime.detail || "not ready"}`);
-      }
-      await options.afterRuntimeReady?.();
-      return result;
-    } catch (error) {
-      const primary = error instanceof Error ? error.message : String(error);
-      const failures = [];
-      let rolledBack = false;
-      let checkpointChanged = false;
-      if (!previousRuntime.configured && setupCommandStarted) {
-        try {
-          rolledBack = await this.rollbackFirstSetup(checkpoint);
-        } catch (caught) {
-          failures.push(
-            `first-time setup rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`,
-          );
-        }
-      }
-      if (previousRuntime.configured && checkpoint && runtimeTransitionStarted) {
-        try {
-          checkpointChanged = this.setupCheckpointChanged(checkpoint);
-        } catch (caught) {
-          checkpointChanged = true;
-          failures.push(
-            `checking the setup checkpoint failed: ${caught instanceof Error ? caught.message : String(caught)}`,
-          );
-        }
-        try {
-          this.restoreSetupCheckpoint(checkpoint);
-        } catch (caught) {
-          failures.push(caught instanceof Error ? caught.message : String(caught));
-        }
-      }
-      let recoveryError;
-      if (runtimeTransitionStarted) {
-        try {
-          await this.restorePreviousRuntime(previousRuntime, name, {
-            repairExternal: previousRuntime.owner === "external" && checkpointChanged,
-          });
-        } catch (caught) {
-          recoveryError = caught;
-        }
-      }
-      if (recoveryError) {
-        failures.push(
-          `restoring the previous launcher runtime failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
-        );
-      }
-      const message = [
-        primary,
-        ...(rolledBack ? ["incomplete first-time setup was rolled back"] : []),
-        ...failures,
-      ].join("; ");
-      this.publishOperation?.({ name, status: "failed", message });
-      throw new Error(message, { cause: error });
-    } finally {
-      this.lifecycleOperation = null;
-    }
+    return this.setupTransaction.execute(name, args, options);
   }
 }
 

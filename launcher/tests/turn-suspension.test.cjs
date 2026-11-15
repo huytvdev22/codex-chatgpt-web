@@ -4,8 +4,8 @@ const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
   sweepGapIndicatesSuspension,
-} = require("../electron/turn-suspension.cjs");
-const { BrowserHost } = require("../electron/browser-host.cjs");
+} = require("../electron/infra/turn-suspension.cjs");
+const { BrowserHost } = require("../electron/browser/browser-host.cjs");
 
 // Suspension freezes both launcher sweeps and helper heartbeats. These tests pin wake-side lease
 // re-baselining and sleep prevention without treating suspended time as helper failure.

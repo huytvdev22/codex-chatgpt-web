@@ -7,20 +7,22 @@ const launcherRoot = path.resolve(__dirname, "..");
 const appSource = fs.readFileSync(path.join(launcherRoot, "src", "App.tsx"), "utf8");
 const stylesSource = fs.readFileSync(path.join(launcherRoot, "src", "styles.css"), "utf8");
 const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
-const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
+const ipcRouterSource = fs.readFileSync(path.join(launcherRoot, "electron", "app", "ipc-router.cjs"), "utf8");
+const catalogMonitorSource = fs.readFileSync(path.join(launcherRoot, "electron", "app", "catalog-monitor.cjs"), "utf8");
+const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
 test("M365 no longer exposes per-request Temporary Chat configuration", () => {
-  for (const source of [appSource, electronMain, browserHostSource, preloadSource]) {
+  for (const source of [appSource, electronMain, ipcRouterSource, browserHostSource, preloadSource]) {
     assert.doesNotMatch(source, /m365TemporaryChatPerRequest|setM365TemporaryChatPerRequest|launcher:m365-temporary-chat/);
   }
 });
 
 test("M365 multi-surface normal conversations are enabled without launcher configuration", () => {
-  for (const source of [appSource, electronMain, preloadSource]) {
+  for (const source of [appSource, electronMain, ipcRouterSource, preloadSource]) {
     assert.doesNotMatch(source, /m365MultiSurfaceConversations|setM365MultiSurface|launcher:m365-multi-surface/);
   }
-  assert.match(browserHostSource, /M365SurfaceManager/);
+  assert.match(browserHostSource, /M365BrowserProvider/);
 });
 
 test("embedded ChatGPT is measured only after its animated surface mounts", () => {
@@ -39,8 +41,8 @@ test("native clicks reach browser tabs instead of the window drag region", () =>
 
 test("renderer zoom scales the shell without moving or zooming the native ChatGPT surface", () => {
   assert.match(
-    electronMain,
-    /browserHost\?\.setBounds\(validateBounds\(bounds\), event\.sender\.getZoomFactor\(\)\)/,
+    ipcRouterSource,
+    /getBrowserHost\(\)\?\.setBounds\(validateBounds\(bounds\), event\.sender\.getZoomFactor\(\)\)/,
   );
   assert.match(browserHostSource, /this\.bindShellZoomShortcuts\(this\.window\.webContents\)/);
   assert.match(browserHostSource, /contents\.setZoomLevel\(next\)/);
@@ -50,7 +52,7 @@ test("renderer zoom scales the shell without moving or zooming the native ChatGP
 test("closing the launcher follows the persisted background-runtime preference", () => {
   assert.match(
     electronMain,
-    /if \(stateStore\.read\(\)\.keepRunningOnClose && tray\) window\.hide\(\);\s*else void requestQuit\(\);/,
+    /if \(stateStore\.read\(\)\.keepRunningOnClose && trayController\?\.isAvailable\(\)\) window\.hide\(\);\s*else void requestQuit\(\);/,
   );
   assert.match(appSource, /setPreference\("keepRunningOnClose", checked\)/);
 });
@@ -96,9 +98,9 @@ test("normal shutdown persists the ChatGPT session before closing browser views"
 
 test("setup preserves session-check failures and never installs without verified authentication", async () => {
   const vm = require("node:vm");
-  const source = electronMain.slice(
-    electronMain.indexOf('handle("launcher:setup-core",'),
-    electronMain.indexOf('handle("launcher:connector-name",'),
+  const source = ipcRouterSource.slice(
+    ipcRouterSource.indexOf('handle("launcher:setup-core",'),
+    ipcRouterSource.indexOf('handle("launcher:connector-name",'),
   );
   for (const dev of [false, true]) {
     let setup;
@@ -107,11 +109,12 @@ test("setup preserves session-check failures and never installs without verified
     const state = { browserInteractionMode: "automatic", coreSetupComplete: false };
     const run = async () => { installs++; return { mode: "browser-only", stdout: "" }; };
     vm.runInNewContext(source, {
-      handle: (_name, handler) => { setup = handler; }, IS_DEV_PROFILE: dev,
+      handle: (_name, handler) => { setup = handler; }, isDevProfile: dev,
       stateStore: { read: () => state, update() {} },
-      browserHost: { probeAuthentication: async () => browser, returnToIdle: async () => {}, provider: "m365" },
-      runtimeHost: { setupCore: run, setupDevCore: run, runtimeConfigSnapshot: () => ({ config: {} }) },
-      smokePassedThisSession: true, send() {}, startCatalogVerificationMonitor() {}, logger: {},
+      getBrowserHost: () => ({ probeAuthentication: async () => browser, returnToIdle: async () => {}, provider: "m365" }),
+      getRuntimeHost: () => ({ setupCore: run, setupDevCore: run, runtimeConfigSnapshot: () => ({ config: {} }) }),
+      isSmokePassedThisSession: () => true, smokePassedForCurrentVersion: () => false,
+      send() {}, startCatalogVerificationMonitor() {}, logger: { warn() {} },
     });
     await assert.rejects(setup, error => error.message === browser.message);
     assert.equal(installs, 0);
@@ -217,10 +220,10 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(electronMain, /onboardingComplete:\s*true,[\s\S]*?autoStart:\s*false/);
   assert.match(appSource, /snapshot\.profile === "development"/);
   assert.match(appSource, /data-profile=\{snapshot\.profile\}/);
-  assert.match(appSource, /manualBiggerContextUnavailable[\s\S]*?copy\.biggerContextBody/);
+  assert.match(appSource, /copy\.biggerContextBody/);
   assert.match(appSource, /api!\.setBiggerContext\(enabled\)/);
-  assert.match(electronMain, /runtimeHost\.setBiggerContext\(enabled === true\)/);
-  assert.doesNotMatch(electronMain, /IS_DEV_PROFILE && key === "experimentalBiggerContext"/);
+  assert.match(ipcRouterSource, /getRuntimeHost\(\)\.setBiggerContext\(enabled === true\)/);
+  assert.doesNotMatch(ipcRouterSource, /isDevProfile && key === "experimentalBiggerContext"/);
 });
 
 test("browser toolbar opens detached DevTools for the active embedded surface", () => {
@@ -233,8 +236,8 @@ test("browser toolbar opens detached DevTools for the active embedded surface", 
     /openBrowserDevTools:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:browser-devtools"\)/,
   );
   assert.match(
-    electronMain,
-    /handle\("launcher:browser-devtools",\s*\(\)\s*=>\s*browserHost\s*\?\s*browserHost\.openDevTools\(\)\s*:\s*false\)/,
+    ipcRouterSource,
+    /handle\("launcher:browser-devtools",\s*\(\)\s*=>\s*\{[\s\S]*?getBrowserHost\(\);[\s\S]*?return browserHost \? browserHost\.openDevTools\(\) : false;/,
   );
   assert.match(
     browserHostSource,
@@ -245,7 +248,7 @@ test("browser toolbar opens detached DevTools for the active embedded surface", 
 test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {
   assert.match(
     appSource,
-    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\([\s\S]*?snapshot\.state\.browserInteractionMode === "automatic"[\s\S]*?snapshot\.state\.coreSetupComplete === true[\s\S]*?!snapshot\.state\.experimentalBiggerContext,/,
+    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\([\s\S]*?snapshot\.state\.coreSetupComplete === true[\s\S]*?!snapshot\.state\.experimentalBiggerContext,/,
   );
   assert.match(appSource, /&& !biggerContextRecommendationOpen;/);
   assert.match(appSource, /updateState\(await api!\.setBiggerContext\(enabled\)\)/);
@@ -284,27 +287,37 @@ test("completed model setup remains a repeatable capability probe", () => {
   assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{install\}[\s\S]*?repeatable/);
   assert.match(appSource, /complete && !repeatable/);
   assert.match(
-    electronMain,
-    /!setupState\.coreSetupComplete[\s\S]*?smokePassedThisSession[\s\S]*?smokePassedForCurrentVersion\(setupState\)/,
+    ipcRouterSource,
+    /!setupState\.coreSetupComplete[\s\S]*?isSmokePassedThisSession\(\)[\s\S]*?smokePassedForCurrentVersion\(setupState\)/,
   );
 });
 
 test("catalog verification reports a failed request instead of requesting another restart, then recovers", async () => {
   const vm = require("node:vm");
-  const start = electronMain.indexOf("function startCatalogVerificationMonitor(");
-  const end = electronMain.indexOf("\nfunction ", start + 1);
-  const source = electronMain.slice(start, end);
+  const source = catalogMonitorSource.slice(
+    catalogMonitorSource.indexOf("class CatalogMonitor"),
+    catalogMonitorSource.indexOf("module.exports"),
+  );
   const state = { coreSetupComplete: true, codexCatalogVerified: false, codexRestartRequired: true, language: "en" };
   const operations = [];
   const events = [];
   let tick;
   let payload = { pid: 10, successful_model_catalog_requests: 0, model_catalog_requests: 0, last_model_catalog_result: null };
-  vm.runInNewContext(source + "\nstartCatalogVerificationMonitor({ logger, stateStore });", {
-    catalogVerificationInFlight: false, catalogVerificationTimer: null, lastOperation: null,
-    stopCatalogVerificationMonitor() {},
+  vm.runInNewContext(`${source}
+    new CatalogMonitor({
+      logger,
+      stateStore,
+      getRuntimeSupervisor: () => runtimeSupervisor,
+      getRuntimeHost: () => null,
+      getLastOperation: () => lastOperation,
+      publishOperation,
+      send,
+    }).start();`, {
+    lastOperation: null,
     runtimeSupervisor: { readConfig: () => ({}), proxyHealthPayload: async () => payload },
     stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
     setInterval: callback => { tick = callback; return { unref() {} }; },
+    clearInterval() {},
     logger: { info: (...args) => events.push(args), warn: (...args) => events.push(args), debug() {} },
     send() {}, publishOperation: op => operations.push(op),
     nativeCopyFor: () => ({ catalogFailure: "Catalog failed (HTTP {status}; {reason})." }),
@@ -338,30 +351,43 @@ test("fresh-conversation IPC commits only after setup succeeds and refuses activ
     const property = savedChats ? "useSavedChats" : "experimentalFreshConversationPerTurn";
     const method = savedChats ? "setUseSavedChats" : "setFreshConversationPerTurn";
     const channel = savedChats ? "launcher:use-saved-chats" : "launcher:fresh-conversation-per-turn";
-    const nextChannel = savedChats ? "launcher:browser-interaction-mode" : "launcher:use-saved-chats";
-    const source = electronMain.slice(
-      electronMain.indexOf(`handle("${channel}",`),
-      electronMain.indexOf(`handle("${nextChannel}",`),
+    const nextChannel = savedChats ? "launcher:set-preference" : "launcher:use-saved-chats";
+    const source = ipcRouterSource.slice(
+      ipcRouterSource.indexOf(`handle("${channel}",`),
+      ipcRouterSource.indexOf(`handle("${nextChannel}",`),
     );
     const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false };
     const config = { experimentalFreshConversationPerTurn: false, useSavedChats: false };
     const events = [];
     let handler, finishSetup, setupFailure, calls = 0;
     const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };
-    const syncSource = electronMain.slice(electronMain.indexOf("function syncFreshConversationPreference("), electronMain.indexOf("function registerIpc("));
-    vm.runInNewContext(syncSource + source, {
-      handle: (_channel, callback) => { handler = callback; }, browserHost,
-      releaseRetainedConversation: require("../electron/retained-turn-release.cjs").releaseRetainedConversation,
-      runtimeHost: { currentOperation: () => null, runtimeConfigSnapshot: () => ({ config }), [method]: async enabled => {
-        calls++;
-        if (setupFailure) throw setupFailure;
-        await new Promise(resolve => { finishSetup = resolve; });
-        config[property] = enabled;
-        return { enabled };
-      } },
-      stateStore: { read: () => ({ ...state }), update: patch => Object.assign(state, patch) },
-      send: (channel, value) => events.push({ channel, value: { ...value } }),
+    const runtimeHost = { currentOperation: () => null, runtimeConfigSnapshot: () => ({ config }), [method]: async enabled => {
+      calls++;
+      if (setupFailure) throw setupFailure;
+      await new Promise(resolve => { finishSetup = resolve; });
+      config[property] = enabled;
+      return { enabled };
+    } };
+    const syncSource = ipcRouterSource.slice(
+      ipcRouterSource.indexOf("function syncFreshConversationPreference("),
+      ipcRouterSource.indexOf("class IpcRouter"),
+    );
+    const sandboxStateStore = { read: () => ({ ...state }), update: patch => Object.assign(state, patch) };
+    const sandboxSend = (eventChannel, value) => events.push({ channel: eventChannel, value: { ...value } });
+    const sandbox = {
+      handle: (_channel, callback) => { handler = callback; },
+      getBrowserHost: () => browserHost,
+      getRuntimeHost: () => runtimeHost,
+      releaseRetainedConversation: require("../electron/browser/retained-turn-release.cjs").releaseRetainedConversation,
+      stateStore: sandboxStateStore,
+      send: sandboxSend,
+    };
+    sandbox.syncPrefs = (cfg) => sandbox.syncFreshConversationPreference(sandboxStateStore, cfg, {
+      runtimeHost,
+      browserHost,
+      send: sandboxSend,
     });
+    vm.runInNewContext(syncSource + source, sandbox);
     await assert.rejects(() => handler(null, true), /Finish or cancel active ChatGPT turns/);
     browserHost.activeTraceId = null;
     browserHost.currentOperation = () => "browser-smoke";
@@ -390,49 +416,51 @@ test("fresh-conversation IPC commits only after setup succeeds and refuses activ
   }
 });
 
-test("fresh-conversation snapshot uses runtime configuration and mode switching preserves the preference", async () => {
+test("fresh-conversation snapshot uses runtime configuration", async () => {
   const vm = require("node:vm");
   const handlers = new Map();
-  const state = { browserInteractionMode: "automatic", experimentalFreshConversationPerTurn: false };
-  let config = { browserInteractionMode: "automatic", experimentalFreshConversationPerTurn: true };
+  const state = { experimentalFreshConversationPerTurn: false };
+  let config = { experimentalFreshConversationPerTurn: true };
   const runtimeHost = {
     currentOperation: () => null,
     runtimeConfigSnapshot: () => ({ config }), browserConnectorName: () => "Codex Native2",
     setupConnectorName: () => "Codex Native2", mcpCredentialsConfigured: () => true,
-    setBrowserInteractionMode: async mode => { config.browserInteractionMode = mode; return { configured: true }; },
   };
+  const browserHost = { activeTraceId: null, turnTabs: new Map(), currentOperation: () => null, snapshot: () => ({}) };
+  const stateStore = { read: () => ({ ...state }), update: patch => Object.assign(state, patch) };
   const sandbox = {
-    handle: (name, handler) => handlers.set(name, handler), runtimeHost,
-    releaseRetainedConversation: require("../electron/retained-turn-release.cjs").releaseRetainedConversation,
-    stateStore: { read: () => ({ ...state }), update: patch => Object.assign(state, patch) },
-    browserHost: { activeTraceId: null, turnTabs: new Map(), currentOperation: () => null, snapshot: () => ({}),
-      withInteractionModeChange: async (_mode, action) => action() },
-    validateBrowserInteractionMode: mode => mode, IS_DEV_PROFILE: false, send() {}, startCatalogVerificationMonitor() {},
-    LAUNCHER_PROFILE: { kind: "production", codexHome: "/fixture/codex" }, CORE_HOME: "/fixture/core",
+    handle: (name, handler) => handlers.set(name, handler),
+    getRuntimeHost: () => runtimeHost,
+    getBrowserHost: () => browserHost,
+    getUpdateController: () => null,
+    getLastOperation: () => null,
+    releaseRetainedConversation: require("../electron/browser/retained-turn-release.cjs").releaseRetainedConversation,
+    stateStore,
+    isDevProfile: false, send() {}, startCatalogVerificationMonitor() {},
+    launcherProfile: { kind: "production", codexHome: "/fixture/codex" }, coreHome: "/fixture/core",
     launcherUserData: "/fixture/launcher", logger: { recent: () => [] },
-    GITHUB_URL: "", X_URL: "", CONNECTORS_URL: "", TUNNELS_URL: "", KEYS_URL: "",
+    githubUrl: "", xUrl: "",
     process: { platform: "darwin" }, app: { isPackaged: false, getVersion: () => "test" },
-    smokePassedThisSession: false, smokePassedForCurrentVersion: () => false, lastOperation: null, updateController: null,
+    isSmokePassedThisSession: () => false, smokePassedForCurrentVersion: () => false,
   };
-  vm.runInNewContext(electronMain.slice(electronMain.indexOf("function syncFreshConversationPreference("), electronMain.indexOf("function registerIpc(")) +
-    electronMain.slice(electronMain.indexOf('handle("launcher:snapshot",'),
-    electronMain.indexOf('handle("launcher:set-language",')) +
-    electronMain.slice(electronMain.indexOf('handle("launcher:browser-interaction-mode",'),
-    electronMain.indexOf('handle("launcher:set-preference",')), sandbox);
+  sandbox.syncPrefs = (cfg) => sandbox.syncFreshConversationPreference(stateStore, cfg, {
+    runtimeHost,
+    browserHost,
+    send: sandbox.send,
+  });
+  vm.runInNewContext(
+    ipcRouterSource.slice(ipcRouterSource.indexOf("function syncFreshConversationPreference("), ipcRouterSource.indexOf("class IpcRouter")) +
+    ipcRouterSource.slice(ipcRouterSource.indexOf('handle("launcher:snapshot",'), ipcRouterSource.indexOf('handle("launcher:set-language",')),
+    sandbox,
+  );
   const snapshot = handlers.get("launcher:snapshot");
   assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, true);
   assert.equal(state.experimentalFreshConversationPerTurn, true, "snapshot synchronizes a CLI configuration change");
-  const changeMode = handlers.get("launcher:browser-interaction-mode");
-  for (const mode of ["manual", "automatic"]) {
-    const changed = await changeMode(null, mode);
-    assert.equal(changed.state.experimentalFreshConversationPerTurn, true);
-    assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, true);
-  }
   config = {};
   assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, false);
 });
 
-test("fresh-conversation control is translated, disabled in Zero Risk, and invokes the async setting", async () => {
+test("fresh-conversation control is translated and invokes the async setting", async () => {
   const ts = require("typescript");
   const vm = require("node:vm");
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
@@ -450,28 +478,28 @@ test("fresh-conversation control is translated, disabled in Zero Risk, and invok
     api: { setFreshConversationPerTurn: async enabled => { invocation = enabled; return { experimentalFreshConversationPerTurn: enabled }; } },
     messageOf: String, platformLabel: String,
   };
-  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", Object.assign(sandbox, { render }));
   render = sandbox.render;
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
     ? [tree, ...visit(tree.children ?? [])] : [];
   for (const language of Object.keys(require("../electron/languages.json"))) {
     const copy = translated.exports.copyFor(language);
-    for (const key of ["freshConversation", "freshConversationBody", "manualFreshConversationUnavailable"]) {
+    for (const key of ["freshConversation", "freshConversationBody"]) {
       assert.equal(typeof copy[key], "string");
       assert.ok(copy[key].length > 10);
     }
-    for (const [mode, configured, enabled] of [["automatic", true, false], ["manual", true, true], ["automatic", false, false]]) {
-      const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {},
-        snapshot: { connectorNames: { automatic: "Codex Native2", manual: "Codex Zero Risk" }, state: { browserInteractionMode: mode, coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled } },
+    for (const [configured, enabled] of [[true, false], [false, false]]) {
+      const tree = render({ copy, devProfile: false, language, openSetup() {}, setError() {},
+        snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled } },
         updateState: value => { saved = value; },
       });
       const row = visit(tree).find(node => node.type === "SettingRow" && node.props.label === copy.freshConversation);
       assert.ok(row);
-      assert.equal(row.props.body, mode === "manual" ? copy.manualFreshConversationUnavailable : copy.freshConversationBody);
+      assert.equal(row.props.body, copy.freshConversationBody);
       const control = visit(row).find(node => node.type === "Switch");
       assert.equal(control.props.checked, enabled);
-      assert.equal(control.props.disabled, mode === "manual" || !configured);
+      assert.equal(control.props.disabled, !configured);
       if (!control.props.disabled) {
         control.props.onChange(true);
         await new Promise(resolve => setImmediate(resolve));
@@ -482,22 +510,23 @@ test("fresh-conversation control is translated, disabled in Zero Risk, and invok
   }
 });
 
-test("plugin rename rejects active browser work and emits updated connector names", async () => {
+test("plugin rename rejects active browser work and emits updated connector name", async () => {
   const vm = require("node:vm");
   const handlers = new Map();
   const state = {};
   const events = [];
   let fail = true, calls = 0;
   const browserHost = { activeTraceId: "busy", currentOperation: () => null };
-  vm.runInNewContext(electronMain.slice(electronMain.indexOf('handle("launcher:connector-name",'),
-    electronMain.indexOf('handle("launcher:autostart",')), {
-    handle: (name, handler) => handlers.set(name, handler), browserHost,
-    runtimeHost: {
+  vm.runInNewContext(ipcRouterSource.slice(ipcRouterSource.indexOf('handle("launcher:connector-name",'),
+    ipcRouterSource.indexOf('handle("launcher:autostart",')), {
+    handle: (name, handler) => handlers.set(name, handler),
+    getBrowserHost: () => browserHost,
+    getRuntimeHost: () => ({
       setConnectorNameSuffix: async () => { calls++; if (fail) throw new Error("setup failed"); return { changed: true }; },
       browserConnectorName: () => "Codex Work",
-      setupConnectorName: mode => mode === "manual" ? "Codex Zero Risk" : "Codex Work",
+      setupConnectorName: () => "Codex Work",
       runtimeConfigSnapshot: () => ({ config: { appName: "Codex Work" } }),
-    },
+    }),
     stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
     send: (channel, body) => events.push({ channel, body }),
   });
@@ -509,8 +538,8 @@ test("plugin rename rejects active browser work and emits updated connector name
   assert.equal(events.length, 0);
   fail = false;
   await rename(null, "Work");
-  assert.equal(events[0].channel, "launcher:connector-names-changed");
-  assert.equal(events[0].body.connectorNames.manual, "Codex Zero Risk");
+  assert.equal(events[0].channel, "launcher:connector-name-changed");
+  assert.equal(events[0].body, "Codex Work");
   assert.equal(events[1].channel, "launcher:state-changed");
 });
 
@@ -525,7 +554,7 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
   const copy = translated.exports.copyFor("en");
   const hooks = [];
-  let cursor = 0, submitted, configureMode;
+  let cursor = 0, submitted, openedSetup = false;
   const sandbox = {
     element: (type, props, ...children) => ({ type, props: props ?? {}, children }), Fragment: "Fragment",
     useState: initial => { const index = cursor++; if (!(index in hooks)) hooks[index] = initial;
@@ -533,14 +562,14 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
     useEffect() {}, messageOf: String, platformLabel: String,
     api: { setConnectorNameSuffix: async suffix => { submitted = suffix; return { mcpSetupComplete: false }; } },
   };
-  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "InteractionModePicker", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", sandbox);
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
     ? [tree, ...visit(tree.children ?? [])] : [];
   const render = () => { cursor = 0; return visit(sandbox.render({ copy, devProfile: false, language: "en",
-    snapshot: { connectorNames: { automatic: "Codex Native2", manual: "Codex Zero Risk" }, state: { browserInteractionMode: "automatic", coreSetupComplete: true } },
-    configureInteractionMode: mode => { configureMode = mode; }, setError: error => { if (error) throw new Error(error); }, updateState() {},
+    snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: true } },
+    openSetup: () => { openedSetup = true; }, setError: error => { if (error) throw new Error(error); }, updateState() {},
   })); };
   let nodes = render();
   const group = nodes.find(node => node.props.className === "plugin-name-input");
@@ -557,7 +586,7 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   nodes.find(node => node.type === "PrimaryButton" && node.children[0] === copy.pluginNameConfirm).props.onClick();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(submitted, "Work");
-  assert.equal(configureMode, "automatic");
+  assert.equal(openedSetup, true);
 });
 
 test("setup shows uninstall action after core setup and calls uninstallIntegration", () => {

@@ -70,7 +70,7 @@ function bindM365TurnContents(host, tab) {
     tab.rendererReady = true;
     tab.bootstrapReady = allowedM365Navigation(tab.url);
     host.syncViewVisibility();
-    if (host.browserInteractionMode() !== "automatic" || tab.initializingSurface) {
+    if (tab.initializingSurface) {
       host.publishState?.(host.snapshot());
       return;
     }
@@ -85,7 +85,6 @@ function bindM365TurnContents(host, tab) {
     );
   });
   contents.on("page-title-updated", (_event, title) => {
-    if (host.browserInteractionMode() !== "automatic") return;
     if (typeof title === "string" && title.trim()) tab.pageTitle = title.trim();
     host.publishState?.(host.snapshot());
   });

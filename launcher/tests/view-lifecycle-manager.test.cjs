@@ -1,8 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
-const { ViewLifecycleManager } = require("../electron/view-lifecycle-manager.cjs");
-const { BrowserHost, IDLE_BROWSER_URL } = require("../electron/browser-host.cjs");
+const { PrimaryViewManager } = require("../electron/browser/primary-view-manager.cjs");
+const { BrowserHost, IDLE_BROWSER_URL } = require("../electron/browser/browser-host.cjs");
 
 function createFakeView(key) {
   let destroyed = false;
@@ -24,7 +24,7 @@ function createFakeView(key) {
   };
 }
 
-test("ViewLifecycleManager lazy-loads views and destroys inactive ones cleanly", () => {
+test("PrimaryViewManager lazy-loads views and destroys inactive ones cleanly", () => {
   const attached = new Set();
   const created = [];
   const window = {
@@ -33,7 +33,7 @@ test("ViewLifecycleManager lazy-loads views and destroys inactive ones cleanly",
       removeChildView: (view) => attached.delete(view.key),
     },
   };
-  const manager = new ViewLifecycleManager({
+  const manager = new PrimaryViewManager({
     window,
     createView: (key) => createFakeView(key),
     onCreate: (key) => created.push(key),
@@ -135,36 +135,29 @@ test("presentTurnView disables device emulation and hides completed ready tabs i
   assert.equal(tab.deviceEmulationDirty, true);
 });
 
-test("endTurn preserves older ready automatic tabs and syncs visibility when retaining a completed turn", async () => {
+test("endTurn preserves older ready tabs and syncs visibility when retaining a completed turn", async () => {
   const removed = [];
   let visibilitySynced = 0;
   const oldReadyTab = {
     id: "tab-old-ready",
+    provider: "m365",
     traceId: "trace_old",
     status: "ready",
-    interactionMode: "automatic",
     conversationKey: "a".repeat(64),
-  };
-  const manualReadyTab = {
-    id: "tab-manual-ready",
-    traceId: "trace_manual",
-    status: "ready",
-    interactionMode: "manual",
-    conversationKey: "b".repeat(64),
   };
   const completingTab = {
     id: "tab-completing",
+    provider: "m365",
     traceId: "trace_completing",
     helperPid: 888,
     status: "running",
-    interactionMode: "automatic",
     conversationKey: "c".repeat(64),
-    connectorIdentity: "chatgpt-web",
+    connectorIdentity: "m365-copilot",
     view: {
       webContents: {
         isDestroyed: () => false,
         setBackgroundThrottling: () => {},
-        getURL: () => "https://chatgpt.com/c/6704b2a8-5e88-800c-b26a-9bb7d24669f1",
+        getURL: () => "https://m365.cloud.microsoft/chat",
       },
     },
   };
@@ -172,12 +165,15 @@ test("endTurn preserves older ready automatic tabs and syncs visibility when ret
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     turnTabs: new Map([
       [oldReadyTab.id, oldReadyTab],
-      [manualReadyTab.id, manualReadyTab],
       [completingTab.id, completingTab],
     ]),
     closedTurnOwners: new Map(),
     userCancelledTurnOwners: new Map(),
     selectedTabId: completingTab.id,
+    m365SurfaceManager: {
+      bind: (_key, conversationId) => conversationId,
+    },
+    syncPowerSaveBlocker() {},
     removeTurnTab(candidate, abortRunning) {
       removed.push([candidate.id, abortRunning]);
       this.turnTabs.delete(candidate.id);
@@ -203,11 +199,11 @@ test("endTurn preserves older ready automatic tabs and syncs visibility when ret
     undefined,
     true,
     true,
+    "6704b2a8-5e88-400c-b26a-9bb7d24669f1",
   );
 
   assert.deepEqual(removed, []);
   assert.equal(fixture.turnTabs.has("tab-old-ready"), true);
-  assert.equal(fixture.turnTabs.has("tab-manual-ready"), true);
   assert.equal(fixture.turnTabs.has("tab-completing"), true);
   assert.equal(completingTab.status, "ready");
   assert.equal(visibilitySynced, 1);
@@ -304,23 +300,14 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
     id: "m365-ready",
     provider: "m365",
     status: "ready",
-    interactionMode: "automatic",
   };
   const m365RunningTab = {
     id: "m365-running",
     provider: "m365",
     status: "running",
-    interactionMode: "automatic",
-  };
-  const chatgptReadyTab = {
-    id: "chatgpt-ready",
-    provider: "chatgpt",
-    status: "ready",
-    interactionMode: "automatic",
   };
 
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
-    chatGptView: { webContents: { isDestroyed: () => false, off() {} } },
     m365View: { webContents: { isDestroyed: () => false, off() {} } },
     shellZoomShortcutBindings: new Map(),
     primaryViewManager: {
@@ -329,7 +316,6 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
     turnTabs: new Map([
       [m365ReadyTab.id, m365ReadyTab],
       [m365RunningTab.id, m365RunningTab],
-      [chatgptReadyTab.id, chatgptReadyTab],
     ]),
     removeTurnTab(tab, abortRunning) {
       removedTabs.push([tab.id, abortRunning]);
@@ -337,19 +323,17 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
     },
   });
 
-  BrowserHost.prototype.releaseInactivePrimaryViews.call(fixture, "chatgpt");
+  BrowserHost.prototype.releaseInactivePrimaryViews.call(fixture, "other-provider");
 
   assert.deepEqual(destroyedProviders, ["m365"]);
   assert.equal(fixture.m365View, null);
-  assert.notEqual(fixture.chatGptView, null);
   assert.deepEqual(removedTabs, []);
   assert.equal(fixture.turnTabs.has("m365-ready"), true);
   assert.equal(fixture.turnTabs.has("m365-running"), true);
-  assert.equal(fixture.turnTabs.has("chatgpt-ready"), true);
 });
 
 test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab while a turn tab is active", () => {
-  const { M365SurfaceManager } = require("../electron/m365-surface-manager.cjs");
+  const { M365BrowserProvider } = require("../electron/browser/providers/m365/m365-browser-provider.cjs");
   const os = require("node:os");
   const path = require("node:path");
   const fs = require("node:fs");
@@ -432,7 +416,7 @@ test("parkIdlePrimaryView unloads unused Home tab and snapshot hides Home tab wh
   // để tái sử dụng đúng conversationKey thay vì liên tục đóng và tạo renderer mới.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "m365-evict-ready-"));
   try {
-    const manager = new M365SurfaceManager({
+    const manager = new M365BrowserProvider({
       descriptorPath: path.join(tmpDir, "launcher-browser.json"),
     });
     const tabs = new Map([

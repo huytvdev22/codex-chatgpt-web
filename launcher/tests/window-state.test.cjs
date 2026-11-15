@@ -7,7 +7,7 @@ const {
   normalizeWindowState,
   readWindowState,
   writeWindowState,
-} = require("../electron/window-state.cjs");
+} = require("../electron/app/window-state.cjs");
 
 const displays = [{ workArea: { x: 0, y: 0, width: 1512, height: 982 } }];
 

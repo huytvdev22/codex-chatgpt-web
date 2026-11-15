@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const {
   WINDOWS_RENAME_RETRY_DELAYS_MS,
   renameAtomicFile,
-} = require("../electron/atomic-file.cjs");
+} = require("../electron/infra/atomic-file.cjs");
 
 test("atomic replacement retries bounded transient Windows file locks", () => {
   const waits = [];

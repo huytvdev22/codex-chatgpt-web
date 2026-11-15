@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
-const { resolveLauncherProfile } = require("../electron/profile.cjs");
+const { resolveLauncherProfile } = require("../electron/infra/profile.cjs");
 
 test("DEV launcher profile isolates every durable home from production", () => {
   const homeDir = path.resolve("/Users/tester");

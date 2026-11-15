@@ -6,7 +6,7 @@
  * Mỗi provider chỉ có tối đa một renderer chính. View chỉ được tạo khi provider
  * được chọn lần đầu; view nền có thể ngủ đông hoặc bị hủy hoàn toàn.
  */
-class ViewLifecycleManager {
+class PrimaryViewManager {
   constructor({ window, createView, onCreate, logger }) {
     this.window = window;
     this.createView = createView;
@@ -29,7 +29,7 @@ class ViewLifecycleManager {
   }
 
   ensure(key) {
-    if (this.destroyed) throw new Error("ViewLifecycleManager has been destroyed");
+    if (this.destroyed) throw new Error("PrimaryViewManager has been destroyed");
 
     const current = this.entries.get(key);
     if (current && !current.view.webContents.isDestroyed()) {
@@ -153,4 +153,5 @@ class ViewLifecycleManager {
   }
 }
 
-module.exports = { ViewLifecycleManager };
+module.exports = { PrimaryViewManager };
+

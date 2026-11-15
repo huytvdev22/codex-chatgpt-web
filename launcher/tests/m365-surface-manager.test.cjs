@@ -4,13 +4,16 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
+  ConversationStore,
+} = require("../electron/browser/conversation-store.cjs");
+const {
   M365_CHAT_URL,
-  M365ConversationStore,
-  M365SurfaceManager,
+  M365BrowserProvider,
   m365ConversationUrl,
+  normalizeM365ConversationId,
   parseM365ConversationId,
-} = require("../electron/m365-surface-manager.cjs");
-const { allowedM365Navigation } = require("../electron/m365-turn-surface.cjs");
+} = require("../electron/browser/providers/m365/m365-browser-provider.cjs");
+const { allowedM365Navigation } = require("../electron/browser/providers/m365/m365-turn-surface.cjs");
 
 const CONVERSATION_ID = "8cbbbab7-10a3-4f92-950e-f0a1b18b8f89";
 
@@ -34,9 +37,14 @@ test("M365 persistent bindings survive launcher store recreation", () => {
   const file = path.join(root, "bindings.json");
   const key = "a".repeat(64);
   try {
-    const first = new M365ConversationStore(file);
+    const options = {
+      filePath: file,
+      providerLabel: "M365 Copilot",
+      normalizeId: normalizeM365ConversationId,
+    };
+    const first = new ConversationStore(options);
     first.bind(key, CONVERSATION_ID.toUpperCase());
-    assert.equal(new M365ConversationStore(file).get(key).conversationId, CONVERSATION_ID);
+    assert.equal(new ConversationStore(options).get(key).conversationId, CONVERSATION_ID);
     if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o077, 0);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -46,7 +54,7 @@ test("M365 persistent bindings survive launcher store recreation", () => {
 test("M365 supports three independent conversation surfaces by default", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "m365-multi-surfaces-"));
   try {
-    const manager = new M365SurfaceManager({
+    const manager = new M365BrowserProvider({
       descriptorPath: path.join(root, "launcher-browser.json"),
     });
     const tabs = new Map([

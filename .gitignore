@@ -9,7 +9,7 @@ coverage/
 *.sock
 *.key
 storage-state.json
-runtime/
+/runtime/
 .launcher-runtime/
 launcher/build/
 launcher/release/

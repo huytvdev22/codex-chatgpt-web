@@ -2,7 +2,7 @@ const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { renameAtomicFile } = require("./atomic-file.cjs");
+const { renameAtomicFile } = require("../infra/atomic-file.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
 
 const DEFAULT_SOURCE_WAIT_TIMEOUT_MS = 30_000;

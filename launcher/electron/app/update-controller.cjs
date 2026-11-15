@@ -236,7 +236,7 @@ function defaultDependencies() {
         );
         if (fs.statSync(unpacked, { throwIfNoEntry: false })?.isFile()) return unpacked;
       }
-      const source = path.resolve(__dirname, "..", "assets", "linux-appimage-runner.sh");
+      const source = path.resolve(__dirname, "../..", "assets", "linux-appimage-runner.sh");
       if (fs.statSync(source, { throwIfNoEntry: false })?.isFile()) return source;
       throw new Error("Packaged Linux AppImage runner is missing");
     },
