@@ -39,9 +39,9 @@ export interface LauncherBrowserHostDescriptor {
   partition: string;
   idleUrl: string;
   surfaceId: string;
-  m365SurfaceId?: string;
   activeSurfaceId?: string;
   provider?: string;
+  providerSurfaceIds?: Record<string, string>;
   surfaceTargets: Record<string, string>;
   createdAt: string;
 }
@@ -100,17 +100,10 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!helperScript || !existsSync(helperScript)) {
     throw new Error("Launcher browser descriptor helper script does not exist");
   }
-  const allowedPartitions = descriptor.profile === "development"
-    ? [
-        "persist:codex-web-gpt-dev-chatgpt",
-      ]
-    : [
-        "persist:codex-web-gpt-chatgpt",
-        "persist:codex-web-m365",
-        "persist:codex-m365-copilot",
-        "persist:codex-web-gpt-m365",
-      ];
-  if (typeof descriptor.partition !== "string" || !allowedPartitions.includes(descriptor.partition)) {
+  const allowedPartitionPattern = descriptor.profile === "development"
+    ? /^persist:codex-web-gpt-dev-[a-z0-9-]+$/
+    : /^persist:codex-(?:web-gpt-|web-|m365-)[a-z0-9-]+$/;
+  if (typeof descriptor.partition !== "string" || !allowedPartitionPattern.test(descriptor.partition)) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }
   if (descriptor.idleUrl !== LAUNCHER_BROWSER_IDLE_URL) {
@@ -118,6 +111,18 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   }
   if (typeof descriptor.surfaceId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(descriptor.surfaceId)) {
     throw new Error("Launcher browser descriptor has an invalid owned surface id");
+  }
+  let providerSurfaceIds: Record<string, string> | undefined;
+  if (descriptor.providerSurfaceIds !== undefined) {
+    if (!descriptor.providerSurfaceIds || typeof descriptor.providerSurfaceIds !== "object" || Array.isArray(descriptor.providerSurfaceIds)) {
+      throw new Error("Launcher browser descriptor has invalid providerSurfaceIds");
+    }
+    for (const [providerKey, surface] of Object.entries(descriptor.providerSurfaceIds)) {
+      if (!/^[a-z0-9-]+$/.test(providerKey) || typeof surface !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(surface)) {
+        throw new Error("Launcher browser descriptor has invalid provider surface entry");
+      }
+    }
+    providerSurfaceIds = { ...descriptor.providerSurfaceIds };
   }
   const targets = descriptor.surfaceTargets;
   if (!targets || typeof targets !== "object" || Array.isArray(targets)
@@ -140,9 +145,9 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     partition: descriptor.partition,
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
-    m365SurfaceId: descriptor.m365SurfaceId,
     activeSurfaceId: descriptor.activeSurfaceId,
     provider: descriptor.provider,
+    ...(providerSurfaceIds ? { providerSurfaceIds } : {}),
     surfaceTargets: targets,
     createdAt: descriptor.createdAt,
   };
@@ -292,20 +297,17 @@ export async function connectLauncherBrowserHost(
 export async function inspectLauncherBrowserHost(
   descriptorPath: string,
   options: {
-    detectCapabilities?: boolean;
     expectedProfile?: LauncherBrowserHostProfile;
     timeoutMs?: number;
   } = {},
-): Promise<{ solAvailable?: boolean; extraHighAvailable?: boolean; proAvailable?: boolean; url: string }> {
+): Promise<{ url: string; provider?: string }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   if (options.expectedProfile && descriptor.profile !== options.expectedProfile) {
     throw new Error(
       `Launcher browser belongs to ${descriptor.profile}, but ${options.expectedProfile} was required`,
     );
   }
-  const timeoutMs = options.timeoutMs ?? (options.detectCapabilities
-    ? LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS
-    : LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS);
+  const timeoutMs = options.timeoutMs ?? LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS;
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -319,41 +321,29 @@ export async function inspectLauncherBrowserHost(
         authorization: `Bearer ${descriptor.control.token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ detectCapabilities: options.detectCapabilities === true }),
+      body: JSON.stringify({}),
       signal: controller.signal,
     });
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
-    if (body.authenticated !== true || body.temporary !== true || typeof body.url !== "string") {
-      throw new Error("Launcher returned invalid ChatGPT session evidence");
-    }
-    if (options.detectCapabilities
-      && (typeof body.solAvailable !== "boolean" || typeof body.extraHighAvailable !== "boolean" || typeof body.proAvailable !== "boolean")) {
-      throw new Error("Launcher did not return complete ChatGPT account capability evidence");
-    }
-    if (options.detectCapabilities && (body.proAvailable === true || body.extraHighAvailable === true) && body.solAvailable !== true) {
-      throw new Error("Launcher returned contradictory ChatGPT account capability evidence");
+    if (body.authenticated !== true || typeof body.url !== "string") {
+      throw new Error("Launcher returned invalid Web browser session evidence");
     }
     return {
       url: body.url,
-      ...(options.detectCapabilities ? {
-        solAvailable: body.solAvailable as boolean,
-        extraHighAvailable: body.extraHighAvailable as boolean,
-        proAvailable: body.proAvailable as boolean,
-      } : {}),
+      ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
     };
   } catch (error) {
     const detail = timedOut
       ? `session inspection timed out after ${timeoutMs}ms`
       : error instanceof Error ? error.message : String(error);
-    throw new Error(`Launcher ChatGPT session could not be verified: ${detail}`);
+    throw new Error(`Launcher Web browser session could not be verified: ${detail}`);
   } finally {
     clearTimeout(timer);
   }
 }
 
 export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
-export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
   | {
@@ -448,8 +438,7 @@ export async function notifyLauncherTurn(
       }
       if (body.conversationId !== undefined
         && (typeof body.conversationId !== "string"
-          || (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversationId)
-              && !/^[a-zA-Z0-9_-]{8,128}$/.test(body.conversationId)))) {
+          || !/^[A-Za-z0-9_.:-]{4,256}$/.test(body.conversationId))) {
         throw new Error("Launcher browser control channel returned an invalid conversation id");
       }
       return {

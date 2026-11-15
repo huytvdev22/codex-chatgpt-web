@@ -419,7 +419,7 @@ export class BashCommandTranslator {
 
         // Chốt chặn an toàn doanh nghiệp (GPBank): Tuyệt đối không tự động chạy destructive commands từ fenced block
         if (isDestructiveCommand(stripped)) {
-          console.warn(`[m365-translator] Bỏ qua lệnh nguy hiểm từ fenced block: ${stripped}`);
+          console.warn(`[web-translator] Bỏ qua lệnh nguy hiểm từ fenced block: ${stripped}`);
           continue;
         }
 

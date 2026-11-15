@@ -235,7 +235,4 @@ export function validateWebToolCall(
   }
 }
 
-/** @deprecated Dùng `validateWebToolCall` thay thế. */
-export const validateM365ToolCall = validateWebToolCall;
-
 export { BRIDGE_TOOLS };

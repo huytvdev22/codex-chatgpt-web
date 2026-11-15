@@ -171,9 +171,6 @@ export const WEB_IMAGE_ATTACHMENT_HINT = `[HÌNH ẢNH ĐÍNH KÈM]
 Tin nhắn này có đính kèm hình ảnh thực tế trong khung chat.
 Bạn quan sát trực tiếp hình ảnh đính kèm để phân tích giao diện, mã nguồn, biểu đồ hoặc lỗi giúp mình nhé.`;
 
-/** @deprecated Dùng `WEB_IMAGE_ATTACHMENT_HINT`. */
-export const M365_IMAGE_ATTACHMENT_HINT = WEB_IMAGE_ATTACHMENT_HINT;
-
 /**
  * Lời nhắc định dạng đầu ra chốt hạ súc tích ở cuối prompt.
  */
@@ -327,8 +324,6 @@ export interface FormatRetryOptions {
   outputFormat?: CodexJsonSchemaOutputFormat;
 }
 
-export type M365FormatRetryOptions = FormatRetryOptions;
-
 /**
  * Tạo prompt nhắc AI xuất lại đúng định dạng JSON theo schema khi phản hồi trước sai cấu trúc JSON/Schema.
  */
@@ -394,5 +389,3 @@ Bạn giúp mình gửi lại đúng nội dung bạn vừa định làm ở lư
 </webResponse>
 \`\`\`\``;
 }
-
-export const buildM365FormatRetryPrompt = buildFormatRetryPrompt;

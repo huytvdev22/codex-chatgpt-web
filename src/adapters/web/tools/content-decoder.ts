@@ -1,6 +1,4 @@
 export type WebContentEncoding = "plain" | "base64";
-/** @deprecated Dùng `WebContentEncoding` thay thế. */
-export type M365ContentEncoding = WebContentEncoding;
 
 export interface DecodeContentOptions {
   encoding?: WebContentEncoding | string;
@@ -15,9 +13,6 @@ export function decodeWebContent(value: unknown, options: DecodeContentOptions =
   throw new Error(`Unsupported Web content encoding: ${encoding}`);
 }
 
-/** @deprecated Dùng `decodeWebContent` thay thế. */
-export const decodeM365Content = decodeWebContent;
-
 export interface NormalizeFileContentOptions {
   unescapeNewlines?: boolean;
   targetPath?: string;
@@ -26,7 +21,7 @@ export interface NormalizeFileContentOptions {
 
 /**
  * @deprecated Compatibility facade. Runtime mới bảo toàn nội dung nguyên trạng và chỉ decode
- * bằng decodeM365Content khi protocol khai báo content_encoding rõ ràng.
+ * bằng decodeWebContent khi protocol khai báo content_encoding rõ ràng.
  */
 export function normalizeFileContent(
   content: string,

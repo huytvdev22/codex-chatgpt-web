@@ -1,9 +1,8 @@
 import {
   normalizeMarkdownFences,
-  m365HtmlToMarkdown,
   webHtmlToMarkdown,
 } from "./html-to-markdown";
-export { m365HtmlToMarkdown, webHtmlToMarkdown };
+export { webHtmlToMarkdown };
 
 export interface SemanticMarkdownBlock {
   key: string;
@@ -12,8 +11,6 @@ export interface SemanticMarkdownBlock {
   text: string;
   streamable: boolean;
 }
-
-export type M365MarkdownBlock = SemanticMarkdownBlock;
 
 /**
  * SemanticMarkdownBuffer quản lý luồng streaming append-only theo khối ngữ nghĩa:
@@ -115,5 +112,3 @@ export class SemanticMarkdownBuffer {
     return delta;
   }
 }
-
-export const M365MarkdownBuffer = SemanticMarkdownBuffer;

@@ -127,11 +127,11 @@ describe("M365 browser worker migration contract", () => {
 
     expect(observerSource).toContain("export interface M365ResponseRuntimeState {");
     expect(observerSource).toContain(
-      "markdownBuffer: InstanceType<typeof M365MarkdownBuffer>;",
+      "markdownBuffer: SemanticMarkdownBuffer;",
     );
     expect(observerSource).toContain("fastPathBuffer: FastPathStreamBuffer;");
     expect(observerSource).toContain("lastFastPathText: string;");
-    expect(observerSource).toContain("lastBlocks: M365MarkdownBlock[];");
+    expect(observerSource).toContain("lastBlocks: SemanticMarkdownBlock[];");
     expect(observerSource).toContain("lastStatus: M365ResponseDomStatus | null;");
     expect(workerSource).toContain(
       "private readonly responseStates = new WeakMap<",
@@ -166,7 +166,7 @@ describe("M365 browser worker migration contract", () => {
 
     expect(workerSource).toContain("protected shouldEmitObservationDelta(");
     expect(workerSource).toContain(
-      "M365MarkdownBuffer và FastPathStreamBuffer đã phát semantic delta",
+      "SemanticMarkdownBuffer và FastPathStreamBuffer đã phát semantic delta",
     );
     expect(workerSource).toContain("return false;");
     expect(observerSource).toContain(

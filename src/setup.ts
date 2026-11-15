@@ -34,7 +34,6 @@ export interface SetupOptions {
   port?: number;
   chromeExecutablePath?: string;
   browserHostDescriptorPath?: string;
-  refreshAccountCapabilities?: boolean;
   autoApproveToolCalls?: boolean;
   experimentalBiggerContext?: boolean;
   experimentalSkillAttachments?: boolean;
@@ -59,17 +58,6 @@ interface PreparedSetup {
   launcherOwned: boolean;
 }
 
-export function launcherCapabilityProbeRequired(
-  existing: AppConfig | undefined,
-  refreshAccountCapabilities = false,
-): boolean {
-  return refreshAccountCapabilities
-    || existing?.browserHost !== "launcher"
-    || typeof existing.solAvailable !== "boolean"
-    || typeof existing.extraHighAvailable !== "boolean"
-    || typeof existing.proAvailable !== "boolean";
-}
-
 function loadExistingConfig(): AppConfig | undefined {
   if (!existsSync(getConfigPath())) return undefined;
   return loadConfigForSetup();
@@ -90,9 +78,6 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     storageStatePath: before.storageStatePath,
     brokerSocketPath: before.brokerSocketPath,
     headed: before.headed,
-    solAvailable: before.solAvailable,
-    extraHighAvailable: before.extraHighAvailable,
-    proAvailable: before.proAvailable,
     experimentalBiggerContext: before.experimentalBiggerContext,
     experimentalSkillAttachments: before.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
@@ -114,9 +99,6 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     storageStatePath: after.storageStatePath,
     brokerSocketPath: after.brokerSocketPath,
     headed: after.headed,
-    solAvailable: after.solAvailable,
-    extraHighAvailable: after.extraHighAvailable,
-    proAvailable: after.proAvailable,
     experimentalBiggerContext: after.experimentalBiggerContext,
     experimentalSkillAttachments: after.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
@@ -215,26 +197,6 @@ function baseConfig(
   return config;
 }
 
-async function inspectLauncherCapabilities(
-  config: AppConfig,
-  existing: AppConfig | undefined,
-  refreshAccountCapabilities: boolean,
-): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }> {
-  const detectCapabilities = launcherCapabilityProbeRequired(
-    existing,
-    refreshAccountCapabilities,
-  );
-  const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
-    detectCapabilities,
-    expectedProfile: "production",
-  });
-  return {
-    solAvailable: detectCapabilities ? inspected.solAvailable === true : existing!.solAvailable,
-    extraHighAvailable: detectCapabilities ? inspected.extraHighAvailable === true : existing!.extraHighAvailable === true,
-    proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
-  };
-}
-
 function prepareSetup(options: SetupOptions): PreparedSetup {
   const existing = loadExistingConfig();
   const config = baseConfig(existing, {
@@ -282,26 +244,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   }
 
   const loginCreated = false;
-  let solAvailable: boolean | undefined = config.solAvailable;
-  let extraHighAvailable: boolean | undefined = config.extraHighAvailable;
-  let proAvailable: boolean | undefined = config.proAvailable;
   if (config.browserHost === "launcher") {
-    const capabilities = await inspectLauncherCapabilities(
-      config,
-      existing,
-      options.refreshAccountCapabilities === true,
-    );
-    solAvailable = capabilities.solAvailable;
-    extraHighAvailable = capabilities.extraHighAvailable;
-    proAvailable = capabilities.proAvailable;
-  } else {
-    solAvailable = false;
-    extraHighAvailable = false;
-    proAvailable = false;
+    await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
+      expectedProfile: "production",
+    });
   }
-  config.solAvailable = solAvailable === true;
-  config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
-  config.proAvailable = config.solAvailable && proAvailable === true;
   const preliminaryChange = Boolean(existing && meaningfulRuntimeChange(existing, config));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
     throw new Error(

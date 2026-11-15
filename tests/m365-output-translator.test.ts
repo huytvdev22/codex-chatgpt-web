@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  M365OutputTranslator,
+  WebOutputTranslator,
   JsonToolCallDetector,
   XmlToolCallDetector,
   BashCommandDetector,
@@ -11,7 +11,7 @@ import {
 
 describe("M365 Output Translator Specification Tests", () => {
   // Explicit legacy detector injection only; production adapter uses strict response protocol.
-  const translator = new M365OutputTranslator([
+  const translator = new WebOutputTranslator([
     new PatchToolCallDetector(),
     new JsonToolCallDetector(),
     new XmlToolCallDetector(),

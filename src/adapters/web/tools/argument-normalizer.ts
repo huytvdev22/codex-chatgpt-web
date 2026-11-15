@@ -68,9 +68,4 @@ export function normalizeWebToolArguments(
   return { name: normalizedName, arguments: args };
 }
 
-/** @deprecated Dùng `normalizeWebToolName` thay thế. */
-export const normalizeM365ToolName = normalizeWebToolName;
-/** @deprecated Dùng `normalizeWebToolArguments` thay thế. */
-export const normalizeM365ToolArguments = normalizeWebToolArguments;
-
 export { TOOL_NAME_ALIASES };

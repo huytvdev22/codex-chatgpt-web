@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  M365OutputTranslator,
-  M365_RESPONSE_CLOSE_TAG,
-  M365_RESPONSE_OPEN_TAG,
-  parseStrictM365Response,
+  WebOutputTranslator,
+  WEB_RESPONSE_CLOSE_TAG,
+  WEB_RESPONSE_OPEN_TAG,
+  parseStrictWebResponse,
 } from "../src/adapters/web/protocol";
 
 describe("M365 strict response protocol", () => {
   test("default output translator does not infer tools from shell fences or standalone JSON", () => {
-    const translator = new M365OutputTranslator();
+    const translator = new WebOutputTranslator();
     expect(translator.translate("```bash\ngit status\n```").type).toBe("final_answer");
     expect(translator.translate('{"name":"exec_command","arguments":{"cmd":"git status"}}').type)
       .toBe("final_answer");
@@ -22,7 +22,7 @@ describe("M365 strict response protocol", () => {
 Invoke-RestMethod -Uri "https://YOUR_HOST/api"
 \`\`\`
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toContain("Invoke-RestMethod");
@@ -32,28 +32,28 @@ Invoke-RestMethod -Uri "https://YOUR_HOST/api"
 
   test("final answer may discuss response envelope syntax without being treated as multiple envelopes", () => {
     const raw = [
-      M365_RESPONSE_OPEN_TAG,
+      WEB_RESPONSE_OPEN_TAG,
       "Parser chỉ nên coi thẻ ở biên ngoài là cấu trúc điều khiển.",
       "",
-      `Tên thẻ mở là \`${M365_RESPONSE_OPEN_TAG}\` và tên thẻ đóng là \`${M365_RESPONSE_CLOSE_TAG}\`.`,
+      `Tên thẻ mở là \`${WEB_RESPONSE_OPEN_TAG}\` và tên thẻ đóng là \`${WEB_RESPONSE_CLOSE_TAG}\`.`,
       "Các chuỗi này nằm trong nội dung Markdown nên phải được giữ nguyên như dữ liệu.",
-      M365_RESPONSE_CLOSE_TAG,
+      WEB_RESPONSE_CLOSE_TAG,
     ].join("\n");
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
-      expect(result.content).toContain(`\`${M365_RESPONSE_OPEN_TAG}\``);
-      expect(result.content).toContain(`\`${M365_RESPONSE_CLOSE_TAG}\``);
+      expect(result.content).toContain(`\`${WEB_RESPONSE_OPEN_TAG}\``);
+      expect(result.content).toContain(`\`${WEB_RESPONSE_CLOSE_TAG}\``);
     }
   });
 
   test("final answer may contain an escaped response-envelope example", () => {
-    const escapedOpen = M365_RESPONSE_OPEN_TAG.replace("<", "&lt;").replace(">", "&gt;");
-    const escapedClose = M365_RESPONSE_CLOSE_TAG.replace("<", "&lt;").replace(">", "&gt;");
+    const escapedOpen = WEB_RESPONSE_OPEN_TAG.replace("<", "&lt;").replace(">", "&gt;");
+    const escapedClose = WEB_RESPONSE_CLOSE_TAG.replace("<", "&lt;").replace(">", "&gt;");
     const raw = [
-      M365_RESPONSE_OPEN_TAG,
+      WEB_RESPONSE_OPEN_TAG,
       "Ví dụ cấu trúc được escape để hiển thị:",
       "",
       "```xml",
@@ -61,10 +61,10 @@ Invoke-RestMethod -Uri "https://YOUR_HOST/api"
       "nội dung minh họa",
       escapedClose,
       "```",
-      M365_RESPONSE_CLOSE_TAG,
+      WEB_RESPONSE_CLOSE_TAG,
     ].join("\n");
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
@@ -78,7 +78,7 @@ Invoke-RestMethod -Uri "https://YOUR_HOST/api"
 <tool_call>{"name":"read_file","arguments":{"path":"a.ts"}}</tool_call>
 <tool_call>{"name":"grep_code","arguments":{"query":"needle","path":"src"}}</tool_call>
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("tool_calls");
     if (result.kind === "tool_calls") {
       expect(result.calls).toHaveLength(2);
@@ -91,7 +91,7 @@ Invoke-RestMethod -Uri "https://YOUR_HOST/api"
 <tool_call>{"name":"read_file","arguments":{"path":"a.ts"}}</tool_call>
 <tool_call>{"name":"grep_code","arguments":{"query":"needle","path":"src"}}
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("INCOMPLETE_TOOL_CALL");
@@ -103,7 +103,7 @@ Invoke-RestMethod -Uri "https://YOUR_HOST/api"
 Ví dụ tool call:
 <tool_call>{"name":"exec_command","arguments":{"cmd":"git status"}}</tool_call>
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MIXED_TOOL_AND_TEXT_CONTENT");
@@ -111,7 +111,7 @@ Ví dụ tool call:
   });
 
   test("rejects plain final answers without the required transport fence", () => {
-    const result = parseStrictM365Response("Đây là câu trả lời Markdown thông thường.");
+    const result = parseStrictWebResponse("Đây là câu trả lời Markdown thông thường.");
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_TRANSPORT_FENCE");
@@ -120,7 +120,7 @@ Ví dụ tool call:
 
   test("rejects standalone JSON without the required transport fence", () => {
     const raw = '{"name":"exec_command","arguments":{"cmd":"git status"}}';
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_TRANSPORT_FENCE");
@@ -131,7 +131,7 @@ Ví dụ tool call:
     const raw = `Mình chưa truy cập được repo của bạn từ môi trường hiện tại nên không thể đánh giá thực tế mã nguồn.
 
 Để mình review nhanh, hãy gửi cây thư mục hoặc nội dung các file chính.`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_TRANSPORT_FENCE");
@@ -144,7 +144,7 @@ Ví dụ tool call:
 
 Không cần gọi công cụ.
 \`\`\`\``;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toBe("# Kết quả\n\nKhông cần gọi công cụ.");
@@ -155,7 +155,7 @@ Không cần gọi công cụ.
     const toolOpen = `${"<"}tool_call>`;
     const toolClose = `${"<"}/tool_call>`;
     const raw = `${toolOpen}{"name":"exec_command","arguments":{"cmd":"git status"}}${toolClose}`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
@@ -163,8 +163,8 @@ Không cần gọi công cụ.
   });
 
   test("rejects incomplete response envelope even for plain text", () => {
-    const responseOpen = M365_RESPONSE_OPEN_TAG;
-    const result = parseStrictM365Response(`${responseOpen}Câu trả lời chưa đóng envelope`);
+    const responseOpen = WEB_RESPONSE_OPEN_TAG;
+    const result = parseStrictWebResponse(`${responseOpen}Câu trả lời chưa đóng envelope`);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
@@ -176,7 +176,7 @@ Không cần gọi công cụ.
 *** Add File: a.txt
 +hello
 *** End Patch`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
@@ -187,7 +187,7 @@ Không cần gọi công cụ.
     const raw = `<webResponse>
 <tool_call>{"name":"read_file","arguments":{"path":"a.ts"}</tool_call>
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_TOOL_JSON");
   });
@@ -200,7 +200,7 @@ Không cần gọi công cụ.
 +hello
 </custom_tool_call>
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
   });
@@ -209,7 +209,7 @@ Không cần gọi công cụ.
     const raw = `<webResponse>
 <tool_call>{"name":"apply_patch","arguments":{"input":"*** Begin Patch\\n*** Add File: a.txt\\n+hello"}}</tool_call>
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
   });
@@ -219,7 +219,7 @@ Không cần gọi công cụ.
       const raw = `<webResponse>
 <tool_call>{"name":"${name}","arguments":{"input":"*** Begin Patch\\n*** Add File: a.txt\\n+hello"}}</tool_call>
 </webResponse>`;
-      const result = parseStrictM365Response(raw);
+      const result = parseStrictWebResponse(raw);
       expect(result.kind).toBe("protocol_error");
       if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
     }
@@ -234,7 +234,7 @@ Không cần gọi công cụ.
 *** End Patch
 </custom_tool_call>
 </webResponse>`;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") expect(result.code).toBe("INVALID_PATCH_ENVELOPE");
   });
@@ -262,7 +262,7 @@ Không cần gọi công cụ.
       responseClose,
     ].join("\n");
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("tool_calls");
     if (result.kind === "tool_calls") {
@@ -294,7 +294,7 @@ Không cần gọi công cụ.
       responseClose,
     ].join("\n");
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
@@ -325,7 +325,7 @@ Không cần gọi công cụ.
       responseClose,
     ].join("\n");
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
@@ -340,7 +340,7 @@ Không cần gọi công cụ.
 Hoàn tất.
 </webResponse>
 \`\`\`\``;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("final_answer");
   });
 
@@ -357,7 +357,7 @@ Dưới đây là bản vá:
 *** End Patch
 </custom_tool_call>
 \`\`\`\``;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
@@ -390,7 +390,7 @@ Lời dẫn trước envelope:
 </custom_tool_call>
 </webResponse>
 \`\`\`\``;
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
       expect(result.code).toBe("MISSING_RESPONSE_ENVELOPE");
@@ -428,7 +428,7 @@ Lời dẫn trước envelope:
 </custom_tool_call>
 </webResponse>`;
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("tool_calls");
     if (result.kind === "tool_calls") {
       expect(result.calls).toHaveLength(1);
@@ -444,7 +444,7 @@ Lời dẫn trước envelope:
 </tool_call>
 </webResponse>\`\`\``;
 
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
     expect(result.kind).toBe("tool_calls");
     if (result.kind === "tool_calls") {
       expect(result.calls).toHaveLength(1);

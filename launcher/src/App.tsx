@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import type {
+  BrowserProviderInfo,
   BrowserState,
   DoctorReport,
   Language,
@@ -23,6 +24,27 @@ import type {
   OperationState,
   Surface,
 } from "./types";
+
+function resolveProviders(
+  browser: BrowserState | null,
+  snapshot: LauncherSnapshot,
+): BrowserProviderInfo[] {
+  const candidates = browser?.providers?.length
+    ? browser.providers
+    : snapshot.providers?.length
+      ? snapshot.providers
+      : [];
+  if (candidates.length > 0) return candidates;
+  const fallbackId = browser?.provider || snapshot.state.selectedProvider || "m365";
+  return [{
+    id: fallbackId,
+    displayName: fallbackId === "m365" ? "M365 Copilot" : fallbackId,
+    homeUrl: "",
+    partition: "",
+    active: true,
+    authenticated: browser?.authenticated === true,
+  }];
+}
 
 const api = window.codexWebLauncher;
 const PANEL_TRANSITION = { duration: 0.3, ease: [0.16, 1, 0.3, 1] } as const;
@@ -57,6 +79,7 @@ export function App() {
             state,
             smokePassed: current.smokePassed
               || (state.browserSmokePassed === true && state.browserSmokeVersion === current.version),
+            smokePassedByProvider: state.smokePassedByProvider ?? current.smokePassedByProvider,
           }
         : current);
     });
@@ -88,6 +111,7 @@ export function App() {
           state,
           smokePassed: current.smokePassed
             || (state.browserSmokePassed === true && state.browserSmokeVersion === current.version),
+          smokePassedByProvider: state.smokePassedByProvider ?? current.smokePassedByProvider,
         }
       : current);
   }, []);
@@ -134,6 +158,7 @@ export function App() {
         {startupLoadingOpen && operation ? (
           <StartupLoadingModal
             operation={operation}
+            product={copy.product}
             version={snapshot.version}
           />
         ) : null}
@@ -280,7 +305,10 @@ function LauncherShell({
     && !(compactSidebar && sidebarOpen)
     && !startupLoadingOpen
     && !biggerContextRecommendationOpen;
-  const needsBrowser = browser?.authenticated !== true;
+  const providers = resolveProviders(browser, snapshot);
+  const anyProviderAuthenticated = providers.some((item) => item.authenticated)
+    || Object.values(browser?.authenticatedByProvider ?? {}).some(Boolean);
+  const needsBrowser = browser?.authenticated !== true && !anyProviderAuthenticated;
   const needsSetup = !needsBrowser && !interactionSetupComplete;
   const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
@@ -488,6 +516,7 @@ function LauncherShell({
                 browser={browser}
                 browserSlotRef={browserSlotRef}
                 copy={copy}
+                providers={providers}
                 setError={setError}
               />
             ) : null}
@@ -606,15 +635,33 @@ function BrowserSurface({
   browser,
   browserSlotRef,
   copy,
+  providers,
   setError,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
+  providers: BrowserProviderInfo[];
   setError: (error: string | null) => void;
 }) {
+  const [switchingProvider, setSwitchingProvider] = useState(false);
   const visible = browser?.visible === true;
   const navigationLocked = browser?.status === "running" || browser?.status === "testing";
+  const activeProviderId = browser?.provider || providers[0]?.id || "m365";
+  const activeProvider = providers.find((item) => item.id === activeProviderId) ?? providers[0];
+  const providerLabel = activeProvider?.displayName || activeProviderId;
+  const switchProvider = async (providerId: string) => {
+    if (switchingProvider || navigationLocked || providerId === activeProviderId) return;
+    setSwitchingProvider(true);
+    setError(null);
+    try {
+      await api!.switchProvider(providerId);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setSwitchingProvider(false);
+    }
+  };
   const navigate = async (action: "back" | "forward" | "reload") => {
     try {
       await api!.navigateBrowser(action);
@@ -712,6 +759,26 @@ function BrowserSurface({
           <Icon name="globe" />
           <span>{formatBrowserAddress(browser?.url, copy)}</span>
         </div>
+        {providers.length > 1 ? (
+          <div className="provider-switcher" role="group" aria-label="Web provider">
+            {providers.map((item) => {
+              const selected = item.id === activeProviderId;
+              return (
+                <button
+                  aria-disabled={switchingProvider || navigationLocked || undefined}
+                  aria-pressed={selected}
+                  className="provider-switcher-button"
+                  key={item.id}
+                  onClick={() => void switchProvider(item.id)}
+                  title={`${item.displayName}${item.authenticated ? ` (${copy.signedIn})` : ""}`}
+                  type="button"
+                >
+                  {item.displayName}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <div className="browser-zoom-controls">
           <IconButton icon="minus" label={copy.zoomOut} onClick={() => void zoom("out")} />
           <button
@@ -743,7 +810,7 @@ function BrowserSurface({
           <div className="browser-empty">
             <BrandMark />
             <h1>{copy.noActiveTask}</h1>
-            <p>Browser tabs (M365 Copilot) will appear here automatically when Codex starts a turn.</p>
+            <p>Browser tabs ({providerLabel}) will appear here automatically when Codex starts a turn.</p>
             {(browser?.tabs ?? []).length > 0 ? (
               <div className="browser-empty-actions">
                 <PrimaryButton onClick={() => void toggle()}>
@@ -783,10 +850,11 @@ function SetupSurface({
 }) {
   const [localBusy, setLocalBusy] = useState(false);
 
-  const isM365 = (browser?.provider || snapshot.state.selectedProvider || "m365") === "m365";
-  const m365Authed = Boolean(browser?.m365Authenticated || (browser?.authenticated && isM365));
-
-  const isM365Testing = browser?.status === "testing" && isM365;
+  const providers = resolveProviders(browser, snapshot);
+  const activeProviderId = browser?.provider || snapshot.state.selectedProvider || providers[0].id;
+  const authMap = browser?.authenticatedByProvider || {};
+  const smokeMap = snapshot.state.smokePassedByProvider || snapshot.smokePassedByProvider || {};
+  const modelSummary = providers.map((item) => item.displayName).join(", ");
   const isRunningTurn = browser?.status === "running";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
@@ -818,41 +886,61 @@ function SetupSurface({
       eyebrow={copy.required}
       subtitle={devProfile
         ? copy.devSetupSubtitle
-        : "Configure Microsoft 365 Copilot to work with Codex."}
-      title={devProfile ? copy.devSetupTitle : "Set up Codex Copilot"}
+        : providers.length > 1
+          ? "Sign in and verify web providers to work with Codex."
+          : `Configure ${providers[0].displayName} to work with Codex.`}
+      title={devProfile ? copy.devSetupTitle : "Set up Codex Web Providers"}
     >
-      {/* ── M365 Copilot Setup Section ── */}
-      <SectionHeading label="M365 Copilot Setup" />
-      <div className="setup-list">
-        <SetupRow
-          action={m365Authed
-            ? copy.signedIn
-            : browser?.status === "loading" && isM365 ? copy.checkingSignIn : copy.signIn}
-          complete={m365Authed}
-          description="Sign in directly in the embedded M365 Copilot browser. Login stays in this launcher's private profile."
-          disabled={globalActionDisabled}
-          index={1}
-          onAction={() => run(async () => {
-            await activateBrowser();
-            await api!.openLogin();
-          })}
-          title="Sign in to Microsoft 365 Copilot"
-        />
-        <SetupRow
-          action={snapshot.m365SmokePassed ? "Verify again" : "Run verify"}
-          complete={Boolean(snapshot.m365SmokePassed)}
-          description="Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to M365 Copilot and verify response."
-          disabled={globalActionDisabled || isM365Testing || !m365Authed}
-          index={2}
-          onAction={() => run(async () => {
-            await activateBrowser();
-            await api!.smokeTest();
-            updateState((await api!.snapshot()).state);
-          })}
-          repeatable={true}
-          title="Run browser smoke test (M365)"
-        />
-      </div>
+      {providers.map((provider, providerIndex) => {
+        const isActiveProvider = provider.id === activeProviderId;
+        const isAuthed = Boolean(
+          authMap[provider.id]
+          ?? provider.authenticated
+          ?? (isActiveProvider && browser?.authenticated),
+        );
+        const isTesting = isActiveProvider && browser?.status === "testing";
+        const isSmokePassed = Boolean(smokeMap[provider.id]?.passed);
+        const signInIndex = providerIndex * 2 + 1;
+        const smokeIndex = providerIndex * 2 + 2;
+
+        return (
+          <div className="setup-provider-group" key={provider.id}>
+            <SectionHeading label={`${provider.displayName} Setup`} spaced={providerIndex > 0} />
+            <div className="setup-list">
+              <SetupRow
+                action={isAuthed
+                  ? copy.signedIn
+                  : browser?.status === "loading" && isActiveProvider ? copy.checkingSignIn : copy.signIn}
+                complete={isAuthed}
+                description={`Sign in directly in the embedded ${provider.displayName} browser. Login stays in this launcher's private profile.`}
+                disabled={globalActionDisabled}
+                index={signInIndex}
+                onAction={() => run(async () => {
+                  await activateBrowser();
+                  if (!isActiveProvider) await api!.switchProvider(provider.id);
+                  await api!.openLogin(provider.id);
+                })}
+                title={`Sign in to ${provider.displayName}`}
+              />
+              <SetupRow
+                action={isSmokePassed ? "Verify again" : "Run verify"}
+                complete={isSmokePassed}
+                description={`Send smoke test prompt 'Reply with exactly: CODEX WEB GPT READY' to ${provider.displayName} and verify response.`}
+                disabled={globalActionDisabled || isTesting || !isAuthed}
+                index={smokeIndex}
+                onAction={() => run(async () => {
+                  await activateBrowser();
+                  if (!isActiveProvider) await api!.switchProvider(provider.id);
+                  await api!.smokeTest(provider.id);
+                  updateState((await api!.snapshot()).state);
+                })}
+                repeatable={true}
+                title={`Run browser smoke test (${provider.displayName})`}
+              />
+            </div>
+          </div>
+        );
+      })}
 
       {/* ── Install Section ── */}
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} spaced />
@@ -864,9 +952,9 @@ function SetupSurface({
           complete={snapshot.state.codexCatalogVerified === true}
           description={devProfile
             ? copy.devStepInstallBody
-            : "Configure Codex to expose only installed adapter models (M365 Copilot)."}
+            : `Configure Codex to expose only installed adapter models (${modelSummary}).`}
           disabled={globalActionDisabled}
-          index={3}
+          index={providers.length * 2 + 1}
           onAction={install}
           repeatable
           title={devProfile ? copy.devStepInstall : copy.stepInstall}
@@ -1742,9 +1830,11 @@ const STARTUP_LOADING_STEPS = [
 
 function StartupLoadingModal({
   operation,
+  product,
   version,
 }: {
   operation: OperationState;
+  product: string;
   version: string;
 }) {
   const matchedIndex = operation.name === "runtime-upgrade"
@@ -1775,7 +1865,7 @@ function StartupLoadingModal({
         <header className="startup-loading-header">
           <div className="startup-loading-brand">
             <BrandMark small />
-            <span>Codex M365 Copilot</span>
+            <span>{product}</span>
             <small>v{version}</small>
           </div>
           <h2 id="startup-loading-title">Đang khởi động ứng dụng…</h2>

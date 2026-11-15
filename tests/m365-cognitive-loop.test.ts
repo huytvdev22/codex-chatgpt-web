@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  M365OutputTranslator,
+  WebOutputTranslator,
   extractCognitiveBlocks,
-  M365ToolCallDetector,
+  WebToolCallDetector,
 } from "../src/adapters/web/protocol";
 import {
   isReadOnlyTool,
@@ -121,8 +121,8 @@ Mục tiêu: Đọc 50 dòng đầu.
     expect(cognitive.cleanedText).not.toContain("<thought>");
   });
 
-  test("M365OutputTranslator dịch Cognitive Envelope thành tool_call có thinking và narrative", () => {
-    const translator = new M365OutputTranslator();
+  test("WebOutputTranslator dịch Cognitive Envelope thành tool_call có thinking và narrative", () => {
+    const translator = new WebOutputTranslator();
     const raw = `<thought>
 Khảo sát cấu trúc adapter M365 Copilot.
 Bước 1: Đọc agent-loop.ts.
@@ -142,8 +142,8 @@ Bây giờ tôi cần xem file agent-loop.ts để hiểu flow:
     }
   });
 
-  test("M365OutputTranslator bóc tách thinking trong Final Answer và làm sạch content", () => {
-    const translator = new M365OutputTranslator();
+  test("WebOutputTranslator bóc tách thinking trong Final Answer và làm sạch content", () => {
+    const translator = new WebOutputTranslator();
     const raw = `<thought>
 Đã có đầy đủ dữ liệu phân tích từ 3 file. Giờ kết luận cho người dùng.
 </thought>
@@ -159,10 +159,10 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
   });
 
   // =========================================================================
-  // 4. M365ToolCallDetector Streaming Cognitive Isolation & Sanitization
+  // 4. WebToolCallDetector Streaming Cognitive Isolation & Sanitization
   // =========================================================================
-  test("M365ToolCallDetector nuốt trọn khối <thought> không để rò rỉ vào safeText stream", () => {
-    const detector = new M365ToolCallDetector();
+  test("WebToolCallDetector nuốt trọn khối <thought> không để rò rỉ vào safeText stream", () => {
+    const detector = new WebToolCallDetector();
     const chunk1 = "<thought>\nTôi đang suy nghĩ cách sửa file.\n";
     const chunk2 = "Cần kiểm tra trước.</thought>\n";
     const chunk3 = "Tôi sẽ kiểm tra file:\n<tool_call>\n";
@@ -184,8 +184,8 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
     expect(detector.getToolCall()?.name).toBe("read_file");
   });
 
-  test("M365ToolCallDetector bảo toàn trailing backtick vì có thể là Markdown fence hợp lệ", () => {
-    const detector = new M365ToolCallDetector();
+  test("WebToolCallDetector bảo toàn trailing backtick vì có thể là Markdown fence hợp lệ", () => {
+    const detector = new WebToolCallDetector();
     const emitted = detector.feed("Xin chào anh Huy! Mình có thể hỗ trợ anh.\n`");
     const { remainingText } = detector.finish();
 
@@ -194,8 +194,8 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
     expect(remainingText).toBe("`");
   });
 
-  test("M365ToolCallDetector với renderThinkingInText: true nuốt thẻ webResponse, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
-    const detector = new M365ToolCallDetector({ renderThinkingInText: true });
+  test("WebToolCallDetector với renderThinkingInText: true nuốt thẻ webResponse, định dạng thought dạng text thuần túy 💭 và giữ nguyên Markdown", () => {
+    const detector = new WebToolCallDetector({ renderThinkingInText: true });
     const rawStream = [
       "<webResponse>\n<thought>\n",
       "Liên kết `app.js` trong `index.html` hiện đã đúng, ",
@@ -235,8 +235,8 @@ Dự án M365 Copilot có kiến trúc modular rất tốt.`;
     expect(toolCall?.arguments).toEqual({ path: "app.js" });
   });
 
-  test("M365OutputTranslator dịch thành công lệnh shell phức tạp chứa escape dấu ngoặc đơn \\( \\) mà không bị rơi vào fallback", () => {
-    const translator = new M365OutputTranslator();
+  test("WebOutputTranslator dịch thành công lệnh shell phức tạp chứa escape dấu ngoặc đơn \\( \\) mà không bị rơi vào fallback", () => {
+    const translator = new WebOutputTranslator();
     const rawWithShellEscape = `<webResponse>
 <thought>
 Cần khảo sát cấu trúc repository, công nghệ sử dụng, trạng thái Git và các tệp cấu hình chính.
@@ -258,8 +258,8 @@ Tôi sẽ kiểm tra cấu trúc dự án trước:
     }
   });
 
-  test("M365OutputTranslator làm sạch hoàn toàn envelope webResponse trong Final Answer", () => {
-    const translator = new M365OutputTranslator();
+  test("WebOutputTranslator làm sạch hoàn toàn envelope webResponse trong Final Answer", () => {
+    const translator = new WebOutputTranslator();
     const raw = `<webResponse>
 <thought>
 Đã kiểm tra file app.js và sửa lỗi thành công. Giờ thông báo kết quả.

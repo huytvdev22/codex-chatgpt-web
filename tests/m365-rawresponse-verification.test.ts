@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parseStrictM365Response } from "../src/adapters/web/protocol";
-import { buildM365FormatRetryPrompt } from "../src/adapters/web/prompt";
-import { validateM365ToolCall } from "../src/adapters/web/tools";
+import { parseStrictWebResponse } from "../src/adapters/web/protocol";
+import { buildFormatRetryPrompt } from "../src/adapters/web/prompt";
+import { validateWebToolCall } from "../src/adapters/web/tools";
 
 describe("M365 Raw Response Reproduction & Analysis", () => {
   test("tái hiện chính xác response thực tế từ M365: phát hiện thiếu transport wrapper 4-backtick và trả về MISSING_TRANSPORT_FENCE", () => {
@@ -12,7 +12,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 </webResponse>`;
 
     // Gọi parser nghiêm ngặt
-    const result = parseStrictM365Response(actualM365Response);
+    const result = parseStrictWebResponse(actualM365Response);
 
     // BẮT BUỘC phải nhận diện là tool_calls hợp lệ vì có envelope <webResponse> hoàn chỉnh
     expect(result.kind).toBe("tool_calls");
@@ -24,7 +24,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
   test("tái hiện chính xác response từ M365 khi có text trần không bọc 4-backtick: trả về MISSING_TRANSPORT_FENCE", () => {
     const rawNoFence = "Đây là câu trả lời trần không có bọc gì cả.";
-    const result = parseStrictM365Response(rawNoFence);
+    const result = parseStrictWebResponse(rawNoFence);
 
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
@@ -32,7 +32,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
       expect(result.message).toContain("4-backtick");
 
       // Verify format retry prompt được sinh ra chính xác để hướng dẫn AI
-      const retryPrompt = buildM365FormatRetryPrompt({
+      const retryPrompt = buildFormatRetryPrompt({
         code: result.code,
         message: result.message,
       });
@@ -52,7 +52,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 </tool_call>
 \`\`\`\``;
 
-    const result = parseStrictM365Response(rawFencedNoEnvelope);
+    const result = parseStrictWebResponse(rawFencedNoEnvelope);
 
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
@@ -61,7 +61,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
       expect(result.message).toContain("<tool_call>");
 
       // Verify format retry prompt
-      const retryPrompt = buildM365FormatRetryPrompt({
+      const retryPrompt = buildFormatRetryPrompt({
         code: result.code,
         message: result.message,
       });
@@ -73,7 +73,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
   test("khi phản hồi chứa lệnh exec_command quét đệ quy Get-ChildItem -Recurse: cho phép model tự chủ tư duy và parse thành tool_call", () => {
     const raw = "````markdown\n<webResponse>\n<tool_call>\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"Write-Output '=== ROOT ==='; Get-ChildItem -Recurse | Select-Object Name\"}}\n</tool_call>\n</webResponse>\n````";
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     // Đã bỏ chặn RECURSIVE_SCAN_DISALLOWED để model tự chủ tư duy
     expect(result.kind).toBe("tool_calls");
@@ -86,7 +86,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
   test("khi phản hồi chứa lệnh exec_command chứa batch read foreach: cho phép thực thi theo quyền tự chủ của model", () => {
     const raw = "````markdown\n<webResponse>\n<tool_call>\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"$files = @('a.java', 'b.java'); foreach ($f in $files) { Get-Content $f }\"}}\n</tool_call>\n</webResponse>\n````";
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("tool_calls");
     if (result.kind === "tool_calls") {
@@ -98,7 +98,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
   test("khi phản hồi chứa lệnh exec_command vi phạm wildcard read *.sql: trả về DISALLOWED_COMMAND", () => {
     const raw = "````markdown\n<webResponse>\n<tool_call>\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"Get-Content *.sql\"}}\n</tool_call>\n</webResponse>\n````";
-    const result = parseStrictM365Response(raw);
+    const result = parseStrictWebResponse(raw);
 
     expect(result.kind).toBe("protocol_error");
     if (result.kind === "protocol_error") {
@@ -114,7 +114,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 </tool_call>
 </webResponse>`;
 
-    const result = parseStrictM365Response(actualM365Response);
+    const result = parseStrictWebResponse(actualM365Response);
 
     // Không còn bị reject vì Get-ChildItem -Recurse nữa
     expect(result.kind).toBe("tool_calls");
@@ -126,7 +126,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
     }
   });
 
-  test("khi M365 gọi công cụ không có trong clientTools: validateM365ToolCall trả về UNKNOWN_TOOL kèm danh sách tool khả dụng", () => {
+  test("khi M365 gọi công cụ không có trong clientTools: validateWebToolCall trả về UNKNOWN_TOOL kèm danh sách tool khả dụng", () => {
     const activeClientTools = [
       { name: "read_file", description: "Read a file", parameters: {} },
       { name: "exec_command", description: "Run shell command", parameters: {} },
@@ -134,7 +134,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
     ] as any[];
 
     // write_stdin nằm trong BRIDGE_TOOLS tĩnh nhưng KHÔNG có trong activeClientTools của lượt này
-    const validation = validateM365ToolCall("write_stdin", { session_id: 1, chars: "ls" }, activeClientTools);
+    const validation = validateWebToolCall("write_stdin", { session_id: 1, chars: "ls" }, activeClientTools);
 
     expect(validation.ok).toBe(false);
     if (!validation.ok) {
@@ -143,7 +143,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
       expect(validation.message).toContain("Các công cụ khả dụng: [read_file, exec_command, apply_patch]");
 
       // Verify format retry prompt tương ứng
-      const retryPrompt = buildM365FormatRetryPrompt({
+      const retryPrompt = buildFormatRetryPrompt({
         code: validation.code,
         message: validation.message,
       });
@@ -154,13 +154,13 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
     }
   });
 
-  test("khi M365 gọi công cụ hoàn toàn lạ: validateM365ToolCall phát hiện UNKNOWN_TOOL và hướng dẫn AI tự chọn lại", () => {
+  test("khi M365 gọi công cụ hoàn toàn lạ: validateWebToolCall phát hiện UNKNOWN_TOOL và hướng dẫn AI tự chọn lại", () => {
     const activeClientTools = [
       { name: "read_file", description: "Read a file", parameters: {} },
       { name: "list_dir", description: "List directory", parameters: {} },
     ] as any[];
 
-    const validation = validateM365ToolCall("fetch_url_content", { url: "https://example.com" }, activeClientTools);
+    const validation = validateWebToolCall("fetch_url_content", { url: "https://example.com" }, activeClientTools);
     expect(validation.ok).toBe(false);
     if (!validation.ok) {
       expect(validation.code).toBe("UNKNOWN_TOOL");

@@ -232,6 +232,3 @@ export class WebOutputTranslator {
     return { content: result.content };
   }
 }
-
-/** @deprecated Dùng `WebOutputTranslator` thay thế. */
-export const M365OutputTranslator = WebOutputTranslator;

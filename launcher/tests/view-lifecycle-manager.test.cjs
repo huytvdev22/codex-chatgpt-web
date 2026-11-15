@@ -170,8 +170,14 @@ test("endTurn preserves older ready tabs and syncs visibility when retaining a c
     closedTurnOwners: new Map(),
     userCancelledTurnOwners: new Map(),
     selectedTabId: completingTab.id,
-    m365SurfaceManager: {
-      bind: (_key, conversationId) => conversationId,
+    providerRegistry: {
+      has: (id) => id === "m365",
+      get: () => ({
+        id: "m365",
+        displayName: "M365 Copilot",
+        normalizeConversationId: (id) => id,
+        bind: (_key, conversationId) => conversationId,
+      }),
     },
     syncPowerSaveBlocker() {},
     removeTurnTab(candidate, abortRunning) {
@@ -246,11 +252,17 @@ test("endTurn closes ephemeral M365 tab without persisting binding when retain i
     closedTurnOwners: new Map(),
     userCancelledTurnOwners: new Map(),
     selectedTabId: ephemeralTitleTab.id,
-    m365SurfaceManager: {
-      bind(key, conversationId) {
-        bindCalls.push({ key, conversationId });
-        return conversationId;
-      },
+    providerRegistry: {
+      has: (id) => id === "m365",
+      get: () => ({
+        id: "m365",
+        displayName: "M365 Copilot",
+        normalizeConversationId: (id) => id,
+        bind(key, conversationId) {
+          bindCalls.push({ key, conversationId });
+          return conversationId;
+        },
+      }),
     },
     syncPowerSaveBlocker() {},
     removeTurnTab(candidate, abortRunning) {
@@ -308,7 +320,7 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
   };
 
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
-    m365View: { webContents: { isDestroyed: () => false, off() {} } },
+    providerViews: new Map([["m365", { webContents: { isDestroyed: () => false, off() {} } }]]),
     shellZoomShortcutBindings: new Map(),
     primaryViewManager: {
       destroy: (providerName) => destroyedProviders.push(providerName),
@@ -326,7 +338,7 @@ test("releaseInactivePrimaryViews destroys inactive primary views while preservi
   BrowserHost.prototype.releaseInactivePrimaryViews.call(fixture, "other-provider");
 
   assert.deepEqual(destroyedProviders, ["m365"]);
-  assert.equal(fixture.m365View, null);
+  assert.equal(fixture.providerViews.has("m365"), false);
   assert.deepEqual(removedTabs, []);
   assert.equal(fixture.turnTabs.has("m365-ready"), true);
   assert.equal(fixture.turnTabs.has("m365-running"), true);

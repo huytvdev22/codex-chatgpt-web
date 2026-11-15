@@ -55,13 +55,3 @@ export function webHtmlToMarkdown(
 
   return normalizeMarkdownFences(md);
 }
-
-/**
- * Chuyển đổi cây HTML của tin nhắn sang chuỗi Markdown chuẩn hóa (preset tương thích M365).
- */
-export function m365HtmlToMarkdown(html: string): string {
-  return webHtmlToMarkdown(html, {
-    leadingPrefixes: [/^Copilot(?: said)?:\s*/i],
-    statusPatterns: STATUS_PATTERNS,
-  });
-}

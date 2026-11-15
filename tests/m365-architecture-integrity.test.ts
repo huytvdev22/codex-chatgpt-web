@@ -1,34 +1,54 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 // @ts-ignore
 import { findCircularDependencies } from "../scripts/check-circular-deps.js";
 
-describe("M365 Copilot Architecture Integrity & CI Gate", () => {
-  const m365Dir = path.resolve(process.cwd(), "src/adapters/m365-copilot");
+function discoverProviderAdapterNames(): string[] {
+  const adaptersRoot = path.resolve(process.cwd(), "src/adapters");
+  return fs
+    .readdirSync(adaptersRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== "web")
+    .map((entry) => entry.name)
+    .sort();
+}
+
+describe("Web Adapter Architecture Integrity & CI Gate", () => {
   const sharedWebDir = path.resolve(process.cwd(), "src/adapters/web");
+  const providerNames = discoverProviderAdapterNames();
 
-  test("CI GATE: Tuyệt đối không có Circular Dependency trong m365-copilot (Cycles = 0)", () => {
-    const { graph, cycles } = findCircularDependencies(m365Dir);
+  test("CI GATE: Tuyệt đối không có Circular Dependency trong mọi provider adapter (Cycles = 0)", () => {
+    expect(providerNames.length).toBeGreaterThanOrEqual(1);
+    expect(providerNames).toContain("m365-copilot");
 
-    if (cycles.length > 0) {
-      console.error("\n[CI GATE ERROR] Phát hiện Circular Dependency trong kiến trúc:");
-      cycles.forEach((c: any, idx: number) => {
-        console.error(`  #${idx + 1}: ${c.join(" -> ")}`);
-      });
+    for (const providerName of providerNames) {
+      const providerDir = path.resolve(process.cwd(), "src/adapters", providerName);
+      const { graph, cycles } = findCircularDependencies(providerDir);
+
+      if (cycles.length > 0) {
+        console.error(`\n[CI GATE ERROR] Phát hiện Circular Dependency trong ${providerName}:`);
+        cycles.forEach((c: any, idx: number) => {
+          console.error(`  #${idx + 1}: ${c.join(" -> ")}`);
+        });
+      }
+
+      expect(cycles.length).toBe(0);
+      expect(Object.keys(graph)).toContain("index.ts");
+
+      if (providerName === "m365-copilot") {
+        expect(Object.keys(graph).sort()).toEqual([
+          "attachments.ts",
+          "capability-picker.ts",
+          "conversation-key.ts",
+          "conversation-url.ts",
+          "index.ts",
+          "m365-browser-worker.ts",
+          "m365-clipboard-salvage.ts",
+          "m365-dom-observer.ts",
+          "model-provider.ts",
+        ]);
+      }
     }
-
-    expect(cycles.length).toBe(0);
-    expect(Object.keys(graph).sort()).toEqual([
-      "attachments.ts",
-      "capability-picker.ts",
-      "conversation-key.ts",
-      "conversation-url.ts",
-      "index.ts",
-      "m365-browser-worker.ts",
-      "m365-clipboard-salvage.ts",
-      "m365-dom-observer.ts",
-      "model-provider.ts",
-    ]);
   });
 
   test("CI GATE: Shared Web Adapter layer không có cycle hoặc phụ thuộc ngược vào provider", async () => {
@@ -37,9 +57,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(Object.keys(graph).length).toBeGreaterThan(10);
 
     const sharedModules = Object.keys(graph);
-    const providerSegments = [
-      "/m365-copilot/",
-    ];
+    const providerSegments = providerNames.map((name) => `/${name}/`);
     for (const modulePath of sharedModules) {
       const source = await Bun.file(path.resolve(sharedWebDir, modulePath)).text();
       for (const providerSegment of providerSegments) {
@@ -77,9 +95,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
   });
 
   test("CI GATE: Provider Facade (index.ts) không tự gọi trực tiếp hàm điều phối cấp thấp", async () => {
-    const providerFacades = [
-      "src/adapters/m365-copilot/index.ts",
-    ];
+    const providerFacades = providerNames.map((name) => `src/adapters/${name}/index.ts`);
     const forbiddenDirectOrchestrationCalls = [
       "startLauncherBrowserTurn(",
       "endLauncherBrowserTurn(",
@@ -87,7 +103,6 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
       "runWebProtocolRetry(",
       "emitWebProtocolResponse(",
       "validateWebProtocolResponse(",
-      "parseStrictM365Response(",
       "parseStrictWebResponse(",
     ];
 
@@ -100,7 +115,7 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     }
   });
 
-  test("ARCH INTEGRITY: Root Adapter Facade bảo toàn đầy đủ các API công khai", async () => {
+  test("ARCH INTEGRITY: Root Adapter Facade & Shared Web Layer dùng API chuẩn trung tính", async () => {
     const rootModule = await import("../src/adapters/m365-copilot");
     const sharedNormalization = await import("../src/adapters/web/normalization");
     const sharedPrompt = await import("../src/adapters/web/prompt");
@@ -108,16 +123,16 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     const sharedTools = await import("../src/adapters/web/tools");
 
     // Core Classes
-    expect(rootModule.M365OutputTranslator).toBeDefined();
+    expect(rootModule.WebOutputTranslator).toBeDefined();
     expect(rootModule.M365BrowserWorker).toBeDefined();
     expect(rootModule.M365ModelProvider).toBeDefined();
+    expect(rootModule.m365HtmlToMarkdown).toBeDefined();
 
     // Normalization
     expect(rootModule.CodexPayloadNormalizer).toBeDefined();
     expect(rootModule.CodexRawPayload).toBeDefined();
 
     // Native-first Tool Bridge
-    expect(rootModule.M365ToolBridge).toBeDefined();
     expect(rootModule.WebToolBridge).toBeDefined();
     expect(rootModule.AtomicFileWriter).toBeDefined();
     expect("PosixCommandStrategy" in rootModule).toBe(false);
@@ -133,23 +148,42 @@ describe("M365 Copilot Architecture Integrity & CI Gate", () => {
     expect(rootModule.stripShellPrefix).toBeDefined();
     expect(rootModule.normalizePatchEnvelope).toBeDefined();
 
-    // Shared Web Adapter facade (both neutral Web* and M365* compatibility aliases)
+    // Shared Web Adapter facade (pure neutral Web* APIs)
     expect(sharedNormalization.CodexPayloadNormalizer).toBeDefined();
     expect(sharedNormalization.CodexRawPayload).toBeDefined();
     expect(sharedPrompt.WebPromptCompiler).toBeDefined();
-    expect(sharedPrompt.M365PromptCompiler).toBeDefined();
     expect(sharedPrompt.promptCompiler).toBeDefined();
+    expect(sharedPrompt.WEB_IMAGE_ATTACHMENT_HINT).toBeDefined();
+    expect(sharedPrompt.buildFormatRetryPrompt).toBeDefined();
     expect(sharedProtocol.WebOutputTranslator).toBeDefined();
     expect(sharedProtocol.WebToolCallDetector).toBeDefined();
     expect(sharedProtocol.parseStrictWebResponse).toBeDefined();
-    expect(sharedProtocol.parseStrictM365Response).toBeDefined();
+    expect(sharedProtocol.WEB_RESPONSE_OPEN_TAG).toBeDefined();
+    expect(sharedProtocol.WEB_RESPONSE_CLOSE_TAG).toBeDefined();
     expect(sharedProtocol.webHtmlToMarkdown).toBeDefined();
     expect(sharedProtocol.SemanticMarkdownBuffer).toBeDefined();
     expect(sharedTools.WebToolBridge).toBeDefined();
-    expect(sharedTools.M365ToolBridge).toBeDefined();
     expect(sharedTools.normalizeWebToolArguments).toBeDefined();
     expect(sharedTools.decodeWebContent).toBeDefined();
     expect(sharedTools.validateWebToolCall).toBeDefined();
     expect(sharedTools.AtomicFileWriter).toBeDefined();
+
+    // Legacy M365* compatibility aliases in shared web layer must remain absent
+    expect("M365_MAX_INPUT_IMAGES" in sharedNormalization).toBe(false);
+    expect("M365PromptCompiler" in sharedPrompt).toBe(false);
+    expect("M365_IMAGE_ATTACHMENT_HINT" in sharedPrompt).toBe(false);
+    expect("buildM365FormatRetryPrompt" in sharedPrompt).toBe(false);
+    expect("M365OutputTranslator" in sharedProtocol).toBe(false);
+    expect("M365ToolCallDetector" in sharedProtocol).toBe(false);
+    expect("parseStrictM365Response" in sharedProtocol).toBe(false);
+    expect("M365_RESPONSE_OPEN_TAG" in sharedProtocol).toBe(false);
+    expect("M365_RESPONSE_CLOSE_TAG" in sharedProtocol).toBe(false);
+    expect("m365HtmlToMarkdown" in sharedProtocol).toBe(false);
+    expect("M365MarkdownBuffer" in sharedProtocol).toBe(false);
+    expect("M365ToolBridge" in sharedTools).toBe(false);
+    expect("normalizeM365ToolName" in sharedTools).toBe(false);
+    expect("normalizeM365ToolArguments" in sharedTools).toBe(false);
+    expect("decodeM365Content" in sharedTools).toBe(false);
+    expect("validateM365ToolCall" in sharedTools).toBe(false);
   });
 });

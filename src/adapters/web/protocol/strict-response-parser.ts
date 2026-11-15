@@ -42,10 +42,6 @@ export type StrictWebResponseResult =
     rawResponse: string;
   };
 
-export type M365ProtocolErrorCode = WebProtocolErrorCode;
-export type StrictM365ToolCall = StrictWebToolCall;
-export type StrictM365ResponseResult = StrictWebResponseResult;
-
 const ROOT_OPEN = "<webResponse>";
 const ROOT_CLOSE = "</webResponse>";
 const TOOL_OPEN = "<tool_call>";
@@ -445,7 +441,7 @@ export function parseStrictWebResponse(rawResponse: string): StrictWebResponseRe
   const framed = unwrapTransportFence(rawResponse);
 
   if (!framed.trim()) {
-    return protocolError(rawResponse, "EMPTY_RESPONSE", "Phản hồi M365 không được rỗng.");
+    return protocolError(rawResponse, "EMPTY_RESPONSE", "Phản hồi Web không được rỗng.");
   }
 
   const matchedRootOpen = framed.startsWith(ROOT_OPEN) ? ROOT_OPEN : null;
@@ -567,11 +563,7 @@ export function parseStrictWebResponse(rawResponse: string): StrictWebResponseRe
   return { kind: "final_answer", content, rawResponse };
 }
 
-export const parseStrictM365Response = parseStrictWebResponse;
-
 export {
   ROOT_OPEN as WEB_RESPONSE_OPEN_TAG,
   ROOT_CLOSE as WEB_RESPONSE_CLOSE_TAG,
-  ROOT_OPEN as M365_RESPONSE_OPEN_TAG,
-  ROOT_CLOSE as M365_RESPONSE_CLOSE_TAG,
 };

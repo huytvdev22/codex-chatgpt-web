@@ -20,11 +20,27 @@ const DEFAULT_STATE = Object.freeze({
   useSavedChats: false,
   browserSmokePassed: false,
   browserSmokeVersion: null,
+  smokePassedByProvider: {},
   sidebarOpen: true,
   sidebarWidth: 252,
   sessionRefreshReminderAt: null,
   selectedProvider: "m365",
 });
+
+function sanitizeSmokePassedByProvider(rawValue) {
+  const result = {};
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return result;
+  for (const [providerId, entry] of Object.entries(rawValue)) {
+    if (!providerId || !/^[a-z0-9-]+$/.test(providerId)) continue;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const passed = entry.passed === true;
+    const version = typeof entry.version === "string" && entry.version.length <= 128
+      ? entry.version
+      : null;
+    result[providerId] = { passed, version };
+  }
+  return result;
+}
 
 function nextSessionRefreshReminderAt(now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("Session refresh reminder time must be finite");
@@ -42,11 +58,12 @@ function readState(filePath, { defaultProvider = DEFAULT_STATE.selectedProvider,
       state.language = DEFAULT_STATE.language;
     }
     const providerId = typeof state.selectedProvider === "string" ? state.selectedProvider.trim() : "";
-    if (!providerId || providerId === "chatgpt" || (typeof isValidProvider === "function" && !isValidProvider(providerId))) {
+    if (!providerId || (typeof isValidProvider === "function" && !isValidProvider(providerId))) {
       state.selectedProvider = defaultProvider;
     } else {
       state.selectedProvider = providerId;
     }
+    state.smokePassedByProvider = sanitizeSmokePassedByProvider(parsed.smokePassedByProvider);
     for (const key of [
       "onboardingComplete",
       "githubOpened",
@@ -88,6 +105,12 @@ function readState(filePath, { defaultProvider = DEFAULT_STATE.selectedProvider,
       "codexRestartRequired",
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
+    }
+    if (!parsed.smokePassedByProvider && state.browserSmokePassed === true) {
+      state.smokePassedByProvider[state.selectedProvider || defaultProvider] = {
+        passed: true,
+        version: state.browserSmokeVersion || null,
+      };
     }
     return state;
   } catch {

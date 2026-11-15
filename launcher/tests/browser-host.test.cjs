@@ -594,7 +594,7 @@ test("logout clears only the owned M365 Copilot session and returns to the sign-
   const authView = { webContents: { isDestroyed: () => false } };
   const fixture = {
     authView,
-    m365Authenticated: true,
+    authenticatedByProvider: { m365: true },
     state: { authenticated: true, status: "ready" },
     view: {
       webContents: {
@@ -635,7 +635,7 @@ test("logout clears only the owned M365 Copilot session and returns to the sign-
 
   assert.equal(result.authenticated, false);
   assert.equal(result.status, "signed-out");
-  assert.equal(fixture.m365Authenticated, false);
+  assert.equal(fixture.authenticatedByProvider.m365, false);
   assert.deepEqual(calls[0], ["manualOperation", "M365 Copilot logout"]);
   assert.deepEqual(calls[1], ["closeAuthView", authView, true, false]);
   assert.deepEqual(calls[2], ["clearStorageData"]);
@@ -1626,7 +1626,15 @@ test("a completed keyed turn is retained for thirty minutes and preserves its ac
     writeDescriptor() {},
     publishState() {},
     snapshot: () => ({ tabs: [] }),
-    m365SurfaceManager: { bind: (_key, id) => id },
+    providerRegistry: {
+      has: (id) => id === "m365",
+      get: () => ({
+        id: "m365",
+        displayName: "M365 Copilot",
+        normalizeConversationId: (id) => id,
+        bind: (_key, id) => id,
+      }),
+    },
     hide() {},
     logger: { info() {} },
   });

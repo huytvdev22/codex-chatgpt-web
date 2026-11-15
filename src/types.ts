@@ -297,11 +297,6 @@ export interface CodexProviderConfig {
     headed?: boolean;
     /** Attach the turn-bound Codex MCP capability for every connector-capable Web model. */
     localToolsEnabled?: boolean;
-    /** Account capability proven by the authenticated browser probe. */
-    solAvailable?: boolean;
-    /** Account capability proven by the authenticated browser probe. */
-    extraHighAvailable?: boolean;
-    proAvailable?: boolean;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
     /** Experimental transport: adapt one context across one, two, or six ChatGPT messages. */

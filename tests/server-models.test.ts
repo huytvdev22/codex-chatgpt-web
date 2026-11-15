@@ -52,11 +52,8 @@ test("returns only registered adapter models locally without native fallback", a
   expect(m365Default!.max_context_window).toBe(100_000);
 });
 
-test("M365 model catalog does not expose chatgpt-web routes regardless of legacy flags", async () => {
+test("M365 model catalog does not expose chatgpt-web routes even if legacy flags exist in loaded JSON", async () => {
   const config = defaultConfig("browser-only");
-  config.solAvailable = false;
-  config.extraHighAvailable = true;
-  config.proAvailable = true;
   const response = await modelsRequest(
     new Request("http://127.0.0.1:17841/v1/models", {
       headers: { authorization: "Bearer codex-oauth-token" },

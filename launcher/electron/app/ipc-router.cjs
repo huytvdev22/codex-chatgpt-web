@@ -104,6 +104,9 @@ class IpcRouter {
       const runtimeHost = getRuntimeHost();
       const browserHost = getBrowserHost();
       const updateController = getUpdateController();
+      const state = syncPrefs(runtimeHost?.runtimeConfigSnapshot().config);
+      const browser = browserHost?.snapshot() ?? null;
+      const providers = browser?.providers ?? browserHost?.listProviders?.() ?? [];
       return {
         profile: launcherProfile.kind,
         profilePaths: {
@@ -111,15 +114,16 @@ class IpcRouter {
           codexHome: launcherProfile.codexHome,
           userData: launcherUserData,
         },
-        state: syncPrefs(runtimeHost?.runtimeConfigSnapshot().config),
-        browser: browserHost?.snapshot() ?? null,
+        state,
+        browser,
+        providers,
         connectorName: runtimeHost ? runtimeHost.browserConnectorName() : "Codex Native2",
         urls: { github: githubUrl, x: xUrl },
         platform: process.platform,
         packaged: app.isPackaged,
         version: app.getVersion(),
-        smokePassed: isSmokePassedThisSession() || smokePassedForCurrentVersion(stateStore.read()),
-        m365SmokePassed: stateStore.read().m365SmokePassed === true,
+        smokePassed: isSmokePassedThisSession() || smokePassedForCurrentVersion(state),
+        smokePassedByProvider: state.smokePassedByProvider || {},
         operation: getLastOperation(),
         update: updateController?.getState() ?? { status: "disabled" },
       };
@@ -179,13 +183,35 @@ class IpcRouter {
     handle("launcher:browser-zoom", (_event, action) => getBrowserHost()?.zoom(action) ?? null);
     handle("launcher:browser-tab-select", (_event, tabId) => getBrowserHost()?.selectTab(tabId) ?? null);
     handle("launcher:browser-tab-close", (_event, tabId) => getBrowserHost()?.closeTab(tabId) ?? null);
-    handle("launcher:browser-login", async () => {
+    handle("launcher:list-providers", () => getBrowserHost()?.listProviders?.() ?? []);
+    handle("launcher:switch-provider", async (_event, providerId) => {
       if (!getBrowserHost()) await awaitRuntimeStartup();
-      return await getBrowserHost().openLogin();
+      const browserHost = getBrowserHost();
+      const nextSnapshot = await browserHost.switchProvider(providerId);
+      if (nextSnapshot?.provider) {
+        const updated = stateStore.update({ selectedProvider: nextSnapshot.provider });
+        send("launcher:state-changed", updated);
+      }
+      return nextSnapshot;
     });
-    handle("launcher:browser-smoke", async () => {
-      const result = await getBrowserHost().smokeTest();
-      stateStore.update({ m365SmokePassed: true, browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
+    handle("launcher:browser-login", async (_event, providerId) => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return await getBrowserHost().openLogin(providerId);
+    });
+    handle("launcher:browser-smoke", async (_event, providerId) => {
+      const browserHost = getBrowserHost();
+      const result = await browserHost.smokeTest(providerId);
+      const targetProvider = providerId || browserHost.provider || stateStore.read().selectedProvider || "m365";
+      const current = stateStore.read();
+      const updatedState = stateStore.update({
+        smokePassedByProvider: {
+          ...(current.smokePassedByProvider || {}),
+          [targetProvider]: { passed: true, version: app.getVersion() },
+        },
+        browserSmokePassed: true,
+        browserSmokeVersion: app.getVersion(),
+      });
+      send("launcher:state-changed", updatedState);
       markSmokePassedThisSession();
       return result;
     });
@@ -235,13 +261,20 @@ class IpcRouter {
       const runtimeHost = getRuntimeHost();
       const browser = await browserHost.probeAuthentication();
       if (!browser.authenticated) {
-        const anyPassed = setupState.m365SmokePassed || setupState.browserSmokePassed;
+        const smokeMap = setupState.smokePassedByProvider || {};
+        const activeProviderId = browser.provider || browserHost.provider || setupState.selectedProvider || "m365";
+        const anyProviderSmokePassed = Object.values(smokeMap).some((entry) => entry?.passed === true);
+        const anyPassed = smokeMap[activeProviderId]?.passed === true
+          || anyProviderSmokePassed
+          || setupState.browserSmokePassed === true;
         if (!anyPassed) {
           if (browser.status === "error") throw new Error(browser.message);
+          const providerInfo = (browserHost.listProviders?.() ?? []).find((item) => item.id === activeProviderId);
+          const providerLabel = providerInfo?.displayName || activeProviderId;
           throw new Error(
             isDevProfile
-              ? "Sign in to the isolated DEV M365 Copilot profile before configuring the harness"
-              : "Sign in to Microsoft 365 Copilot before installing the Codex integration",
+              ? `Sign in to the isolated DEV ${providerLabel} profile before configuring the harness`
+              : `Sign in to ${providerLabel} before installing the Codex integration`,
           );
         }
       }
@@ -273,7 +306,7 @@ class IpcRouter {
       const browserHost = getBrowserHost();
       const runtimeHost = getRuntimeHost();
       if (browserHost.activeTraceId || browserHost.currentOperation()) {
-        throw new Error("Finish active ChatGPT turns before changing the plugin name");
+        throw new Error("Finish active Web turns before changing the plugin name");
       }
       const result = await runtimeHost.setConnectorNameSuffix(suffix);
       if (!result.changed) return stateStore.read();

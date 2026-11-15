@@ -15,9 +15,6 @@ export interface WebToolCallDetectorOptions {
   renderThinkingInText?: boolean;
 }
 
-/** @deprecated Dùng `WebToolCallDetectorOptions` thay thế. */
-export type M365ToolCallDetectorOptions = WebToolCallDetectorOptions;
-
 /**
  * Các loại marker có thể xuất hiện khi detector đang ở trạng thái văn bản thường (ngoài mọi khối nội bộ).
  */
@@ -770,8 +767,5 @@ export function autoHealHtmlMangledTags(text: string): string {
 
   return healed;
 }
-
-/** @deprecated Dùng `WebToolCallDetector` thay thế. */
-export const M365ToolCallDetector = WebToolCallDetector;
 
 export { chatGptHtmlToMarkdown, htmlToMarkdown };

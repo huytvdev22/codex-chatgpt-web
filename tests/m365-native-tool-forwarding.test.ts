@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CodexTool } from "../src/types";
-import { M365ToolBridge } from "../src/adapters/web/tools/tool-bridge";
+import { WebToolBridge } from "../src/adapters/web/tools/tool-bridge";
 
 const functionTool = (
   name: string,
@@ -58,7 +58,7 @@ const APPLY_PATCH_TOOL = functionTool("apply_patch", {
 
 describe("M365 native tool forwarding regression coverage", () => {
   test("forwards the exact wire name advertised by the active inventory", () => {
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "write_stdin",
         arguments: {
@@ -79,7 +79,7 @@ describe("M365 native tool forwarding regression coverage", () => {
   });
 
   test("preserves the write_stdin session identifier without coercion or fallback", () => {
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "write_stdin",
         arguments: {
@@ -102,7 +102,7 @@ describe("M365 native tool forwarding regression coverage", () => {
   });
 
   test("forwards function arguments and supported execution metadata", () => {
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "exec_command",
         arguments: {
@@ -132,7 +132,7 @@ describe("M365 native tool forwarding regression coverage", () => {
   });
 
   test("preserves explicit approval metadata without inferring escalation", () => {
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "exec_command",
         arguments: {
@@ -161,7 +161,7 @@ describe("M365 native tool forwarding regression coverage", () => {
 +export const value = 2;
 *** End Patch`;
 
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "apply_patch",
         arguments: { input: `\n${patch}\n` },
@@ -175,7 +175,7 @@ describe("M365 native tool forwarding regression coverage", () => {
 
   test("rejects an action that is absent from the current active inventory", () => {
     expect(() =>
-      M365ToolBridge.mapToolCall(
+      WebToolBridge.mapToolCall(
         {
           name: "write_stdin",
           arguments: {
@@ -190,7 +190,7 @@ describe("M365 native tool forwarding regression coverage", () => {
 
   test("does not replace an unavailable semantic action with exec_command", () => {
     expect(() =>
-      M365ToolBridge.mapToolCall(
+      WebToolBridge.mapToolCall(
         {
           name: "apply_patch",
           arguments: {
@@ -204,7 +204,7 @@ describe("M365 native tool forwarding regression coverage", () => {
 
   test("rejects a completely unknown action instead of inventing an alias", () => {
     expect(() =>
-      M365ToolBridge.mapToolCall(
+      WebToolBridge.mapToolCall(
         {
           name: "made_up_action",
           arguments: {
@@ -217,7 +217,7 @@ describe("M365 native tool forwarding regression coverage", () => {
   });
 
   test("normalizes only the supported functions namespace prefix", () => {
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "functions.write_stdin",
         arguments: {
@@ -244,8 +244,8 @@ describe("M365 native tool forwarding regression coverage", () => {
       },
     };
 
-    const first = M365ToolBridge.mapToolCall(raw, [WRITE_STDIN_TOOL]);
-    const second = M365ToolBridge.mapToolCall(raw, [WRITE_STDIN_TOOL]);
+    const first = WebToolBridge.mapToolCall(raw, [WRITE_STDIN_TOOL]);
+    const second = WebToolBridge.mapToolCall(raw, [WRITE_STDIN_TOOL]);
 
     expect(second).toEqual(first);
     expect(JSON.parse(second.arguments).session_id).toBe(101);

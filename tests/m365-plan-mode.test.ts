@@ -10,7 +10,7 @@ import {
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
 } from "../src/adapters/web";
-import { M365OutputTranslator } from "../src/adapters/web/protocol";
+import { WebOutputTranslator } from "../src/adapters/web/protocol";
 import type { CodexParsedRequest } from "../src/types";
 
 function compileM365PromptViaWebCompiler(
@@ -201,8 +201,8 @@ describe("M365 Plan Mode Support", () => {
     expect(prompt).toContain(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
   });
 
-  test("M365OutputTranslator treats proposed_plan response as final_answer even with sample code blocks", () => {
-    const translator = new M365OutputTranslator();
+  test("WebOutputTranslator treats proposed_plan response as final_answer even with sample code blocks", () => {
+    const translator = new WebOutputTranslator();
     const rawWithPlan = `Dưới đây là kế hoạch chi tiết:
 
 <proposed_plan>

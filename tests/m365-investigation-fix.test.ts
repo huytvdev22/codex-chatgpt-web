@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
 import { CodexRawPayload } from "../src/adapters/web/normalization/codex-raw-payload";
-import { M365ToolBridge } from "../src/adapters/web/tools/tool-bridge";
-import { M365OutputTranslator, normalizeToolName, FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/web/protocol";
+import { WebToolBridge } from "../src/adapters/web/tools/tool-bridge";
+import { WebOutputTranslator, normalizeToolName, FastPathStreamBuffer, findSuffixPrefixOverlap } from "../src/adapters/web/protocol";
 import type { CodexTool } from "../src/types";
 
 describe("M365 Investigation & Fix Verification Tests", () => {
@@ -69,12 +69,12 @@ describe("M365 Investigation & Fix Verification Tests", () => {
   });
 
   describe("2. Tự động loại bỏ tiền tố functions. trong Tool Bridge và Output Translator", () => {
-    it("M365ToolBridge tự động chuyển functions.exec_command thành exec_command", () => {
+    it("WebToolBridge tự động chuyển functions.exec_command thành exec_command", () => {
       const clientTools: CodexTool[] = [
         { name: "exec_command", description: "", parameters: {} },
       ];
 
-      const mapped = M365ToolBridge.mapToolCall(
+      const mapped = WebToolBridge.mapToolCall(
         {
           name: "functions.exec_command",
           arguments: { cmd: "npm install && npm test" },
@@ -87,8 +87,8 @@ describe("M365 Investigation & Fix Verification Tests", () => {
       expect(args.cmd).toBe("npm install && npm test");
     });
 
-    it("M365OutputTranslator dịch <tool_call> chứa functions.exec_command thành exec_command", () => {
-      const translator = new M365OutputTranslator();
+    it("WebOutputTranslator dịch <tool_call> chứa functions.exec_command thành exec_command", () => {
+      const translator = new WebOutputTranslator();
       const raw = `<tool_call>
 {"name": "functions.exec_command", "arguments": {"cmd": "npm test"}}
 </tool_call>`;
@@ -161,8 +161,8 @@ describe("M365 Investigation & Fix Verification Tests", () => {
       expect(finalRes.markdown).toContain("*** End Patch");
       expect(finalRes.markdown).toContain("</custom_tool_call>");
 
-      // Kiểm chứng M365OutputTranslator nhận diện đúng apply_patch mà KHÔNG bị fallback sang final_answer
-      const translator = new M365OutputTranslator();
+      // Kiểm chứng WebOutputTranslator nhận diện đúng apply_patch mà KHÔNG bị fallback sang final_answer
+      const translator = new WebOutputTranslator();
       const translated = translator.translate(finalRes.markdown);
       expect(translated.type).toBe("tool_call");
       if (translated.type === "tool_call") {

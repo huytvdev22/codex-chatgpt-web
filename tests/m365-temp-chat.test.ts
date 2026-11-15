@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { stripOuterCodeFence } from "../src/adapters/web/protocol/strip-code-fence";
-import { M365OutputTranslator, PatchToolCallDetector, XmlToolCallDetector, M365ToolCallDetector } from "../src/adapters/web/protocol";
+import { WebOutputTranslator, PatchToolCallDetector, XmlToolCallDetector, WebToolCallDetector } from "../src/adapters/web/protocol";
 
 describe("M365 4-Backtick Transport Specification Tests", () => {
-  const translator = new M365OutputTranslator([new PatchToolCallDetector(), new XmlToolCallDetector()]);
+  const translator = new WebOutputTranslator([new PatchToolCallDetector(), new XmlToolCallDetector()]);
 
   describe("stripOuterCodeFence unit tests", () => {
     it("bóc chính xác lớp vỏ 4-backtick ````markdown và bảo toàn khối ```java bên trong", () => {
@@ -50,7 +50,7 @@ Nội dung 5 dấu backticks
     });
   });
 
-  describe("M365OutputTranslator với phản hồi được bọc 4-backtick", () => {
+  describe("WebOutputTranslator với phản hồi được bọc 4-backtick", () => {
     it("dịch thành công Tool Call XML khi nằm bên trong khối 4-backtick", () => {
       const rawResponse = `\`\`\`\`markdown
 Tôi sẽ đọc nội dung file:
@@ -133,8 +133,8 @@ tool_call>
       }
     });
 
-    it("M365ToolCallDetector nuốt trọn chuỗi tool_call> mà KHÔNG emit text_delta rò rỉ ra UI", () => {
-      const detector = new M365ToolCallDetector();
+    it("WebToolCallDetector nuốt trọn chuỗi tool_call> mà KHÔNG emit text_delta rò rỉ ra UI", () => {
+      const detector = new WebToolCallDetector();
       const chunk = `tool_call>
 {"name": "write_stdin", "arguments": {"session_id": 7198, "chars": "\\u0003"}}
 </tool_call>`;

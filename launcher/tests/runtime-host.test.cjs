@@ -67,7 +67,6 @@ test("core setup migrates a legacy full-harness configuration to browser-only", 
     "--browser-only",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
-    "--refresh-account-capabilities",
     "--replace-codex-route",
     "--acknowledge-unofficial",
     "--restart-service",
@@ -86,7 +85,7 @@ test("core setup starts in browser-only mode when no installation exists", async
   const result = await fixture.host.setupCore();
   assert.equal(result.mode, "browser-only");
   assert.deepEqual(fixture.invocation().args.slice(0, 2), ["setup", "--browser-only"]);
-  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
+  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
   assert.equal(fixture.invocation().args.includes("--replace-codex-route"), true);
   assert.equal(fixture.invocation().args.includes("--chrome"), false);
 });
@@ -103,7 +102,6 @@ test("DEV core setup configures only the isolated harness contract", async () =>
       "--browser-only",
       "--browser-host-descriptor",
       "/dev/runtime/launcher-browser.json",
-      "--refresh-account-capabilities",
       "--acknowledge-unofficial",
     ],
   });
@@ -224,8 +222,6 @@ test("launcher update transaction upgrades its owned browser-only runtime with s
     browserHost: "launcher",
     appName: "Codex Native2",
     releaseVersion: "1.1.1",
-    solAvailable: true,
-    extraHighAvailable: false, proAvailable: false,
   });
   fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
 
@@ -236,7 +232,6 @@ test("launcher update transaction upgrades its owned browser-only runtime with s
     "--browser-only",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
-    "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
   ]);
@@ -266,7 +261,6 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--browser-only",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
-    "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
   ]);
@@ -288,7 +282,7 @@ test("launcher update transaction does not preserve a stale disconnected route p
   assert.equal(result.updated, true);
   assert.equal("bridgeEnabled" in result, false);
   assert.equal(fixture.invocation().args.includes("disconnect"), false);
-  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
+  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
 });
 
 test("launcher update transaction leaves current and externally owned runtimes unchanged", async () => {

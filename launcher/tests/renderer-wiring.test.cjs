@@ -531,7 +531,7 @@ test("plugin rename rejects active browser work and emits updated connector name
     send: (channel, body) => events.push({ channel, body }),
   });
   const rename = handlers.get("launcher:connector-name");
-  await assert.rejects(rename(null, "Work"), /Finish active ChatGPT turns/);
+  await assert.rejects(rename(null, "Work"), /Finish active Web turns/);
   assert.equal(calls, 0);
   browserHost.activeTraceId = null;
   await assert.rejects(rename(null, "Work"), /setup failed/);
@@ -594,4 +594,63 @@ test("setup shows uninstall action after core setup and calls uninstallIntegrati
   assert.match(setupSlice, /api!\.uninstallIntegration\(\)/);
   assert.match(setupSlice, /label=\{copy\.uninstallIntegration\}/);
   assert.match(setupSlice, /\{copy\.uninstall\}/);
+});
+
+test("multi-provider IPC channels and dynamic provider rendering stay wired cleanly", async () => {
+  const vm = require("node:vm");
+  const handlers = new Map();
+  let state = { selectedProvider: "m365", smokePassedByProvider: {} };
+  const events = [];
+  const providers = [
+    { id: "m365", displayName: "M365 Copilot", homeUrl: "https://m365.cloud.microsoft/chat", partition: "persist:m365", active: true, authenticated: true },
+    { id: "gemini", displayName: "Gemini Web", homeUrl: "https://gemini.google.com/app", partition: "persist:gemini", active: false, authenticated: false },
+  ];
+  const browserHost = {
+    provider: "m365",
+    listProviders: () => providers,
+    switchProvider: async (id) => ({ provider: id, authenticated: id === "m365", providers }),
+    smokeTest: async (id) => ({ ok: true, provider: id || "m365", effort: "high", response: "OK" }),
+  };
+
+  assert.match(preloadSource, /listProviders:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:list-providers"\)/);
+  assert.match(preloadSource, /switchProvider:\s*\(providerId\)\s*=>\s*ipcRenderer\.invoke\("launcher:switch-provider",\s*providerId\)/);
+
+  vm.runInNewContext(
+    ipcRouterSource.slice(
+      ipcRouterSource.indexOf('handle("launcher:list-providers",'),
+      ipcRouterSource.indexOf('handle("launcher:doctor",'),
+    ),
+    {
+      handle: (name, handler) => handlers.set(name, handler),
+      getBrowserHost: () => browserHost,
+      awaitRuntimeStartup: async () => {},
+      stateStore: {
+        read: () => state,
+        update: (patch) => {
+          state = { ...state, ...patch };
+          return state;
+        },
+      },
+      app: { getVersion: () => "1.2.3" },
+      send: (channel, body) => events.push({ channel, body }),
+      markSmokePassedThisSession() {},
+    },
+  );
+
+  assert.equal((await handlers.get("launcher:list-providers")()).length, 2);
+  await handlers.get("launcher:switch-provider")(null, "gemini");
+  assert.equal(state.selectedProvider, "gemini");
+  await handlers.get("launcher:browser-smoke")(null, "gemini");
+  assert.deepEqual({ ...state.smokePassedByProvider.gemini }, { passed: true, version: "1.2.3" });
+  assert.equal("m365SmokePassed" in state, false);
+  assert.ok(events.some((event) => event.channel === "launcher:state-changed"));
+
+  const setupSlice = appSource.slice(appSource.indexOf("function SetupSurface("), appSource.indexOf("function SettingsSurface("));
+  assert.match(setupSlice, /resolveProviders\(browser,\s*snapshot\)/);
+  assert.doesNotMatch(setupSlice, /m365SmokePassed|m365Authenticated/);
+
+  const browserSlice = appSource.slice(appSource.indexOf("function BrowserSurface("), appSource.indexOf("function SetupSurface("));
+  assert.match(browserSlice, /className="provider-switcher"/);
+  assert.match(browserSlice, /api!\.switchProvider\(providerId\)/);
+  assert.match(browserSlice, /switchProvider\(item\.id\)/);
 });

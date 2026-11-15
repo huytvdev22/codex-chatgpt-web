@@ -55,8 +55,6 @@ test("Responses Lite exposes native exec from the default functions namespace on
 
 test("Responses Lite native exec survives a complete server request as one custom call", async () => {
   const config = defaultConfig("browser-only");
-  config.solAvailable = false;
-  config.proAvailable = false;
   const turnId = "turn_responses_lite_exec_regression";
   const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
     method: "POST",

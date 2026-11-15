@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { M365ToolCallDetector } from "../src/adapters/web/protocol/toolcall-detector";
+import { WebToolCallDetector } from "../src/adapters/web/protocol/toolcall-detector";
 
 /**
- * Regression: M365ToolCallDetector không được làm rò rỉ thẻ nội bộ (webResponse, thought, tool_call,
+ * Regression: WebToolCallDetector không được làm rò rỉ thẻ nội bộ (webResponse, thought, tool_call,
  * custom_tool_call, patch) hay mảnh thẻ dở dang (`</`) ra text_delta, bất kể chunk bị cắt ở vị trí nào.
  */
 
@@ -65,7 +65,7 @@ const FORBIDDEN_FRAGMENTS = [
 ];
 
 function runStream(chunks: string[]): { text: string; tool: string | null } {
-  const detector = new M365ToolCallDetector({ renderThinkingInText: true });
+  const detector = new WebToolCallDetector({ renderThinkingInText: true });
   let text = "";
   for (const chunk of chunks) {
     text += detector.feed(chunk);
@@ -90,7 +90,7 @@ function assertClean(sample: StreamSample, chunks: string[], label: string): voi
   expect(tool).toBe(sample.expectedTool);
 }
 
-describe("M365ToolCallDetector streaming leak regression", () => {
+describe("WebToolCallDetector streaming leak regression", () => {
   for (const sample of SAMPLES) {
     test(`${sample.name}: một chunk duy nhất`, () => {
       assertClean(sample, [sample.raw], "single chunk");
@@ -129,7 +129,7 @@ describe("M365ToolCallDetector streaming leak regression", () => {
   });
 
   test("thẻ đóng </custom_tool_call> bị cắt giữa 2 chunk vẫn phát hiện tool", () => {
-    const detector = new M365ToolCallDetector();
+    const detector = new WebToolCallDetector();
     detector.feed("<custom_tool_call name=\"apply_patch\">\n*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch\n</custom_tool_");
     detector.feed("call>");
     expect(detector.hasDetectedToolCall()).toBe(true);

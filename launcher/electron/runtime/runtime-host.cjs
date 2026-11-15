@@ -644,7 +644,6 @@ class RuntimeHost {
       "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      "--refresh-account-capabilities",
       "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
@@ -670,7 +669,6 @@ class RuntimeHost {
       "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      "--refresh-account-capabilities",
       "--acknowledge-unofficial",
     ];
     const result = await this.runDevSetup("dev-profile-setup", args, {
@@ -815,9 +813,6 @@ class RuntimeHost {
       "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      // A release may repair capability detection. Reusing the previous result can
-      // keep eligible models disabled even after the corrected probe is installed.
-      "--refresh-account-capabilities",
       "--acknowledge-unofficial",
       "--restart-service",
     ];

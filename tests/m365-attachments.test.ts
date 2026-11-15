@@ -7,7 +7,7 @@ import {
   PLUS_MENU_SELECTORS,
 } from "../src/adapters/m365-copilot/attachments";
 import { promptCompiler } from "../src/adapters/web/prompt/compiler";
-import { M365_IMAGE_ATTACHMENT_HINT } from "../src/adapters/web/prompt/templates";
+import { WEB_IMAGE_ATTACHMENT_HINT } from "../src/adapters/web/prompt/templates";
 import type { NormalizedImageAttachment } from "../src/adapters/web/normalization/canonical-types";
 
 describe("M365 Copilot Image Attachments (Phương án 1)", () => {
@@ -77,7 +77,7 @@ describe("M365 Copilot Image Attachments (Phương án 1)", () => {
     expect(payloads[0]!.buffer.length).toBe(sampleAttachment.buffer.length);
   });
 
-  test("4. promptCompiler đính kèm M365_IMAGE_ATTACHMENT_HINT khi request có ảnh", () => {
+  test("4. promptCompiler đính kèm WEB_IMAGE_ATTACHMENT_HINT khi request có ảnh", () => {
     const rawPayload = CodexRawPayload.from({
       input: [
         {
@@ -97,7 +97,7 @@ describe("M365 Copilot Image Attachments (Phương án 1)", () => {
       isNewConversation: true,
     });
 
-    expect(result.finalPrompt).toContain(M365_IMAGE_ATTACHMENT_HINT);
+    expect(result.finalPrompt).toContain(WEB_IMAGE_ATTACHMENT_HINT);
   });
 
   test("5. attachFilesViaPlusMenu tương tác chuẩn xác với PlusMenuButton và filechooser", async () => {

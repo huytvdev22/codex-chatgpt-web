@@ -30,6 +30,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       useSavedChats: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
+      smokePassedByProvider: {},
       sidebarOpen: true,
       sidebarWidth: 252,
       sessionRefreshReminderAt: null,
@@ -41,6 +42,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       keepRunningOnClose: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
+      smokePassedByProvider: { m365: { passed: true, version: "0.2.0" } },
     });
     assert.deepEqual(createStateStore(file).read(), {
       version: 1,
@@ -57,6 +59,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       useSavedChats: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
+      smokePassedByProvider: { m365: { passed: true, version: "0.2.0" } },
       sidebarOpen: true,
       sidebarWidth: 252,
       sessionRefreshReminderAt: null,
@@ -134,10 +137,34 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       useSavedChats: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
+      smokePassedByProvider: {},
       sidebarOpen: true,
       sidebarWidth: 252,
       sessionRefreshReminderAt: null,
       selectedProvider: "m365",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy browserSmokePassed migrates into smokePassedByProvider and accepts custom providers", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-state-migrate-"));
+  const file = path.join(root, "state.json");
+  try {
+    fs.writeFileSync(file, JSON.stringify({
+      version: 1,
+      browserSmokePassed: true,
+      browserSmokeVersion: "0.1.9",
+      selectedProvider: "gemini",
+    }));
+    const state = createStateStore(file, {
+      defaultProvider: "m365",
+      isValidProvider: (id) => id === "m365" || id === "gemini",
+    }).read();
+    assert.equal(state.selectedProvider, "gemini");
+    assert.deepEqual(state.smokePassedByProvider, {
+      gemini: { passed: true, version: "0.1.9" },
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

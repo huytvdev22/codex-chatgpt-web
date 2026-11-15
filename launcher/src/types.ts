@@ -4,6 +4,20 @@ export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type Surface = "browser" | "setup" | "settings";
 
+export interface BrowserProviderInfo {
+  id: string;
+  displayName: string;
+  homeUrl: string;
+  partition: string;
+  active: boolean;
+  authenticated: boolean;
+}
+
+export interface ProviderSmokeStatus {
+  passed: boolean;
+  version: string | null;
+}
+
 export interface LauncherState {
   version: 1;
   language: Language | null;
@@ -21,6 +35,7 @@ export interface LauncherState {
   sidebarWidth: number;
   browserSmokePassed?: boolean;
   browserSmokeVersion?: string | null;
+  smokePassedByProvider?: Record<string, ProviderSmokeStatus>;
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
   codexRestartRequired?: boolean;
@@ -34,7 +49,8 @@ export interface BrowserState {
   url: string;
   title: string;
   authenticated: boolean;
-  m365Authenticated?: boolean;
+  authenticatedByProvider?: Record<string, boolean>;
+  providers?: BrowserProviderInfo[];
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -90,6 +106,7 @@ export interface LauncherSnapshot {
   };
   state: LauncherState;
   browser: BrowserState | null;
+  providers?: BrowserProviderInfo[];
   connectorName: string;
   urls: {
     github: string;
@@ -99,7 +116,7 @@ export interface LauncherSnapshot {
   packaged: boolean;
   version: string;
   smokePassed: boolean;
-  m365SmokePassed?: boolean;
+  smokePassedByProvider?: Record<string, ProviderSmokeStatus>;
   operation: OperationState | null;
   update: UpdateState;
 }
@@ -119,8 +136,10 @@ export interface LauncherApi {
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string): Promise<BrowserState>;
-  openLogin(): Promise<BrowserState>;
-  smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
+  listProviders(): Promise<BrowserProviderInfo[]>;
+  switchProvider(providerId: string): Promise<BrowserState>;
+  openLogin(providerId?: string): Promise<BrowserState>;
+  smokeTest(providerId?: string): Promise<{ ok: boolean; effort: string; response: string }>;
   doctor(): Promise<DoctorReport>;
   cancelTurns(): Promise<{ stdout: string }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;

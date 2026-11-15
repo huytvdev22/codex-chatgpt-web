@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { m365HtmlToMarkdown, M365MarkdownBuffer, type M365MarkdownBlock } from "../src/adapters/web/protocol";
+import { m365HtmlToMarkdown } from "../src/adapters/m365-copilot";
+import { SemanticMarkdownBuffer, type SemanticMarkdownBlock } from "../src/adapters/web/protocol";
 
 describe("m365HtmlToMarkdown", () => {
   it("strips thinking indicators from response start", () => {
@@ -47,13 +48,13 @@ describe("m365HtmlToMarkdown", () => {
   });
 });
 
-describe("M365MarkdownBuffer", () => {
+describe("SemanticMarkdownBuffer", () => {
   it("streams blocks sequentially without corrupting code blocks or prefix mismatch", () => {
-    const buffer = new M365MarkdownBuffer();
+    const buffer = new SemanticMarkdownBuffer();
     const emittedChunks: string[] = [];
 
     // Nhịp 1: Copilot sinh ra đoạn mở đầu, chưa có khối kế tiếp
-    const step1Blocks: M365MarkdownBlock[] = [
+    const step1Blocks: SemanticMarkdownBlock[] = [
       {
         key: "block-0-p",
         tag: "p",
@@ -67,7 +68,7 @@ describe("M365MarkdownBuffer", () => {
     expect(chunk1).toBe(""); // Chưa có khối kế tiếp nên chưa emit
 
     // Nhịp 2: Khối code block bắt đầu xuất hiện, khối mở đầu hoàn tất
-    const step2Blocks: M365MarkdownBlock[] = [
+    const step2Blocks: SemanticMarkdownBlock[] = [
       {
         key: "block-0-p",
         tag: "p",
@@ -88,7 +89,7 @@ describe("M365MarkdownBuffer", () => {
     expect(chunk2).toBe("Dưới đây là một chương trình **Hello World** đơn giản bằng Java:");
 
     // Nhịp 3: Khối tiêu đề kế tiếp xuất hiện, code block hoàn tất 100%
-    const step3Blocks: M365MarkdownBlock[] = [
+    const step3Blocks: SemanticMarkdownBlock[] = [
       {
         key: "block-0-p",
         tag: "p",
@@ -129,12 +130,12 @@ describe("M365MarkdownBuffer", () => {
   });
 
   it("strictly preserves in-order blocks without omitting text or duplicating sections", () => {
-    const buffer = new M365MarkdownBuffer();
+    const buffer = new SemanticMarkdownBuffer();
     const emittedChunks: string[] = [];
 
     // Mô phỏng lượt sinh phức tạp gồm nhiều section có <br>, code block và danh sách
     // Nhịp 1: Section 5 với Entities và AssignData (chưa có AssignHistory)
-    const step1Blocks: M365MarkdownBlock[] = [
+    const step1Blocks: SemanticMarkdownBlock[] = [
       {
         key: "block-0-p",
         tag: "p",
@@ -158,7 +159,7 @@ describe("M365MarkdownBuffer", () => {
     expect(chunk1).not.toContain("Business Service"); // Khối 1 chưa streamable
 
     // Nhịp 2: Section 9 hoàn tất với Business Service và khối tiếp theo xuất hiện
-    const step2Blocks: M365MarkdownBlock[] = [
+    const step2Blocks: SemanticMarkdownBlock[] = [
       ...step1Blocks.slice(0, 1),
       {
         ...step1Blocks[1],
@@ -179,7 +180,7 @@ describe("M365MarkdownBuffer", () => {
     expect(chunk2).not.toContain("log.info"); // Khối code chưa streamable
 
     // Nhịp 3: Khối code hoàn tất, khối kết luận xuất hiện
-    const step3Blocks: M365MarkdownBlock[] = [
+    const step3Blocks: SemanticMarkdownBlock[] = [
       step2Blocks[0],
       step2Blocks[1],
       {

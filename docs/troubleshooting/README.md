@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **053** | Dọn dẹp nợ kỹ thuật đa provider (alias `M365*`, legacy capability probe, state/IPC/UI Launcher) | `core`, `web`, `launcher`, `all-providers` | ⏳ Chờ User Test & Confirm | ./053-clean-multi-provider-tech-debt.md |
 | **052** | Tái cấu trúc Electron Launcher theo OOP đa Provider và phân tách thư mục (`app/`, `browser/`, `runtime/`, `infra/`) | `launcher`, `electron`, `m365-copilot`, `architecture` | ⏳ Chờ User Test & Confirm | ./052-electron-launcher-oop-refactor.md |
 | **051** | Turndown thoát ký tự Markdown (`\_`, `\*`, `\[`) làm hỏng JSON Structured Output trên M365 | `core`, `web`, `m365-copilot` | ⏳ Chờ User Test & Confirm | ./051-m365-turndown-escaped-json-schema.md |
 | **050** | Tối ưu prompt Structured Output (`json_schema`) và tự đóng tab phụ sinh tiêu đề | `core`, `web`, `m365-copilot`, `launcher` | ⏳ Chờ User Test & Confirm | ./050-m365-structured-output-and-ephemeral-tab.md |

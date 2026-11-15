@@ -81,7 +81,6 @@ function turnManagerFor(host) {
 
 function surfaceIdForHost(host, providerId) {
   const id = providerId || host.provider || "m365";
-  if (id === "m365" && host.m365SurfaceId) return host.m365SurfaceId;
   if (!host.surfaceIds) return host.surfaceId;
   if (!host.surfaceIds.has(id)) {
     host.surfaceIds.set(id, randomBytes(24).toString("base64url"));
@@ -139,15 +138,16 @@ class BrowserHost {
     this.publishState = publishState;
     this.showWindow = showWindow;
     this.getUseSavedChats = getUseSavedChats;
-    this.m365SurfaceManager = this.providerRegistry.has("m365")
-      ? this.providerRegistry.get("m365")
-      : null;
 
     this.surfaceIds = new Map();
     const initialSurfaceId = randomBytes(24).toString("base64url");
     this.surfaceIds.set(this.provider, initialSurfaceId);
     this.surfaceId = initialSurfaceId;
-    this.m365SurfaceId = this.provider === "m365" ? initialSurfaceId : null;
+    this.authenticatedByProvider = {};
+    for (const registeredProvider of this.providerRegistry.list()) {
+      this.authenticatedByProvider[registeredProvider.id] = false;
+    }
+    this.providerViews = new Map();
 
     this.visible = false;
     this.surfaceActive = true;
@@ -186,8 +186,6 @@ class BrowserHost {
       zoomFactor: 1,
       provider: this.provider,
     };
-    this.m365Authenticated = false;
-    this.m365View = null;
 
     this.turnTabManager = new TurnTabManager(this);
     this.primaryViewManager = new PrimaryViewManager({
@@ -207,7 +205,7 @@ class BrowserHost {
         });
       },
       onCreate: (providerName, view) => {
-        if (providerName === "m365") this.m365View = view;
+        this.providerViews?.set(providerName, view);
         const providerObj = resolveProviderFromHost(this, providerName);
         if (view?.webContents?.session) {
           providerObj.onPrimarySessionCreated(view.webContents.session, this);
@@ -248,30 +246,40 @@ class BrowserHost {
   }
 
   _surfaceIdFor(providerId) {
-    const id = providerId || this.provider || "m365";
-    if (id === "m365" && this.m365SurfaceId) return this.m365SurfaceId;
-    if (!this.surfaceIds) return this.surfaceId;
-    if (!this.surfaceIds.has(id)) {
-      this.surfaceIds.set(id, randomBytes(24).toString("base64url"));
-    }
-    return this.surfaceIds.get(id);
+    return surfaceIdForHost(this, providerId);
   }
 
   getHomeUrl() {
     return resolveProviderFromHost(this).homeUrl;
   }
 
+  listProviders() {
+    const list = this.providerRegistry ? this.providerRegistry.list() : [];
+    return list.map((providerObj) => ({
+      id: providerObj.id,
+      displayName: providerObj.displayName,
+      homeUrl: providerObj.homeUrl,
+      partition: providerObj.partition,
+      active: providerObj.id === this.provider,
+      authenticated: Boolean(this.authenticatedByProvider?.[providerObj.id]),
+    }));
+  }
+
   releaseInactivePrimaryViews(activeProvider) {
     if (!this.primaryViewManager) return;
-    for (const providerId of this.providerRegistry ? this.providerRegistry.listIds() : ["m365"]) {
+    const candidates = new Set([
+      ...(this.providerRegistry ? this.providerRegistry.listIds() : []),
+      ...(this.providerViews ? this.providerViews.keys() : []),
+    ]);
+    for (const providerId of candidates) {
       if (providerId === activeProvider) continue;
       const hasManagedView = typeof this.primaryViewManager.has === "function"
         ? this.primaryViewManager.has(providerId)
-        : (providerId === "m365" && Boolean(this.m365View));
+        : Boolean(this.providerViews?.has(providerId));
       if (!hasManagedView) continue;
       const view = typeof this.primaryViewManager.get === "function"
         ? this.primaryViewManager.get(providerId)
-        : (providerId === "m365" ? this.m365View : null);
+        : (this.providerViews?.get(providerId) || null);
       const contents = view?.webContents;
       if (contents && this.shellZoomShortcutBindings) {
         const binding = this.shellZoomShortcutBindings.get(contents);
@@ -281,12 +289,12 @@ class BrowserHost {
         this.shellZoomShortcutBindings.delete(contents);
       }
       this.primaryViewManager.destroy(providerId);
-      if (providerId === "m365") this.m365View = null;
+      this.providerViews?.delete(providerId);
     }
   }
 
   async switchProvider(providerId) {
-    if (!hasProviderOnHost(this, providerId)) return;
+    if (!hasProviderOnHost(this, providerId)) return this.snapshot();
     const providerObj = resolveProviderFromHost(this, providerId);
     this.provider = providerObj.id;
     const viewExisted = this.primaryViewManager.has(providerObj.id);
@@ -298,8 +306,13 @@ class BrowserHost {
       this.bindAuthenticationChanges();
     }
     this.surfaceId = surfaceIdForHost(this, providerObj.id);
-    if (providerObj.id === "m365") this.m365SurfaceId = this.surfaceId;
     this.partition = providerObj.partition;
+    const cachedAuth = Boolean(this.authenticatedByProvider?.[providerObj.id]);
+    this.setState({
+      provider: providerObj.id,
+      title: providerObj.getFallbackTitle(),
+      authenticated: cachedAuth,
+    });
 
     this.releaseInactivePrimaryViews(providerObj.id);
     this.primaryViewManager.activate(
@@ -322,7 +335,9 @@ class BrowserHost {
     this.syncViewVisibility();
     await this.probeAuthentication();
     this.writeDescriptor();
-    this.publishState?.(this.snapshot());
+    const snap = this.snapshot();
+    this.publishState?.(snap);
+    return snap;
   }
 
   async ready() {
@@ -478,7 +493,7 @@ class BrowserHost {
         const url = contents.getURL();
         if (isActive) {
           if (this.state?.status === "loading" && !this.activeTraceId && !this.manualOperation) {
-            const isAuth = Boolean(this.m365Authenticated);
+            const isAuth = Boolean(this.authenticatedByProvider?.[providerName]);
             this.setState({
               status: isAuth ? "ready" : "signed-out",
               message: isAuth ? `${providerObj.displayName} is ready` : `Sign in to ${providerObj.displayName}`,
@@ -544,8 +559,6 @@ class BrowserHost {
 
     if (singleView && singleProvider) {
       bindFor(singleView, singleProvider);
-    } else if (this.m365View) {
-      bindFor(this.m365View, "m365");
     } else if (this.view) {
       bindFor(this.view, this.provider || "m365");
     }
@@ -586,7 +599,11 @@ class BrowserHost {
     };
     const sessions = new Set();
     if (this.view?.webContents?.session?.cookies) sessions.add(this.view.webContents.session.cookies);
-    if (this.m365View?.webContents?.session?.cookies) sessions.add(this.m365View.webContents.session.cookies);
+    if (this.providerViews) {
+      for (const view of this.providerViews.values()) {
+        if (view?.webContents?.session?.cookies) sessions.add(view.webContents.session.cookies);
+      }
+    }
     for (const sessionCookies of sessions) {
       if (this.authenticationCookieBindings.has(sessionCookies)) continue;
       sessionCookies.on("changed", listener);
@@ -674,7 +691,8 @@ class BrowserHost {
       }),
       activeTabId: this.selectedTabId,
       provider: this.provider,
-      m365Authenticated: this.m365Authenticated,
+      providers: typeof this.listProviders === "function" ? this.listProviders() : [],
+      authenticatedByProvider: { ...(this.authenticatedByProvider || {}) },
       tabs: includeHomeTab
         ? (this.turnTabs.size > 0
             ? [
@@ -1099,7 +1117,7 @@ class BrowserHost {
     conversationKey,
     connectorIdentity,
     requireRetainedConversation = false,
-    providerOrSignal = "m365",
+    providerOrSignal = this.provider || "m365",
     acquisitionSignal,
   ) {
     return turnManagerFor(this).beginTurn(
@@ -1149,7 +1167,10 @@ class BrowserHost {
     });
   }
 
-  openLogin() {
+  async openLogin(providerId) {
+    if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
+      await this.switchProvider(providerId);
+    }
     const providerObj = resolveProviderFromHost(this);
     this.homeSurfaceOpen = true;
     this.activateHomeSurface();
@@ -1158,7 +1179,7 @@ class BrowserHost {
     if (!providerObj.isAuthOrAppUrl(current)) {
       void this.view.webContents.loadURL(providerObj.homeUrl);
     }
-    return Promise.resolve(this.snapshot());
+    return this.snapshot();
   }
 
   async logout() {
@@ -1167,7 +1188,8 @@ class BrowserHost {
       if (this.authView) this.closeAuthView(this.authView, true, false);
       const contents = this.view.webContents;
       await contents.session.clearStorageData();
-      this.m365Authenticated = false;
+      this.authenticatedByProvider ||= {};
+      this.authenticatedByProvider[providerObj.id] = false;
       this.setState({
         authenticated: false,
         loading: true,
@@ -1185,7 +1207,9 @@ class BrowserHost {
 
   refreshAuthentication() {
     const providerObj = resolveProviderFromHost(this);
-    const targetView = (providerObj.id === "m365" ? this.m365View : null) || this.view;
+    const targetView = this.primaryViewManager?.get?.(providerObj.id)
+      || this.providerViews?.get?.(providerObj.id)
+      || this.view;
     const currentUrl = targetView?.webContents?.getURL() || "";
     const loadPromise = !providerObj.isAuthOrAppUrl(currentUrl)
       ? Promise.resolve(targetView?.webContents?.loadURL?.(providerObj.homeUrl)).catch(() => {})
@@ -1220,9 +1244,10 @@ class BrowserHost {
       }
       const result = await providerObj.probeAuthentication(this.view.webContents);
       if (revision !== this.authenticationRevision) return this.snapshot();
+      this.authenticatedByProvider ||= {};
       if (result.authenticated) {
         this.reauthenticationRequired = false;
-        this.m365Authenticated = true;
+        this.authenticatedByProvider[providerObj.id] = true;
         if (this.authView && !this.authView.webContents.isDestroyed()) {
           this.closeAuthView(this.authView, true, false);
         }
@@ -1237,7 +1262,7 @@ class BrowserHost {
           loading: false,
         });
       } else {
-        this.m365Authenticated = false;
+        this.authenticatedByProvider[providerObj.id] = false;
         const loaded = result.readyState === "complete";
         this.setState({
           status: loaded ? "signed-out" : "loading",
@@ -1259,7 +1284,10 @@ class BrowserHost {
     return tracked;
   }
 
-  async smokeTest() {
+  async smokeTest(providerId) {
+    if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
+      await this.switchProvider(providerId);
+    }
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
   }
 
@@ -1283,13 +1311,11 @@ class BrowserHost {
 
   async runSessionInspection() {
     const liveUrl = (this.view && !this.view.webContents.isDestroyed()) ? this.view.webContents.getURL() : "";
+    const snapshot = await this.probeAuthentication();
     return {
-      authenticated: true,
-      temporary: true,
-      url: liveUrl,
-      solAvailable: true,
-      extraHighAvailable: true,
-      proAvailable: true,
+      authenticated: Boolean(snapshot?.authenticated),
+      url: snapshot?.url || liveUrl,
+      provider: this.provider,
     };
   }
 
@@ -1316,7 +1342,7 @@ class BrowserHost {
       if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
       this.manualOperation = null;
       if (!this.activeTraceId && this.state) {
-        const isAuth = Boolean(this.m365Authenticated);
+        const isAuth = Boolean(this.authenticatedByProvider?.[this.provider]);
         const currentStatus = this.state?.status;
         if (currentStatus === "loading" || currentStatus === "testing") {
           this.setState({
@@ -1332,8 +1358,23 @@ class BrowserHost {
 
   writeDescriptor() {
     const surfaceTargets = {};
+    const providerSurfaceIds = {};
+    if (this.surfaceIds) {
+      for (const [providerId, surfaceId] of this.surfaceIds.entries()) {
+        if (surfaceId) providerSurfaceIds[providerId] = surfaceId;
+      }
+    }
+    const providerPrimarySurfaces = [];
+    if (this.surfaceIds) {
+      for (const [providerId, surfaceId] of this.surfaceIds.entries()) {
+        const view = this.primaryViewManager?.get?.(providerId) || this.providerViews?.get?.(providerId);
+        if (surfaceId && view) {
+          providerPrimarySurfaces.push([surfaceId, view.webContents]);
+        }
+      }
+    }
     const surfaces = [
-      ...(this.m365SurfaceId && this.m365View ? [[this.m365SurfaceId, this.m365View?.webContents]] : []),
+      ...providerPrimarySurfaces,
       ...(this.surfaceId && this.view ? [[this.surfaceId, this.view?.webContents]] : []),
       ...[...this.turnTabs.values()].map(tab => [tab.surfaceId, tab.view?.webContents || tab.view]),
     ];
@@ -1353,10 +1394,10 @@ class BrowserHost {
       partition: this.partition,
       idleUrl: IDLE_BROWSER_URL,
       surfaceId: this.surfaceId,
-      m365SurfaceId: this.m365SurfaceId,
       activeSurfaceId: this.surfaceId,
+      providerSurfaceIds,
       surfaceTargets,
-      provider: this.provider || "m365",
+      provider: this.provider || this.providerRegistry?.defaultId?.() || "m365",
       createdAt: new Date().toISOString(),
     };
     writePrivateFileAtomic(this.descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
@@ -1395,7 +1436,7 @@ class BrowserHost {
     this.clearHomeNavigationTimeout();
     this.turnTabManager?.destroy();
     this.primaryViewManager?.destroyAll();
-    this.m365View = null;
+    this.providerViews?.clear();
     this.view = null;
   }
 }

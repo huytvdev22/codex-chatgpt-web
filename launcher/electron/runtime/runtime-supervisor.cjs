@@ -94,12 +94,20 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   } else if (config.purpose !== undefined) {
     throw new Error("Production launcher refuses a DEV harness configuration");
   }
-  if (config.solAvailable === undefined) config = { ...config, solAvailable: true };
-  if (config.mode === "full") {
-    config = { ...config, mode: "browser-only" };
-    delete config.tunnel;
-    delete config.automaticTunnel;
-    delete config.manualTunnel;
+  const hasLegacyCapabilities = config.solAvailable !== undefined
+    || config.extraHighAvailable !== undefined
+    || config.proAvailable !== undefined;
+  if (config.mode === "full" || hasLegacyCapabilities) {
+    config = { ...config };
+    if (config.mode === "full") {
+      config.mode = "browser-only";
+      delete config.tunnel;
+      delete config.automaticTunnel;
+      delete config.manualTunnel;
+    }
+    delete config.solAvailable;
+    delete config.extraHighAvailable;
+    delete config.proAvailable;
   }
   if (config.mode !== "browser-only") {
     throw new Error("Runtime configuration has an invalid mode");
@@ -144,16 +152,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   } else if (!absolutePath(config.brokerSocketPath, platform) || windowsPipeEndpoint(config.brokerSocketPath)) {
     throw new Error("Runtime configuration has an invalid Unix broker socket");
   }
-  for (const key of ["headed", "solAvailable", "proAvailable", "autoApproveToolCalls"]) {
+  for (const key of ["headed", "autoApproveToolCalls"]) {
     if (typeof config[key] !== "boolean") {
       throw new Error(`Runtime configuration has an invalid ${key}`);
     }
-  }
-  if (config.extraHighAvailable !== undefined && typeof config.extraHighAvailable !== "boolean") {
-    throw new Error("Runtime configuration has an invalid extraHighAvailable");
-  }
-  if (config.extraHighAvailable === true && !config.solAvailable) {
-    throw new Error("Runtime configuration cannot enable Extra High without Sol");
   }
   if (config.experimentalBiggerContext !== undefined
     && typeof config.experimentalBiggerContext !== "boolean") {
@@ -166,9 +168,6 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   if (config.stallTimeoutSec !== undefined
     && (!Number.isFinite(config.stallTimeoutSec) || config.stallTimeoutSec <= 0)) {
     throw new Error("Runtime configuration has an invalid stallTimeoutSec");
-  }
-  if (config.proAvailable && !config.solAvailable) {
-    throw new Error("Runtime configuration cannot enable Pro without Sol");
   }
   if (!Array.isArray(config.runtimeCommand)
     || config.runtimeCommand.length === 0

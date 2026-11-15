@@ -273,14 +273,12 @@ test("launcher session verification uses the authenticated control channel inste
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     expect(request.url).toBe("/v1/session/inspect");
     expect(request.headers.authorization).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
-    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toEqual({ detectCapabilities: true });
+    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toEqual({});
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       authenticated: true,
-      temporary: true,
-      solAvailable: true,
-      extraHighAvailable: true, proAvailable: true,
-      url: "https://chatgpt.com/?temporary-chat=true",
+      url: "https://m365.cloud.microsoft/chat",
+      provider: "m365",
     }));
   });
   await new Promise<void>((resolve, reject) => {
@@ -291,10 +289,9 @@ test("launcher session verification uses the authenticated control channel inste
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server has no port");
     const path = descriptorFile(`http://127.0.0.1:${address.port}`);
-    expect(await inspectLauncherBrowserHost(path, { detectCapabilities: true })).toEqual({
-      solAvailable: true,
-      extraHighAvailable: true, proAvailable: true,
-      url: "https://chatgpt.com/?temporary-chat=true",
+    expect(await inspectLauncherBrowserHost(path)).toEqual({
+      url: "https://m365.cloud.microsoft/chat",
+      provider: "m365",
     });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -352,7 +349,7 @@ test("launcher session verification reports its own deadline instead of a generi
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server has no port");
     const path = descriptorFile(`http://127.0.0.1:${address.port}`);
-    await expect(inspectLauncherBrowserHost(path, { detectCapabilities: true, timeoutMs: 5 }))
+    await expect(inspectLauncherBrowserHost(path, { timeoutMs: 5 }))
       .rejects.toThrow("session inspection timed out after 5ms");
   } finally {
     await new Promise<void>(resolveClose => server.close(() => resolveClose()));
@@ -456,4 +453,71 @@ test("launcher page selection stops immediately when acquisition is aborted", as
     descriptor.surfaceId,
     controller.signal,
   )).rejects.toMatchObject({ name: "AbortError" });
+});
+
+test("launcher descriptor and turn lifecycle accept generalized providerSurfaceIds, partitions, and conversation ids", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-launcher-multiprovider-"));
+  roots.push(root);
+  const path = join(root, "launcher-browser.json");
+  let endBody: unknown = null;
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    endBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end('{"ok":true,"cancelledByUser":false}\n');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server has no port");
+    writeFileSync(path, `${JSON.stringify({
+      version: 3,
+      kind: LAUNCHER_BROWSER_HOST_KIND,
+      profile: "production",
+      pid: process.pid,
+      endpoint: "http://127.0.0.1:39110",
+      control: {
+        endpoint: `http://127.0.0.1:${address.port}`,
+        token: "launcher-control-token-0123456789abcdefghijklmnop",
+      },
+      helper: {
+        executable: process.execPath,
+        script: import.meta.path,
+      },
+      partition: "persist:codex-web-gemini",
+      idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+      surfaceId: "launcher_surface_id_0123456789AB",
+      providerSurfaceIds: {
+        m365: "launcher_surface_m365_0123456789",
+        gemini: "launcher_surface_gemini_01234567",
+      },
+      surfaceTargets: { ["launcher_surface_id_0123456789AB"]: "native-owned-target" },
+      createdAt: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+
+    const parsed = readLauncherBrowserHostDescriptor(path);
+    expect(parsed.partition).toBe("persist:codex-web-gemini");
+    expect(parsed.providerSurfaceIds).toEqual({
+      m365: "launcher_surface_m365_0123456789",
+      gemini: "launcher_surface_gemini_01234567",
+    });
+
+    await expect(notifyLauncherTurn(path, {
+      phase: "end",
+      traceId: "multi123456",
+      helperPid: process.pid,
+      status: "completed",
+      retain: true,
+      conversationId: "gemini:thread_abc-123.xyz",
+    })).resolves.toEqual({ cancelledByUser: false });
+    expect(endBody).toMatchObject({
+      conversationId: "gemini:thread_abc-123.xyz",
+    });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });

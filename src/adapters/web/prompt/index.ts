@@ -13,7 +13,6 @@ export {
   TOOL_RESULT_HINTS,
   OUTPUT_FORMAT_HINTS,
   WEB_IMAGE_ATTACHMENT_HINT,
-  M365_IMAGE_ATTACHMENT_HINT,
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   PURE_CONVERSATION_ANCHOR,
@@ -39,7 +38,6 @@ export {
   sanitizeCodexInstructions,
   DEFAULT_MAX_WEB_PROMPT_CHARS,
   WebPromptCompiler,
-  M365PromptCompiler,
   promptCompiler,
   truncateToolResult,
   isImplementingPlanRequest,
@@ -53,7 +51,5 @@ export {
 
 export {
   buildFormatRetryPrompt,
-  buildM365FormatRetryPrompt,
   type FormatRetryOptions,
-  type M365FormatRetryOptions,
 } from "./templates";

@@ -69,9 +69,6 @@ export interface NormalizedExecutionPolicy {
  */
 export const DEFAULT_MAX_INPUT_IMAGES = 3;
 
-/** @deprecated Dùng `DEFAULT_MAX_INPUT_IMAGES` hoặc cấu hình trên `WebAttachmentDriver.maxInputImages`. */
-export const M365_MAX_INPUT_IMAGES = DEFAULT_MAX_INPUT_IMAGES;
-
 /**
  * Đính kèm hình ảnh đã được chuẩn hóa (Canonical Image Attachment).
  */

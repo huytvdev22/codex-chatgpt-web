@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildCodexExecCommandArguments,
   validateCommandApproval,
-  M365ToolBridge,
+  WebToolBridge,
 } from "../src/adapters/web/tools";
 
 const EXEC_COMMAND_TOOL = [{
@@ -130,7 +130,7 @@ describe("M365 local approval policy", () => {
   });
 
   test("tool bridge emits the Codex approval wire fields", () => {
-    const mapped = M365ToolBridge.mapToolCall(
+    const mapped = WebToolBridge.mapToolCall(
       {
         name: "exec_command",
         arguments: {

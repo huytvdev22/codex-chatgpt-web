@@ -19,9 +19,6 @@ export interface WebMappedToolCall {
   arguments: string;
 }
 
-export type M365RawToolCall = WebRawToolCall;
-export type M365MappedToolCall = WebMappedToolCall;
-
 export interface RequestUserInputOption {
   label: string;
   description?: string;
@@ -198,5 +195,3 @@ export class WebToolBridge {
     };
   }
 }
-
-export const M365ToolBridge = WebToolBridge;

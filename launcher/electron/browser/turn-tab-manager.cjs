@@ -199,7 +199,7 @@ class TurnTabManager {
       : this.evictOldestRetainedTurnTab();
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = "m365") {
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365") {
     signal?.throwIfAborted();
     const evictReclaimable = this.host.evictOldestReclaimableTurnTab || (() => this.evictOldestReclaimableTurnTab());
     if (this.turnTabs.size >= MAX_BROWSER_TABS && !evictReclaimable.call(this.host)) {
@@ -216,9 +216,8 @@ class TurnTabManager {
     const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("Browser tab allocation is inconsistent");
-    const surfaceStore = this.host.m365SurfaceManager || providerObj;
-    const bootstrapUrl = surfaceStore?.initialUrl?.(conversationKey) || providerObj.homeUrl;
-    const conversationId = surfaceStore?.conversationId?.(conversationKey) || null;
+    const bootstrapUrl = providerObj.initialUrl?.(conversationKey) || providerObj.homeUrl;
+    const conversationId = providerObj.conversationId?.(conversationKey) || null;
     const view = new WebContentsView({
       webPreferences: {
         partition: providerObj.partition,
@@ -633,8 +632,7 @@ class TurnTabManager {
       error.code = "retained_conversation_unavailable";
       throw error;
     }
-    const surfaceAllocator = this.host.m365SurfaceManager || providerObj;
-    surfaceAllocator.prepareAllocation(
+    providerObj.prepareAllocation(
       this.turnTabs,
       conversationKey,
       tab => (this.host.removeTurnTab || this.removeTurnTab).call(this.host, tab, false),
@@ -691,7 +689,7 @@ class TurnTabManager {
         `Browser helper ownership mismatch: expected ${tab.helperPid}, received ${helperPid}`,
       );
     }
-    const providerObj = this.resolveProvider(tab.provider || "m365");
+    const providerObj = this.resolveProvider(tab.provider || this.host?.provider || "m365");
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
     const authenticationRequired = tab.authenticationRequired === true;
     if (authenticationRequired && status === "completed") status = "failed";
@@ -703,8 +701,7 @@ class TurnTabManager {
         message = `${providerObj.displayName} completed without a valid persistent conversation id`;
         effectiveConnectorBound = false;
       } else {
-        const store = this.host.m365SurfaceManager || providerObj;
-        tab.conversationId = store.bind(tab.conversationKey, normalizedConversationId);
+        tab.conversationId = providerObj.bind(tab.conversationKey, normalizedConversationId);
         effectiveConnectorBound = true;
       }
     }

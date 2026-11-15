@@ -811,9 +811,6 @@ export class WebPromptCompiler {
   }
 }
 
-/** @deprecated Dùng `WebPromptCompiler`. */
-export const M365PromptCompiler = WebPromptCompiler;
-
 export const promptCompiler = new WebPromptCompiler();
 
 export {

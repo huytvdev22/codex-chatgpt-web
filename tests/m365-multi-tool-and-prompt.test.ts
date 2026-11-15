@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { M365OutputTranslator } from "../src/adapters/web/protocol/output-translator";
+import { WebOutputTranslator } from "../src/adapters/web/protocol/output-translator";
 import { XmlToolCallDetector } from "../src/adapters/web/protocol/detectors/xml-detector";
 import {
   UNIFIED_TOOL_PROTOCOL,
@@ -12,7 +12,7 @@ import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
 } from "../src/adapters/web/prompt/templates";
-import { M365ToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/web/tools/tool-bridge";
+import { WebToolBridge, normalizeRequestUserInputArgs } from "../src/adapters/web/tools/tool-bridge";
 
 describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   test("1. UNIFIED_TOOL_PROTOCOL đã loại bỏ hoàn toàn khối suy luận nội tâm và hướng dẫn xuất trực tiếp", () => {
@@ -97,8 +97,8 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(list[1].arguments.command).toBe("bun test");
   });
 
-  test("6. M365OutputTranslator dịch trọn vẹn chuỗi phản hồi song song không có thought", () => {
-    const translator = new M365OutputTranslator();
+  test("6. WebOutputTranslator dịch trọn vẹn chuỗi phản hồi song song không có thought", () => {
+    const translator = new WebOutputTranslator();
     const raw = `
 <tool_call>
 {"name": "exec_command", "arguments": {"command": "git log -n 5"}}
@@ -157,7 +157,7 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     expect(norm2.questions[0].options[0].description).toBe("Utility-first CSS framework");
   });
 
-  test("8. M365ToolBridge map request_user_input chính xác cho Codex native", () => {
+  test("8. WebToolBridge map request_user_input chính xác cho Codex native", () => {
     const rawCall = {
       name: "request_user_input",
       arguments: JSON.stringify({
@@ -166,7 +166,7 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
         options: ["Tạo file mới (Recommended)", "Sửa file hiện có"],
       }),
     };
-    const mapped = M365ToolBridge.mapToolCall(rawCall, [
+    const mapped = WebToolBridge.mapToolCall(rawCall, [
       { name: "request_user_input", description: "", parameters: {} } as any,
     ]);
     expect(mapped.name).toBe("request_user_input");
@@ -178,7 +178,7 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   });
 
   test("9. XmlToolCallDetector & OutputTranslator phát hiện và dịch request_user_input đầy đủ", () => {
-    const translator = new M365OutputTranslator();
+    const translator = new WebOutputTranslator();
     const raw = `
 <tool_call>
 {

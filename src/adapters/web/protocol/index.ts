@@ -9,9 +9,7 @@ export * from "./semantic-detector";
 export * from "./fast-path-stream-buffer";
 export {
   WebToolCallDetector,
-  M365ToolCallDetector,
   type WebToolCallDetectorOptions,
-  type M365ToolCallDetectorOptions,
   type ParsedToolCall,
   sanitizeJsonControlChars,
   sanitizeCodexPatchContent,

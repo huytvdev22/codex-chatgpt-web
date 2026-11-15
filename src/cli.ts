@@ -42,8 +42,6 @@ Setup options:
   --chrome PATH                Google Chrome/Chromium executable used when running outside the launcher
   --browser-host-descriptor PATH
                                Use the embedded launcher browser described by this owner-only file
-  --refresh-account-capabilities
-                               Re-read the authenticated account's available Web models
   --replace-codex-route        Reversibly replace existing Responses or Voice route settings
   --subagent-protocol MODE     compatibility-v1 (default) or native (advanced)
   --restart-service            Explicitly restart this project's daemon after an update
@@ -136,7 +134,7 @@ async function setupCommand(args: string[]): Promise<void> {
   const browserHostDescriptorPath = takeOption(args, "--browser-host-descriptor");
   if (chrome) options.chromeExecutablePath = chrome;
   if (browserHostDescriptorPath) options.browserHostDescriptorPath = browserHostDescriptorPath;
-  options.refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
+  takeFlag(args, "--refresh-account-capabilities");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
   const skillAttachments = takeFlag(args, "--skill-attachments");
   const inlineSkills = takeFlag(args, "--inline-skills");
@@ -341,7 +339,7 @@ async function main(): Promise<void> {
     const config = loadConfig();
     if (config.browserHost === "launcher") {
       await inspectLauncherBrowserHost(config.browserHostDescriptorPath!);
-      stdout.write("Playwright can reach the authenticated M365 Copilot surface embedded in the launcher.\n");
+      stdout.write("Playwright can reach the authenticated Web provider surface embedded in the launcher.\n");
     } else {
       if (!existsSync(config.chromeExecutablePath)) {
         throw new Error(`Chrome executable is missing: ${config.chromeExecutablePath}`);

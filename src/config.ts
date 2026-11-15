@@ -73,9 +73,6 @@ export interface AppConfig {
   storageStatePath: string;
   brokerSocketPath: string;
   headed: boolean;
-  solAvailable: boolean;
-  extraHighAvailable?: boolean;
-  proAvailable: boolean;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
@@ -185,9 +182,6 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     storageStatePath: join(home, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(home),
     headed: true,
-    solAvailable: true,
-    extraHighAvailable: false,
-    proAvailable: false,
     experimentalBiggerContext: false,
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: false,
@@ -345,6 +339,9 @@ export function loadConfigForSetup(): AppConfig {
   delete raw.manualAppName;
   delete raw.browserInteractionMode;
   delete raw.zeroRiskProEnabled;
+  delete raw.solAvailable;
+  delete raw.extraHighAvailable;
+  delete raw.proAvailable;
   return parseConfig(raw, path);
 }
 
@@ -359,6 +356,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   delete legacy.manualAppName;
   delete legacy.browserInteractionMode;
   delete legacy.zeroRiskProEnabled;
+  delete legacy.solAvailable;
+  delete legacy.extraHighAvailable;
+  delete legacy.proAvailable;
   const parsed = value as Partial<AppConfig>;
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
@@ -412,15 +412,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid runtimeCommand in ${path}`);
   }
   assertDurableRuntimeCommand(parsed.runtimeCommand as string[]);
-  if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
-    throw new Error(`Invalid extraHighAvailable in ${path}`);
-  }
-  if (parsed.proAvailable !== undefined && typeof parsed.proAvailable !== "boolean") {
-    throw new Error(`Invalid proAvailable in ${path}`);
-  }
-  if (parsed.solAvailable !== undefined && typeof parsed.solAvailable !== "boolean") {
-    throw new Error(`Invalid solAvailable in ${path}`);
-  }
   if (parsed.experimentalBiggerContext !== undefined
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
@@ -429,8 +420,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
   }
-  const solAvailable = parsed.solAvailable !== false;
-  const proAvailable = parsed.proAvailable === true;
   if (parsed.experimentalSkillAttachments !== undefined && typeof parsed.experimentalSkillAttachments !== "boolean") {
     throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
   }
@@ -445,17 +434,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   const useSavedChats = parsed.useSavedChats === true;
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
-  if (parsed.extraHighAvailable === true && !solAvailable) {
-    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Extra High requires Sol`);
-  }
-  if (proAvailable && !solAvailable) {
-    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
-  }
   return {
     ...parsed,
     subagentProtocol,
-    solAvailable,
-    proAvailable,
     experimentalBiggerContext,
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
@@ -501,9 +482,6 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
       headed: config.headed,
       localToolsEnabled: false,
-      solAvailable: true,
-      extraHighAvailable: false,
-      proAvailable: false,
       experimentalBiggerContext: false,
       experimentalSkillAttachments: config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,

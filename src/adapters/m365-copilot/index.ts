@@ -14,6 +14,9 @@ export * from "../web/prompt/index";
 export * from "../web/protocol";
 export * from "../web/tools";
 export {
+  m365HtmlToMarkdown,
+} from "./m365-dom-observer";
+export {
   M365BrowserWorker,
   type M365TurnOptions,
   type M365TurnResult,
@@ -162,7 +165,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         launcherProviderId: "m365",
         connectorIdentity: "m365-copilot",
         resolveSurfaceId: (descriptor, leaseSurfaceId) =>
-          leaseSurfaceId || descriptor.m365SurfaceId || descriptor.surfaceId,
+          leaseSurfaceId || descriptor.providerSurfaceIds?.m365 || descriptor.surfaceId,
         executeTurn: async ({
           page,
           prompt,

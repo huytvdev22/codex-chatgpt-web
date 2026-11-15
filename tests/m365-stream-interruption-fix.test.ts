@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { M365ToolCallDetector, FastPathStreamBuffer } from "../src/adapters/web/protocol";
+import { WebToolCallDetector, FastPathStreamBuffer } from "../src/adapters/web/protocol";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent } from "../src/types";
 
@@ -54,7 +54,7 @@ describe("M365 Stream Interruption & Cut-off Fixes", () => {
   });
 
   test("Fix 3: Tool detector strips <webResponse> and trailing backticks cleanly on plan mode", () => {
-    const detector = new M365ToolCallDetector({ renderThinkingInText: true });
+    const detector = new WebToolCallDetector({ renderThinkingInText: true });
     const planResponse = `<webResponse>
 <thought>Plan survey complete.</thought>
 <proposed_plan>

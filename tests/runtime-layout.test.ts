@@ -117,13 +117,16 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
   })}\n`);
 
   expect(() => loadConfig()).toThrow("rerun setup to migrate");
-  expect(loadConfigForSetup()).toMatchObject({
+  const migrated = loadConfigForSetup();
+  expect(migrated).toMatchObject({
     version: 3,
     mode: "browser-only",
     browserHost: "managed-chrome",
     subagentProtocol: "compatibility-v1",
-    solAvailable: true,
   });
+  expect("solAvailable" in migrated).toBe(false);
+  expect("extraHighAvailable" in migrated).toBe(false);
+  expect("proAvailable" in migrated).toBe(false);
 });
 
 test("legacy temp-path wrapper and vendor are removed only after runtime ownership changes", () => {
@@ -155,14 +158,12 @@ test("launcher browser ownership is explicit in provider configuration", () => {
   expect(providerConfig(config).chatgptWeb).toMatchObject({
     browserHost: "launcher",
     browserHostDescriptorPath: config.browserHostDescriptorPath,
-    solAvailable: true,
     stallTimeoutSec: 900,
   });
 });
 
-test("provider configuration always exposes the unified ChatGPT Web model", () => {
+test("provider configuration always exposes the unified Web configuration", () => {
   const config = defaultConfig("browser-only");
-  config.solAvailable = false;
   const provider = providerConfig(config);
 
   expect(provider.models).toEqual(["chatgpt-web"]);
@@ -171,31 +172,32 @@ test("provider configuration always exposes the unified ChatGPT Web model", () =
   expect(provider.modelDefaultReasoningEfforts).toEqual({ "chatgpt-web": "low" });
   expect(provider.modelInputModalities).toEqual({ "chatgpt-web": ["text", "image"] });
   expect(provider.chatgptWeb).toMatchObject({
-    solAvailable: true,
-    extraHighAvailable: false,
-    proAvailable: false,
     experimentalBiggerContext: false,
   });
+  expect("solAvailable" in (provider.chatgptWeb ?? {})).toBe(false);
+  expect("extraHighAvailable" in (provider.chatgptWeb ?? {})).toBe(false);
+  expect("proAvailable" in (provider.chatgptWeb ?? {})).toBe(false);
 });
 
-test("legacy account flags cannot create additional ChatGPT backends", () => {
-  const config = defaultConfig("browser-only");
-  config.solAvailable = true;
-  config.extraHighAvailable = true;
-  config.proAvailable = true;
-  config.experimentalBiggerContext = true;
-  const provider = providerConfig(config);
-
-  expect(provider.models).toEqual(["chatgpt-web"]);
-  expect(provider.defaultModel).toBe("chatgpt-web");
-  expect(provider.modelReasoningEfforts).toEqual({ "chatgpt-web": ["low", "high"] });
-  expect(provider.modelDefaultReasoningEfforts).toEqual({ "chatgpt-web": "low" });
-  expect(provider.modelInputModalities).toEqual({ "chatgpt-web": ["text", "image"] });
+test("loading legacy config with capability flags strips them cleanly", () => {
+  const root = join(tmpdir(), `codex-web-legacy-caps-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const raw: Record<string, unknown> = {
+    ...defaultConfig("browser-only"),
+    solAvailable: false,
+    extraHighAvailable: true,
+    proAvailable: true,
+  };
+  writeFileSync(join(root, "config.json"), JSON.stringify(raw));
+  const loaded = loadConfig()!;
+  expect("solAvailable" in loaded).toBe(false);
+  expect("extraHighAvailable" in loaded).toBe(false);
+  expect("proAvailable" in loaded).toBe(false);
+  const provider = providerConfig(loaded);
   expect(provider.chatgptWeb).toMatchObject({
-    appName: config.appName,
-    solAvailable: true,
-    extraHighAvailable: false,
-    proAvailable: false,
+    appName: loaded.appName,
     experimentalBiggerContext: false,
   });
 });

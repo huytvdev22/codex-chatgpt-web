@@ -129,7 +129,7 @@ class BrowserControlServer {
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");
       if (isSessionInspect) {
-        const result = await host.inspectSession(body?.detectCapabilities === true);
+        const result = await host.inspectSession();
         writeJson(response, 200, result);
         return;
       }

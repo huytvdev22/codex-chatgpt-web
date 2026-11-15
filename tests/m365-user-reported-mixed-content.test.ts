@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseStrictM365Response } from "../src/adapters/web/protocol";
+import { parseStrictWebResponse } from "../src/adapters/web/protocol";
 
 describe("User reported cases for MIXED_TOOL_AND_TEXT_CONTENT and DISALLOWED_COMMAND", () => {
   // Case 1 nguyên văn
@@ -77,7 +77,7 @@ Như vậy, cầu nối đã bóc tách đúng <tool_call>, thực thi lệnh tr
 </webResponse>`;
 
   test("Kiểm thử Case 1 (Nguyên văn có inline code backticks): trả về final_answer", () => {
-    const result = parseStrictM365Response(case1Raw);
+    const result = parseStrictWebResponse(case1Raw);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toContain("codex-chatgpt-web");
@@ -86,7 +86,7 @@ Như vậy, cầu nối đã bóc tách đúng <tool_call>, thực thi lệnh tr
   });
 
   test("Kiểm thử Case 1 biến thể (Không có inline code backticks quanh thẻ XML): trả về final_answer không bị chặn nhầm", () => {
-    const result = parseStrictM365Response(case1RawNoBackticks);
+    const result = parseStrictWebResponse(case1RawNoBackticks);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toContain("codex-chatgpt-web");
@@ -95,12 +95,12 @@ Như vậy, cầu nối đã bóc tách đúng <tool_call>, thực thi lệnh tr
   });
 
   test("Kiểm thử Case 2 (Nguyên văn): trả về final_answer", () => {
-    const result = parseStrictM365Response(case2Raw);
+    const result = parseStrictWebResponse(case2Raw);
     expect(result.kind).toBe("final_answer");
   });
 
   test("Kiểm thử Case 3 (Nguyên văn có inline code backticks): trả về final_answer", () => {
-    const result = parseStrictM365Response(case3Raw);
+    const result = parseStrictWebResponse(case3Raw);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toContain("Tool call đã hoạt động thành công");
@@ -109,7 +109,7 @@ Như vậy, cầu nối đã bóc tách đúng <tool_call>, thực thi lệnh tr
   });
 
   test("Kiểm thử Case 3 biến thể (Không có inline code backticks quanh <tool_call>): trả về final_answer không bị chặn nhầm", () => {
-    const result = parseStrictM365Response(case3RawNoBackticks);
+    const result = parseStrictWebResponse(case3RawNoBackticks);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toContain("Tool call đã hoạt động thành công");
@@ -118,7 +118,7 @@ Như vậy, cầu nối đã bóc tách đúng <tool_call>, thực thi lệnh tr
   });
 
   test("Kiểm thử Case 4 (Lệnh shell chứa batch foreach reading): cho phép thực thi bình thường theo quyền tự chủ", () => {
-    const result = parseStrictM365Response(case4Raw);
+    const result = parseStrictWebResponse(case4Raw);
     expect(result.kind).toBe("tool_calls");
     if (result.kind === "tool_calls") {
       expect(result.calls).toHaveLength(1);
@@ -138,7 +138,7 @@ Bạn có thể tham khảo mẫu gọi công cụ sau:
 \`\`\`
 Mẫu trên giúp bạn đọc file.
 </webResponse>`;
-    const result = parseStrictM365Response(tutorialMarkdown);
+    const result = parseStrictWebResponse(tutorialMarkdown);
     expect(result.kind).toBe("final_answer");
     if (result.kind === "final_answer") {
       expect(result.content).toContain("Bạn có thể tham khảo mẫu");

@@ -1,11 +1,22 @@
 import type { Page } from "playwright-core";
 import {
   FastPathStreamBuffer,
-  m365HtmlToMarkdown,
-  M365MarkdownBuffer,
-  type M365MarkdownBlock,
+  SemanticMarkdownBuffer,
+  STATUS_PATTERNS,
+  webHtmlToMarkdown,
+  type SemanticMarkdownBlock,
 } from "../web/protocol";
 import type { BaseBrowserRunOptions } from "../web/browser";
+
+/**
+ * Chuyển đổi cây HTML của tin nhắn sang chuỗi Markdown chuẩn hóa (preset riêng cho Microsoft 365 Copilot).
+ */
+export function m365HtmlToMarkdown(html: string): string {
+  return webHtmlToMarkdown(html, {
+    leadingPrefixes: [/^Copilot(?: said)?:\s*/i],
+    statusPatterns: STATUS_PATTERNS,
+  });
+}
 
 export interface M365ResponseBaseline {
   aiCount: number;
@@ -16,7 +27,7 @@ export interface M365ResponseBaseline {
 
 export interface M365ResponseDomStatus {
   isGenerating: boolean;
-  blocks: M365MarkdownBlock[];
+  blocks: SemanticMarkdownBlock[];
   rawHtml?: string;
   isNew: boolean;
   hasContent: boolean;
@@ -31,13 +42,13 @@ export interface M365ResponseObservation {
   isCompleted: boolean;
   activityKey: string;
   status: M365ResponseDomStatus;
-  blocks: M365MarkdownBlock[];
+  blocks: SemanticMarkdownBlock[];
   fastPathActive: boolean;
   timedOut: boolean;
 }
 
 export interface M365ResponseRuntimeState {
-  markdownBuffer: InstanceType<typeof M365MarkdownBuffer>;
+  markdownBuffer: SemanticMarkdownBuffer;
   fastPathBuffer: FastPathStreamBuffer;
   fastPathActive: boolean;
   lastFastPathText: string;
@@ -46,7 +57,7 @@ export interface M365ResponseRuntimeState {
   completedCandidateAt: number | null;
   stableCycles: number;
   lastTextChangeAt: number;
-  lastBlocks: M365MarkdownBlock[];
+  lastBlocks: SemanticMarkdownBlock[];
   attempts: number;
   lastStatus: M365ResponseDomStatus | null;
   pendingStatus: M365ResponseDomStatus | null;
@@ -59,7 +70,7 @@ export interface M365ResponseRuntimeState {
 export class M365DomObserver {
   public createRuntimeState(): M365ResponseRuntimeState {
     return {
-      markdownBuffer: new M365MarkdownBuffer({ htmlToMarkdown: m365HtmlToMarkdown }),
+      markdownBuffer: new SemanticMarkdownBuffer({ htmlToMarkdown: m365HtmlToMarkdown }),
       fastPathBuffer: new FastPathStreamBuffer(),
       fastPathActive: false,
       lastFastPathText: "",

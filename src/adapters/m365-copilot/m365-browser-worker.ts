@@ -166,7 +166,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     _observation: M365ResponseObservation,
     _options: M365BrowserRunOptions,
   ): boolean {
-    // M365MarkdownBuffer và FastPathStreamBuffer đã phát semantic delta trong
+    // SemanticMarkdownBuffer và FastPathStreamBuffer đã phát semantic delta trong
     // applyResponseStatus. Không để shared lifecycle phát lại observation.text.
     return false;
   }

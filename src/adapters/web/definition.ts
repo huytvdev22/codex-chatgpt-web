@@ -9,9 +9,8 @@ import type {
 import type { WebProtocolErrorCode } from "./protocol/strict-response-parser";
 import type { ToolValidationFailure } from "./tools/tool-validator";
 
-export type WebLauncherProviderId =
-  | "chatgpt"
-  | "m365";
+/** Mã định danh của Web provider đăng ký trong Launcher BrowserHost (`BrowserProviderRegistry`). */
+export type WebLauncherProviderId = string;
 
 export type WebTurnFinalStatus = "completed" | "failed" | "aborted";
 

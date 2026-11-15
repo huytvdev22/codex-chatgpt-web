@@ -146,8 +146,8 @@ Mỗi provider chọn tổ hợp chính sách phù hợp thay vì viết câu l�
 Ngoài thư mục `src/adapters/<provider>/`, một provider mới chạm vào **ít nhất 4 nhóm điểm tích hợp**:
 
 1. **Model Registry (`src/models/model-registry.ts` & `src/models/model-catalog.ts`)**: Khai báo `ModelProviderId`, danh sách model slugs, giới hạn ngữ cảnh và các mức reasoning.
-2. **Server Router (`src/server.ts`)**: Định tuyến model của provider vào `adapter.runTurn(parsed, incoming, emit)`.
-3. **Launcher Surface (`launcher/electron/` & `src/launcher-browser-host.ts`)**: Cấp phát phân vùng trình duyệt độc lập (`persist:codex-<provider>`) và quản lý tab qua Surface Manager.
+2. **Adapter Registry & Server (`src/adapters/adapter-registry.ts`, `src/adapters/register-default-adapters.ts`, `src/server.ts`)**: Đăng ký factory cho provider mới vào `AdapterRegistry`; `Server` tự động giải quyết model sang adapter tương ứng qua `ModelRegistry` + `AdapterRegistry`.
+3. **Launcher Surface (`launcher/electron/` & `src/launcher-browser-host.ts`)**: Cấp phát `BrowserProvider` với phân vùng trình duyệt độc lập (`persist:codex-<provider>`), đăng ký trong `BrowserProviderRegistry`, và quản lý tab qua `TurnTabManager`.
 4. **Cổng Kiểm tra Kiến trúc (`tests/m365-architecture-integrity.test.ts` & `tests/web-turn-engine.test.ts`)**:
    - `tests/m365-architecture-integrity.test.ts` giữ tên lịch sử nhưng hiện kiểm tra shared Web layer và toàn bộ provider facade.
    - Đảm bảo không có phụ thuộc vòng, không import ngược từ shared layer, và facade của provider chỉ kế thừa `WebProviderAdapter` mà không tự điều phối cấp thấp.

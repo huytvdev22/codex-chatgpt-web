@@ -50,11 +50,7 @@ async function handleMessage(line: string): Promise<void> {
         id,
         value: {
           authenticated: true,
-          temporary: true,
           url: "https://m365.cloud.microsoft/chat",
-          solAvailable: true,
-          extraHighAvailable: true,
-          proAvailable: true,
         },
       });
     } else {

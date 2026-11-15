@@ -125,7 +125,7 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({
       id: "browser-host",
       status: "warning",
-      message: "Standalone browser mode active; M365 Copilot session is managed by the Launcher",
+      message: "Standalone browser mode active; Web provider sessions are managed by the Launcher",
     });
   }
 

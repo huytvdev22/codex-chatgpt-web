@@ -104,30 +104,42 @@ export function findCircularDependencies(targetDir) {
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isMain) {
-  const targetArg = process.argv[2] || "src/adapters/m365-copilot";
   const projectRoot = process.cwd();
-  const targetDir = path.isAbsolute(targetArg) ? targetArg : path.join(projectRoot, targetArg);
+  const explicitArg = process.argv[2];
+  const targets = explicitArg
+    ? [path.isAbsolute(explicitArg) ? explicitArg : path.join(projectRoot, explicitArg)]
+    : [
+        path.join(projectRoot, "src/adapters/web"),
+        ...fs
+          .readdirSync(path.join(projectRoot, "src/adapters"), { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && entry.name !== "web")
+          .map((entry) => path.join(projectRoot, "src/adapters", entry.name)),
+      ];
 
-  console.log(`[CI GATE] Kiểm tra Circular Dependency trong: ${path.relative(projectRoot, targetDir)}`);
+  let totalCycles = 0;
 
-  if (!fs.existsSync(targetDir)) {
-    console.error(`[LỖI] Thư mục không tồn tại: ${targetDir}`);
-    process.exit(1);
+  for (const targetDir of targets) {
+    console.log(`[CI GATE] Kiểm tra Circular Dependency trong: ${path.relative(projectRoot, targetDir)}`);
+
+    if (!fs.existsSync(targetDir)) {
+      console.error(`[LỖI] Thư mục không tồn tại: ${targetDir}`);
+      process.exit(1);
+    }
+
+    const { graph, cycles } = findCircularDependencies(targetDir);
+    const totalModules = Object.keys(graph).length;
+    console.log(`Đã quét ${totalModules} modules TypeScript.`);
+
+    if (cycles.length === 0) {
+      console.log(`\x1b[32m✔ THÀNH CÔNG: Không phát hiện Circular Dependency nào (0 cycles).\x1b[0m`);
+    } else {
+      totalCycles += cycles.length;
+      console.error(`\x1b[31m✖ THẤT BẠI: Phát hiện ${cycles.length} Circular Dependency:\x1b[0m`);
+      cycles.forEach((c, idx) => {
+        console.error(`  [Cycle #${idx + 1}] ${c.join(" ➔ ")}`);
+      });
+    }
   }
 
-  const { graph, cycles } = findCircularDependencies(targetDir);
-  const totalModules = Object.keys(graph).length;
-
-  console.log(`Đã quét ${totalModules} modules TypeScript.`);
-
-  if (cycles.length === 0) {
-    console.log(`\x1b[32m✔ THÀNH CÔNG: Không phát hiện Circular Dependency nào (0 cycles).\x1b[0m`);
-    process.exit(0);
-  } else {
-    console.error(`\x1b[31m✖ THẤT BẠI: Phát hiện ${cycles.length} Circular Dependency:\x1b[0m`);
-    cycles.forEach((c, idx) => {
-      console.error(`  [Cycle #${idx + 1}] ${c.join(" ➔ ")}`);
-    });
-    process.exit(1);
-  }
+  process.exit(totalCycles > 0 ? 1 : 0);
 }

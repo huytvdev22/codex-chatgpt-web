@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { PatchToolCallDetector, normalizePatchEnvelope, M365OutputTranslator, M365ToolCallDetector } from "../src/adapters/web/protocol";
-import { M365ToolBridge } from "../src/adapters/web/tools/tool-bridge";
+import { PatchToolCallDetector, normalizePatchEnvelope, WebOutputTranslator, WebToolCallDetector } from "../src/adapters/web/protocol";
+import { WebToolBridge } from "../src/adapters/web/tools/tool-bridge";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import type { AdapterEvent, CodexTool } from "../src/types";
 
@@ -66,8 +66,8 @@ describe("M365 Native apply_patch Tests", () => {
     expect(call.arguments.input).toContain("*** End Patch");
   });
 
-  test("Phase 2: M365OutputTranslator translates patch into OpenAI tool_call format", () => {
-    const translator = new M365OutputTranslator([new PatchToolCallDetector()]);
+  test("Phase 2: WebOutputTranslator translates patch into OpenAI tool_call format", () => {
+    const translator = new WebOutputTranslator([new PatchToolCallDetector()]);
     const translated = translator.translate(`Dưới đây là bản vá:\n${samplePatch}`);
     expect(translated.type).toBe("tool_call");
     if (translated.type === "tool_call") {
@@ -78,8 +78,8 @@ describe("M365 Native apply_patch Tests", () => {
     }
   });
 
-  test("Phase 3: M365ToolCallDetector streams text cleanly without leaking raw patch content", () => {
-    const detector = new M365ToolCallDetector();
+  test("Phase 3: WebToolCallDetector streams text cleanly without leaking raw patch content", () => {
+    const detector = new WebToolCallDetector();
     const chunks = [
       "Tôi sẽ sửa hàm calculateTotal cho bạn:\n",
       "*** Begin Patch\n",
@@ -111,7 +111,7 @@ describe("M365 Native apply_patch Tests", () => {
     expect(fullEmitted).toContain("Tôi sẽ sửa hàm calculateTotal cho bạn:");
   });
 
-  test("Phase 4: M365ToolBridge maps apply_patch to native Codex apply_patch when client supports it", () => {
+  test("Phase 4: WebToolBridge maps apply_patch to native Codex apply_patch when client supports it", () => {
     const clientTools: CodexTool[] = [
       { name: "apply_patch", description: "Patch files", parameters: {}, freeform: true },
       { name: "exec_command", description: "Run command", parameters: {} },
@@ -122,13 +122,13 @@ describe("M365 Native apply_patch Tests", () => {
       arguments: { patch: samplePatch },
     };
 
-    const mapped = M365ToolBridge.mapToolCall(rawCall, clientTools);
+    const mapped = WebToolBridge.mapToolCall(rawCall, clientTools);
     expect(mapped.name).toBe("apply_patch");
     const parsedArgs = JSON.parse(mapped.arguments);
     expect(parsedArgs.input).toBe(samplePatch);
   });
 
-  test("Phase 4: M365ToolBridge rejects apply_patch when the client lacks the native tool", () => {
+  test("Phase 4: WebToolBridge rejects apply_patch when the client lacks the native tool", () => {
     const clientTools: CodexTool[] = [
       { name: "exec_command", description: "Run command", parameters: {} },
     ];
@@ -138,12 +138,12 @@ describe("M365 Native apply_patch Tests", () => {
       arguments: { patch: samplePatch },
     };
 
-    expect(() => M365ToolBridge.mapToolCall(rawCall, clientTools))
+    expect(() => WebToolBridge.mapToolCall(rawCall, clientTools))
       .toThrow("Client does not advertise native apply_patch; platform-specific shell fallback is disabled.");
   });
 
-  test("Phase 4: M365ToolBridge rejects incomplete patches instead of auto-closing them", () => {
-    expect(() => M365ToolBridge.mapToolCall({
+  test("Phase 4: WebToolBridge rejects incomplete patches instead of auto-closing them", () => {
+    expect(() => WebToolBridge.mapToolCall({
       name: "functions.apply_patch",
       arguments: {
         input: "*** Begin Patch\n*** Update File: src/cart.ts\n@@\n-old\n+new",

@@ -60,7 +60,6 @@ function launcherConfig(descriptorPath, overrides = {}) {
       ? "\\\\.\\pipe\\codex-chatgpt-web-runtime-supervisor-test"
       : path.join(root, "turn-broker.sock"),
     headed: true,
-    extraHighAvailable: true, proAvailable: true,
     autoApproveToolCalls: false,
     controlToken: "runtime-supervisor-control-token-0123456789abcdef",
     runtimeCommand: [process.execPath],
@@ -132,10 +131,19 @@ test("launcher runtime ownership rejects a different browser descriptor", () => 
 
 test("launcher runtime ownership cannot cross production and DEV profiles", () => {
   const descriptorPath = path.join(os.tmpdir(), "launcher.json");
-  const production = { ...launcherConfig(descriptorPath), solAvailable: true };
+  const production = launcherConfig(descriptorPath);
   const development = { ...production, purpose: "dev-harness" };
   assert.equal(validateConfig(production, descriptorPath, process.platform, "production"), production);
   assert.equal(validateConfig(development, descriptorPath, process.platform, "development"), development);
+  const legacyWithCaps = validateConfig({
+    ...production,
+    solAvailable: false,
+    extraHighAvailable: true,
+    proAvailable: true,
+  }, descriptorPath, process.platform, "production");
+  assert.equal("solAvailable" in legacyWithCaps, false);
+  assert.equal("extraHighAvailable" in legacyWithCaps, false);
+  assert.equal("proAvailable" in legacyWithCaps, false);
   assert.throws(
     () => validateConfig(development, descriptorPath, process.platform, "production"),
     /Production launcher refuses a DEV harness/,
@@ -849,7 +857,7 @@ test("observed CLI fresh-conversation changes retire completed tabs once and def
   const supervisor = new RuntimeSupervisor({ coreHome: root, browserDescriptorPath: descriptorPath,
     onConfigRead: config => sandbox.syncFreshConversationPreference(sandbox.stateStore, config, sandbox) });
   const persist = enabled => fs.writeFileSync(configPath, JSON.stringify(launcherConfig(descriptorPath, {
-    solAvailable: true, experimentalFreshConversationPerTurn: enabled,
+    experimentalFreshConversationPerTurn: enabled,
   })));
   try {
     persist(true);

@@ -745,6 +745,65 @@ code {
   color: var(--color-text-primary);
 }
 
+.provider-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-background-control);
+}
+
+.provider-switcher-button {
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .provider-switcher-button {
+    transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+}
+
+@media (hover: hover) {
+  .provider-switcher-button:not([aria-disabled="true"]):hover {
+    background: var(--color-background-control-hover);
+    color: var(--color-text-primary);
+  }
+}
+
+.provider-switcher-button:focus-visible {
+  outline: 2px solid var(--blue-300);
+  outline-offset: 2px;
+}
+
+.provider-switcher-button[aria-pressed="true"] {
+  border-color: var(--color-border-light);
+  background: rgb(255 255 255 / 12%);
+  color: var(--color-text-primary);
+}
+
+.provider-switcher-button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (forced-colors: active) {
+  .provider-switcher-button[aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}
+
 .browser-loading-line {
   position: absolute;
   right: 0;
