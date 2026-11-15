@@ -1,4 +1,4 @@
-const languages = require("./languages.json");
+const languages = require("../languages.json");
 const fs = require("node:fs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const SIDEBAR_MIN_WIDTH = 240;
@@ -14,7 +14,6 @@ const DEFAULT_STATE = Object.freeze({
   autoStart: true,
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
-  browserInteractionMode: "automatic",
   experimentalBiggerContext: false,
   experimentalSkillAttachments: false,
   experimentalFreshConversationPerTurn: false,
@@ -32,16 +31,22 @@ function nextSessionRefreshReminderAt(now = Date.now()) {
   return new Date(now + SESSION_REFRESH_REMINDER_INTERVAL_MS).toISOString();
 }
 
-function readState(filePath) {
+function readState(filePath, { defaultProvider = DEFAULT_STATE.selectedProvider, isValidProvider = null } = {}) {
+  const defaults = { ...DEFAULT_STATE, selectedProvider: defaultProvider };
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
-    const state = { ...DEFAULT_STATE, ...parsed };
+    if (!parsed || parsed.version !== 1) return { ...defaults };
+    const state = { ...defaults, ...parsed };
     delete state.bridgeEnabled;
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
     }
-    state.selectedProvider = "m365";
+    const providerId = typeof state.selectedProvider === "string" ? state.selectedProvider.trim() : "";
+    if (!providerId || providerId === "chatgpt" || (typeof isValidProvider === "function" && !isValidProvider(providerId))) {
+      state.selectedProvider = defaultProvider;
+    } else {
+      state.selectedProvider = providerId;
+    }
     for (const key of [
       "onboardingComplete",
       "githubOpened",
@@ -58,12 +63,7 @@ function readState(filePath) {
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];
     }
-    if (state.browserInteractionMode !== "automatic" && state.browserInteractionMode !== "manual") {
-      state.browserInteractionMode = DEFAULT_STATE.browserInteractionMode;
-    }
-    if (state.coreSetupComplete !== true) {
-      if (state.onboardingComplete !== true) state.browserInteractionMode = "automatic";
-    }
+    delete state.browserInteractionMode;
     if (state.browserSmokeVersion !== null
       && (typeof state.browserSmokeVersion !== "string" || state.browserSmokeVersion.length > 128)) {
       state.browserSmokeVersion = DEFAULT_STATE.browserSmokeVersion;
@@ -91,7 +91,7 @@ function readState(filePath) {
     }
     return state;
   } catch {
-    return { ...DEFAULT_STATE };
+    return { ...defaults };
   }
 }
 
@@ -109,8 +109,8 @@ function validateSidebarState(value) {
   return { sidebarOpen: value.open, sidebarWidth: Math.round(value.width) };
 }
 
-function createStateStore(filePath) {
-  let state = readState(filePath);
+function createStateStore(filePath, options = {}) {
+  let state = readState(filePath, options);
   return {
     read() {
       return structuredClone(state);
@@ -132,3 +132,4 @@ module.exports = {
   nextSessionRefreshReminderAt,
   validateSidebarState,
 };
+

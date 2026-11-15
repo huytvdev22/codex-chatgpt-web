@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
-const { configureWindowsTrust, windowsTrustEnvironment } = require("../electron/windows-trust.cjs");
-const { RuntimeHost } = require("../electron/runtime.cjs");
-const { RuntimeSupervisor } = require("../electron/runtime-supervisor.cjs");
+const { configureWindowsTrust, windowsTrustEnvironment } = require("../electron/infra/windows-trust.cjs");
+const { RuntimeHost } = require("../electron/runtime/runtime-host.cjs");
+const { RuntimeSupervisor } = require("../electron/runtime/runtime-supervisor.cjs");
 
 test("Windows trust preserves explicit settings and other platforms without changing the parent environment", () => {
   const original = { NODE_EXTRA_CA_CERTS: "custom.pem" };

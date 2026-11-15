@@ -8,16 +8,10 @@ import { VERSION } from "./version";
 
 export type RuntimeMode = "browser-only";
 export type BrowserHostMode = "managed-chrome" | "launcher";
-export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
 
-/**
- * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
- * contract therefore has a new identity instead of mutating the retired connector in place.
- */
 export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk";
 export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native"] as const;
 
 export function isLegacyChatGptConnectorName(value: string): boolean {
@@ -49,37 +43,18 @@ function validateCurrentConnectorName(value: unknown): string {
   return value;
 }
 
-export interface InteractionConnectorIdentities {
-  appName: string;
-  automaticAppName: string;
-  manualAppName: string;
-}
-
-export function resolveInteractionConnectorIdentities(
-  interactionMode: BrowserInteractionMode,
+export function resolveConnectorIdentity(
   profile: "production" | "development" = "production",
-  existing: Partial<InteractionConnectorIdentities> = {},
+  existingAppName?: string,
   suffix?: string,
-): InteractionConnectorIdentities {
-  const defaultAutomatic = profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
-  let automaticAppName = existing.automaticAppName ?? defaultAutomatic;
-  let manualAppName = existing.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  if (isLegacyChatGptConnectorName(automaticAppName)) automaticAppName = defaultAutomatic;
+): string {
+  const fallback = profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
+  let appName = existingAppName ?? fallback;
+  if (isLegacyChatGptConnectorName(appName)) appName = fallback;
   if (suffix !== undefined) {
-    const name = `Codex ${validateConnectorNameSuffix(suffix)}`;
-    if (interactionMode === "manual") manualAppName = name;
-    else automaticAppName = name;
+    appName = `Codex ${validateConnectorNameSuffix(suffix)}`;
   }
-  validateCurrentConnectorName(automaticAppName);
-  validateCurrentConnectorName(manualAppName);
-  if (automaticAppName === manualAppName) {
-    throw new Error("Automatic and Zero Risk connector names must differ");
-  }
-  return {
-    appName: interactionMode === "manual" ? manualAppName : automaticAppName,
-    automaticAppName,
-    manualAppName,
-  };
+  return validateCurrentConnectorName(appName);
 }
 
 export interface AppConfig {
@@ -92,10 +67,7 @@ export interface AppConfig {
   port: number;
   contextWindow: number;
   appName: string;
-  automaticAppName: string;
-  manualAppName: string;
   browserHost: BrowserHostMode;
-  browserInteractionMode: BrowserInteractionMode;
   browserHostDescriptorPath?: string;
   chromeExecutablePath: string;
   storageStatePath: string;
@@ -108,8 +80,6 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
-  /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
-  zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
   stallTimeoutSec?: number;
   autoApproveToolCalls: boolean;
@@ -210,10 +180,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     port: 17841,
     contextWindow: 256_000,
     appName: CHATGPT_CONNECTOR_NAME,
-    automaticAppName: CHATGPT_CONNECTOR_NAME,
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     browserHost: "managed-chrome",
-    browserInteractionMode: "automatic",
     chromeExecutablePath: defaultChromeExecutable(),
     storageStatePath: join(home, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(home),
@@ -225,7 +192,6 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: false,
     useSavedChats: false,
-    zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
     runtimeCommand: currentRuntimeCommand(),
@@ -370,14 +336,15 @@ export function loadConfigForSetup(): AppConfig {
   delete raw.tunnel;
   delete raw.automaticTunnel;
   delete raw.manualTunnel;
-  const interactionMode = raw.browserInteractionMode ?? "automatic";
-  const automaticName = raw.automaticAppName
-    ?? (interactionMode === "automatic" ? raw.appName : CHATGPT_CONNECTOR_NAME);
-  if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME
-    && (raw.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME) === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
-    raw.automaticAppName = CHATGPT_CONNECTOR_NAME;
-    if (interactionMode === "automatic") raw.appName = CHATGPT_CONNECTOR_NAME;
+  if (!raw.appName || raw.appName === "Codex Zero Risk") {
+    raw.appName = typeof raw.automaticAppName === "string" && raw.automaticAppName !== "Codex Zero Risk"
+      ? raw.automaticAppName
+      : CHATGPT_CONNECTOR_NAME;
   }
+  delete raw.automaticAppName;
+  delete raw.manualAppName;
+  delete raw.browserInteractionMode;
+  delete raw.zeroRiskProEnabled;
   return parseConfig(raw, path);
 }
 
@@ -388,6 +355,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   delete legacy.tunnel;
   delete legacy.automaticTunnel;
   delete legacy.manualTunnel;
+  delete legacy.automaticAppName;
+  delete legacy.manualAppName;
+  delete legacy.browserInteractionMode;
+  delete legacy.zeroRiskProEnabled;
   const parsed = value as Partial<AppConfig>;
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
@@ -402,13 +373,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.host !== "127.0.0.1") throw new Error("The Responses proxy must bind to 127.0.0.1");
   if (parsed.browserHost !== "managed-chrome" && parsed.browserHost !== "launcher") {
     throw new Error(`Invalid browserHost in ${path}`);
-  }
-  const browserInteractionMode = parsed.browserInteractionMode ?? "automatic";
-  if (browserInteractionMode !== "automatic" && browserInteractionMode !== "manual") {
-    throw new Error(`Invalid browserInteractionMode in ${path}`);
-  }
-  if (browserInteractionMode === "manual" && parsed.browserHost !== "launcher") {
-    throw new Error(`Manual browser interaction requires the launcher browser host in ${path}`);
   }
   if (!Number.isInteger(parsed.port) || parsed.port! < 1 || parsed.port! > 65_535) throw new Error(`Invalid port in ${path}`);
   if (!Number.isSafeInteger(parsed.contextWindow) || parsed.contextWindow! <= 0) {
@@ -425,21 +389,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     if (typeof parsed[key] !== "string" || !(parsed[key] as string).trim()) throw new Error(`Missing ${key} in ${path}`);
   }
   if (parsed.appName!.length > 80) throw new Error(`appName is too long in ${path}`);
-  const automaticAppName = parsed.automaticAppName
-    ?? (browserInteractionMode === "automatic" ? parsed.appName : CHATGPT_CONNECTOR_NAME);
-  const manualAppName = parsed.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
-    throw new Error(`Invalid automaticAppName in ${path}`);
-  }
-  if (!isLegacyChatGptConnectorName(automaticAppName)) validateCurrentConnectorName(automaticAppName);
-  validateCurrentConnectorName(manualAppName);
-  if (automaticAppName === manualAppName) {
-    throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);
-  }
-  const expectedAppName = browserInteractionMode === "manual" ? manualAppName : automaticAppName;
-  if (parsed.appName !== expectedAppName) {
-    throw new Error(`Active appName does not match browserInteractionMode in ${path}; rerun setup`);
-  }
+  if (!isLegacyChatGptConnectorName(parsed.appName!)) validateCurrentConnectorName(parsed.appName!);
   if (parsed.browserHost === "launcher"
     && (typeof parsed.browserHostDescriptorPath !== "string" || !parsed.browserHostDescriptorPath.trim())) {
     throw new Error(`Launcher browser host requires browserHostDescriptorPath in ${path}`);
@@ -475,9 +425,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
   }
-  if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
-    throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
-  }
   if (parsed.stallTimeoutSec !== undefined
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
@@ -497,14 +444,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid useSavedChats in ${path}`);
   }
   const useSavedChats = parsed.useSavedChats === true;
-  if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
-    throw new Error(`Zero Risk does not support Skills as files in ${path}`);
-  }
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
-  const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
-  if (browserInteractionMode === "manual" && experimentalBiggerContext) {
-    throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
-  }
   if (parsed.extraHighAvailable === true && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Extra High requires Sol`);
   }
@@ -513,10 +453,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   return {
     ...parsed,
-    appName: expectedAppName,
-    automaticAppName,
-    manualAppName,
-    browserInteractionMode,
     subagentProtocol,
     solAvailable,
     proAvailable,
@@ -524,7 +460,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
     useSavedChats,
-    zeroRiskProEnabled,
   } as AppConfig;
 }
 
@@ -556,8 +491,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
     },
     noReasoningModels: [],
     chatgptWeb: {
-      appName: config.automaticAppName,
-      browserInteractionMode: "automatic",
+      appName: config.appName,
       browserHost: config.browserHost,
       browserHostDescriptorPath: config.browserHostDescriptorPath,
       storageStatePath: config.storageStatePath,

@@ -36,12 +36,4 @@ test("launcher setup refreshes account capabilities only when missing or explici
     extraHighAvailable: false, proAvailable: false,
   } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired(verifiedLauncher as never, true)).toBe(true);
-  expect(launcherCapabilityProbeRequired({
-    ...verifiedLauncher,
-    browserInteractionMode: "manual",
-  } as never)).toBe(false);
-  expect(launcherCapabilityProbeRequired({
-    ...verifiedLauncher,
-    browserInteractionMode: "manual",
-  } as never, false, "automatic")).toBe(true);
 });

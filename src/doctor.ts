@@ -6,7 +6,6 @@ import { inspectCodexIntegration } from "./codex-integration";
 import { getServiceStatus } from "./service";
 import {
   inspectLauncherBrowserHost,
-  inspectLauncherBrowserHostLiveness,
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
@@ -102,18 +101,12 @@ export async function runDoctor(): Promise<DoctorReport> {
 
   if (config.browserHost === "launcher") {
     try {
-      const descriptor = config.browserInteractionMode === "manual"
-        ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
-        : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
-      if (config.browserInteractionMode === "automatic") {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
-      }
+      const descriptor = readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
+      await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
       checks.push({
         id: "browser-host",
         status: "ok",
-        message: config.browserInteractionMode === "manual"
-          ? `Embedded launcher browser is reachable for Zero Risk (pid ${descriptor.pid})`
-          : `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
+        message: `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
       });
     } catch (error) {
       checks.push({

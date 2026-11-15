@@ -43,7 +43,7 @@ function readBrowserNavigationState(contents, fallback, { readPageTitle = true }
   return {
     ...fallback,
     url: contents.getURL() || fallback.url,
-    title: readPageTitle ? contents.getTitle() || fallback.title || "ChatGPT" : fallback.title || "ChatGPT",
+    title: readPageTitle ? contents.getTitle() || fallback.title || "M365 Copilot" : fallback.title || "M365 Copilot",
     loading: contents.isLoading(),
     canGoBack: history.canGoBack(),
     canGoForward: history.canGoForward(),

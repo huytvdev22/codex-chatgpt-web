@@ -1,5 +1,5 @@
 const fs = require("node:fs");
-const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { writePrivateFileAtomic } = require("../infra/atomic-file.cjs");
 
 const DEFAULT_WINDOW_STATE = Object.freeze({
   bounds: { width: 1120, height: 720 },

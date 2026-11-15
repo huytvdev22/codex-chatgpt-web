@@ -15,9 +15,8 @@ import {
   loadConfigForSetup,
   providerConfig,
   resolveBrokerEndpoint,
-  resolveInteractionConnectorIdentities,
+  resolveConnectorIdentity,
   runtimeCommandForProcess,
-  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
   validateConnectorNameSuffix,
 } from "../src/config";
 import { removeLegacyRuntimeArtifacts } from "../src/service";
@@ -89,47 +88,9 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
   expect(expandUserPath("~\\runtime")).toBe(join(homedir(), "runtime"));
 });
 
-test("default setup uses the fixed production connector identities", () => {
+test("default setup uses the fixed production connector identity", () => {
   expect(defaultConfig("browser-only").appName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("browser-only").automaticAppName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("browser-only").manualAppName).toBe(ZERO_RISK_CHATGPT_CONNECTOR_NAME);
   expect(defaultConfig("browser-only").subagentProtocol).toBe("compatibility-v1");
-  expect(defaultConfig("browser-only").browserInteractionMode).toBe("automatic");
-  expect(defaultConfig("browser-only").zeroRiskProEnabled).toBe(false);
-});
-
-test.each([
-  ["production", CHATGPT_CONNECTOR_NAME],
-  ["development", DEV_CHATGPT_CONNECTOR_NAME],
-] as const)("%s setup preserves its fixed automatic identity across Zero Risk", (profile, automaticAppName) => {
-  expect(resolveInteractionConnectorIdentities("manual", profile)).toEqual({
-    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-    automaticAppName,
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  });
-  expect(resolveInteractionConnectorIdentities("automatic", profile)).toEqual({
-    appName: automaticAppName,
-    automaticAppName,
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  });
-});
-
-test("setup repairs a legacy automatic connector name that collides with Zero Risk", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-connector-collision-${process.pid}-${Date.now()}`);
-  roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
-  mkdirSync(root, { recursive: true });
-  const collided = defaultConfig("browser-only");
-  collided.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  collided.automaticAppName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  writeFileSync(join(root, "config.json"), `${JSON.stringify(collided)}\n`);
-
-  expect(() => loadConfig()).toThrow(/Automatic and Zero Risk connector names must differ/);
-  expect(loadConfigForSetup()).toMatchObject({
-    appName: CHATGPT_CONNECTOR_NAME,
-    automaticAppName: CHATGPT_CONNECTOR_NAME,
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  });
 });
 
 test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", () => {
@@ -160,45 +121,9 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     version: 3,
     mode: "browser-only",
     browserHost: "managed-chrome",
-    browserInteractionMode: "automatic",
     subagentProtocol: "compatibility-v1",
     solAvailable: true,
   });
-});
-
-test("existing v3 configurations deterministically retain automatic browser interaction", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-v3-interaction-migration-${process.pid}-${Date.now()}`);
-  roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
-  mkdirSync(root, { recursive: true });
-  const legacyV3: Record<string, unknown> = { ...defaultConfig("browser-only") };
-  delete legacyV3.browserInteractionMode;
-  delete legacyV3.zeroRiskProEnabled;
-  writeFileSync(join(root, "config.json"), `${JSON.stringify(legacyV3)}\n`);
-
-  expect(loadConfig()).toMatchObject({
-    browserInteractionMode: "automatic",
-    zeroRiskProEnabled: false,
-  });
-  expect(loadConfigForSetup()).toMatchObject({
-    appName: CHATGPT_CONNECTOR_NAME,
-    automaticAppName: CHATGPT_CONNECTOR_NAME,
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-    browserInteractionMode: "automatic",
-  });
-});
-
-test("Zero Risk fails closed without the Launcher browser host", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-manual-host-${process.pid}-${Date.now()}`);
-  roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
-  mkdirSync(root, { recursive: true });
-  const invalid = defaultConfig("browser-only");
-  invalid.browserInteractionMode = "manual";
-  invalid.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  writeFileSync(join(root, "config.json"), `${JSON.stringify(invalid)}\n`);
-
-  expect(() => loadConfig()).toThrow("requires the launcher browser host");
 });
 
 test("legacy temp-path wrapper and vendor are removed only after runtime ownership changes", () => {
@@ -246,7 +171,6 @@ test("provider configuration always exposes the unified ChatGPT Web model", () =
   expect(provider.modelDefaultReasoningEfforts).toEqual({ "chatgpt-web": "low" });
   expect(provider.modelInputModalities).toEqual({ "chatgpt-web": ["text", "image"] });
   expect(provider.chatgptWeb).toMatchObject({
-    browserInteractionMode: "automatic",
     solAvailable: true,
     extraHighAvailable: false,
     proAvailable: false,
@@ -254,13 +178,11 @@ test("provider configuration always exposes the unified ChatGPT Web model", () =
   });
 });
 
-test("legacy account and manual flags cannot create additional ChatGPT backends", () => {
+test("legacy account flags cannot create additional ChatGPT backends", () => {
   const config = defaultConfig("browser-only");
-  config.browserInteractionMode = "manual";
   config.solAvailable = true;
   config.extraHighAvailable = true;
   config.proAvailable = true;
-  config.zeroRiskProEnabled = true;
   config.experimentalBiggerContext = true;
   const provider = providerConfig(config);
 
@@ -270,8 +192,7 @@ test("legacy account and manual flags cannot create additional ChatGPT backends"
   expect(provider.modelDefaultReasoningEfforts).toEqual({ "chatgpt-web": "low" });
   expect(provider.modelInputModalities).toEqual({ "chatgpt-web": ["text", "image"] });
   expect(provider.chatgptWeb).toMatchObject({
-    appName: config.automaticAppName,
-    browserInteractionMode: "automatic",
+    appName: config.appName,
     solAvailable: true,
     extraHighAvailable: false,
     proAvailable: false,
@@ -279,7 +200,7 @@ test("legacy account and manual flags cannot create additional ChatGPT backends"
   });
 });
 
-test("conversation preferences survive reload and are independent of legacy interaction flags", () => {
+test("conversation preferences survive reload", () => {
   const root = join(tmpdir(), `codex-web-fresh-config-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
@@ -298,10 +219,7 @@ test("conversation preferences survive reload and are independent of legacy inte
   persist();
   const loaded = loadConfig()!;
   expect(providerConfig(loaded).chatgptWeb!.useSavedChats).toBe(true);
-  expect(providerConfig({ ...loaded, browserInteractionMode: "manual" }).chatgptWeb!.useSavedChats).toBe(true);
   expect(providerConfig(loaded).chatgptWeb!.experimentalFreshConversationPerTurn).toBe(true);
-  expect(providerConfig({ ...loaded, browserInteractionMode: "manual" })
-    .chatgptWeb!.experimentalFreshConversationPerTurn).toBe(true);
   expect(loaded.experimentalFreshConversationPerTurn).toBe(true);
   config.experimentalFreshConversationPerTurn = "true";
   persist();
@@ -312,7 +230,7 @@ test("conversation preferences survive reload and are independent of legacy inte
   expect(() => loadConfig()).toThrow("useSavedChats");
 });
 
-test("skill attachments config defaults off, reaches the adapter, and rejects invalid/manual settings", () => {
+test("skill attachments config defaults off and reaches the adapter", () => {
   const root = join(tmpdir(), `codex-skills-config-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
@@ -333,57 +251,51 @@ test("skill attachments config defaults off, reaches the adapter, and rejects in
   config.experimentalSkillAttachments = "true";
   persist();
   expect(() => loadConfig()).toThrow("experimentalSkillAttachments");
-  config.experimentalSkillAttachments = true;
-  config.browserInteractionMode = "manual";
-  config.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  persist();
-  expect(() => loadConfig()).toThrow("Zero Risk does not support Skills as files");
 });
 
-
-test("the whole name after Codex is editable and only the selected mode changes", () => {
+test("the whole name after Codex is editable", () => {
   for (const suffix of ["Native2", "Work", "DEV", "研究_2", "a".repeat(74)]) {
     expect(validateConnectorNameSuffix(suffix)).toBe(suffix);
-    const names = resolveInteractionConnectorIdentities("automatic", "production", {}, suffix);
-    expect(names.appName).toBe(`Codex ${suffix}`);
-    expect(names.manualAppName).toBe("Codex Zero Risk");
-    expect(names.appName.length).toBeLessThanOrEqual(80);
-    const manual = resolveInteractionConnectorIdentities("manual", "production", names, "Manual");
-    expect(manual.automaticAppName).toBe(names.automaticAppName);
-    expect(manual.appName).toBe("Codex Manual");
-    expect(resolveInteractionConnectorIdentities("automatic", "production", manual).appName).toBe(names.automaticAppName);
+    const name = resolveConnectorIdentity("production", undefined, suffix);
+    expect(name).toBe(`Codex ${suffix}`);
+    expect(name.length).toBeLessThanOrEqual(80);
   }
+  expect(resolveConnectorIdentity("development")).toBe(DEV_CHATGPT_CONNECTOR_NAME);
   for (const suffix of [null, 5, "", "x".repeat(75), " Work", "Work ", "x\ny", "x`y", "x@y", "--flag"]) {
     expect(() => validateConnectorNameSuffix(suffix)).toThrow("part after Codex");
   }
   expect(() => validateConnectorNameSuffix("Native")).toThrow("retired");
-  expect(() => resolveInteractionConnectorIdentities("automatic", "production", {}, "Zero Risk")).toThrow("must differ");
 });
 
-test("stored names survive config loading without an additional naming preference", () => {
+test("stored names survive config loading and strip legacy manual keys", () => {
   const root = join(tmpdir(), `cgw-name-config-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
   mkdirSync(root, { recursive: true });
   const config = {
-    ...defaultConfig("browser-only"), browserHost: "launcher" as const,
+    ...defaultConfig("browser-only"),
+    browserHost: "launcher" as const,
     browserHostDescriptorPath: join(root, "launcher.json"),
-    tunnel: { binaryPath: join(root, "tunnel"), tunnelId: `tunnel_${"a".repeat(32)}`,
-      runtimeKeyFile: join(root, "key"), profileDir: root, profileName: "test", alias: "test" },
-    ...resolveInteractionConnectorIdentities("automatic", "production", {}, "Work"),
+    appName: resolveConnectorIdentity("production", undefined, "Work"),
   };
-  for (const mode of ["automatic", "manual"] as const) {
-    Object.assign(config, { browserInteractionMode: mode }, resolveInteractionConnectorIdentities(mode, "production", config));
-    writeFileSync(join(root, "config.json"), JSON.stringify(config));
-    expect(loadConfig().appName).toBe(mode === "manual" ? "Codex Zero Risk" : "Codex Work");
-    expect(loadConfigForSetup().automaticAppName).toBe("Codex Work");
-  }
-  // An older locally configured name also remains exact; it is not renamed on upgrade.
-  config.automaticAppName = "Codex Native2 - Work";
   writeFileSync(join(root, "config.json"), JSON.stringify(config));
-  expect(loadConfigForSetup().automaticAppName).toBe("Codex Native2 - Work");
-  writeFileSync(join(root, "config.json"), JSON.stringify({ ...config, manualAppName: "Another plugin" }));
+  expect(loadConfig().appName).toBe("Codex Work");
+  expect(loadConfigForSetup().appName).toBe("Codex Work");
+
+  // An older locally configured name also remains exact; it is not renamed on upgrade.
+  config.appName = "Codex Native2 - Work";
+  writeFileSync(join(root, "config.json"), JSON.stringify(config));
+  expect(loadConfigForSetup().appName).toBe("Codex Native2 - Work");
+
+  writeFileSync(join(root, "config.json"), JSON.stringify({ ...config, appName: "Another plugin" }));
   expect(() => loadConfig()).toThrow("must start with Codex");
-  writeFileSync(join(root, "config.json"), JSON.stringify({ ...config, automaticAppName: "Codex Zero Risk", manualAppName: "Codex Manual", appName: "Codex Manual" }));
-  expect(loadConfigForSetup().automaticAppName).toBe("Codex Zero Risk");
+
+  writeFileSync(join(root, "config.json"), JSON.stringify({
+    ...config,
+    appName: "Codex Zero Risk",
+    automaticAppName: "Codex Work",
+    manualAppName: "Codex Zero Risk",
+    browserInteractionMode: "manual",
+  }));
+  expect(loadConfigForSetup().appName).toBe("Codex Work");
 });

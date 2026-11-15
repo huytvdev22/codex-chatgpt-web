@@ -4,15 +4,15 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { writePrivateFileAtomic } = require("./atomic-file.cjs");
-const { redactText } = require("./logging.cjs");
+const { writePrivateFileAtomic } = require("../infra/atomic-file.cjs");
+const { redactText } = require("../infra/logging.cjs");
 const {
   DETACH_OWNED_CHILD,
   processRunning,
   terminateOwnedProcessTree,
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
-const { windowsTrustEnvironment } = require("./windows-trust.cjs");
+const { windowsTrustEnvironment } = require("../infra/windows-trust.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
@@ -95,9 +95,6 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     throw new Error("Production launcher refuses a DEV harness configuration");
   }
   if (config.solAvailable === undefined) config = { ...config, solAvailable: true };
-  if (config.browserInteractionMode === undefined) {
-    config.browserInteractionMode = "automatic";
-  }
   if (config.mode === "full") {
     config = { ...config, mode: "browser-only" };
     delete config.tunnel;
@@ -106,9 +103,6 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   }
   if (config.mode !== "browser-only") {
     throw new Error("Runtime configuration has an invalid mode");
-  }
-  if (config.browserInteractionMode !== "automatic" && config.browserInteractionMode !== "manual") {
-    throw new Error("Runtime configuration has an invalid browser interaction mode");
   }
   if (config.subagentProtocol !== undefined
     && config.subagentProtocol !== "compatibility-v1"
@@ -262,6 +256,10 @@ class RuntimeSupervisor {
     delete normalized.tunnel;
     delete normalized.automaticTunnel;
     delete normalized.manualTunnel;
+    delete normalized.browserInteractionMode;
+    delete normalized.zeroRiskProEnabled;
+    delete normalized.automaticAppName;
+    delete normalized.manualAppName;
     return normalized;
   }
 

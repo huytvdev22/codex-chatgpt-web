@@ -129,9 +129,16 @@ test("launcher UI localizes doctor check messages", () => {
 
 
 test("native dialogs and IPC accept exactly the renderer's supported languages", () => {
-  const main = read("launcher", "electron", "main.cjs");
-  const copySource = main.slice(main.indexOf("const NATIVE_COPY ="), main.indexOf("function updateTrayMenu("));
-  const validation = main.slice(main.indexOf("function validateLanguage("), main.indexOf("function validateBrowserInteractionMode("));
+  const trayControllerSource = read("launcher", "electron", "app", "tray-controller.cjs");
+  const ipcRouterSource = read("launcher", "electron", "app", "ipc-router.cjs");
+  const copySource = trayControllerSource.slice(
+    trayControllerSource.indexOf("const NATIVE_COPY ="),
+    trayControllerSource.indexOf("class TrayController"),
+  );
+  const validation = ipcRouterSource.slice(
+    ipcRouterSource.indexOf("function validateLanguage("),
+    ipcRouterSource.indexOf("function validateBounds("),
+  );
   const { nativeCopyFor, validateLanguage } = Function("languages", `${copySource}\n${validation}\nreturn {nativeCopyFor, validateLanguage};`)(languages);
   const english = nativeCopyFor("en");
   for (const language of Object.keys(languages)) {
@@ -151,7 +158,6 @@ test("all locales translate known doctor success checks without changing literal
     [undefined, "Checking local runtime", "checkingLocalRuntime"],
     ["config", `Configuration is valid (${fixturePath})`, "doctorConfigValid", "{path}", fixturePath],
     ["browser-host", "Embedded launcher browser is authenticated and reachable (pid 345)", "doctorBrowserReady", "{pid}", "345"],
-    ["browser-host", "Embedded launcher browser is reachable for Zero Risk (pid 678)", "doctorManualBrowserReady", "{pid}", "678"],
     ["codex", "Codex native model route is installed", "doctorCodexInstalled"],
     ["service", "Launcher owns the background runtime", "doctorRuntimeOwned"],
     ["chrome", `Chrome executable found: ${fixturePath}`, "doctorChromeFound", "{path}", fixturePath],
@@ -180,16 +186,12 @@ test("all locales translate known doctor success checks without changing literal
 });
 
 
-test("plugin setup and Zero Risk instructions show configured names in every language", () => {
+test("plugin setup instructions show configured connector name in every language", () => {
   const { copyFor } = loadI18nModule();
-  const names = { automatic: "Codex Work", manual: "Codex Manual" };
+  const connectorName = "Codex Work";
   for (const language of Object.keys(languages)) {
-    const copy = copyFor(language, names);
-    for (const key of ["manualMcpStepThreeBody", "manualConnectorNotice", "manualPromptInstruction", "manualPromptWaiting"]) {
-      assert.ok(copy[key].includes(names.manual), `${language}: ${key}`);
-    }
-    assert.ok(copy.connectorMigrationNotice.includes(names.automatic));
+    const copy = copyFor(language, connectorName);
+    assert.ok(copy.connectorMigrationNotice.includes(connectorName));
     assert.ok(copy.pluginNameWarning.length > 0);
-    assert.equal(copyFor(language).manualPromptInstruction.includes("Codex Manual"), false);
   }
 });

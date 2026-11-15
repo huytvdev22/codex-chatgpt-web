@@ -3,10 +3,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { CURRENT_CONNECTOR_NAME, DEV_CONNECTOR_NAME } = require("../electron/connector-identity.cjs");
-const { RuntimeHost } = require("../electron/runtime.cjs");
+const { CURRENT_CONNECTOR_NAME, DEV_CONNECTOR_NAME } = require("../electron/infra/connector-identity.cjs");
+const { RuntimeHost } = require("../electron/runtime/runtime-host.cjs");
 
-function hostFor(existingConfig, interactionMode = "automatic") {
+function hostFor(existingConfig) {
   const host = new RuntimeHost({
     app: {
       getPath: () => path.join(os.tmpdir(), "codex-web-gpt-runtime-host-test"),
@@ -21,7 +21,6 @@ function hostFor(existingConfig, interactionMode = "automatic") {
       stopForSetup: async () => ({ status: "stopped" }),
       startIfConfigured: async () => ({ status: "ready" }),
     },
-    getBrowserInteractionMode: () => interactionMode,
   });
   let invocation;
   host.runSetup = async (name, args, options = {}) => {
@@ -32,7 +31,7 @@ function hostFor(existingConfig, interactionMode = "automatic") {
   return { host, invocation: () => invocation };
 }
 
-function devHostFor(existingConfig, interactionMode = "automatic") {
+function devHostFor(existingConfig) {
   const host = new RuntimeHost({
     app: {
       getPath: () => path.join(os.tmpdir(), "codex-web-gpt-dev-runtime-host-test"),
@@ -49,7 +48,6 @@ function devHostFor(existingConfig, interactionMode = "automatic") {
       stopForSetup: async () => ({ status: "stopped" }),
       startIfConfigured: async () => ({ status: "ready" }),
     },
-    getBrowserInteractionMode: () => interactionMode,
   });
   let invocation;
   host.runDevSetup = async (name, args, options = {}) => {
@@ -69,7 +67,6 @@ test("core setup migrates a legacy full-harness configuration to browser-only", 
     "--browser-only",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
-    "--automatic-browser-interaction",
     "--refresh-account-capabilities",
     "--replace-codex-route",
     "--acknowledge-unofficial",
@@ -94,67 +91,6 @@ test("core setup starts in browser-only mode when no installation exists", async
   assert.equal(fixture.invocation().args.includes("--chrome"), false);
 });
 
-test("core setup preserves manual browser interaction for a new installation", async () => {
-  const fixture = hostFor(null, "manual");
-  const result = await fixture.host.setupCore();
-  assert.equal(result.mode, "browser-only");
-  assert.equal(fixture.invocation().args.includes("--manual-browser-interaction"), true);
-  assert.equal(fixture.invocation().args.includes("--automatic-browser-interaction"), false);
-  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
-});
-
-test("manual browser interaction requires an installed browser-backed runtime", async () => {
-  await assert.rejects(
-    hostFor(null).host.setBrowserInteractionMode("manual"),
-    /Install the Codex integration/,
-  );
-  const fixture = hostFor({
-    mode: "browser-only",
-    browserHost: "launcher",
-    appName: "Codex Native2",
-  });
-  const result = await fixture.host.setBrowserInteractionMode("manual");
-  assert.equal(result.mode, "manual");
-  assert.equal(fixture.invocation().args.includes("--manual-browser-interaction"), true);
-});
-
-test("browser interaction mode changes reuse the transactional setup and refresh only automatic capabilities", async () => {
-  const config = {
-    mode: "browser-only",
-    browserHost: "launcher",
-    appName: "Codex Native2",
-    experimentalBiggerContext: true,
-  };
-  const manual = hostFor(config);
-  const manualResult = await manual.host.setBrowserInteractionMode("manual");
-  assert.equal(manualResult.mode, "manual");
-  assert.equal(manual.invocation().args.includes("--manual-browser-interaction"), true);
-  assert.equal(manual.invocation().args.includes("--refresh-account-capabilities"), false);
-  assert.equal(manual.invocation().args.includes("--standard-context"), true);
-
-  const automatic = hostFor(config);
-  const automaticResult = await automatic.host.setBrowserInteractionMode("automatic");
-  assert.equal(automaticResult.mode, "automatic");
-  assert.equal(automatic.invocation().args.includes("--automatic-browser-interaction"), true);
-  assert.equal(automatic.invocation().args.includes("--refresh-account-capabilities"), true);
-  assert.equal(automatic.invocation().args.includes("--bigger-context"), true);
-});
-
-test("switching back from manual interaction preserves the saved automatic connector identity", async () => {
-  const fixture = hostFor({
-    mode: "browser-only",
-    browserHost: "launcher",
-    appName: "Codex Zero Risk",
-    automaticAppName: "Codex Native2",
-    browserInteractionMode: "manual",
-  }, "manual");
-  await fixture.host.setBrowserInteractionMode("automatic");
-  const args = fixture.invocation().args;
-  assert.equal(args.includes("--app-name"), false);
-  assert.equal(fixture.host.setupConnectorName(), CURRENT_CONNECTOR_NAME);
-  assert.equal(args.includes("Codex Zero Risk"), false);
-});
-
 test("DEV core setup configures only the isolated harness contract", async () => {
   const fixture = devHostFor(null);
   const result = await fixture.host.setupDevCore();
@@ -167,7 +103,6 @@ test("DEV core setup configures only the isolated harness contract", async () =>
       "--browser-only",
       "--browser-host-descriptor",
       "/dev/runtime/launcher-browser.json",
-      "--automatic-browser-interaction",
       "--refresh-account-capabilities",
       "--acknowledge-unofficial",
     ],
@@ -187,7 +122,6 @@ test("Bigger Context uses the setup transaction and refreshes the production Cod
       "--browser-only",
       "--browser-host-descriptor",
       "/runtime/launcher-browser.json",
-      "--automatic-browser-interaction",
       "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
@@ -208,7 +142,6 @@ test("Bigger Context updates the isolated DEV config without installing a Codex 
       "--browser-only",
       "--browser-host-descriptor",
       "/dev/runtime/launcher-browser.json",
-      "--automatic-browser-interaction",
       "--acknowledge-unofficial",
       "--standard-context",
     ],
@@ -303,7 +236,6 @@ test("launcher update transaction upgrades its owned browser-only runtime with s
     "--browser-only",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
-    "--automatic-browser-interaction",
     "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
@@ -334,7 +266,6 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--browser-only",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
-    "--automatic-browser-interaction",
     "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
@@ -360,33 +291,11 @@ test("launcher update transaction does not preserve a stale disconnected route p
   assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
 });
 
-test("launcher update preserves manual browser interaction without probing account capabilities", async () => {
-  const fixture = hostFor({
-    mode: "browser-only",
-    browserHost: "launcher",
-    browserInteractionMode: "manual",
-    appName: "Codex Native2",
-    releaseVersion: "1.1.1",
-  });
-
-  assert.equal((await fixture.host.upgradeManagedRuntime()).updated, true);
-  assert.equal(fixture.invocation().args.includes("--manual-browser-interaction"), true);
-  assert.equal(fixture.invocation().args.includes("--automatic-browser-interaction"), false);
-  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
-});
-
 test("launcher update transaction leaves current and externally owned runtimes unchanged", async () => {
   const current = hostFor({
     mode: "browser-only",
     browserHost: "launcher",
     appName: "Codex Native2",
-    releaseVersion: "1.1.3",
-  });
-  const currentManual = hostFor({
-    mode: "full",
-    browserHost: "launcher",
-    appName: "Codex Native2",
-    browserInteractionMode: "manual",
     releaseVersion: "1.1.3",
   });
   const external = hostFor({
@@ -397,10 +306,8 @@ test("launcher update transaction leaves current and externally owned runtimes u
   });
 
   assert.deepEqual(await current.host.upgradeManagedRuntime(), { updated: false });
-  assert.deepEqual(await currentManual.host.upgradeManagedRuntime(), { updated: false });
   assert.deepEqual(await external.host.upgradeManagedRuntime(), { updated: false });
   assert.equal(current.invocation(), undefined);
-  assert.equal(currentManual.invocation(), undefined);
   assert.equal(external.invocation(), undefined);
 });
 
@@ -1041,26 +948,23 @@ test("failed terminal migration restores removed launchd ownership before verify
   }
 });
 
-test("skill file experiment uses the setup transaction in production and DEV, and rejects manual mode", async () => {
-  const production = hostFor({ mode: "browser-only", browserInteractionMode: "automatic" });
+test("skill file experiment uses the setup transaction in production and DEV", async () => {
+  const production = hostFor({ mode: "browser-only" });
   assert.equal((await production.host.setSkillAttachments(true)).enabled, true);
   assert.equal(production.invocation().args.includes("--browser-only"), true);
   assert.equal(production.invocation().args.includes("--skill-attachments"), true);
   assert.equal(production.invocation().args.includes("--restart-service"), true);
-  const dev = devHostFor({ mode: "browser-only", browserInteractionMode: "automatic" });
+  const dev = devHostFor({ mode: "browser-only" });
   assert.equal((await dev.host.setSkillAttachments(false)).enabled, false);
   assert.equal(dev.invocation().args.includes("--browser-only"), true);
   assert.equal(dev.invocation().args.includes("--inline-skills"), true);
   assert.equal(dev.invocation().args.includes("--replace-codex-route"), false);
-  const manual = hostFor({ mode: "browser-only", browserInteractionMode: "manual" }, "manual");
-  await assert.rejects(() => manual.host.setSkillAttachments(true), /Zero Risk/);
-  assert.equal(manual.invocation(), undefined);
 });
 
 
-test("fresh-conversation preference uses production and DEV setup without forcing mode or other preferences", async () => {
+test("fresh-conversation preference uses production and DEV setup without forcing other preferences", async () => {
   for (const makeHost of [hostFor, devHostFor]) {
-    const existing = { mode: "browser-only", browserInteractionMode: "automatic", autoApproveToolCalls: true,
+    const existing = { mode: "browser-only", autoApproveToolCalls: true,
       experimentalFreshConversationPerTurn: false, experimentalSkillAttachments: true };
     const fixture = makeHost(existing);
     for (const enabled of [true, false]) {
@@ -1077,23 +981,19 @@ test("fresh-conversation preference uses production and DEV setup without forcin
       assert.equal(existing.experimentalFreshConversationPerTurn, false, "setter must delegate persistence to setup");
       assert.equal(existing.experimentalSkillAttachments, true);
     }
-    for (const config of [null, { mode: "browser-only", browserInteractionMode: "manual" }]) {
-      const fixture = makeHost(config);
-      await assert.rejects(() => fixture.host.setFreshConversationPerTurn(true), /Initialize|Zero Risk/);
-      await assert.rejects(() => fixture.host.setFreshConversationPerTurn(false), /Initialize|Zero Risk/);
-      assert.equal(fixture.invocation(), undefined);
+    const uninitialized = makeHost(null);
+    await assert.rejects(() => uninitialized.host.setFreshConversationPerTurn(true), /Initialize/);
+    await assert.rejects(() => uninitialized.host.setFreshConversationPerTurn(false), /Initialize/);
+    assert.equal(uninitialized.invocation(), undefined);
+    const saved = makeHost({ mode: "browser-only" });
+    for (const enabled of [true, false]) {
+      await saved.host.setUseSavedChats(enabled);
+      assert.equal(saved.invocation().args.includes(enabled ? "--saved-chats" : "--temporary-chats"), true);
+      assert.equal(saved.invocation().args.includes("--browser-only"), true);
+      assert.equal(saved.invocation().args.includes("--fresh-conversation"), false);
     }
-    for (const interaction of ["automatic", "manual"]) {
-      const saved = makeHost({ mode: "browser-only", browserInteractionMode: interaction }, interaction);
-      for (const enabled of [true, false]) {
-        await saved.host.setUseSavedChats(enabled);
-        assert.equal(saved.invocation().args.includes(enabled ? "--saved-chats" : "--temporary-chats"), true);
-        assert.equal(saved.invocation().args.includes("--browser-only"), true);
-        assert.equal(saved.invocation().args.includes("--fresh-conversation"), false);
-      }
-      await assert.rejects(() => saved.host.setUseSavedChats("true"), /boolean/);
-    }
-    const invalidPreference = makeHost({ mode: "browser-only", browserInteractionMode: "automatic" });
+    await assert.rejects(() => saved.host.setUseSavedChats("true"), /boolean/);
+    const invalidPreference = makeHost({ mode: "browser-only" });
     await assert.rejects(() => invalidPreference.host.setFreshConversationPerTurn("true"), /boolean/);
     assert.equal(invalidPreference.invocation(), undefined);
   }
@@ -1102,9 +1002,8 @@ test("fresh-conversation preference uses production and DEV setup without forcin
 
 for (const development of [false, true]) test(`plugin renaming uses transactional ${development ? "DEV" : "production"} setup without changing credentials or refreshing models`, async () => {
   const factory = development ? devHostFor : hostFor;
-  const fixture = factory({ mode: "browser-only", appName: "Codex Work", automaticAppName: "Codex Work", manualAppName: "Codex Manual" });
-  assert.equal(fixture.host.setupConnectorName("manual"), "Codex Manual");
-  assert.equal(fixture.host.setupConnectorName("automatic"), "Codex Work");
+  const fixture = factory({ mode: "browser-only", appName: "Codex Work" });
+  assert.equal(fixture.host.setupConnectorName(), "Codex Work");
   assert.equal(fixture.host.browserConnectorName(), "Codex Work");
   assert.deepEqual(await fixture.host.setConnectorNameSuffix("Work"), { changed: false });
   assert.equal(fixture.invocation(), undefined);
@@ -1114,13 +1013,12 @@ for (const development of [false, true]) test(`plugin renaming uses transactiona
   assert.equal(args[args.indexOf("--connector-name-suffix") + 1], "Home");
   for (const unwanted of ["--refresh-account-capabilities", "--tunnel-id", "--runtime-key-file"]) assert.equal(args.includes(unwanted), false);
   await assert.rejects(fixture.host.setConnectorNameSuffix(""), /part after Codex/);
-  await assert.rejects(fixture.host.setConnectorNameSuffix("Manual"), /must differ/);
   await assert.rejects(fixture.host.setConnectorNameSuffix("Native"), /retired/);
   await assert.rejects(fixture.host.setConnectorNameSuffix("bad\nname"), /part after Codex/);
 });
 
 test("renaming rolls back the saved name if the new runtime fails", async () => {
-  const config = { mode: "full", browserHost: "launcher", appName: "Codex Old", automaticAppName: "Codex Old" };
+  const config = { mode: "full", browserHost: "launcher", appName: "Codex Old" };
   const fixture = hostFor(config);
   const host = fixture.host;
   host.runSetup = RuntimeHost.prototype.runSetup;
@@ -1129,11 +1027,10 @@ test("renaming rolls back the saved name if the new runtime fails", async () => 
   host.restoreSetupCheckpoint = checkpoint => { Object.assign(config, checkpoint); };
   host.restorePreviousRuntime = async () => {};
   host.run = async (_name, args) => {
-    if (!args.includes("--preflight-only")) Object.assign(config, { automaticAppName: "Codex New", appName: "Codex New" });
+    if (!args.includes("--preflight-only")) Object.assign(config, { appName: "Codex New" });
     return { stdout: "" };
   };
   host.supervisor.startIfConfigured = async () => ({ status: "failed", detail: "fixture failure" });
   await assert.rejects(host.setConnectorNameSuffix("New"), /fixture failure/);
-  assert.equal(config.automaticAppName, "Codex Old");
   assert.equal(config.appName, "Codex Old");
 });

@@ -4,12 +4,12 @@ const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { runtimeInvocation } = require("../electron/runtime-command.cjs");
+const { runtimeInvocation } = require("../electron/runtime/runtime-command.cjs");
 const {
   ensurePackagedRuntime,
   validateRuntimeBundle,
   waitForPackagedRuntimeSource,
-} = require("../electron/runtime-install.cjs");
+} = require("../electron/runtime/runtime-install.cjs");
 
 function comparePaths(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;

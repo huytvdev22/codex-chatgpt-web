@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { writePrivateFileAtomic } = require("../infra/atomic-file.cjs");
 
 const LINUX_DESKTOP_NAME = "dev.codexwebgpt.launcher.desktop";
 

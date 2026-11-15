@@ -12,7 +12,7 @@ const {
   macApplicationPath,
   releaseAssetName,
   validateReleaseAssetUrl,
-} = require("../electron/update.cjs");
+} = require("../electron/app/update-controller.cjs");
 
 test("Linux auto-update fails closed without the stable installer wrapper", () => {
   const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
@@ -286,7 +286,7 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
     runnerSource,
   }));
   try {
-    const result = spawnSync(process.execPath, [path.join(__dirname, "..", "electron", "update-worker.cjs"), jobPath], {
+    const result = spawnSync(process.execPath, [path.join(__dirname, "..", "electron", "app", "update-worker.cjs"), jobPath], {
       encoding: "utf8",
       timeout: 10_000,
     });

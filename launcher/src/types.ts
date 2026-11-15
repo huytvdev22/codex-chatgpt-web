@@ -2,7 +2,6 @@ import languages from "../electron/languages.json";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
-export type BrowserInteractionMode = "automatic" | "manual";
 export type Surface = "browser" | "setup" | "settings";
 
 export interface LauncherState {
@@ -14,7 +13,6 @@ export interface LauncherState {
   autoStart: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
-  browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
@@ -27,7 +25,7 @@ export interface LauncherState {
   codexCatalogVerified?: boolean;
   codexRestartRequired?: boolean;
   sessionRefreshReminderAt: string | null;
-  selectedProvider: "m365" | "chatgpt";
+  selectedProvider: string;
 }
 
 export interface BrowserState {
@@ -36,7 +34,6 @@ export interface BrowserState {
   url: string;
   title: string;
   authenticated: boolean;
-  chatGptAuthenticated?: boolean;
   m365Authenticated?: boolean;
   visible: boolean;
   surfaceActive: boolean;
@@ -46,7 +43,7 @@ export interface BrowserState {
   zoomFactor: number;
   activeTabId: string;
   maxTabs: number;
-  provider?: "m365" | "chatgpt";
+  provider?: string;
   tabs: BrowserTabState[];
 }
 
@@ -58,11 +55,6 @@ export interface BrowserTabState {
   loading: boolean;
   active: boolean;
   closable: boolean;
-  interactionMode?: BrowserInteractionMode;
-  manualState?: "awaiting-user" | "sent" | "running" | "completed" | "timed-out" | "cancelled" | "failed";
-  manualDeadlineAt?: string;
-  canCopyPrompt?: boolean;
-  canConfirmSent?: boolean;
 }
 
 export interface DoctorCheck {
@@ -99,7 +91,6 @@ export interface LauncherSnapshot {
   state: LauncherState;
   browser: BrowserState | null;
   connectorName: string;
-  connectorNames: Record<BrowserInteractionMode, string>;
   urls: {
     github: string;
     x: string;
@@ -117,7 +108,7 @@ export interface LauncherApi {
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
   openSocial(target: "github" | "x"): Promise<LauncherState>;
-  completeOnboarding(language: Language, browserInteractionMode: BrowserInteractionMode): Promise<LauncherState>;
+  completeOnboarding(language: Language): Promise<LauncherState>;
   openExternal(url: string): Promise<boolean>;
   setBrowserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<boolean>;
   setBrowserSurfaceActive(active: boolean): Promise<BrowserState>;
@@ -128,8 +119,6 @@ export interface LauncherApi {
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string): Promise<BrowserState>;
-  copyManualPrompt(tabId: string): Promise<BrowserState>;
-  confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   doctor(): Promise<DoctorReport>;
@@ -142,11 +131,6 @@ export interface LauncherApi {
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setUseSavedChats(enabled: boolean): Promise<LauncherState>;
-  setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
-    state: LauncherState;
-    credentialsRequired: boolean;
-    targetMode: BrowserInteractionMode;
-  }>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,
@@ -156,7 +140,7 @@ export interface LauncherApi {
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
   windowControl(action: "close" | "minimize" | "zoom"): void;
   onWindowStateChanged(listener: (state: { fullScreen: boolean; maximized: boolean }) => void): () => void;
-  onConnectorNamesChanged(listener: (names: Pick<LauncherSnapshot, "connectorName" | "connectorNames">) => void): () => void;
+  onConnectorNameChanged(listener: (connectorName: string) => void): () => void;
   onStateChanged(listener: (state: LauncherState) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;

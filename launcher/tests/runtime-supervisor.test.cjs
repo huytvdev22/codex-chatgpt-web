@@ -6,14 +6,14 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { packagedRuntimePaths } = require("../electron/runtime-command.cjs");
-const { linuxDesktopEntry, requireAutostartState } = require("../electron/autostart.cjs");
+const { packagedRuntimePaths } = require("../electron/runtime/runtime-command.cjs");
+const { linuxDesktopEntry, requireAutostartState } = require("../electron/app/autostart.cjs");
 const {
   MAX_RESTARTS_PER_WINDOW,
   RuntimeSupervisor,
   managedTunnelConnectArgs,
   validateConfig,
-} = require("../electron/runtime-supervisor.cjs");
+} = require("../electron/runtime/runtime-supervisor.cjs");
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -157,10 +157,8 @@ test("launcher runtime ownership cannot cross production and DEV profiles", () =
     900,
   );
   for (const enabled of [false, true]) {
-    for (const browserInteractionMode of ["automatic", "manual"]) {
-      assert.equal(validateConfig({ ...production, browserInteractionMode,
-        experimentalFreshConversationPerTurn: enabled }, descriptorPath).experimentalFreshConversationPerTurn, enabled);
-    }
+    assert.equal(validateConfig({ ...production,
+      experimentalFreshConversationPerTurn: enabled }, descriptorPath).experimentalFreshConversationPerTurn, enabled);
   }
   for (const invalid of ["true", 1, null]) {
     assert.throws(() => validateConfig({ ...production,
@@ -816,22 +814,21 @@ server.listen(config.port, config.host);
 
 test("observed CLI fresh-conversation changes retire completed tabs once and defer launcher transactions", async () => {
   const vm = require("node:vm");
-  const { BrowserHost } = require("../electron/browser-host.cjs");
-  const { releaseRetainedConversation } = require("../electron/retained-turn-release.cjs");
-  const main = fs.readFileSync(path.join(__dirname, "../electron/main.cjs"), "utf8");
+  const { BrowserHost } = require("../electron/browser/browser-host.cjs");
+  const { releaseRetainedConversation } = require("../electron/browser/retained-turn-release.cjs");
+  const ipcRouterSource = fs.readFileSync(path.join(__dirname, "../electron/app/ipc-router.cjs"), "utf8");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-fresh-config-"));
   const descriptorPath = path.join(root, "launcher.json");
   const configPath = path.join(root, "config.json");
   const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false };
   const key = "a".repeat(64);
-  const old = { id: "old", traceId: "old-trace", status: "ready", interactionMode: "automatic", conversationKey: key,
+  const old = { id: "old", traceId: "old-trace", status: "ready", conversationKey: key,
     connectorIdentity: "Codex Native2", connectorBound: true };
-  const active = { id: "active", traceId: "active-trace", status: "running", interactionMode: "automatic", conversationKey: key };
-  const manual = { id: "manual", status: "ready", interactionMode: "manual", conversationKey: "b".repeat(64) };
+  const active = { id: "active", traceId: "active-trace", status: "running", conversationKey: key };
   let operation = null, updates = 0;
   const removed = [];
   const browserHost = Object.assign(Object.create(BrowserHost.prototype), {
-    manualOperation: null, turnTabs: new Map([[old.id, old], [active.id, active], [manual.id, manual]]),
+    manualOperation: null, turnTabs: new Map([[old.id, old], [active.id, active]]),
     userCancelledTurnOwners: new Map(), logger: { info() {} },
     removeTurnTab(tab, abort) { assert.equal(abort, false); removed.push(tab.id); this.turnTabs.delete(tab.id); },
     createTurnTab: async () => ({ id: "new", surfaceId: "new-surface" }),
@@ -842,11 +839,17 @@ test("observed CLI fresh-conversation changes retire completed tabs once and def
     stateStore: { read: () => ({ ...state }), update: patch => { updates++; return Object.assign(state, patch); } },
     send() {},
   };
-  vm.runInNewContext(main.slice(main.indexOf("function syncFreshConversationPreference("), main.indexOf("function registerIpc(")), sandbox);
+  vm.runInNewContext(
+    ipcRouterSource.slice(
+      ipcRouterSource.indexOf("function syncFreshConversationPreference("),
+      ipcRouterSource.indexOf("class IpcRouter"),
+    ),
+    sandbox,
+  );
   const supervisor = new RuntimeSupervisor({ coreHome: root, browserDescriptorPath: descriptorPath,
-    onConfigRead: config => sandbox.syncFreshConversationPreference(sandbox.stateStore, config) });
+    onConfigRead: config => sandbox.syncFreshConversationPreference(sandbox.stateStore, config, sandbox) });
   const persist = enabled => fs.writeFileSync(configPath, JSON.stringify(launcherConfig(descriptorPath, {
-    solAvailable: true, browserInteractionMode: "automatic", experimentalFreshConversationPerTurn: enabled,
+    solAvailable: true, experimentalFreshConversationPerTurn: enabled,
   })));
   try {
     persist(true);
@@ -866,7 +869,6 @@ test("observed CLI fresh-conversation changes retire completed tabs once and def
     }
     assert.deepEqual(removed, [old.id]);
     assert.equal(browserHost.turnTabs.get(active.id), active);
-    assert.equal(browserHost.turnTabs.get(manual.id), manual);
     const lease = await browserHost.beginTurn("new-trace", false, 123, key, "Codex Native2");
     assert.equal(lease.reused, false);
     assert.equal(lease.tabId, "new");

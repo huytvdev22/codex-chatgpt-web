@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
+import type { AppConfig, RuntimeMode, SubagentProtocol } from "./config";
 import {
   currentRuntimeCommand,
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
   loadConfigForSetup,
-  resolveInteractionConnectorIdentities,
+  resolveConnectorIdentity,
   saveConfig,
 } from "./config";
 import {
@@ -30,7 +30,6 @@ import { VERSION } from "./version";
 export interface SetupOptions {
   connectorNameSuffix?: string;
   mode: RuntimeMode;
-  browserInteractionMode?: BrowserInteractionMode;
   subagentProtocol?: SubagentProtocol;
   port?: number;
   chromeExecutablePath?: string;
@@ -41,7 +40,6 @@ export interface SetupOptions {
   experimentalSkillAttachments?: boolean;
   experimentalFreshConversationPerTurn?: boolean;
   useSavedChats?: boolean;
-  zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
   acknowledgedUnofficial?: boolean;
@@ -64,11 +62,8 @@ interface PreparedSetup {
 export function launcherCapabilityProbeRequired(
   existing: AppConfig | undefined,
   refreshAccountCapabilities = false,
-  interactionMode: BrowserInteractionMode = existing?.browserInteractionMode ?? "automatic",
 ): boolean {
-  if (interactionMode === "manual") return false;
   return refreshAccountCapabilities
-    || existing?.browserInteractionMode === "manual"
     || existing?.browserHost !== "launcher"
     || typeof existing.solAvailable !== "boolean"
     || typeof existing.extraHighAvailable !== "boolean"
@@ -89,10 +84,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     port: before.port,
     contextWindow: before.contextWindow,
     appName: before.appName,
-    automaticAppName: before.automaticAppName,
-    manualAppName: before.manualAppName,
     browserHost: before.browserHost,
-    browserInteractionMode: before.browserInteractionMode,
     browserHostDescriptorPath: before.browserHostDescriptorPath,
     chromeExecutablePath: before.chromeExecutablePath,
     storageStatePath: before.storageStatePath,
@@ -105,7 +97,6 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     experimentalSkillAttachments: before.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
     useSavedChats: before.useSavedChats,
-    zeroRiskProEnabled: before.zeroRiskProEnabled,
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
     runtimeCommand: before.runtimeCommand,
@@ -117,10 +108,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     port: after.port,
     contextWindow: after.contextWindow,
     appName: after.appName,
-    automaticAppName: after.automaticAppName,
-    manualAppName: after.manualAppName,
     browserHost: after.browserHost,
-    browserInteractionMode: after.browserInteractionMode,
     browserHostDescriptorPath: after.browserHostDescriptorPath,
     chromeExecutablePath: after.chromeExecutablePath,
     storageStatePath: after.storageStatePath,
@@ -133,7 +121,6 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     experimentalSkillAttachments: after.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
     useSavedChats: after.useSavedChats,
-    zeroRiskProEnabled: after.zeroRiskProEnabled,
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
     runtimeCommand: after.runtimeCommand,
@@ -193,13 +180,7 @@ function baseConfig(
 ): AppConfig {
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
-  if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
-  Object.assign(config, resolveInteractionConnectorIdentities(
-    config.browserInteractionMode,
-    "production",
-    existing,
-    options.connectorNameSuffix,
-  ));
+  config.appName = resolveConnectorIdentity("production", existing?.appName, options.connectorNameSuffix);
   if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
   config.releaseVersion = VERSION;
   config.runtimeCommand = currentRuntimeCommand();
@@ -227,31 +208,6 @@ function baseConfig(
   if (options.experimentalBiggerContext !== undefined) {
     config.experimentalBiggerContext = options.experimentalBiggerContext;
   }
-  if (options.zeroRiskProEnabled !== undefined) {
-    if (config.browserInteractionMode !== "manual") {
-      throw new Error("Zero Risk Pro can be configured only with --zero-risk-browser-interaction");
-    }
-    config.zeroRiskProEnabled = options.zeroRiskProEnabled;
-  }
-  if (config.browserInteractionMode === "manual") {
-    if (options.experimentalFreshConversationPerTurn === true) {
-      throw new Error("Fresh browser conversations per turn is available only in automatic mode");
-    }
-    if (options.refreshAccountCapabilities) {
-      throw new Error("Zero Risk cannot refresh account capabilities");
-    }
-    if (options.experimentalSkillAttachments === true) {
-      throw new Error("Zero Risk does not support Skills as files");
-    }
-    if (options.experimentalBiggerContext === true) {
-      throw new Error("Zero Risk does not support Bigger Context");
-    }
-    if (config.browserHost !== "launcher") {
-      throw new Error("Manual browser interaction requires the Launcher; pass --browser-host-descriptor from the running Launcher");
-    }
-    config.experimentalBiggerContext = false;
-    config.experimentalSkillAttachments = false;
-  }
   if (options.acknowledgedUnofficial) config.acknowledgedUnofficialAt = new Date().toISOString();
   if (!config.acknowledgedUnofficialAt) {
     throw new Error("Setup requires explicit acknowledgement that this is unofficial browser automation. Pass --acknowledge-unofficial.");
@@ -267,7 +223,6 @@ async function inspectLauncherCapabilities(
   const detectCapabilities = launcherCapabilityProbeRequired(
     existing,
     refreshAccountCapabilities,
-    config.browserInteractionMode,
   );
   const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
     detectCapabilities,
@@ -330,10 +285,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   let solAvailable: boolean | undefined = config.solAvailable;
   let extraHighAvailable: boolean | undefined = config.extraHighAvailable;
   let proAvailable: boolean | undefined = config.proAvailable;
-  if (config.browserInteractionMode === "manual") {
-    // The generic manual route is independent of account capabilities. The launcher may open the
-    // authenticated surface, but setup must not inspect its model selector or infer availability.
-  } else if (config.browserHost === "launcher") {
+  if (config.browserHost === "launcher") {
     const capabilities = await inspectLauncherCapabilities(
       config,
       existing,

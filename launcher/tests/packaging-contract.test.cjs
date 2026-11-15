@@ -107,8 +107,8 @@ test("release installers resolve checksummed native launcher assets", () => {
 });
 
 test("packaged launcher owns a detached checksummed updater for every release platform", () => {
-  const updater = fs.readFileSync(path.join(launcherRoot, "electron", "update.cjs"), "utf8");
-  const worker = fs.readFileSync(path.join(launcherRoot, "electron", "update-worker.cjs"), "utf8");
+  const updater = fs.readFileSync(path.join(launcherRoot, "electron", "app", "update-controller.cjs"), "utf8");
+  const worker = fs.readFileSync(path.join(launcherRoot, "electron", "app", "update-worker.cjs"), "utf8");
   for (const platform of ["darwin", "win32", "linux"]) {
     assert.match(updater, new RegExp(`platform === "${platform}"`));
     assert.match(worker, new RegExp(`job\\.platform === "${platform}"`));

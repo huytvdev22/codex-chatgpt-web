@@ -2,7 +2,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
+const { validateRuntimeBundle } = require("../electron/runtime/runtime-install.cjs");
 const { requireLibnotifySymbol } = require("./prepare-linux-appimage-tools.cjs");
 
 const root = path.resolve(__dirname, "..");

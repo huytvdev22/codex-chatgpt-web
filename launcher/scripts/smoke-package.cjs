@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
+const { validateRuntimeBundle } = require("../electron/runtime/runtime-install.cjs");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const artifactsDirectory = path.join(launcherRoot, "artifacts");

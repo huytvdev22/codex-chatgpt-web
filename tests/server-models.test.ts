@@ -54,7 +54,6 @@ test("returns only registered adapter models locally without native fallback", a
 
 test("M365 model catalog does not expose chatgpt-web routes regardless of legacy flags", async () => {
   const config = defaultConfig("browser-only");
-  config.browserInteractionMode = "manual";
   config.solAvailable = false;
   config.extraHighAvailable = true;
   config.proAvailable = true;

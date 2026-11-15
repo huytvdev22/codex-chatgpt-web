@@ -6,7 +6,6 @@ import { stdin, stdout } from "node:process";
 import { getConfigDir, getConfigPath, loadConfig } from "./config";
 import {
   inspectLauncherBrowserHost,
-  inspectLauncherBrowserHostLiveness,
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import {
@@ -39,10 +38,6 @@ Usage:
 
 Setup options:
   --browser-only               Browser-backed multi-provider runtime (default)
-  --automatic-browser-interaction
-                               Send prompts and read provider state through browser automation (default)
-  --manual-browser-interaction
-                               Select, paste, and send through the launcher manually
   --port NUMBER                Loopback Responses port (default: 17841)
   --chrome PATH                Google Chrome/Chromium executable used when running outside the launcher
   --browser-host-descriptor PATH
@@ -128,22 +123,6 @@ async function setupCommand(args: string[]): Promise<void> {
     mode: "browser-only",
     ...(portRaw ? { port: Number(portRaw) } : {}),
   };
-  const automaticBrowserInteraction = takeFlag(args, "--automatic-browser-interaction");
-  const manualBrowserInteraction = takeFlag(args, "--manual-browser-interaction");
-  const legacyManualBrowserInteraction = takeFlag(args, "--zero-risk-browser-interaction");
-  if (automaticBrowserInteraction && (manualBrowserInteraction || legacyManualBrowserInteraction)) {
-    throw new Error(
-      "Choose at most one browser interaction mode: --automatic-browser-interaction or --manual-browser-interaction",
-    );
-  }
-  if (legacyManualBrowserInteraction) {
-    stdout.write("Treating deprecated --zero-risk-browser-interaction as --manual-browser-interaction.\n");
-  }
-  if (automaticBrowserInteraction || manualBrowserInteraction || legacyManualBrowserInteraction) {
-    options.browserInteractionMode = manualBrowserInteraction || legacyManualBrowserInteraction
-      ? "manual"
-      : "automatic";
-  }
   const connectorNameSuffix = takeOption(args, "--connector-name-suffix");
   if (connectorNameSuffix !== undefined) options.connectorNameSuffix = connectorNameSuffix;
   const subagentProtocol = takeOption(args, "--subagent-protocol");
@@ -361,13 +340,8 @@ async function main(): Promise<void> {
     if (action !== "check") throw new Error("Browser command must be: browser check");
     const config = loadConfig();
     if (config.browserHost === "launcher") {
-      if (config.browserInteractionMode === "manual") {
-        await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!);
-        stdout.write("The launcher browser is reachable; DOM inspection is intentionally disabled in Zero Risk.\n");
-      } else {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!);
-        stdout.write("Playwright can reach the authenticated M365 Copilot surface embedded in the launcher.\n");
-      }
+      await inspectLauncherBrowserHost(config.browserHostDescriptorPath!);
+      stdout.write("Playwright can reach the authenticated M365 Copilot surface embedded in the launcher.\n");
     } else {
       if (!existsSync(config.chromeExecutablePath)) {
         throw new Error(`Chrome executable is missing: ${config.chromeExecutablePath}`);
