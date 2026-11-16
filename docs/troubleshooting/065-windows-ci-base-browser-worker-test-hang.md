@@ -1,6 +1,6 @@
 # 065 - Job `windows-latest` treo vô hạn tại `tests/base-browser-worker.test.ts` trên GitHub Actions
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm  
 > **Ngày phát hiện:** 2026-11-17  
 > **Phạm vi:** `tests/base-browser-worker.test.ts`, `scripts/verify.ts`
 

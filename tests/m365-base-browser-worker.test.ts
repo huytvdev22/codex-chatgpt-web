@@ -12,11 +12,11 @@ const observerPath = path.resolve(
 );
 
 async function readWorkerSource(): Promise<string> {
-  return await Bun.file(workerPath).text();
+  return (await Bun.file(workerPath).text()).replace(/\r\n/g, "\n");
 }
 
 async function readObserverSource(): Promise<string> {
-  return await Bun.file(observerPath).text();
+  return (await Bun.file(observerPath).text()).replace(/\r\n/g, "\n");
 }
 
 describe("M365 browser worker migration contract", () => {
