@@ -371,5 +371,25 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     expect(result.mimeType).toBe("audio/wav");
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_NEW");
   });
+
+  test("waitForGeneratedAudio fail-fast ngay khi AI Studio hiện banner lỗi HTTP 403 / 400-500", async () => {
+    const worker = new AiStudioSpeechWorker();
+    const fakePage = {
+      waitForTimeout: async () => {},
+      evaluate: async () => ({
+        detectedError: "Http response at 400 or 500 level, error: , http status code: 403",
+        audioSrc: "",
+        isGenerating: false,
+      }),
+    } as unknown as Page;
+
+    await expect(
+      (worker as any).waitForGeneratedAudio(fakePage, "", {
+        modelId: "gemini-2.5-pro-preview-tts",
+        text: "hi",
+        speakers: [],
+      }),
+    ).rejects.toThrow("http status code: 403");
+  });
 });
 

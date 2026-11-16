@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **061** | AI Studio TTS hiện lỗi `http status code: 403` nhưng API bị treo không phản hồi lỗi | `ai-studio`, `speech` | ✅ Đã Confirm | [061-ai-studio-speech-403-toast-hang.md](./061-ai-studio-speech-403-toast-hang.md) |
 | **060** | Lỗi timeout `textarea[aria-label="Enter a prompt"]` do preset AI Studio mở mặc định ở chế độ `Composer` | `ai-studio`, `speech` | ✅ Đã Confirm | [060-ai-studio-speech-composer-mode-timeout.md](./060-ai-studio-speech-composer-mode-timeout.md) |
 | **059** | Triển khai API tạo Voice Podcast tương thích Gemini TTS qua Google AI Studio `/generate-speech` | `ai-studio`, `server`, `speech` | ✅ Đã Confirm | [059-gemini-tts-podcast-api.md](./059-gemini-tts-podcast-api.md) |
 | **058** | Lỗi `element is outside of the viewport` khi click nút Send trên M365 Copilot lúc tab chạy ngầm | `m365-copilot`, `web`, `playwright` | ✅ Đã Confirm | [058-m365-send-outside-viewport.md](./058-m365-send-outside-viewport.md) |

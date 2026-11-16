@@ -49,10 +49,10 @@ const SPEECH_SELECTORS = {
   availableVoicesRegion: '[aria-label="Available voices"]',
   closeDrawerButton: 'button[aria-label="Close panel"]',
   downloadButton: 'button.download-button[aria-label="Download"]',
-  errorBanner: '[role="alert"], mat-snack-bar-container, simple-snack-bar, [class*="error-banner" i], [class*="toast" i]',
+  errorBanner: '[role="alert"], [role="status"], mat-snack-bar-container, simple-snack-bar, .mdc-snackbar, [class*="error-banner" i], [class*="toast" i], [class*="snackbar" i]',
 } as const;
 
-const ERROR_TEXT_PATTERN = /Failed to generate content|permission denied|quota exceeded|rate limit|service unavailable|invalid argument|unauthenticated/i;
+const ERROR_TEXT_PATTERN = /Failed to generate content|Http response at 400 or 500 level|http status code:\s*(?:4\d\d|5\d\d)|permission denied|quota exceeded|rate limit|service unavailable|invalid argument|unauthenticated|forbidden/i;
 
 function extractMarkdownSection(text: string, headingPattern: RegExp): string {
   const lines = text.split(/\r?\n/);
@@ -401,11 +401,12 @@ export class AiStudioSpeechWorker {
         await options.heartbeat().catch(() => {});
       }
 
-      const state = await page.evaluate(({ errorSelector, runSelector }) => {
+      const state = await page.evaluate(({ errorSelector, runSelector, errorPatternSource }) => {
+        const errorPattern = new RegExp(errorPatternSource, "i");
         let detectedError = "";
         for (const el of document.querySelectorAll<HTMLElement>(errorSelector)) {
           const text = (el.innerText || el.textContent || "").trim();
-          if (text && /Failed to generate content|permission denied|quota exceeded|rate limit|service unavailable|invalid argument|unauthenticated/i.test(text)) {
+          if (text && errorPattern.test(text)) {
             detectedError = text.replace(/\s+/g, " ").slice(0, 300);
             break;
           }
@@ -421,6 +422,7 @@ export class AiStudioSpeechWorker {
       }, {
         errorSelector: SPEECH_SELECTORS.errorBanner,
         runSelector: SPEECH_SELECTORS.runButton,
+        errorPatternSource: ERROR_TEXT_PATTERN.source,
       });
 
       if (state.detectedError && ERROR_TEXT_PATTERN.test(state.detectedError)) {
