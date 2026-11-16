@@ -1,0 +1,225 @@
+import { describe, expect, test } from "bun:test";
+import { AdapterRegistry } from "../src/adapters/adapter-registry";
+import { WebProviderAdapter } from "../src/adapters/web/web-provider-adapter";
+import {
+  AI_STUDIO_NEW_CHAT_URL,
+  AiStudioAdapter,
+  AiStudioModelProvider,
+  aiStudioConversationKey,
+  buildAiStudioConversationUrl,
+  buildAiStudioNewChatUrl,
+  normalizeAiStudioConversationId,
+  parseAiStudioConversationId,
+} from "../src/adapters/ai-studio";
+import { AI_STUDIO_DOM_SELECTORS, AiStudioDomObserver } from "../src/adapters/ai-studio/ai-studio-dom-observer";
+import {
+  normalizeCopiedAiStudioCodeSnippet,
+  resolveClipboardMenuItemIndex,
+} from "../src/adapters/ai-studio/ai-studio-clipboard-salvage";
+import { selectPreferredAiStudioResponse } from "../src/adapters/ai-studio/ai-studio-browser-worker";
+import { parseStrictWebResponse } from "../src/adapters/web/protocol/strict-response-parser";
+import { resolveAiStudioThinkingLevel } from "../src/adapters/ai-studio/capability-picker";
+import { ModelRegistry } from "../src/models/model-registry";
+import type { CodexParsedRequest } from "../src/types";
+
+function makeParsedRequest(overrides: Partial<CodexParsedRequest> = {}): CodexParsedRequest {
+  return {
+    modelId: "ai-studio/gemini-4-hydrogen",
+    stream: true,
+    options: {},
+    context: {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Hello" }], timestamp: 1_700_000_000_000 },
+      ],
+      tools: [],
+    },
+    ...overrides,
+  };
+}
+
+describe("Google AI Studio Web Adapter", () => {
+  test("ModelRegistry & AdapterRegistry đăng ký duy nhất model ai-studio/gemini-4-hydrogen", () => {
+    const modelProvider = AiStudioModelProvider.getInstance();
+    expect(modelProvider.id).toBe("ai-studio");
+    expect(modelProvider.routes.map(route => route.slug)).toEqual(["ai-studio/gemini-4-hydrogen"]);
+    expect(modelProvider.matchModelSlug("ai-studio/gemini-4-hydrogen")).toBe(true);
+    expect(modelProvider.matchModelSlug("ai-studio/gemini-4-carbon")).toBe(false);
+
+    expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-hydrogen")?.id).toBe("ai-studio");
+    expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-carbon")).toBeUndefined();
+
+    expect(resolveAiStudioThinkingLevel("ai-studio/gemini-4-hydrogen", "low")).toBe("Low");
+    expect(resolveAiStudioThinkingLevel("ai-studio/gemini-4-hydrogen", "medium")).toBe("Medium");
+    expect(resolveAiStudioThinkingLevel("ai-studio/gemini-4-hydrogen", "high")).toBe("High");
+
+    const adapter = AdapterRegistry.getInstance().createAdapter("ai-studio");
+    expect(adapter).toBeInstanceOf(AiStudioAdapter);
+    expect(adapter).toBeInstanceOf(WebProviderAdapter);
+    expect(adapter.name).toBe("ai-studio");
+  });
+
+  test("parse/normalize AI Studio conversation URL bảo toàn chữ hoa/thường và từ chối new_chat", () => {
+    const sampleId = "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
+    expect(AI_STUDIO_NEW_CHAT_URL).toBe("https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen");
+    expect(buildAiStudioNewChatUrl("gemini-4-hydrogen")).toBe(AI_STUDIO_NEW_CHAT_URL);
+    expect(normalizeAiStudioConversationId(sampleId)).toBe(sampleId);
+    expect(normalizeAiStudioConversationId("new_chat")).toBeUndefined();
+    expect(parseAiStudioConversationId(`https://aistudio.google.com/prompts/${sampleId}`)).toBe(sampleId);
+    expect(parseAiStudioConversationId("https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen")).toBeUndefined();
+    expect(parseAiStudioConversationId("https://evil.example.com/prompts/1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb")).toBeUndefined();
+    expect(buildAiStudioConversationUrl(sampleId)).toBe(`https://aistudio.google.com/prompts/${sampleId}`);
+  });
+
+  test("aiStudioConversationKey tạo SHA-256 ổn định và không lộ threadId gốc", () => {
+    const parsed = makeParsedRequest();
+    const key1 = aiStudioConversationKey(parsed, "thread_secret_abc");
+    const key2 = aiStudioConversationKey(parsed, "thread_secret_abc");
+    expect(key1).toMatch(/^[a-f0-9]{64}$/);
+    expect(key1).toBe(key2);
+    expect(key1).not.toContain("thread_secret_abc");
+  });
+
+  test("AiStudioDomObserver giữ trạng thái generating khi mới có Thoughts và hoàn tất khi Answer turn có nội dung + turn-footer", () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    const thinkingOnly = observer.applyStatus(state, {
+      isGenerating: true,
+      responseReadyLive: false,
+      hasNewAnswerTurn: false,
+      hasTurnFooter: false,
+      thoughtsCount: 1,
+      rawHtml: "",
+      rawText: "",
+      hasContent: false,
+    });
+    expect(thinkingOnly.isGenerating).toBe(true);
+    expect(thinkingOnly.isCompleted).toBe(false);
+    expect(thinkingOnly.activityKey).toContain("thinking:1");
+
+    const firstFooterPoll = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<p>78</p>",
+      rawText: "78",
+      hasContent: true,
+    });
+    expect(firstFooterPoll.isGenerating).toBe(false);
+    expect(firstFooterPoll.isCompleted).toBe(false);
+
+    const completedAnswer = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<p>78</p>",
+      rawText: "78",
+      hasContent: true,
+    });
+    expect(completedAnswer.isGenerating).toBe(false);
+    expect(completedAnswer.isCompleted).toBe(true);
+    expect(completedAnswer.text).toBe("78");
+
+    expect(() => observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: false,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: false,
+      thoughtsCount: 0,
+      rawHtml: "",
+      rawText: "Permission denied. Please check your account permissions and project settings.",
+      hasContent: true,
+      detectedWebError: "Permission denied. Please check your account permissions and project settings.",
+    })).toThrow("[AI Studio Web Error] Permission denied.");
+  });
+
+  test("AiStudioDomObserver không hoàn tất sớm khi <webResponse> chưa đóng và bọc đúng single Markdown code block", () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    const unclosedRaw = "<webResponse>\nChào bạn!";
+    for (let i = 0; i < 4; i += 1) {
+      const obs = observer.applyStatus(state, {
+        isGenerating: false,
+        responseReadyLive: true,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        rawHtml: `<pre><code>&lt;webResponse&gt;\nChào bạn!</code></pre>`,
+        rawText: unclosedRaw,
+        singleMarkdownCodeBlockText: unclosedRaw,
+        hasContent: true,
+      });
+      expect(obs.isCompleted).toBe(false);
+    }
+
+    const completeCodeText = "<webResponse>\nChào bạn!\n</webResponse>";
+    const settle1 = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<ms-code-block><pre><code>...</code></pre></ms-code-block>",
+      rawText: completeCodeText,
+      singleMarkdownCodeBlockText: completeCodeText,
+      hasContent: true,
+    });
+    expect(settle1.isCompleted).toBe(false);
+
+    const settle2 = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<ms-code-block><pre><code>...</code></pre></ms-code-block>",
+      rawText: completeCodeText,
+      singleMarkdownCodeBlockText: completeCodeText,
+      hasContent: true,
+    });
+    expect(settle2.isCompleted).toBe(true);
+    expect(parseStrictWebResponse(settle2.text)).toEqual({
+      kind: "final_answer",
+      content: "Chào bạn!",
+      rawResponse: "````markdown\n<webResponse>\nChào bạn!\n</webResponse>\n````",
+    });
+  });
+
+  test("AiStudioClipboardSalvage khớp menu item kèm icon ligature và ưu tiên bản extraction đầy đủ", () => {
+    expect(AI_STUDIO_DOM_SELECTORS.runOrStopButton).toBe(
+      "button[ms-button].ctrl-enter-submits.ms-button-primary",
+    );
+
+    expect(
+      resolveClipboardMenuItemIndex([
+        "delete\nDelete",
+        "call_split\nBranch from here",
+        "content_copy\nCopy as text",
+        "markdown_copy\nCopy as markdown",
+      ]),
+    ).toBe(3);
+
+    expect(
+      resolveClipboardMenuItemIndex(["content_copy\nCopy as text", "Delete"]),
+    ).toBe(0);
+
+    expect(
+      normalizeCopiedAiStudioCodeSnippet("<webResponse>\nXin chào\n</webResponse>"),
+    ).toBe("````markdown\n<webResponse>\nXin chào\n</webResponse>\n````");
+
+    const domFull = "````markdown\n<webResponse>\nĐầy đủ\n</webResponse>\n````";
+    expect(selectPreferredAiStudioResponse("<webResponse>\nĐầy đủ", domFull)).toEqual({
+      rawResponse: domFull,
+      source: "dom",
+    });
+    expect(selectPreferredAiStudioResponse(domFull, "<webResponse>\nĐầy đủ")).toEqual({
+      rawResponse: domFull,
+      source: "clipboard",
+    });
+  });
+});

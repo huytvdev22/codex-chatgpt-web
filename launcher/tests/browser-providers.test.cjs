@@ -226,3 +226,63 @@ test("M365BrowserProvider encapsulates Microsoft 365 URL, cookie, and fallback p
   assert.equal(loginProbe.authenticated, false);
 });
 
+test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-provider AI Studio registration", async () => {
+  const {
+    AI_STUDIO_CHAT_URL,
+    AI_STUDIO_ORIGIN,
+    AI_STUDIO_PARTITION,
+    AiStudioBrowserProvider,
+  } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const { createDefaultProviderRegistry } = require("../electron/browser/browser-host.cjs");
+
+  const registry = createDefaultProviderRegistry();
+  assert.deepEqual(registry.listIds(), ["m365", "ai-studio"]);
+
+  const provider = new AiStudioBrowserProvider();
+  const sampleId = "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
+  assert.equal(provider.id, "ai-studio");
+  assert.equal(provider.homeUrl, AI_STUDIO_CHAT_URL);
+  assert.equal(provider.origin, AI_STUDIO_ORIGIN);
+  assert.equal(provider.partition, AI_STUDIO_PARTITION);
+  assert.equal(provider.normalizeConversationId(sampleId), sampleId);
+  assert.equal(provider.normalizeConversationId("new_chat"), null);
+  assert.equal(provider.parseConversationId(`https://aistudio.google.com/prompts/${sampleId}`), sampleId);
+  assert.equal(provider.conversationUrl(sampleId), `https://aistudio.google.com/prompts/${sampleId}`);
+  assert.equal(provider.isAllowedNavigation(`https://aistudio.google.com/prompts/${sampleId}`), true);
+  assert.equal(provider.isAllowedNavigation("https://evil.example.com"), false);
+  assert.equal(provider.allowedAuthUrl("https://accounts.google.com/signin"), true);
+
+  const authed = await provider.probeAuthentication({
+    executeJavaScript: async () => Promise.reject(new Error("renderer busy")),
+    getURL: () => AI_STUDIO_CHAT_URL,
+  });
+  assert.equal(authed.authenticated, true);
+
+  const signedOut = await provider.probeAuthentication({
+    executeJavaScript: async () => Promise.reject(new Error("renderer busy")),
+    getURL: () => "https://accounts.google.com/ServiceLogin",
+  });
+  assert.equal(signedOut.authenticated, false);
+
+  let appliedUa = "";
+  provider.onPrimarySessionCreated({
+    getUserAgent: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) CodexM365Copilot/6.9.6 Electron/42.11.18 Chrome/148.0.7778.280 Safari/537.36",
+    setUserAgent: (ua) => { appliedUa = ua; },
+  });
+  assert.equal(
+    appliedUa,
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.280 Safari/537.36",
+  );
+
+  let appliedHyphenUa = "";
+  provider.onPrimarySessionCreated({
+    getUserAgent: () => "Mozilla/5.0 Chrome/134.0.0.0 Electron/42.11.18 codex-m365-copilot/6.9.6 Safari/537.36",
+    setUserAgent: (ua) => { appliedHyphenUa = ua; },
+  });
+  assert.equal(appliedHyphenUa, "Mozilla/5.0 Chrome/134.0.0.0 Safari/537.36");
+
+  const devRegistry = createDefaultProviderRegistry({ profile: "development" });
+  assert.equal(devRegistry.get("m365").partition, "persist:codex-web-gpt-dev-m365");
+  assert.equal(devRegistry.get("ai-studio").partition, "persist:codex-web-gpt-dev-ai-studio");
+});
+

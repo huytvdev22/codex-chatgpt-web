@@ -18,6 +18,7 @@ const {
   createDefaultProviderRegistry,
   navigationErrorForLog,
 } = require("./browser/browser-host.cjs");
+const { sanitizeChromeUserAgent } = require("./browser/providers/base-browser-provider.cjs");
 const { BrowserControlServer } = require("./browser/control-server.cjs");
 const { getAutostart, setAutostart } = require("./app/autostart.cjs");
 const { CatalogMonitor } = require("./app/catalog-monitor.cjs");
@@ -321,8 +322,15 @@ async function start() {
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 
   await app.whenReady();
+  const cleanFallbackUa = sanitizeChromeUserAgent(app.userAgentFallback);
+  if (cleanFallbackUa && cleanFallbackUa !== app.userAgentFallback) {
+    app.userAgentFallback = cleanFallbackUa;
+  }
 
-  const providerRegistry = createDefaultProviderRegistry({ descriptorPath: BROWSER_DESCRIPTOR_PATH });
+  const providerRegistry = createDefaultProviderRegistry({
+    descriptorPath: BROWSER_DESCRIPTOR_PATH,
+    profile: LAUNCHER_PROFILE.kind,
+  });
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"), {
     defaultProvider: providerRegistry.defaultId(),
     isValidProvider: id => providerRegistry.has(id),

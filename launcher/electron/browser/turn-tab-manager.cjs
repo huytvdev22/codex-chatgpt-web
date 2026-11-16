@@ -52,6 +52,7 @@ function loadCommittedBrowserSurface(
   contents,
   url,
   timeoutMs = PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS,
+  { isCommittedUrl = null } = {},
 ) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error("Browser idle document timeout must be positive");
@@ -81,7 +82,11 @@ function loadCommittedBrowserSurface(
         finish(new Error("Browser closed during idle document bootstrap"));
         return;
       }
-      if (contents.getURL() === url) finish();
+      const currentUrl = contents.getURL();
+      const committed = typeof isCommittedUrl === "function"
+        ? isCommittedUrl(currentUrl)
+        : currentUrl === url;
+      if (committed) finish();
     };
     const onFailed = (_event, errorCode, errorDescription, failedUrl, mainFrame) => {
       if (!mainFrame) return;
@@ -261,6 +266,9 @@ class TurnTabManager {
     this.host.presentTurnView(tab, false);
     view.webContents.setZoomFactor(this.host.state.zoomFactor);
     this.host.bindShellZoomShortcuts(view.webContents);
+    if (view?.webContents?.session) {
+      providerObj.onPrimarySessionCreated?.(view.webContents.session, this.host);
+    }
     providerObj.bindTurnContents(this.host, tab);
     await (this.host.initializeTurnTab || this.initializeTurnTab).call(this.host, tab, signal);
     return tab;
@@ -278,8 +286,16 @@ class TurnTabManager {
       await Promise.race([(async () => {
         const contents = tab.view.webContents;
         const targetUrl = tab.url || IDLE_BROWSER_URL;
+        const urlMatcher = targetUrl.startsWith("https://")
+          ? (current) => current === targetUrl || providerObj.isAllowedNavigation(current)
+          : null;
         try {
-          await loadCommittedBrowserSurface(contents, targetUrl);
+          await loadCommittedBrowserSurface(
+            contents,
+            targetUrl,
+            PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS,
+            { isCommittedUrl: urlMatcher },
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const retryableTimeout = message.includes("Browser idle document did not commit within");
@@ -296,6 +312,7 @@ class TurnTabManager {
             contents,
             targetUrl,
             PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS * 3,
+            { isCommittedUrl: urlMatcher },
           );
         }
         signal?.throwIfAborted();

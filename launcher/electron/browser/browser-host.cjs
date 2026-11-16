@@ -11,6 +11,9 @@ const {
   allowedM365AuthUrl,
 } = require("./providers/m365/m365-browser-provider.cjs");
 const {
+  AiStudioBrowserProvider,
+} = require("./providers/ai-studio/ai-studio-browser-provider.cjs");
+const {
   BrowserTurnCancelledError,
   IDLE_BROWSER_URL,
   MAX_BROWSER_TABS,
@@ -69,9 +72,16 @@ function navigationErrorForLog(error) {
   return detail;
 }
 
-function createDefaultProviderRegistry({ descriptorPath = null } = {}) {
+function createDefaultProviderRegistry({ descriptorPath = null, profile = "production" } = {}) {
   const registry = new BrowserProviderRegistry();
-  registry.register(new M365BrowserProvider({ descriptorPath }));
+  registry.register(new M365BrowserProvider({
+    descriptorPath,
+    partition: profile === "development" ? "persist:codex-web-gpt-dev-m365" : undefined,
+  }));
+  registry.register(new AiStudioBrowserProvider({
+    descriptorPath,
+    partition: profile === "development" ? "persist:codex-web-gpt-dev-ai-studio" : undefined,
+  }));
   return registry;
 }
 
@@ -121,7 +131,7 @@ class BrowserHost {
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
-    this.providerRegistry = providerRegistry || createDefaultProviderRegistry({ descriptorPath });
+    this.providerRegistry = providerRegistry || createDefaultProviderRegistry({ descriptorPath, profile });
     const requestedProvider = provider || this.providerRegistry.defaultId();
     const activeProvider = resolveProviderFromHost(this, requestedProvider);
 
