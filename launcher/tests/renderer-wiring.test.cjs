@@ -654,3 +654,76 @@ test("multi-provider IPC channels and dynamic provider rendering stay wired clea
   assert.match(browserSlice, /api!\.switchProvider\(providerId\)/);
   assert.match(browserSlice, /switchProvider\(item\.id\)/);
 });
+
+test("settings opens Swagger UI for production runtime when server is healthy", async () => {
+  const vm = require("node:vm");
+  const settingsSlice = appSource.slice(
+    appSource.indexOf("function SettingsSurface("),
+    appSource.indexOf("function ContentSurface("),
+  );
+  assert.match(settingsSlice, /!devProfile \? <button[\s\S]*?!snapshot\.state\.coreSetupComplete[\s\S]*?openSwagger\(\)/);
+  assert.match(preloadSource, /openSwagger:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:open-swagger"\)/);
+  assert.match(ipcRouterSource, /"launcher:open-swagger"/);
+
+  const slice = ipcRouterSource.slice(
+    ipcRouterSource.indexOf('handle("launcher:open-swagger",'),
+    ipcRouterSource.indexOf('handle("launcher:cancel-turns",'),
+  );
+
+  const register = ({ isDevProfile = false, runtimeSnapshot, fetchImpl, openWebUrl }) => {
+    let openSwaggerHandler;
+    vm.runInNewContext(slice, {
+      handle: (_name, handler) => { openSwaggerHandler = handler; },
+      isDevProfile,
+      getRuntimeHost: () => ({ runtimeConfigSnapshot: () => runtimeSnapshot }),
+      fetch: fetchImpl,
+      openWebUrl,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+    });
+    return openSwaggerHandler;
+  };
+
+  await assert.rejects(
+    register({
+      isDevProfile: true,
+      runtimeSnapshot: { configured: true, config: { host: "127.0.0.1", port: 17841 } },
+      fetchImpl: async () => ({ ok: true }),
+      openWebUrl: async () => {},
+    }),
+    /DEV profile/,
+  );
+
+  await assert.rejects(
+    register({
+      runtimeSnapshot: { configured: false },
+      fetchImpl: async () => ({ ok: true }),
+      openWebUrl: async () => {},
+    }),
+    /Set up the launcher/,
+  );
+
+  await assert.rejects(
+    register({
+      runtimeSnapshot: { configured: true, config: { host: "127.0.0.1", port: 17841 } },
+      fetchImpl: async () => { throw new Error("connect ECONNREFUSED"); },
+      openWebUrl: async () => {},
+    }),
+    /not reachable on http:\/\/127\.0\.0\.1:17841/,
+  );
+
+  const opened = [];
+  const fetched = [];
+  const result = await register({
+    runtimeSnapshot: { configured: true, config: { host: "127.0.0.1", port: 17899 } },
+    fetchImpl: async (url) => {
+      fetched.push(url);
+      return { ok: true };
+    },
+    openWebUrl: async (url) => { opened.push(url); },
+  })();
+  assert.deepEqual(fetched, ["http://127.0.0.1:17899/healthz"]);
+  assert.deepEqual(opened, ["http://127.0.0.1:17899/swagger"]);
+  assert.deepEqual({ ...result }, { url: "http://127.0.0.1:17899/swagger" });
+});

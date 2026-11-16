@@ -86,7 +86,7 @@ class IpcRouter {
       "launcher:setup-core", "launcher:uninstall-integration",
       "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
       "launcher:use-saved-chats",
-      "launcher:connector-name", "launcher:doctor", "launcher:cancel-turns",
+      "launcher:connector-name", "launcher:doctor", "launcher:open-swagger", "launcher:cancel-turns",
       "launcher:browser-smoke",
       "launcher:update-install", "launcher:complete-onboarding",
     ]);
@@ -217,6 +217,34 @@ class IpcRouter {
     });
 
     handle("launcher:doctor", () => isDevProfile ? getRuntimeHost().devDoctor() : getRuntimeHost().doctor());
+    handle("launcher:open-swagger", async () => {
+      if (isDevProfile) throw new Error("Swagger UI shortcut is unavailable in the isolated DEV profile");
+      const runtime = getRuntimeHost().runtimeConfigSnapshot();
+      if (!runtime.configured || !runtime.config) {
+        throw new Error("Set up the launcher before opening Swagger UI");
+      }
+      const { host, port } = runtime.config;
+      if (host !== "127.0.0.1" || !Number.isInteger(port) || port < 1 || port > 65_535) {
+        throw new Error("Runtime configuration has an invalid loopback endpoint");
+      }
+      const baseUrl = `http://${host}:${port}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1_500);
+      try {
+        const response = await fetch(`${baseUrl}/healthz`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Local API server is not reachable on ${baseUrl} (${detail})`);
+      } finally {
+        clearTimeout(timer);
+      }
+      const swaggerUrl = `${baseUrl}/swagger`;
+      await openWebUrl(swaggerUrl);
+      return { url: swaggerUrl };
+    });
     handle("launcher:cancel-turns", () => {
       if (isDevProfile) throw new Error("DEV chat turns are owned by the repository CLI process");
       return getRuntimeHost().cancelActiveTurns();

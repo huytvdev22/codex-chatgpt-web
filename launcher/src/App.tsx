@@ -1040,6 +1040,17 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const openSwagger = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api!.openSwagger();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const cancelTurns = async () => {
     setBusy(true);
     setError(null);
@@ -1209,6 +1220,14 @@ function SettingsSurface({
         </span>
         <Icon name="chevron" />
       </button>
+      {!devProfile ? <button className="diagnostic-row" disabled={busy || !snapshot.state.coreSetupComplete} onClick={() => void openSwagger()} type="button">
+        <Icon name="external" />
+        <span>
+          <strong>{copy.openSwagger}</strong>
+          <small>{snapshot.state.coreSetupComplete ? copy.openSwaggerBody : copy.openSwaggerSetupRequired}</small>
+        </span>
+        <Icon name="chevron" />
+      </button> : null}
       {!devProfile ? <button className="diagnostic-row" disabled={busy} onClick={() => void cancelTurns()} type="button">
         <Icon name="close" />
         <span>

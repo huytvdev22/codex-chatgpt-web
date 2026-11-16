@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   openLogin: (providerId) => ipcRenderer.invoke("launcher:browser-login", providerId),
   smokeTest: (providerId) => ipcRenderer.invoke("launcher:browser-smoke", providerId),
   doctor: () => ipcRenderer.invoke("launcher:doctor"),
+  openSwagger: () => ipcRenderer.invoke("launcher:open-swagger"),
   cancelTurns: () => ipcRenderer.invoke("launcher:cancel-turns"),
   uninstallIntegration: () => ipcRenderer.invoke("launcher:uninstall-integration"),
   setupCore: () => ipcRenderer.invoke("launcher:setup-core"),

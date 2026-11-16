@@ -141,6 +141,7 @@ export interface LauncherApi {
   openLogin(providerId?: string): Promise<BrowserState>;
   smokeTest(providerId?: string): Promise<{ ok: boolean; effort: string; response: string }>;
   doctor(): Promise<DoctorReport>;
+  openSwagger(): Promise<{ url: string }>;
   cancelTurns(): Promise<{ stdout: string }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;

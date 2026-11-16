@@ -386,3 +386,12 @@ test("Windows packages embed the checksummed Bun baseline runtime for CPUs witho
   assert.match(baseline, /Get-FileHash[^\n]+SHA256/);
   assert.match(baseline, /CODEX_CHATGPT_WEB_EMBEDDED_BUN=/);
 });
+
+test("runtime bundle packages docs/swagger.html before manifest hashing", () => {
+  const builder = fs.readFileSync(path.join(repositoryRoot, "scripts", "build-runtime-bundle.ts"), "utf8");
+  assert.match(builder, /copyFileSync\(join\(root, "docs", "swagger\.html"\), join\(output, "docs", "swagger\.html"\)\)/);
+  assert.ok(
+    builder.indexOf('join(output, "docs", "swagger.html")') < builder.indexOf("function runtimeManifestFiles()"),
+    "docs/swagger.html must be copied before manifest hashing",
+  );
+});

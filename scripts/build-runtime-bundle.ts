@@ -141,6 +141,8 @@ if (notices.exitCode !== 0) {
 }
 copyFileSync(join(root, "LICENSE"), join(output, "LICENSE"));
 cpSync(join(root, "LICENSES"), join(output, "LICENSES"), { recursive: true });
+mkdirSync(join(output, "docs"), { recursive: true });
+copyFileSync(join(root, "docs", "swagger.html"), join(output, "docs", "swagger.html"));
 
 interface RuntimeManifestFile {
   path: string;
