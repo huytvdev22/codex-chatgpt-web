@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **065** | Job `windows-latest` treo vô hạn tại `tests/base-browser-worker.test.ts` do race `Bun.sleep(2)` | `ci`, `windows` | ⏳ Chờ User Test & Confirm | [065-windows-ci-base-browser-worker-test-hang.md](./065-windows-ci-base-browser-worker-test-hang.md) |
 | **064** | Đảo `Speaker 2:` lên đầu Transcript nhưng dòng mở đầu vẫn đọc giọng `Speaker 1` (Card 0) | `ai-studio`, `speech` | ✅ Đã Confirm | [064-ai-studio-speech-reversed-speaker-order.md](./064-ai-studio-speech-reversed-speaker-order.md) |
 | **063** | Treo 15s chờ `Enter a prompt` do nút `Text` (`data-value="TEXT"`) không được click | `ai-studio`, `speech` | ✅ Đã Confirm | [063-ai-studio-speech-text-toggle-not-clicked.md](./063-ai-studio-speech-text-toggle-not-clicked.md) |
 | **062** | Không đổi được giọng đọc trên AI Studio Speech UI do `btn.textContent()` dính mô tả trait | `ai-studio`, `speech` | ✅ Đã Confirm | [062-ai-studio-speech-voice-selection-mismatch.md](./062-ai-studio-speech-voice-selection-mismatch.md) |

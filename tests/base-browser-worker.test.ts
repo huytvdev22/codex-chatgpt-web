@@ -113,10 +113,13 @@ class TestBrowserWorker extends BaseWebBrowserWorker<
   }
 }
 
-function createFakePage(): Page {
+function createFakePage(onWait?: (waitCallCount: number) => void): Page {
+  let waitCallCount = 0;
   return {
     waitForTimeout: async (timeoutMs: number) => {
-      await Bun.sleep(timeoutMs);
+      waitCallCount += 1;
+      onWait?.(waitCallCount);
+      await new Promise<void>(resolve => setTimeout(resolve, timeoutMs));
     },
   } as unknown as Page;
 }
@@ -259,23 +262,28 @@ describe("BaseWebBrowserWorker", () => {
     const worker = new TestBrowserWorker();
     const controller = new AbortController();
 
-    const execution = worker.executeTurn(createFakePage(), {
-      prompt: "Abort",
-      signal: controller.signal,
-      pollingIntervalMs: 5,
-      observations: [
+    await expect(
+      worker.executeTurn(
+        createFakePage((waitCallCount) => {
+          if (waitCallCount === 2) {
+            controller.abort();
+          }
+        }),
         {
-          text: "",
-          isGenerating: true,
-          isCompleted: false,
-          activityKey: "generating",
+          prompt: "Abort",
+          signal: controller.signal,
+          pollingIntervalMs: 10,
+          observations: [
+            {
+              text: "",
+              isGenerating: true,
+              isCompleted: false,
+              activityKey: "generating",
+            },
+          ],
         },
-      ],
-    });
-    await Bun.sleep(2);
-    controller.abort();
-
-    await expect(execution).rejects.toMatchObject({
+      ),
+    ).rejects.toMatchObject({
       name: "AbortError",
     });
     expect(worker.stopCalls).toBe(1);
@@ -287,9 +295,9 @@ describe("BaseWebBrowserWorker", () => {
     await expect(
       worker.executeTurn(createFakePage(), {
         prompt: "Hard timeout",
-        hardTimeoutMs: 8,
-        idleTimeoutMs: 100,
-        pollingIntervalMs: 2,
+        hardTimeoutMs: 25,
+        idleTimeoutMs: 200,
+        pollingIntervalMs: 10,
         observations: Array.from({ length: 20 }, (_, index) => ({
           text: `progress-${index}`,
           isGenerating: true,
@@ -307,9 +315,9 @@ describe("BaseWebBrowserWorker", () => {
     await expect(
       worker.executeTurn(createFakePage(), {
         prompt: "Idle timeout",
-        hardTimeoutMs: 100,
-        idleTimeoutMs: 7,
-        pollingIntervalMs: 2,
+        hardTimeoutMs: 250,
+        idleTimeoutMs: 25,
+        pollingIntervalMs: 10,
         observations: [
           {
             text: "Đang xử lý",
