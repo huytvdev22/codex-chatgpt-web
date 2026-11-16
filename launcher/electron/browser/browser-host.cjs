@@ -11,6 +11,9 @@ const {
   allowedM365AuthUrl,
 } = require("./providers/m365/m365-browser-provider.cjs");
 const {
+  AiStudioBrowserProvider,
+} = require("./providers/ai-studio/ai-studio-browser-provider.cjs");
+const {
   BrowserTurnCancelledError,
   IDLE_BROWSER_URL,
   MAX_BROWSER_TABS,
@@ -72,6 +75,7 @@ function navigationErrorForLog(error) {
 function createDefaultProviderRegistry({ descriptorPath = null } = {}) {
   const registry = new BrowserProviderRegistry();
   registry.register(new M365BrowserProvider({ descriptorPath }));
+  registry.register(new AiStudioBrowserProvider({ descriptorPath }));
   return registry;
 }
 

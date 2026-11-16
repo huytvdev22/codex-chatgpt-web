@@ -97,7 +97,7 @@ test("compactRequest rejects missing or unsupported models with HTTP 400", async
     expect(await response.json()).toMatchObject({
       error: {
         type: "invalid_request_error",
-        message: `Unsupported model '${model}'. Enabled providers: m365-copilot.`,
+        message: `Unsupported model '${model}'. Enabled providers: m365-copilot, ai-studio.`,
       },
     });
   }

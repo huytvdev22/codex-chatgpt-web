@@ -29,8 +29,9 @@ describe("model catalog chỉ xuất các model từ adapter qua BaseModelProvid
   test("công bố đầy đủ các model M365 Copilot với đầy đủ metadata cho Codex", () => {
     const models = catalog.buildCatalog(nativeConfig).models;
 
-    expect(models).toHaveLength(2);
-    expect(models[0]).toMatchObject({
+    expect(models).toHaveLength(registry.listRoutes().length);
+    const m365Gpt56 = models.find(model => model.slug === "m365-copilot/gpt-5.6");
+    expect(m365Gpt56).toMatchObject({
       slug: "m365-copilot/gpt-5.6",
       display_name: "M365 - GPT 5.6",
       visibility: "list",
