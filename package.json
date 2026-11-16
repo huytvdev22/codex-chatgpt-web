@@ -5,11 +5,11 @@
   "description": "A focused local Responses API bridge that runs Codex and OpenAI-compatible clients through Microsoft 365 Copilot.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/miuuyy/codex-chatgpt-web.git"
+    "url": "git+https://github.com/huytvdev22/codex-chatgpt-web.git"
   },
-  "homepage": "https://github.com/miuuyy/codex-chatgpt-web#readme",
+  "homepage": "https://github.com/huytvdev22/codex-chatgpt-web#readme",
   "bugs": {
-    "url": "https://github.com/miuuyy/codex-chatgpt-web/issues"
+    "url": "https://github.com/huytvdev22/codex-chatgpt-web/issues"
   },
   "packageManager": "bun@1.4.0",
   "type": "module",

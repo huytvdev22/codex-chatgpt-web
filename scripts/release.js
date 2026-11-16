@@ -88,8 +88,8 @@ class VersionReplacer {
                 `$1${newVer}$2`
               )
               .replaceAll(
-                `/releases/download/v${oldVer}/codex-web-gpt-${oldVer}-`,
-                `/releases/download/v${newVer}/codex-web-gpt-${newVer}-`
+                `/releases/download/v${oldVer}/codex-m365-copilot-${oldVer}-`,
+                `/releases/download/v${newVer}/codex-m365-copilot-${newVer}-`
               ),
         })
       ),

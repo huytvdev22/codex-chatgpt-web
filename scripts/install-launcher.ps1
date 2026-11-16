@@ -50,7 +50,7 @@ function Resolve-LatestReleaseVersion {
   return $Tag
 }
 
-$Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "miuuyy/codex-chatgpt-web" }
+$Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "huytvdev22/codex-chatgpt-web" }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
 }
@@ -67,7 +67,7 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 }
 $Arch = "x64"
 
-$Asset = "codex-web-gpt-$Version-win-$Arch.exe"
+$Asset = "codex-m365-copilot-$Version-win-$Arch.exe"
 $BaseUrl = "https://github.com/$Repository/releases/download/v$Version"
 $Temp = Join-Path ([System.IO.Path]::GetTempPath()) "codex-web-gpt-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $Temp | Out-Null

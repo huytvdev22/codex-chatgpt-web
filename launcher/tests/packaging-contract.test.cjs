@@ -80,7 +80,7 @@ test("release installers resolve checksummed native launcher assets", () => {
       < shellInstaller.indexOf('"$TEMP_DIR/$ASSET" --appimage-extract'),
     "the downloaded AppImage must be executable before it is inspected",
   );
-  assert.match(windowsInstaller, /codex-web-gpt-\$Version-win-\$Arch\.exe/);
+  assert.match(windowsInstaller, /codex-m365-copilot-\$Version-win-\$Arch\.exe/);
   assert.match(windowsInstaller, /\[Environment\]::Is64BitOperatingSystem/);
   assert.doesNotMatch(windowsInstaller, /RuntimeInformation/);
   assert.match(windowsInstaller, /function Test-IsFullyQualifiedWindowsPath/);
@@ -161,7 +161,7 @@ printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/resources/app.asar.unpacked/asset
       const root = path.join(scratch, `${machine}-${valid}`);
       fs.mkdirSync(root);
       fs.writeFileSync(path.join(root, "fixture.AppImage"), appImage);
-      const asset = `codex-web-gpt-1.2.3-linux-${arch}.AppImage`;
+      const asset = `codex-m365-copilot-1.2.3-linux-${arch}.AppImage`;
       const checksum = valid ? createHash("sha256").update(appImage).digest("hex") : "0".repeat(64);
       fs.writeFileSync(path.join(root, "checksums.txt"), `${checksum}  ${asset}\n`);
       const result = spawnSync("/bin/sh", [path.join(repositoryRoot, "scripts", "install-launcher.sh")], {

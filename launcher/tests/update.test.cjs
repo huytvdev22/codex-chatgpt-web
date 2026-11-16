@@ -58,9 +58,9 @@ test("unsupported Linux launches reject updates before downloading or changing s
         dependencies: {
           fetchRelease: async () => ({
             tag_name: "v1.2.0",
-            assets: ["codex-web-gpt-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
+            assets: ["codex-m365-copilot-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
               name,
-              browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
+              browser_download_url: `https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
             })),
           }),
           downloadText: async () => { calls.push("checksums"); throw new Error("Unexpected download"); },
@@ -87,11 +87,11 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.1.4", "1.1.4"), 0);
   assert.equal(compareVersions("1.1.3", "1.1.4"), -1);
   assert.equal(compareVersions("1.2.0", "1.1.99"), 1);
-  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-web-gpt-1.2.0-mac-arm64.zip");
-  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-web-gpt-1.2.0-mac-x64.zip");
-  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.exe");
-  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-web-gpt-1.2.0-linux-x64.AppImage");
-  assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), "codex-web-gpt-1.2.0-linux-arm64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-m365-copilot-1.2.0-mac-arm64.zip");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-m365-copilot-1.2.0-mac-x64.zip");
+  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-m365-copilot-1.2.0-win-x64.exe");
+  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-m365-copilot-1.2.0-linux-x64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), "codex-m365-copilot-1.2.0-linux-arm64.AppImage");
   assert.equal(releaseAssetName("1.2.0", "linux", "arm"), null);
   assert.equal(releaseAssetName("1.2.0", "linux", "ia32"), null);
 });
@@ -102,11 +102,11 @@ test("checksums and release URLs bind the exact expected asset", () => {
   assert.throws(() => expectedChecksum(`${hash}  other.zip\n`, "launcher.zip"), /no entry/);
   assert.equal(
     validateReleaseAssetUrl(
-      "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
       "1.2.0",
       "launcher.zip",
     ),
-    "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+    "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
   );
   assert.throws(
     () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
@@ -141,12 +141,12 @@ test("startup check runs once and exposes only a newer complete release", async 
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              name: "codex-m365-copilot-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
             },
           ],
         };
@@ -167,9 +167,9 @@ test("preview and draft releases stay hidden until promoted, regardless of the v
         dependencies: {
           fetchRelease: async () => ({
             tag_name: `v${tag}`, ...flags,
-            assets: [`codex-web-gpt-${tag}-linux-x64.AppImage`, "checksums.txt"].map(name => ({
+            assets: [`codex-m365-copilot-${tag}-linux-x64.AppImage`, "checksums.txt"].map(name => ({
               name,
-              browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v${tag}/${name}`,
+              browser_download_url: `https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v${tag}/${name}`,
             })),
           }),
         },
@@ -213,16 +213,16 @@ for (const arch of ["x64", "arm64"]) {
             tag_name: "v1.2.0",
             assets: [
               {
-                name: `codex-web-gpt-1.2.0-linux-${arch}.AppImage`,
-                browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-${arch}.AppImage`,
+                name: `codex-m365-copilot-1.2.0-linux-${arch}.AppImage`,
+                browser_download_url: `https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-linux-${arch}.AppImage`,
               },
               {
                 name: "checksums.txt",
-                browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+                browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
               },
             ],
           }),
-          downloadText: async () => `${hash}  codex-web-gpt-1.2.0-linux-${arch}.AppImage\n`,
+          downloadText: async () => `${hash}  codex-m365-copilot-1.2.0-linux-${arch}.AppImage\n`,
           downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
           sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
           spawnWorker: (runtime, worker, job) => {

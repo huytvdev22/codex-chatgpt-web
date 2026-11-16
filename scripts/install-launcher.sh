@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPOSITORY="${CODEX_WEB_GPT_REPOSITORY:-miuuyy/codex-chatgpt-web}"
+REPOSITORY="${CODEX_WEB_GPT_REPOSITORY:-huytvdev22/codex-chatgpt-web}"
 VERSION="${CODEX_WEB_GPT_VERSION:-}"
 OS="$(uname -s)"
 MACHINE="$(uname -m)"
@@ -48,7 +48,7 @@ case "$VERSION" in
   *[!A-Za-z0-9._-]*) echo "Invalid release version: $VERSION" >&2; exit 1 ;;
 esac
 
-ASSET="codex-web-gpt-$VERSION-$PLATFORM-$ARCH.$EXTENSION"
+ASSET="codex-m365-copilot-$VERSION-$PLATFORM-$ARCH.$EXTENSION"
 BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-web-gpt-launcher.XXXXXX")"
 trap 'rm -rf "$TEMP_DIR"' EXIT HUP INT TERM

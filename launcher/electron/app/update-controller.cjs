@@ -6,7 +6,7 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 
-const REPOSITORY = "miuuyy/codex-chatgpt-web";
+const REPOSITORY = "huytvdev22/codex-chatgpt-web";
 const RELEASE_API_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
 const USER_AGENT = "codex-web-gpt-launcher-updater";
 const MAX_REDIRECTS = 5;
@@ -43,13 +43,13 @@ function releaseVersion(tagName) {
 
 function releaseAssetName(version, platform = process.platform, arch = process.arch) {
   if (platform === "darwin" && ["arm64", "x64"].includes(arch)) {
-    return `codex-web-gpt-${version}-mac-${arch}.zip`;
+    return `codex-m365-copilot-${version}-mac-${arch}.zip`;
   }
   if (platform === "win32" && arch === "x64") {
-    return `codex-web-gpt-${version}-win-x64.exe`;
+    return `codex-m365-copilot-${version}-win-x64.exe`;
   }
   if (platform === "linux" && ["x64", "arm64"].includes(arch)) {
-    return `codex-web-gpt-${version}-linux-${arch}.AppImage`;
+    return `codex-m365-copilot-${version}-linux-${arch}.AppImage`;
   }
   return null;
 }
