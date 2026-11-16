@@ -6,12 +6,399 @@
   <title>Codex Web GPT — Swagger UI</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   <style>
-    body { margin: 0; background: #fafafa; }
+    :root {
+      --bg-page: #fafafa;
+      --bg-card: #ffffff;
+      --bg-muted: #f3f4f6;
+      --text-main: #111827;
+      --text-muted: #4b5563;
+      --border-subtle: #d1d5db;
+      --accent: #0b57d0;
+      --accent-hover: #0842a0;
+      --danger: #b91c1c;
+      --danger-bg: #fef2f2;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-page);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.5;
+    }
     .topbar-wrapper img { display: none; }
+
+    .gateway-nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0 1.25rem;
+      background: #1b1b1b;
+      color: #f9fafb;
+      border-block-end: 1px solid #2e2e2e;
+    }
+    .gateway-brand {
+      font-size: 0.95rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .gateway-tablist {
+      display: flex;
+      align-items: stretch;
+      gap: 0.25rem;
+      overflow-x: auto;
+    }
+    .gateway-tab {
+      position: relative;
+      flex: none;
+      padding: 0.8rem 1rem;
+      border: 0;
+      background: transparent;
+      color: #d1d5db;
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .gateway-tab:hover {
+      color: #ffffff;
+    }
+    .gateway-tab:focus-visible {
+      outline: 2px solid #93c5fd;
+      outline-offset: -3px;
+    }
+    .gateway-tab[aria-selected="true"] {
+      color: #ffffff;
+    }
+    .gateway-tab[aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      border-block-end: 3px solid #60a5fa;
+    }
+
+    .studio-shell {
+      max-width: 1040px;
+      margin: 1.5rem auto 3rem;
+      padding: 0 1.25rem;
+    }
+    .studio-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+    }
+    .studio-header {
+      margin-block-end: 1.25rem;
+    }
+    .studio-header h1 {
+      margin: 0 0 0.35rem;
+      font-size: 1.35rem;
+    }
+    .studio-header p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.92rem;
+    }
+    .studio-grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .studio-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      margin-block-end: 1rem;
+    }
+    .field label {
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .field-hint {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      min-height: 42px;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid #9ca3af;
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text-main);
+      font: inherit;
+      font-size: max(1rem, 0.94em);
+    }
+    .field select {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, #374151 50%), linear-gradient(135deg, #374151 50%, transparent 50%);
+      background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      padding-inline-end: 2rem;
+    }
+    .field textarea {
+      min-height: 76px;
+      resize: vertical;
+    }
+    #tts-transcript {
+      min-height: 170px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.88rem;
+    }
+    .field input:focus-visible,
+    .field select:focus-visible,
+    .field textarea:focus-visible,
+    .btn:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .speaker-fieldset {
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 0.9rem 1rem 0.2rem;
+      margin: 0 0 1.15rem;
+      background: #f9fafb;
+    }
+    .speaker-fieldset legend {
+      padding: 0 0.4rem;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .studio-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+      margin-block-start: 0.5rem;
+    }
+    .btn {
+      min-height: 44px;
+      padding: 0.6rem 1.15rem;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #ffffff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    .btn-secondary {
+      background: #ffffff;
+      color: var(--text-main);
+      border-color: #9ca3af;
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--bg-muted);
+    }
+    .status-box {
+      margin-block-start: 1.1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-muted);
+      font-size: 0.9rem;
+    }
+    .status-box.is-error {
+      border-color: #fca5a5;
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+    .status-box.is-ok {
+      border-color: #86efac;
+      background: var(--ok-bg);
+      color: var(--ok);
+    }
+    .audio-result {
+      margin-block-start: 1.1rem;
+      padding: 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      background: #f9fafb;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.9rem;
+    }
+    .audio-result audio {
+      flex: 1 1 320px;
+      min-height: 42px;
+    }
+    .payload-details {
+      margin-block-start: 1.15rem;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 0.55rem 0.9rem;
+      background: #ffffff;
+    }
+    .payload-details summary {
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .payload-details pre {
+      margin: 0.75rem 0 0.25rem;
+      padding: 0.75rem;
+      border-radius: 6px;
+      background: #111827;
+      color: #f3f4f6;
+      font-size: 0.8rem;
+      overflow-x: auto;
+    }
   </style>
 </head>
 <body>
-  <div id="swagger-ui"></div>
+  <header class="gateway-nav">
+    <span class="gateway-brand">Codex Web GPT Gateway</span>
+    <div class="gateway-tablist" focusgroup="tablist nomemory" role="tablist" aria-label="Giao diện kiểm thử API">
+      <button type="button" class="gateway-tab" id="tab-swagger" role="tab" aria-selected="true" focusgroupstart>Swagger API Docs</button>
+      <button type="button" class="gateway-tab" id="tab-podcast" role="tab" aria-selected="false">Podcast TTS Studio</button>
+    </div>
+  </header>
+
+  <div id="panel-swagger" role="tabpanel" aria-labelledby="tab-swagger" tabindex="0">
+    <div id="swagger-ui"></div>
+  </div>
+
+  <div id="panel-podcast" role="tabpanel" aria-labelledby="tab-podcast" hidden="until-found">
+    <div class="studio-shell">
+      <div class="studio-card">
+        <div class="studio-header">
+          <h1 id="tts-studio-heading">Podcast TTS Studio (Gemini Speech UI Runner)</h1>
+          <p>Chọn giọng từng Speaker bằng droplist và điền kịch bản giống Google AI Studio — gửi thẳng tới <code>/v1beta/models/:model:streamGenerateContent</code> và nghe audio WAV ngay tại đây.</p>
+        </div>
+
+        <form id="tts-form" aria-labelledby="tts-studio-heading" method="POST" action="/v1beta/models/gemini-2.5-pro-preview-tts:streamGenerateContent">
+          <div class="studio-grid-3">
+            <div class="field">
+              <label for="tts-server">Server Gateway</label>
+              <select id="tts-server" name="server"></select>
+            </div>
+            <div class="field">
+              <label for="tts-model">Model</label>
+              <input id="tts-model" name="model" type="text" value="gemini-2.5-pro-preview-tts" autocorrect="off" autocapitalize="none" spellcheck="false" required />
+            </div>
+            <div class="field">
+              <label for="tts-temperature">Temperature (0 – 2)</label>
+              <input id="tts-temperature" name="temperature" type="number" min="0" max="2" step="0.1" value="1" required />
+            </div>
+          </div>
+
+          <div class="studio-grid-2">
+            <fieldset class="speaker-fieldset">
+              <legend>Speaker 1</legend>
+              <div class="field">
+                <label for="s1-name">Tên Speaker 1</label>
+                <input id="s1-name" name="s1_name" type="text" value="Speaker 1" required />
+              </div>
+              <div class="field">
+                <label for="s1-voice">Giọng đọc (Voice)</label>
+                <select id="s1-voice" name="s1_voice"></select>
+              </div>
+              <div class="field">
+                <label for="s1-profile">Audio Profile</label>
+                <input id="s1-profile" name="s1_profile" type="text" value="An authoritative main news anchor." />
+              </div>
+              <div class="field">
+                <label for="s1-note">Director's note (Style / Pace / Accent)</label>
+                <input id="s1-note" name="s1_note" type="text" value="Style: Vocal Smile. Pace: Rapid Fire. Accent: American (Gen)." />
+              </div>
+            </fieldset>
+
+            <fieldset class="speaker-fieldset">
+              <legend>Speaker 2</legend>
+              <div class="field">
+                <label for="s2-name">Tên Speaker 2</label>
+                <input id="s2-name" name="s2_name" type="text" value="Speaker 2" required />
+              </div>
+              <div class="field">
+                <label for="s2-voice">Giọng đọc (Voice)</label>
+                <select id="s2-voice" name="s2_voice"></select>
+              </div>
+              <div class="field">
+                <label for="s2-profile">Audio Profile</label>
+                <input id="s2-profile" name="s2_profile" type="text" value="A professional field correspondent." />
+              </div>
+              <div class="field">
+                <label for="s2-note">Director's note (Style / Pace / Accent)</label>
+                <input id="s2-note" name="s2_note" type="text" value="Style: Newscaster. Pace: Rapid Fire. Accent: American (Gen)." />
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="studio-grid-2">
+            <div class="field">
+              <label for="tts-scene">Scene</label>
+              <textarea id="tts-scene" name="scene">A high-quality recording studio, two friends talking casually into dynamic mics.</textarea>
+            </div>
+            <div class="field">
+              <label for="tts-context">Sample Context</label>
+              <textarea id="tts-context" name="context">Podcast style. Fast, slightly overlapping pacing. Tone is energetic, conversational, and warm.</textarea>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="tts-transcript">Transcript (lời thoại)</label>
+            <textarea id="tts-transcript" name="transcript" required aria-describedby="tts-transcript-hint">Speaker 1: [enthusiastic] Welcome back to the show! Today we're diving into the intersection of AI and creative expression.
+Speaker 2: [agreement] Exactly. I've got so many thoughts on what happened this week.
+Speaker 1: [animation] It really is shifting daily. I mean, did you see the demo they dropped on Tuesday?
+Speaker 2: [amazement] Oh, absolutely. It blew my mind! [laughter] But it also raised some pretty huge questions about how we define art in the first place.
+Speaker 1: Right! So let's get right into it, because we have a lot to unpack today.</textarea>
+            <span id="tts-transcript-hint" class="field-hint">Dùng prefix đúng với Tên Speaker 1 / Speaker 2 ở trên (hỗ trợ thẻ cảm xúc như [enthusiastic], [laughter]).</span>
+          </div>
+
+          <div class="studio-actions">
+            <button type="submit" class="btn btn-primary" id="tts-submit">Generate &amp; Nghe Audio</button>
+            <button type="button" class="btn btn-secondary" id="tts-copy-json">Copy Request JSON</button>
+            <button type="button" class="btn btn-secondary" id="tts-copy-curl">Copy cURL</button>
+          </div>
+        </form>
+
+        <div id="tts-status" class="status-box" role="status" aria-live="polite" hidden></div>
+
+        <div id="tts-audio-box" class="audio-result" hidden>
+          <audio id="tts-audio-player" controls></audio>
+          <a id="tts-download-link" class="btn btn-secondary" download="podcast.wav">Tải file .wav</a>
+        </div>
+
+        <details class="payload-details">
+          <summary>Xem trước Request Payload JSON gửi đi</summary>
+          <pre id="tts-json-preview"></pre>
+        </details>
+      </div>
+    </div>
+  </div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
     const spec = {
@@ -409,6 +796,264 @@
       deepLinking: true,
       presets: [SwaggerUIBundle.presets.apis]
     });
+
+    (function initPodcastStudio() {
+      const VOICES = [
+        "Achernar", "Achird", "Algenib", "Algieba", "Alnilam", "Aoede", "Autonoe",
+        "Callirrhoe", "Charon", "Despina", "Enceladus", "Erinome", "Fenrir", "Gacrux",
+        "Iapetus", "Kore", "Laomedeia", "Leda", "Orus", "Puck", "Pulcherrima",
+        "Rasalgethi", "Sadachbia", "Sadaltager", "Schedar", "Sulafat", "Umbriel",
+        "Vindemiatrix", "Zephyr", "Zubenelgenubi"
+      ];
+
+      const tabs = [
+        document.getElementById("tab-swagger"),
+        document.getElementById("tab-podcast")
+      ];
+      const panels = [
+        document.getElementById("panel-swagger"),
+        document.getElementById("panel-podcast")
+      ];
+
+      function activateTab(index) {
+        tabs.forEach((tab, i) => {
+          const active = i === index;
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+          tab.toggleAttribute("focusgroupstart", active);
+          if (active) {
+            panels[i].removeAttribute("hidden");
+            panels[i].setAttribute("tabindex", "0");
+          } else {
+            panels[i].setAttribute("hidden", "until-found");
+            panels[i].removeAttribute("tabindex");
+          }
+        });
+      }
+
+      tabs.forEach((tab, idx) => {
+        tab.addEventListener("click", () => activateTab(idx));
+        tab.addEventListener("keydown", (event) => {
+          if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+            event.preventDefault();
+            const next = event.key === "ArrowRight" ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length;
+            tabs[next].focus();
+            activateTab(next);
+          }
+        });
+      });
+
+      panels.forEach((panel, idx) => {
+        panel.addEventListener("beforematch", () => activateTab(idx));
+      });
+
+      if (window.location.hash === "#podcast-studio") {
+        activateTab(1);
+      }
+
+      const serverSelect = document.getElementById("tts-server");
+      const candidateServers = [];
+      if (window.location.protocol.startsWith("http")) {
+        candidateServers.push({ url: window.location.origin, label: `${window.location.origin} (Current)` });
+      }
+      for (const fallback of ["http://127.0.0.1:17841", "http://127.0.0.1:17842"]) {
+        if (!candidateServers.some((s) => s.url === fallback)) {
+          candidateServers.push({ url: fallback, label: fallback });
+        }
+      }
+      candidateServers.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = s.url;
+        opt.textContent = s.label;
+        serverSelect.appendChild(opt);
+      });
+
+      function populateVoiceSelect(selectEl, defaultVoice) {
+        VOICES.forEach((voice) => {
+          const opt = document.createElement("option");
+          opt.value = voice;
+          opt.textContent = voice;
+          if (voice === defaultVoice) opt.selected = true;
+          selectEl.appendChild(opt);
+        });
+      }
+      populateVoiceSelect(document.getElementById("s1-voice"), "Puck");
+      populateVoiceSelect(document.getElementById("s2-voice"), "Zephyr");
+
+      const form = document.getElementById("tts-form");
+      const statusBox = document.getElementById("tts-status");
+      const audioBox = document.getElementById("tts-audio-box");
+      const audioPlayer = document.getElementById("tts-audio-player");
+      const downloadLink = document.getElementById("tts-download-link");
+      const jsonPreview = document.getElementById("tts-json-preview");
+      const submitBtn = document.getElementById("tts-submit");
+      let currentAudioUrl = null;
+
+      function buildPayload() {
+        const s1Name = document.getElementById("s1-name").value.trim() || "Speaker 1";
+        const s2Name = document.getElementById("s2-name").value.trim() || "Speaker 2";
+        const s1Voice = document.getElementById("s1-voice").value;
+        const s2Voice = document.getElementById("s2-voice").value;
+        const s1Profile = document.getElementById("s1-profile").value.trim();
+        const s2Profile = document.getElementById("s2-profile").value.trim();
+        const s1Note = document.getElementById("s1-note").value.trim();
+        const s2Note = document.getElementById("s2-note").value.trim();
+        const scene = document.getElementById("tts-scene").value.trim();
+        const sampleContext = document.getElementById("tts-context").value.trim();
+        const transcript = document.getElementById("tts-transcript").value.trim();
+        const temperature = Number(document.getElementById("tts-temperature").value);
+
+        const sections = ["Read the following transcript based on the audio profile and director's note."];
+        if (s1Profile || s2Profile) {
+          sections.push("", "# Audio Profile");
+          if (s1Profile) sections.push(`For ${s1Name}: ${s1Profile}`);
+          if (s2Profile) sections.push(`For ${s2Name}: ${s2Profile}`);
+        }
+        if (s1Note || s2Note) {
+          sections.push("", "# Director's note");
+          if (s1Note) sections.push(`For ${s1Name}: ${s1Note}`);
+          if (s2Note) sections.push(`For ${s2Name}: ${s2Note}`);
+        }
+        if (scene) {
+          sections.push("", "## Scene:", scene);
+        }
+        if (sampleContext) {
+          sections.push("", "## Sample Context:", sampleContext);
+        }
+        sections.push("", "## Transcript:", transcript);
+
+        return {
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: sections.join("\n") }]
+            }
+          ],
+          generationConfig: {
+            responseModalities: ["audio"],
+            temperature: Number.isFinite(temperature) ? temperature : 1,
+            speech_config: {
+              multi_speaker_voice_config: {
+                speaker_voice_configs: [
+                  {
+                    speaker: s1Name,
+                    voice_config: { prebuilt_voice_config: { voice_name: s1Voice } }
+                  },
+                  {
+                    speaker: s2Name,
+                    voice_config: { prebuilt_voice_config: { voice_name: s2Voice } }
+                  }
+                ]
+              }
+            }
+          }
+        };
+      }
+
+      function refreshPreview() {
+        jsonPreview.textContent = JSON.stringify(buildPayload(), null, 2);
+      }
+
+      form.addEventListener("input", refreshPreview);
+      form.addEventListener("change", refreshPreview);
+      refreshPreview();
+
+      function showStatus(text, kind) {
+        statusBox.textContent = text;
+        statusBox.className = "status-box" + (kind ? ` is-${kind}` : "");
+        statusBox.hidden = false;
+      }
+
+      function base64ToBlob(base64, mimeType) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: mimeType || "audio/wav" });
+      }
+
+      document.getElementById("tts-copy-json").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(buildPayload(), null, 2));
+          showStatus("Đã copy Request JSON vào clipboard.", "ok");
+        } catch (err) {
+          showStatus(`Không thể copy JSON: ${err && err.message ? err.message : err}`, "error");
+        }
+      });
+
+      document.getElementById("tts-copy-curl").addEventListener("click", async () => {
+        const baseUrl = serverSelect.value;
+        const model = document.getElementById("tts-model").value.trim() || "gemini-2.5-pro-preview-tts";
+        const endpoint = `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent`;
+        const curl = `curl -X POST '${endpoint}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(buildPayload(), null, 2)}'`;
+        try {
+          await navigator.clipboard.writeText(curl);
+          showStatus("Đã copy lệnh cURL vào clipboard.", "ok");
+        } catch (err) {
+          showStatus(`Không thể copy cURL: ${err && err.message ? err.message : err}`, "error");
+        }
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+
+        const baseUrl = serverSelect.value;
+        const model = document.getElementById("tts-model").value.trim() || "gemini-2.5-pro-preview-tts";
+        const endpoint = `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent`;
+        const payload = buildPayload();
+        refreshPreview();
+
+        submitBtn.disabled = true;
+        const startedAt = Date.now();
+        showStatus("Đang gửi sang Google AI Studio qua Launcher và tạo audio (thường mất 10–25 giây)...", "");
+
+        const timer = setInterval(() => {
+          const sec = ((Date.now() - startedAt) / 1000).toFixed(1);
+          statusBox.textContent = `Đang tạo audio trên AI Studio... (${sec}s)`;
+        }, 500);
+
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json().catch(() => null);
+          if (!res.ok) {
+            const msg = data && data.error && data.error.message ? data.error.message : `HTTP ${res.status}`;
+            throw new Error(msg);
+          }
+
+          const firstChunk = Array.isArray(data) ? data[0] : data;
+          const inlineData = firstChunk && firstChunk.candidates && firstChunk.candidates[0]
+            && firstChunk.candidates[0].content && firstChunk.candidates[0].content.parts
+            && firstChunk.candidates[0].content.parts[0] && firstChunk.candidates[0].content.parts[0].inlineData;
+          if (!inlineData || !inlineData.data) {
+            throw new Error("Response không chứa inlineData audio hợp lệ.");
+          }
+
+          const blob = base64ToBlob(inlineData.data, inlineData.mimeType || "audio/wav");
+          if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+          currentAudioUrl = URL.createObjectURL(blob);
+
+          audioPlayer.src = currentAudioUrl;
+          downloadLink.href = currentAudioUrl;
+          downloadLink.download = `podcast-${Date.now()}.wav`;
+          audioBox.hidden = false;
+          audioPlayer.play().catch(() => {});
+
+          const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
+          const kb = (blob.size / 1024).toFixed(1);
+          showStatus(`Tạo audio thành công trong ${elapsed}s (${kb} KB, ${inlineData.mimeType || "audio/wav"}).`, "ok");
+        } catch (err) {
+          showStatus(`Lỗi: ${err && err.message ? err.message : String(err)}`, "error");
+        } finally {
+          clearInterval(timer);
+          submitBtn.disabled = false;
+        }
+      });
+    })();
   </script>
 </body>
 </html>
