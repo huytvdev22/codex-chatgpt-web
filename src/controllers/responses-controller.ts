@@ -1,15 +1,17 @@
 import type { ProviderAdapterFactory } from "../adapters/adapter-registry";
 import { formatErrorResponse } from "../bridge";
 import { readJsonRequestBody } from "../http-body";
+import { RawResponsesService } from "../services/raw-responses-service";
 import { ResponsesService, type ResponseRequestOptions } from "../services/responses-service";
 
 /**
- * Controller định tuyến cho `/v1/responses` và `/v1/responses/compact`:
- * chỉ đảm nhiệm đọc/kiểm tra HTTP request và ủy quyền toàn bộ xử lý nghiệp vụ cho `ResponsesService`.
+ * Controller định tuyến cho `/v1/responses`, `/v1/responses/compact` và `/v2/responses`:
+ * chỉ đảm nhiệm đọc/kiểm tra HTTP request và ủy quyền xử lý nghiệp vụ cho Service tương ứng.
  */
 export class ResponsesController {
   constructor(
     private readonly responsesService: ResponsesService = new ResponsesService(),
+    private readonly rawResponsesService: RawResponsesService = new RawResponsesService(),
   ) {}
 
   /**
@@ -114,5 +116,30 @@ export class ResponsesController {
     }
 
     return await this.handleResponses(internalRequest, options, adapterFactory);
+  }
+
+  /**
+   * Xử lý `POST /v2/responses` (Raw Passthrough + Target Conversation, non-stream only).
+   */
+  public async handleV2Responses(
+    req: Request,
+    adapterFactory?: ProviderAdapterFactory,
+  ): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await readJsonRequestBody(req);
+    } catch (error) {
+      return formatErrorResponse(
+        400,
+        "invalid_request_error",
+        error instanceof Error ? error.message : "Request body must be valid JSON",
+      );
+    }
+
+    return await this.rawResponsesService.executeRawTurn({
+      req,
+      raw,
+      adapterFactory,
+    });
   }
 }

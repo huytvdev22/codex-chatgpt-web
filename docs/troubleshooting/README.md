@@ -5,6 +5,8 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **058** | Lỗi `element is outside of the viewport` khi click nút Send trên M365 Copilot lúc tab chạy ngầm | `m365-copilot`, `web`, `playwright` | ⏳ Chờ User Test & Confirm | [058-m365-send-outside-viewport.md](./058-m365-send-outside-viewport.md) |
+| **057** | Triển khai `POST /v2/responses` (Raw Passthrough non-stream & duy trì Target Conversation) | `server`, `core`, `m365-copilot`, `ai-studio` | ⏳ Chờ User Test & Confirm | [057-v2-raw-responses-api.md](./057-v2-raw-responses-api.md) |
 | **056** | Nhấn **Install models** bị lỗi `invalid Web browser session evidence` do còn gate authen ở backend | `core`, `launcher`, `setup`, `all-providers` | ✅ Đã Confirm | [056-install-models-without-auth-gate.md](./056-install-models-without-auth-gate.md) |
 | **055** | Thêm nút mở Swagger UI trong Settings Launcher và đóng gói `docs/swagger.html` cho bản Packaged | `launcher`, `server`, `swagger`, `packaging` | ✅ Đã Confirm | ./055-launcher-settings-swagger-and-packaging.md |
 | **054** | Đồng bộ `docs/adding-new-web-adapter-guide.md` theo kiến trúc đa provider hiện tại | `docs`, `core`, `launcher`, `all-providers` | ⏳ Chờ User Test & Confirm | ./054-update-adding-new-web-adapter-guide.md |

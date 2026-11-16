@@ -164,6 +164,20 @@ export function startServer(
         "compact",
       );
     }
+    if (req.method === "POST" && url.pathname === "/v2/responses") {
+      if (draining) {
+        return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+      }
+      return httpTurns.track(
+        (signal) => responsesController.handleV2Responses(
+          new Request(req, { signal }),
+          dependencies.adapterFactory,
+        ),
+        req.signal,
+        process.platform,
+        "responses",
+      );
+    }
 
     return new Response("Not found", { status: 404 });
   };

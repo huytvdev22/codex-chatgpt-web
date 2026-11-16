@@ -1,4 +1,9 @@
-import type { IncomingMeta, ProviderAdapter } from "../base";
+import type {
+  IncomingMeta,
+  ProviderAdapter,
+  RawTurnRequest,
+  RawTurnResult,
+} from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { LocalBrowserRuntime } from "./local-browser-runtime";
 import type { WebProviderDefinition } from "./definition";
@@ -26,6 +31,13 @@ export class WebProviderAdapter implements ProviderAdapter {
     emit: (event: AdapterEvent) => void,
   ): Promise<void> {
     await this.engine.runTurn(parsed, incoming, emit);
+  }
+
+  async runRawTurn(
+    request: RawTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<RawTurnResult> {
+    return await this.engine.runRawTurn(request, incoming);
   }
 
   async close(): Promise<void> {

@@ -1,5 +1,12 @@
-import { hasActualPriorAssistantReply, type IncomingMeta } from "../base";
+import {
+  hasActualPriorAssistantReply,
+  type IncomingMeta,
+  type RawTurnRequest,
+  type RawTurnResult,
+} from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import { buildWebConversationKey } from "./conversation/conversation-key";
+import type { NormalizedImageAttachment } from "./normalization/canonical-types";
 import { compileWebPrompt } from "./compile-prompt";
 import { CodexPayloadNormalizer, CodexRawPayload } from "./normalization";
 import { isStructuredJsonOutputTurn } from "./prompt";
@@ -364,6 +371,138 @@ export class WebTurnEngine {
           parsed,
           hasPriorAssistantReply,
           hasToolResults,
+          abortSignal: turnRegistration.signal,
+          ops: this.lifecycleOps,
+        });
+      }
+    } finally {
+      turnRegistration.finish();
+    }
+  }
+
+  /**
+   * Thực thi lượt Raw Passthrough cho `/v2/responses`:
+   * gửi nguyên văn `prompt` tới Web UI và trả về nguyên bản câu trả lời,
+   * bỏ qua toàn bộ prompt compiler, retry định dạng và strict response parser.
+   */
+  async runRawTurn(
+    request: RawTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<RawTurnResult> {
+    if (incoming.abortSignal?.aborted) {
+      throw new DOMException(
+        this.definition.abortMessage ||
+          `${this.definition.assistantName} turn aborted before start`,
+        "AbortError",
+      );
+    }
+
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+      ...this.definition.policies?.traceIdOptions,
+    });
+    const conversationKey = buildWebConversationKey({
+      provider: this.definition.id,
+      source: request.conversationKey ? `v2:${request.conversationKey}` : `v2:${turnTraceId}`,
+      modelId: "raw-v2",
+    });
+
+    const turnRegistration = activeWebTurnRegistry.register(
+      turnTraceId,
+      incoming.abortSignal,
+    );
+    const turnIncoming: IncomingMeta = {
+      ...incoming,
+      abortSignal: turnRegistration.signal,
+    };
+
+    try {
+      const acquired = await acquireWebTurnSurface({
+        definition: this.definition,
+        localBrowser: this.localBrowser,
+        turnTraceId,
+        conversationKey,
+        abortSignal: turnRegistration.signal,
+        ops: this.lifecycleOps,
+      });
+
+      let activeConversationId =
+        request.existingConversationId || acquired.leaseConversationId;
+      const isNewConversation =
+        !acquired.launcherReused && !activeConversationId;
+      const syntheticParsed: CodexParsedRequest = {
+        modelId: request.modelId,
+        stream: false,
+        context: { messages: [], tools: [] },
+        options: {
+          ...(request.reasoning ? { reasoning: request.reasoning } : {}),
+        },
+      };
+      const maxImages = this.definition.attachments?.maxInputImages ?? 3;
+      const attachments: NormalizedImageAttachment[] = (request.images ?? [])
+        .slice(0, maxImages)
+        .map((image, index) => ({
+          ref: `v2-img-${index}`,
+          name: image.name || `image-${index + 1}.png`,
+          mimeType: image.mimeType,
+          dataUrl: image.dataUrl,
+          buffer: image.buffer,
+        }));
+
+      let finalStatus: WebTurnFinalStatus = "failed";
+      try {
+        const result = await this.definition.browser.executeTurn({
+          page: acquired.page,
+          prompt: request.prompt,
+          attempt: 0,
+          parsed: syntheticParsed,
+          incoming: turnIncoming,
+          reasoningEffort: request.reasoning,
+          conversationKey,
+          existingConversationId: activeConversationId,
+          launcherReused: acquired.launcherReused,
+          isNewConversation,
+          retain: true,
+          attachments,
+          turnTraceId,
+          heartbeat: acquired.heartbeat,
+        });
+
+        if (this.definition.conversation.onConversationUpdated) {
+          const updatedId = this.definition.conversation.onConversationUpdated({
+            conversationKey,
+            conversationId: result.conversationId,
+          });
+          if (updatedId) {
+            activeConversationId = updatedId;
+          }
+        } else if (result.conversationId) {
+          activeConversationId = result.conversationId;
+        }
+
+        const outputText = this.definition.response?.sanitizeRawResponse
+          ? this.definition.response.sanitizeRawResponse(result.rawResponse)
+          : result.rawResponse;
+
+        finalStatus = "completed";
+        return {
+          outputText,
+          ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+        };
+      } catch (error) {
+        finalStatus = turnRegistration.signal.aborted ? "aborted" : "failed";
+        throw error;
+      } finally {
+        await releaseWebTurnSurface({
+          definition: this.definition,
+          acquired,
+          turnTraceId,
+          finalStatus,
+          activeConversationId,
+          conversationKey,
+          parsed: syntheticParsed,
+          hasPriorAssistantReply: !isNewConversation,
+          hasToolResults: false,
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });

@@ -6,6 +6,27 @@ export interface IncomingMeta {
   abortSignal?: AbortSignal;
 }
 
+export interface RawTurnImageInput {
+  name?: string;
+  mimeType: string;
+  dataUrl: string;
+  buffer: Buffer;
+}
+
+export interface RawTurnRequest {
+  modelId: string;
+  prompt: string;
+  reasoning?: string;
+  images?: RawTurnImageInput[];
+  conversationKey?: string;
+  existingConversationId?: string;
+}
+
+export interface RawTurnResult {
+  outputText: string;
+  conversationId?: string;
+}
+
 export interface ProviderAdapter {
   name: string;
   runTurn(
@@ -13,6 +34,10 @@ export interface ProviderAdapter {
     incoming: IncomingMeta,
     emit: (event: AdapterEvent) => void,
   ): Promise<void>;
+  runRawTurn?(
+    request: RawTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<RawTurnResult>;
 }
 
 /**

@@ -13,7 +13,9 @@ import {
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import {
+  buildM365ConversationUrl,
   M365_CHAT_URL,
+  normalizeM365ConversationId,
   parseM365ConversationId,
   waitForM365ConversationId,
 } from "./conversation-url";
@@ -380,13 +382,18 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   ): Promise<Locator | undefined> {
     const locators = page.locator(selector);
     const count = await locators.count();
+    let firstVisible: Locator | undefined;
     for (let index = 0; index < count; index += 1) {
       const candidate = locators.nth(index);
       if (await candidate.isVisible().catch(() => false)) {
-        return candidate;
+        if (!firstVisible) firstVisible = candidate;
+        const box = await candidate.boundingBox().catch(() => null);
+        if (box && box.width > 0 && box.height > 0 && box.x >= 0 && box.y >= 0) {
+          return candidate;
+        }
       }
     }
-    return undefined;
+    return firstVisible;
   }
 
   /**
@@ -404,11 +411,19 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         currentConversationId !==
         options.existingConversationId.toLowerCase()
       ) {
-        throw new Error(
-          `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
-        );
+        if (options.launcherReused) {
+          throw new Error(
+            `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
+          );
+        }
+        await page.goto(buildM365ConversationUrl(options.existingConversationId), {
+          waitUntil: "domcontentloaded",
+          timeout: 20_000,
+        });
       }
-      this.retainedConversationIds.set(page, currentConversationId);
+      const targetId = normalizeM365ConversationId(options.existingConversationId)
+        ?? options.existingConversationId.toLowerCase();
+      this.retainedConversationIds.set(page, targetId);
       return;
     }
 
@@ -704,12 +719,34 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         console.log(
           `[m365-worker] [send] Click Send visible ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length})`,
         );
-        await sendLocator.click({ timeout: 1_000 }).catch(error => {
+        try {
+          await sendLocator.click({ timeout: 1_000 });
+        } catch (error) {
           console.warn(
             `[m365-worker] [send] Click Send thất bại ở lần thử ${submitAttempt + 1}:`,
             error,
           );
-        });
+          await sendLocator
+            .evaluate((el) => {
+              (el as HTMLElement).scrollIntoView({
+                block: "center",
+                inline: "center",
+                behavior: "instant",
+              });
+            })
+            .catch(() => {});
+          const box = await sendLocator.boundingBox().catch(() => null);
+          if (box && box.width > 0 && box.height > 0) {
+            await page.mouse
+              .click(box.x + box.width / 2, box.y + box.height / 2)
+              .catch(mouseError => {
+                console.warn(
+                  `[m365-worker] [send] Fallback mouse.click thất bại ở lần thử ${submitAttempt + 1}:`,
+                  mouseError,
+                );
+              });
+          }
+        }
       } else {
         console.log(
           `[m365-worker] [send] Send chưa visible/enabled ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length}), chờ UI đồng bộ...`,

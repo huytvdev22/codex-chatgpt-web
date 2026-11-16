@@ -269,4 +269,57 @@ describe("M365 browser worker migration contract", () => {
     expect(pollCalls).toBe(2);
     expect(heartbeatCalls).toBeGreaterThanOrEqual(1);
   });
+
+  test("submitPrompt fallback sang scrollIntoView + page.mouse.click khi sendLocator.click lỗi viewport", async () => {
+    class TestSubmitWorker extends M365BrowserWorker {
+      public async testSubmit(page: any, options: any): Promise<void> {
+        await this.submitPrompt(page, options);
+      }
+    }
+
+    const worker = new TestSubmitWorker();
+    let submitted = false;
+    let mouseClickedAt: { x: number; y: number } | null = null;
+    let scrolledIntoView = false;
+
+    const editorLocator = {
+      isVisible: async () => true,
+      boundingBox: async () => ({ x: 100, y: 500, width: 400, height: 40 }),
+      textContent: async () => (submitted ? "" : "hello world"),
+    };
+    const sendLocator = {
+      isVisible: async () => true,
+      isEnabled: async () => true,
+      boundingBox: async () => ({ x: 700, y: 760, width: 32, height: 32 }),
+      click: async () => {
+        throw new Error("TimeoutError: click: Timeout 1000ms exceeded. element is outside of the viewport");
+      },
+      evaluate: async () => {
+        scrolledIntoView = true;
+      },
+    };
+
+    const fakePage: any = {
+      waitForTimeout: async () => {},
+      mouse: {
+        click: async (x: number, y: number) => {
+          mouseClickedAt = { x, y };
+          submitted = true;
+        },
+      },
+      locator: (selector: string) => {
+        if (selector.includes("Stop generating")) {
+          return { count: async () => 0 };
+        }
+        if (selector.includes('aria-label="Send"')) {
+          return { count: async () => 1, nth: () => sendLocator };
+        }
+        return { count: async () => 1, nth: () => editorLocator };
+      },
+    };
+
+    await worker.testSubmit(fakePage, { prompt: "hello world" });
+    expect(scrolledIntoView).toBe(true);
+    expect(mouseClickedAt as { x: number; y: number } | null).toEqual({ x: 716, y: 776 });
+  });
 });

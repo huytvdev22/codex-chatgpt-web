@@ -40,8 +40,10 @@ export {
 } from "./attachments";
 export { m365ConversationKey } from "./conversation-key";
 export {
+  buildM365ConversationUrl,
   M365_CHAT_URL,
   M365_CONVERSATION_ORIGIN,
+  normalizeM365ConversationId,
   parseM365ConversationId,
   waitForM365ConversationId,
 } from "./conversation-url";

@@ -31,7 +31,8 @@
       ],
       tags: [
         { name: "Health", description: "Kiểm tra trạng thái server" },
-        { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Microsoft 365 Copilot" },
+        { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Microsoft 365 Copilot / AI Studio" },
+        { name: "Responses v2 (Raw)", description: "Endpoint raw passthrough non-stream, không bọc prompt hệ thống và duy trì target conversation" },
         { name: "Admin Control", description: "Endpoint điều khiển nội bộ (cần Control Bearer token)" }
       ],
       components: {
@@ -176,6 +177,88 @@
             },
             responses: {
               "200": { description: "Kết quả compaction" }
+            }
+          }
+        },
+        "/v2/responses": {
+          post: {
+            tags: ["Responses v2 (Raw)"],
+            summary: "Raw Passthrough Non-Stream tới Web Adapter & duy trì Target Conversation",
+            description:
+              "Gửi nguyên văn chuỗi `prompt` tới Web UI (bỏ qua prompt builder và strict response parser) và chỉ trả về JSON non-stream (`stream: true` sẽ trả lỗi 400).\n\n"
+              + "**Cách duy trì cuộc hội thoại (Conversation):**\n"
+              + "- **Turn 1 (Server tự quản lý - khuyên dùng):** Không truyền `conversation_key` và `conversation_id`. Server tự sinh UUID `conversation_key`, mở New Chat, lưu map `conversation_key -> conversation_id` xuống đĩa và trả về cả 2 trong JSON.\n"
+              + "- **Turn 1 (Client tự đặt key):** Có thể truyền sẵn `conversation_key` tùy ý (bỏ trống `conversation_id`). Server mở New Chat và gắn vào key đó.\n"
+              + "- **Turn 2+:** Truyền lại `conversation_key` (hoặc `conversation_id`) nhận từ Turn 1 để tiếp tục đúng đoạn chat đó (tự mở lại đúng URL cuộc chat ngay cả khi tab bị đóng hoặc Launcher restart).\n"
+              + "- **Concurrency:** Nếu đang có 1 lượt chạy trên cùng `conversation_key` / `conversation_id`, request song song tiếp theo sẽ trả về `409 Conflict`.",
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["model", "prompt"],
+                    properties: {
+                      model: { type: "string", example: "m365-copilot/gpt-5.6" },
+                      prompt: { type: "string", example: "Xin chào, trả lời ngắn gọn 1 câu." },
+                      reasoning: { type: "string", enum: ["low", "medium", "high"], example: "low" },
+                      stream: { type: "boolean", enum: [false], default: false, description: "Chỉ hỗ trợ non-stream (bỏ trống hoặc false)." },
+                      conversation_key: { type: "string", nullable: true, description: "Khóa phiên hội thoại. Turn 1 có thể bỏ trống để server tự sinh UUID." },
+                      conversation_id: { type: "string", nullable: true, description: "ID hội thoại đích của provider trên Web UI (tùy chọn)." },
+                      images: {
+                        type: "array",
+                        description: "Tối đa 3 ảnh (chuỗi data:image/...;base64,... hoặc object { dataUrl / base64, mimeType, name }).",
+                        items: { type: "string" }
+                      }
+                    }
+                  },
+                  examples: {
+                    "Turn 1 — New Chat (Bỏ trống conversation_key & conversation_id)": {
+                      value: {
+                        model: "m365-copilot/gpt-5.6",
+                        prompt: "Tôi tên là Huy. Hãy nhớ tên tôi và chào lại 1 câu.",
+                        reasoning: "low"
+                      }
+                    },
+                    "Turn 2+ — Tiếp tục bằng conversation_key": {
+                      value: {
+                        model: "m365-copilot/gpt-5.6",
+                        prompt: "Tên tôi là gì?",
+                        conversation_key: "<paste conversation_key từ Turn 1>"
+                      }
+                    },
+                    "Turn 2+ — Tiếp tục bằng conversation_id": {
+                      value: {
+                        model: "m365-copilot/gpt-5.6",
+                        prompt: "Tóm tắt lại cuộc trò chuyện trên.",
+                        conversation_id: "<paste conversation_id từ Turn 1>"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": {
+                description: "JSON kết quả raw non-stream",
+                content: {
+                  "application/json": {
+                    example: {
+                      id: "resp_v2_a1b2c3d4e5f6",
+                      object: "v2.response",
+                      model: "m365-copilot/gpt-5.6",
+                      provider: "m365-copilot",
+                      conversation_key: "550e8400-e29b-41d4-a716-446655440000",
+                      conversation_id: "123e4567-e89b-12d3-a456-426614174000",
+                      output_text: "Chào Huy! Rất vui được hỗ trợ bạn."
+                    }
+                  }
+                }
+              },
+              "400": { description: "Payload không hợp lệ hoặc truyền stream: true" },
+              "409": { description: "Xung đột: đang có lượt chạy song song trên cùng conversation hoặc conversation_key không khớp conversation_id" },
+              "502": { description: "Lỗi từ Web Adapter / Browser Worker" },
+              "503": { description: "Server đang draining" }
             }
           }
         },
