@@ -20,7 +20,7 @@ if (packageJson.devDependencies?.["@types/bun"] !== bunVersion) {
 if (packageJson.engines?.bun !== bunVersion) throw new Error(`engines.bun is not synchronized to ${bunVersion}`);
 const expected = [
   ["src/version.ts", `export const VERSION = ${JSON.stringify(packageVersion)};`],
-  ["src/server.ts", "version: VERSION"],
+  ["src/controllers/admin-controller.ts", "version: VERSION"],
   ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${packageVersion}}\"`],
   ["README.md", `${packageVersion}`],
   ["README.md", `${bunVersion}`],

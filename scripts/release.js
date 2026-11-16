@@ -82,10 +82,15 @@ class VersionReplacer {
         (readmeFile) => ({
           path: readmeFile,
           transform: (content) =>
-            content.replaceAll(
-              `/releases/download/v${oldVer}/codex-web-gpt-${oldVer}-`,
-              `/releases/download/v${newVer}/codex-web-gpt-${newVer}-`
-            ),
+            content
+              .replace(
+                /(\*\*Phiên bản hiện tại:\*\*\s*`)[^`]+(`)/,
+                `$1${newVer}$2`
+              )
+              .replaceAll(
+                `/releases/download/v${oldVer}/codex-web-gpt-${oldVer}-`,
+                `/releases/download/v${newVer}/codex-web-gpt-${newVer}-`
+              ),
         })
       ),
     ];
