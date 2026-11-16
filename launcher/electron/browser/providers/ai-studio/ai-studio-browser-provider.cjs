@@ -1,4 +1,4 @@
-const { BaseBrowserProvider } = require("../base-browser-provider.cjs");
+const { BaseBrowserProvider, sanitizeChromeUserAgent } = require("../base-browser-provider.cjs");
 const {
   allowedAiStudioNavigation,
   bindAiStudioTurnContents,
@@ -76,19 +76,31 @@ function allowedAiStudioAuthUrl(value) {
  * Browser provider cho Google AI Studio (`aistudio.google.com`) trong Electron Launcher.
  */
 class AiStudioBrowserProvider extends BaseBrowserProvider {
-  constructor({ descriptorPath = null, smokeTester = new AiStudioSmokeTester() } = {}) {
+  constructor({
+    descriptorPath = null,
+    partition = AI_STUDIO_PARTITION,
+    smokeTester = new AiStudioSmokeTester(),
+  } = {}) {
     super({
       id: "ai-studio",
       displayName: "Google AI Studio",
       homeUrl: AI_STUDIO_CHAT_URL,
       origin: AI_STUDIO_ORIGIN,
-      partition: AI_STUDIO_PARTITION,
+      partition: partition || AI_STUDIO_PARTITION,
       maxSurfaces: MAX_AI_STUDIO_SURFACES,
       maxPersistedBindings: MAX_PERSISTED_AI_STUDIO_BINDINGS,
       smokeTitle: "Google AI Studio",
       descriptorPath,
     });
     this.smokeTester = smokeTester;
+  }
+
+  onPrimarySessionCreated(browserSession) {
+    if (typeof browserSession?.getUserAgent !== "function" || typeof browserSession?.setUserAgent !== "function") {
+      return;
+    }
+    const cleanUa = sanitizeChromeUserAgent(browserSession.getUserAgent());
+    if (cleanUa) browserSession.setUserAgent(cleanUa);
   }
 
   normalizeConversationId(value) {

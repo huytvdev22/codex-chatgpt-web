@@ -17,6 +17,7 @@ export interface AiStudioDomStatus {
   rawHtml: string;
   rawText: string;
   hasContent: boolean;
+  detectedWebError?: string;
 }
 
 export interface AiStudioResponseObservation {
@@ -102,6 +103,18 @@ export class AiStudioDomObserver {
       const isStopVisible = btnText.includes("stop") || btnText.includes("cancel");
       const isGenerating = isStopVisible || isLiveRunning;
 
+      let detectedWebError = "";
+      const alertErrorRegex = /Failed to generate content|permission denied|quota exceeded|rate limit|service unavailable/i;
+      for (const alertEl of document.querySelectorAll<HTMLElement>(
+        '[role="alert"], mat-snack-bar-container, simple-snack-bar, [class*="error-banner" i], [class*="toast" i]',
+      )) {
+        const text = (alertEl.innerText || alertEl.textContent || "").trim();
+        if (text && alertErrorRegex.test(text)) {
+          detectedWebError = text.replace(/\s+/g, " ").slice(0, 300);
+          break;
+        }
+      }
+
       const allContainers = Array.from(document.querySelectorAll<HTMLElement>(selectors.modelTurnContainer));
       const thoughtsCount = allContainers.filter(el => Boolean(el.querySelector(selectors.thoughtPanel))).length;
       const answerContainers = allContainers.filter(el => !el.querySelector(selectors.thoughtPanel));
@@ -118,6 +131,7 @@ export class AiStudioDomObserver {
           rawHtml: "",
           rawText: "",
           hasContent: false,
+          detectedWebError,
         };
       }
 
@@ -131,6 +145,15 @@ export class AiStudioDomObserver {
 
       const rawHtml = clone.innerHTML.trim();
       const rawText = (clone.innerText || clone.textContent || "").trim();
+      if (
+        !detectedWebError &&
+        !hasTurnFooter &&
+        /^(?:Permission denied\.|Failed to generate content\b|An internal error has occurred\.|Quota exceeded\b|Please check your account permissions)/i.test(
+          rawText,
+        )
+      ) {
+        detectedWebError = rawText.replace(/\s+/g, " ").slice(0, 300);
+      }
 
       return {
         isGenerating,
@@ -141,6 +164,7 @@ export class AiStudioDomObserver {
         rawHtml,
         rawText,
         hasContent: rawText.length > 0 || rawHtml.length > 0,
+        detectedWebError,
       };
     }, {
       selectors: AI_STUDIO_DOM_SELECTORS,
@@ -152,6 +176,10 @@ export class AiStudioDomObserver {
     state: AiStudioResponseRuntimeState,
     status: AiStudioDomStatus,
   ): AiStudioResponseObservation {
+    if (status.detectedWebError) {
+      throw new Error(`[AI Studio Web Error] ${status.detectedWebError}`);
+    }
+
     const htmlMarkdown = status.rawHtml ? aiStudioHtmlToMarkdown(status.rawHtml).trim() : "";
     const normalizedText = htmlMarkdown || status.rawText.trim();
 

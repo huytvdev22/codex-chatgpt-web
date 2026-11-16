@@ -77,15 +77,27 @@ class AiStudioSmokeTester {
     let passed = false;
 
     while (Date.now() < deadline) {
-      const matched = await view.webContents.executeJavaScript(`(() => {
+      const probe = await view.webContents.executeJavaScript(`(() => {
         const turns = Array.from(document.querySelectorAll('.chat-session-content .chat-turn-container.model'))
           .filter(el => !el.querySelector('mat-expansion-panel.thought-panel'));
         const last = turns[turns.length - 1];
         const text = last ? (last.innerText || last.textContent || "") : "";
-        return text.includes("CODEX WEB GPT READY");
-      })()`, true).catch(() => false);
+        if (text.includes("CODEX WEB GPT READY")) return { ok: true };
+        if (last && !last.querySelector('.turn-footer') && /permission denied|failed to generate content/i.test(text)) {
+          return { ok: false, error: text.trim() };
+        }
+        const snack = document.querySelector('mat-snack-bar-container, simple-snack-bar, [role="alert"]');
+        const snackText = snack ? (snack.innerText || snack.textContent || "").trim() : "";
+        if (snackText && /permission denied|failed to generate|error|quota|unauthorized/i.test(snackText)) {
+          return { ok: false, error: snackText };
+        }
+        return { ok: false };
+      })()`, true).catch(() => ({ ok: false }));
 
-      if (matched) {
+      if (probe?.error) {
+        throw new Error(`Google AI Studio từ chối yêu cầu: ${probe.error}`);
+      }
+      if (probe?.ok) {
         passed = true;
         break;
       }

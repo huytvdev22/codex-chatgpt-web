@@ -183,5 +183,18 @@ class BaseBrowserProvider {
   }
 }
 
-module.exports = { BaseBrowserProvider };
+/**
+ * Chuẩn hóa User-Agent của Electron thành Chrome thuần để tránh bị dịch vụ web chặn.
+ */
+function sanitizeChromeUserAgent(userAgent) {
+  if (typeof userAgent !== "string") return "";
+  return userAgent
+    .replace(/(\(KHTML,\s*like Gecko\))\s+(?:[^\s]+\s+)*?(Chrome\/[^\s]+)/i, "$1 $2")
+    .replace(/\s*Electron\/[^\s]+/gi, "")
+    .replace(/\s*Codex[^\s]*/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+module.exports = { BaseBrowserProvider, sanitizeChromeUserAgent };
 

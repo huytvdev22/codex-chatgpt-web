@@ -104,5 +104,17 @@ describe("Google AI Studio Web Adapter", () => {
     expect(completedAnswer.isGenerating).toBe(false);
     expect(completedAnswer.isCompleted).toBe(true);
     expect(completedAnswer.text).toBe("78");
+
+    expect(() => observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: false,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: false,
+      thoughtsCount: 0,
+      rawHtml: "",
+      rawText: "Permission denied. Please check your account permissions and project settings.",
+      hasContent: true,
+      detectedWebError: "Permission denied. Please check your account permissions and project settings.",
+    })).toThrow("[AI Studio Web Error] Permission denied.");
   });
 });

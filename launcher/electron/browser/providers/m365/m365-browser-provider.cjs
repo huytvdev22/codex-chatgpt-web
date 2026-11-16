@@ -75,13 +75,17 @@ function allowedM365AuthUrl(value) {
  * Provider cụ thể cho Microsoft 365 Copilot, kế thừa từ BaseBrowserProvider.
  */
 class M365BrowserProvider extends BaseBrowserProvider {
-  constructor({ descriptorPath = null, smokeTester = new M365SmokeTester() } = {}) {
+  constructor({
+    descriptorPath = null,
+    partition = M365_PARTITION,
+    smokeTester = new M365SmokeTester(),
+  } = {}) {
     super({
       id: "m365",
       displayName: "M365 Copilot",
       homeUrl: M365_CHAT_URL,
       origin: M365_ORIGIN,
-      partition: M365_PARTITION,
+      partition: partition || M365_PARTITION,
       maxSurfaces: MAX_M365_SURFACES,
       maxPersistedBindings: MAX_PERSISTED_M365_BINDINGS,
       smokeTitle: "M365 Copilot",

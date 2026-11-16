@@ -263,5 +263,26 @@ test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-prov
     getURL: () => "https://accounts.google.com/ServiceLogin",
   });
   assert.equal(signedOut.authenticated, false);
+
+  let appliedUa = "";
+  provider.onPrimarySessionCreated({
+    getUserAgent: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) CodexM365Copilot/6.9.6 Electron/42.11.18 Chrome/148.0.7778.280 Safari/537.36",
+    setUserAgent: (ua) => { appliedUa = ua; },
+  });
+  assert.equal(
+    appliedUa,
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.280 Safari/537.36",
+  );
+
+  let appliedHyphenUa = "";
+  provider.onPrimarySessionCreated({
+    getUserAgent: () => "Mozilla/5.0 Chrome/134.0.0.0 Electron/42.11.18 codex-m365-copilot/6.9.6 Safari/537.36",
+    setUserAgent: (ua) => { appliedHyphenUa = ua; },
+  });
+  assert.equal(appliedHyphenUa, "Mozilla/5.0 Chrome/134.0.0.0 Safari/537.36");
+
+  const devRegistry = createDefaultProviderRegistry({ profile: "development" });
+  assert.equal(devRegistry.get("m365").partition, "persist:codex-web-gpt-dev-m365");
+  assert.equal(devRegistry.get("ai-studio").partition, "persist:codex-web-gpt-dev-ai-studio");
 });
 
