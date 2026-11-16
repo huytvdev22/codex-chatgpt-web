@@ -11,7 +11,13 @@ import {
   normalizeAiStudioConversationId,
   parseAiStudioConversationId,
 } from "../src/adapters/ai-studio";
-import { AiStudioDomObserver } from "../src/adapters/ai-studio/ai-studio-dom-observer";
+import { AI_STUDIO_DOM_SELECTORS, AiStudioDomObserver } from "../src/adapters/ai-studio/ai-studio-dom-observer";
+import {
+  normalizeCopiedAiStudioCodeSnippet,
+  resolveClipboardMenuItemIndex,
+} from "../src/adapters/ai-studio/ai-studio-clipboard-salvage";
+import { selectPreferredAiStudioResponse } from "../src/adapters/ai-studio/ai-studio-browser-worker";
+import { parseStrictWebResponse } from "../src/adapters/web/protocol/strict-response-parser";
 import { resolveAiStudioThinkingLevel } from "../src/adapters/ai-studio/capability-picker";
 import { ModelRegistry } from "../src/models/model-registry";
 import type { CodexParsedRequest } from "../src/types";
@@ -91,6 +97,19 @@ describe("Google AI Studio Web Adapter", () => {
     expect(thinkingOnly.isCompleted).toBe(false);
     expect(thinkingOnly.activityKey).toContain("thinking:1");
 
+    const firstFooterPoll = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<p>78</p>",
+      rawText: "78",
+      hasContent: true,
+    });
+    expect(firstFooterPoll.isGenerating).toBe(false);
+    expect(firstFooterPoll.isCompleted).toBe(false);
+
     const completedAnswer = observer.applyStatus(state, {
       isGenerating: false,
       responseReadyLive: true,
@@ -116,5 +135,91 @@ describe("Google AI Studio Web Adapter", () => {
       hasContent: true,
       detectedWebError: "Permission denied. Please check your account permissions and project settings.",
     })).toThrow("[AI Studio Web Error] Permission denied.");
+  });
+
+  test("AiStudioDomObserver không hoàn tất sớm khi <webResponse> chưa đóng và bọc đúng single Markdown code block", () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    const unclosedRaw = "<webResponse>\nChào bạn!";
+    for (let i = 0; i < 4; i += 1) {
+      const obs = observer.applyStatus(state, {
+        isGenerating: false,
+        responseReadyLive: true,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        rawHtml: `<pre><code>&lt;webResponse&gt;\nChào bạn!</code></pre>`,
+        rawText: unclosedRaw,
+        singleMarkdownCodeBlockText: unclosedRaw,
+        hasContent: true,
+      });
+      expect(obs.isCompleted).toBe(false);
+    }
+
+    const completeCodeText = "<webResponse>\nChào bạn!\n</webResponse>";
+    const settle1 = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<ms-code-block><pre><code>...</code></pre></ms-code-block>",
+      rawText: completeCodeText,
+      singleMarkdownCodeBlockText: completeCodeText,
+      hasContent: true,
+    });
+    expect(settle1.isCompleted).toBe(false);
+
+    const settle2 = observer.applyStatus(state, {
+      isGenerating: false,
+      responseReadyLive: true,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: true,
+      thoughtsCount: 1,
+      rawHtml: "<ms-code-block><pre><code>...</code></pre></ms-code-block>",
+      rawText: completeCodeText,
+      singleMarkdownCodeBlockText: completeCodeText,
+      hasContent: true,
+    });
+    expect(settle2.isCompleted).toBe(true);
+    expect(parseStrictWebResponse(settle2.text)).toEqual({
+      kind: "final_answer",
+      content: "Chào bạn!",
+      rawResponse: "````markdown\n<webResponse>\nChào bạn!\n</webResponse>\n````",
+    });
+  });
+
+  test("AiStudioClipboardSalvage khớp menu item kèm icon ligature và ưu tiên bản extraction đầy đủ", () => {
+    expect(AI_STUDIO_DOM_SELECTORS.runOrStopButton).toBe(
+      "button[ms-button].ctrl-enter-submits.ms-button-primary",
+    );
+
+    expect(
+      resolveClipboardMenuItemIndex([
+        "delete\nDelete",
+        "call_split\nBranch from here",
+        "content_copy\nCopy as text",
+        "markdown_copy\nCopy as markdown",
+      ]),
+    ).toBe(3);
+
+    expect(
+      resolveClipboardMenuItemIndex(["content_copy\nCopy as text", "Delete"]),
+    ).toBe(0);
+
+    expect(
+      normalizeCopiedAiStudioCodeSnippet("<webResponse>\nXin chào\n</webResponse>"),
+    ).toBe("````markdown\n<webResponse>\nXin chào\n</webResponse>\n````");
+
+    const domFull = "````markdown\n<webResponse>\nĐầy đủ\n</webResponse>\n````";
+    expect(selectPreferredAiStudioResponse("<webResponse>\nĐầy đủ", domFull)).toEqual({
+      rawResponse: domFull,
+      source: "dom",
+    });
+    expect(selectPreferredAiStudioResponse(domFull, "<webResponse>\nĐầy đủ")).toEqual({
+      rawResponse: domFull,
+      source: "clipboard",
+    });
   });
 });

@@ -16,6 +16,7 @@ export interface AiStudioDomStatus {
   thoughtsCount: number;
   rawHtml: string;
   rawText: string;
+  singleMarkdownCodeBlockText?: string | null;
   hasContent: boolean;
   detectedWebError?: string;
 }
@@ -94,7 +95,17 @@ export class AiStudioDomObserver {
   ): Promise<AiStudioDomStatus> {
     return await page.evaluate(({ selectors, baselineAnswerCount }) => {
       const actionBtn = document.querySelector<HTMLButtonElement>(selectors.runOrStopButton);
-      const btnText = (actionBtn?.innerText || actionBtn?.getAttribute("aria-label") || "").trim().toLowerCase();
+      const stopBtn =
+        actionBtn ||
+        document.querySelector<HTMLButtonElement>('button[aria-label*="Stop" i], button[aria-label*="Cancel generation" i]');
+      const btnText = (
+        stopBtn?.innerText ||
+        stopBtn?.getAttribute("aria-label") ||
+        stopBtn?.getAttribute("mattooltip") ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
       const liveText = Array.from(document.querySelectorAll<HTMLElement>(selectors.liveStatus))
         .map(el => (el.innerText || el.textContent || "").trim())
         .join(" ");
@@ -130,6 +141,7 @@ export class AiStudioDomObserver {
           thoughtsCount,
           rawHtml: "",
           rawText: "",
+          singleMarkdownCodeBlockText: null,
           hasContent: false,
           detectedWebError,
         };
@@ -138,9 +150,44 @@ export class AiStudioDomObserver {
       const hasTurnFooter = Boolean(targetAnswer.querySelector(selectors.turnFooter));
       const clone = targetAnswer.cloneNode(true) as HTMLElement;
       for (const noise of clone.querySelectorAll(
-        "h3.author-label, .actions, .turn-footer, mat-accordion, mat-expansion-panel.thought-panel",
+        [
+          "h3.author-label",
+          ".actions",
+          ".turn-footer",
+          "mat-accordion",
+          "mat-expansion-panel.thought-panel",
+          "ms-code-block mat-expansion-panel-header",
+          ".code-block-header",
+          "[class*='code-block-decoration' i]",
+        ].join(", "),
       )) {
         noise.remove();
+      }
+
+      // Kiểm tra nếu toàn bộ câu trả lời là một code block `Markdown` duy nhất của AI Studio
+      // để giữ nguyên chuỗi nguyên bản bên trong (tránh mất 4-backtick transport fence khi fallback DOM).
+      let singleMarkdownCodeBlockText: string | null = null;
+      const originalCodeBlocks = Array.from(targetAnswer.querySelectorAll<HTMLElement>("ms-code-block"));
+      if (originalCodeBlocks.length === 1) {
+        const origBlock = originalCodeBlocks[0];
+        const headerLabel = (
+          origBlock.querySelector("mat-expansion-panel-header, .code-block-header")?.textContent || ""
+        )
+          .trim()
+          .toLowerCase();
+        const isMarkdownLang = headerLabel.includes("markdown") || /\bmd\b/.test(headerLabel);
+        const clonePre = clone.querySelector("ms-code-block pre code, pre code");
+        const cloneOutsideText = (() => {
+          const checkClone = clone.cloneNode(true) as HTMLElement;
+          for (const el of checkClone.querySelectorAll("ms-code-block")) el.remove();
+          return (checkClone.innerText || checkClone.textContent || "").trim();
+        })();
+        if (!cloneOutsideText && clonePre) {
+          const extracted = (clonePre.textContent || "").trim();
+          if (extracted && (isMarkdownLang || /^<webResponse\b/i.test(extracted))) {
+            singleMarkdownCodeBlockText = extracted;
+          }
+        }
       }
 
       const rawHtml = clone.innerHTML.trim();
@@ -163,7 +210,8 @@ export class AiStudioDomObserver {
         thoughtsCount,
         rawHtml,
         rawText,
-        hasContent: rawText.length > 0 || rawHtml.length > 0,
+        singleMarkdownCodeBlockText,
+        hasContent: rawText.length > 0 || Boolean(singleMarkdownCodeBlockText),
         detectedWebError,
       };
     }, {
@@ -180,8 +228,16 @@ export class AiStudioDomObserver {
       throw new Error(`[AI Studio Web Error] ${status.detectedWebError}`);
     }
 
-    const htmlMarkdown = status.rawHtml ? aiStudioHtmlToMarkdown(status.rawHtml).trim() : "";
-    const normalizedText = htmlMarkdown || status.rawText.trim();
+    let normalizedText = "";
+    if (status.singleMarkdownCodeBlockText) {
+      const inner = status.singleMarkdownCodeBlockText.trim();
+      normalizedText = /^`{4}markdown\b/i.test(inner)
+        ? inner
+        : `\`\`\`\`markdown\n${inner}\n\`\`\`\``;
+    } else {
+      const htmlMarkdown = status.rawHtml ? aiStudioHtmlToMarkdown(status.rawHtml).trim() : "";
+      normalizedText = htmlMarkdown || status.rawText.trim();
+    }
 
     if (normalizedText === state.lastObservedText && status.rawHtml === state.lastHtml && status.hasContent) {
       state.stableCycles += 1;
@@ -192,11 +248,18 @@ export class AiStudioDomObserver {
     state.lastObservedText = normalizedText;
     state.lastHtml = status.rawHtml;
 
+    const hasUnclosedWebEnvelope =
+      normalizedText.includes("<webResponse>") && !normalizedText.includes("</webResponse>");
+
     const isCompleted = Boolean(
       !status.isGenerating &&
       status.hasNewAnswerTurn &&
       status.hasContent &&
-      (status.hasTurnFooter || status.responseReadyLive || state.stableCycles >= 2),
+      (
+        (status.hasTurnFooter && state.stableCycles >= 1) ||
+        (status.responseReadyLive && !hasUnclosedWebEnvelope && state.stableCycles >= 4) ||
+        state.stableCycles >= 24
+      ),
     );
 
     const phase = status.isGenerating

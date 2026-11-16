@@ -40,6 +40,28 @@ export interface AiStudioTurnResult {
   conversationId?: string;
 }
 
+export function selectPreferredAiStudioResponse(
+  copiedMarkdown: string | null,
+  domMarkdown: string,
+): { rawResponse: string; source: "clipboard" | "dom" } {
+  const cleanCopied = copiedMarkdown?.trim() || "";
+  const cleanDom = domMarkdown.trim();
+  if (!cleanCopied) {
+    return { rawResponse: cleanDom, source: "dom" };
+  }
+
+  const domHasCompleteEnvelope =
+    cleanDom.includes("<webResponse>") && cleanDom.includes("</webResponse>");
+  const copiedHasCompleteEnvelope =
+    cleanCopied.includes("<webResponse>") && cleanCopied.includes("</webResponse>");
+
+  if (domHasCompleteEnvelope && !copiedHasCompleteEnvelope) {
+    return { rawResponse: cleanDom, source: "dom" };
+  }
+
+  return { rawResponse: cleanCopied, source: "clipboard" };
+}
+
 /**
  * Thực thi lượt hội thoại với Google AI Studio (`aistudio.google.com`) thông qua
  * Template Method trên `BaseWebBrowserWorker`.
@@ -112,11 +134,17 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const modelName = this.extractTargetModelSlug(options.modelSlug);
     const targetNewChatUrl = buildAiStudioNewChatUrl(modelName);
     const currentUrl = page.url();
-    const isAlreadyCleanNewChat =
-      currentUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`) &&
-      currentUrl.includes(`model=${encodeURIComponent(modelName)}`);
+    const isOnNewChatUrl = currentUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
+    const isCleanBlankNewChat = isOnNewChatUrl
+      ? await page.evaluate((targetModel) => {
+          const turns = document.querySelectorAll(".chat-session-content ms-chat-turn, .chat-session-content .chat-turn-container");
+          if (turns.length > 0) return false;
+          const panelText = (document.querySelector(".run-settings-panel, ms-run-settings")?.textContent || "").toLowerCase();
+          return panelText.includes(targetModel.toLowerCase());
+        }, modelName).catch(() => false)
+      : false;
 
-    if (options.isNewConversation || !isAlreadyCleanNewChat || currentConversationId) {
+    if (!isCleanBlankNewChat || currentConversationId) {
       await page.goto(targetNewChatUrl, {
         waitUntil: "domcontentloaded",
         timeout: 25_000,
@@ -191,7 +219,8 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const composer = page.locator(AI_STUDIO_DOM_SELECTORS.composer).first();
 
     let submitted = false;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    let emptyEditorWaitCycles = 0;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       if (options.signal?.aborted) {
         throw new DOMException("AI Studio turn aborted during submit", "AbortError");
       }
@@ -216,9 +245,19 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         composerSelector: AI_STUDIO_DOM_SELECTORS.composer,
       });
 
-      if (status.isStop || status.isRunningLive || status.editorLength === 0) {
+      if (status.isStop || status.isRunningLive) {
         submitted = true;
         break;
+      }
+
+      if (status.editorLength === 0) {
+        emptyEditorWaitCycles += 1;
+        if (emptyEditorWaitCycles >= 3) {
+          submitted = true;
+          break;
+        }
+        await page.waitForTimeout(250);
+        continue;
       }
 
       if (!status.isDisabled) {
@@ -288,9 +327,15 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       context.baseline.answerCount,
     );
     const domMarkdown = context.observation.text.trim();
-    const rawResponse = copiedMarkdown && copiedMarkdown.length >= Math.min(domMarkdown.length, 1)
-      ? copiedMarkdown
-      : domMarkdown;
+    const { rawResponse, source } = selectPreferredAiStudioResponse(copiedMarkdown, domMarkdown);
+
+    const state = this.runtimeStates.get(page);
+    const hasOpen = rawResponse.includes("<webResponse>");
+    const hasClose = rawResponse.includes("</webResponse>");
+    const hasFence = /^`{4}markdown\b/i.test(rawResponse);
+    console.log(
+      `[ai-studio-worker] [extract] source=${source} len=${rawResponse.length} copiedLen=${copiedMarkdown?.length ?? 0} domLen=${domMarkdown.length} open=${hasOpen} close=${hasClose} fence=${hasFence} footer=${context.observation.status.hasTurnFooter} readyLive=${context.observation.status.responseReadyLive} attempts=${state?.attempts ?? 0}`,
+    );
 
     if (!rawResponse) {
       throw new Error("[AI Studio] Không nhận được nội dung phản hồi từ Gemini 4 Hydrogen.");
