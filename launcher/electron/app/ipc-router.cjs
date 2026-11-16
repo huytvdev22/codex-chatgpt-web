@@ -284,36 +284,8 @@ class IpcRouter {
       return { cancelled: false, state };
     });
     handle("launcher:setup-core", async () => {
-      const setupState = stateStore.read();
       const browserHost = getBrowserHost();
       const runtimeHost = getRuntimeHost();
-      const browser = await browserHost.probeAuthentication();
-      if (!browser.authenticated) {
-        const smokeMap = setupState.smokePassedByProvider || {};
-        const activeProviderId = browser.provider || browserHost.provider || setupState.selectedProvider || "m365";
-        const anyProviderSmokePassed = Object.values(smokeMap).some((entry) => entry?.passed === true);
-        const anyPassed = smokeMap[activeProviderId]?.passed === true
-          || anyProviderSmokePassed
-          || setupState.browserSmokePassed === true;
-        if (!anyPassed) {
-          if (browser.status === "error") throw new Error(browser.message);
-          const providerInfo = (browserHost.listProviders?.() ?? []).find((item) => item.id === activeProviderId);
-          const providerLabel = providerInfo?.displayName || activeProviderId;
-          throw new Error(
-            isDevProfile
-              ? `Sign in to the isolated DEV ${providerLabel} profile before configuring the harness`
-              : `Sign in to ${providerLabel} before installing the Codex integration`,
-          );
-        }
-      }
-      if (!setupState.coreSetupComplete
-        && !(isSmokePassedThisSession() || smokePassedForCurrentVersion(setupState))) {
-        throw new Error(
-          isDevProfile
-            ? "Run the browser smoke test before configuring the DEV harness"
-            : "Run the connection verification before installing the Codex integration",
-        );
-      }
       const result = isDevProfile ? await runtimeHost.setupDevCore() : await runtimeHost.setupCore();
       stateStore.update({
         coreSetupComplete: true,

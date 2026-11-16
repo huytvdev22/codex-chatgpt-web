@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { expect, test } from "bun:test";
 import { setupProxyIsReady } from "../src/setup";
 
@@ -19,4 +21,10 @@ test("setup accepts only a matching daemon that is ready for new Codex turns", (
   expect(setupProxyIsReady({ ...ready, accepting_turns: false }, config)).toBe(false);
   expect(setupProxyIsReady({ ...ready, status: "degraded" }, config)).toBe(false);
   expect(setupProxyIsReady({ ...ready, version: "0.1.16" }, config)).toBe(false);
+});
+
+test("launcher setup checks browser liveness without requiring an authenticated web session", () => {
+  const setupSource = readFileSync(resolve(import.meta.dir, "..", "src", "setup.ts"), "utf8");
+  expect(setupSource).toContain("inspectLauncherBrowserHostLiveness(");
+  expect(setupSource).not.toMatch(/\binspectLauncherBrowserHost\s*\(/);
 });

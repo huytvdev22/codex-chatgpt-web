@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **056** | Nhấn **Install models** bị lỗi `invalid Web browser session evidence` do còn gate authen ở backend | `core`, `launcher`, `setup`, `all-providers` | ✅ Đã Confirm | [056-install-models-without-auth-gate.md](./056-install-models-without-auth-gate.md) |
 | **055** | Thêm nút mở Swagger UI trong Settings Launcher và đóng gói `docs/swagger.html` cho bản Packaged | `launcher`, `server`, `swagger`, `packaging` | ✅ Đã Confirm | ./055-launcher-settings-swagger-and-packaging.md |
 | **054** | Đồng bộ `docs/adding-new-web-adapter-guide.md` theo kiến trúc đa provider hiện tại | `docs`, `core`, `launcher`, `all-providers` | ⏳ Chờ User Test & Confirm | ./054-update-adding-new-web-adapter-guide.md |
 | **053** | Dọn dẹp nợ kỹ thuật đa provider (alias `M365*`, legacy capability probe, state/IPC/UI Launcher) | `core`, `web`, `launcher`, `all-providers` | ⏳ Chờ User Test & Confirm | ./053-clean-multi-provider-tech-debt.md |

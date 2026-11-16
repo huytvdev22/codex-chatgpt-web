@@ -16,7 +16,7 @@ import {
   preflightCodexIntegration,
   readCodexSubagentProtocol,
 } from "./codex-integration";
-import { inspectLauncherBrowserHost } from "./launcher-browser-host";
+import { inspectLauncherBrowserHostLiveness } from "./launcher-browser-host";
 import {
   assertServiceIdle,
   getServiceStatus,
@@ -245,7 +245,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
 
   const loginCreated = false;
   if (config.browserHost === "launcher") {
-    await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
+    await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, {
       expectedProfile: "production",
     });
   }

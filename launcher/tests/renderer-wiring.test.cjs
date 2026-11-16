@@ -96,7 +96,7 @@ test("normal shutdown persists the ChatGPT session before closing browser views"
   assert.ok(destroy > persist, "browser views must close only after session persistence completes");
 });
 
-test("setup preserves session-check failures and never installs without verified authentication", async () => {
+test("setup installs models without requiring prior browser authentication or smoke verification", async () => {
   const vm = require("node:vm");
   const source = ipcRouterSource.slice(
     ipcRouterSource.indexOf('handle("launcher:setup-core",'),
@@ -105,25 +105,43 @@ test("setup preserves session-check failures and never installs without verified
   for (const dev of [false, true]) {
     let setup;
     let installs = 0;
-    let browser = { authenticated: false, status: "error", message: "ChatGPT session verification failed (HTTP 503)." };
-    const state = { browserInteractionMode: "automatic", coreSetupComplete: false };
-    const run = async () => { installs++; return { mode: "browser-only", stdout: "" }; };
+    let probes = 0;
+    let idleReturns = 0;
+    let monitorStarts = 0;
+    const state = { coreSetupComplete: false };
+    const run = async () => { installs++; return { mode: "browser-only", stdout: "ok" }; };
     vm.runInNewContext(source, {
-      handle: (_name, handler) => { setup = handler; }, isDevProfile: dev,
-      stateStore: { read: () => state, update() {} },
-      getBrowserHost: () => ({ probeAuthentication: async () => browser, returnToIdle: async () => {}, provider: "m365" }),
-      getRuntimeHost: () => ({ setupCore: run, setupDevCore: run, runtimeConfigSnapshot: () => ({ config: {} }) }),
-      isSmokePassedThisSession: () => true, smokePassedForCurrentVersion: () => false,
-      send() {}, startCatalogVerificationMonitor() {}, logger: { warn() {} },
+      handle: (_name, handler) => { setup = handler; },
+      isDevProfile: dev,
+      stateStore: {
+        read: () => state,
+        update: (patch) => Object.assign(state, patch),
+      },
+      getBrowserHost: () => ({
+        probeAuthentication: async () => {
+          probes++;
+          return { authenticated: false, status: "signed-out", message: "Sign in" };
+        },
+        returnToIdle: async () => { idleReturns++; },
+        provider: "m365",
+      }),
+      getRuntimeHost: () => ({
+        setupCore: run,
+        setupDevCore: run,
+        runtimeConfigSnapshot: () => ({ config: {} }),
+      }),
+      send() { },
+      startCatalogVerificationMonitor() { monitorStarts++; },
+      logger: { warn() { } },
     });
-    await assert.rejects(setup, error => error.message === browser.message);
-    assert.equal(installs, 0);
-    browser = { authenticated: false, status: "signed-out", message: "Sign in to ChatGPT" };
-    await assert.rejects(setup, /Sign in to/);
-    assert.equal(installs, 0);
-    browser = { authenticated: true, status: "ready", message: "ChatGPT is ready" };
-    assert.equal((await setup()).ok, true);
+    const result = await setup();
+    assert.equal(result.ok, true);
+    assert.equal(result.restartRequired, !dev);
     assert.equal(installs, 1);
+    assert.equal(probes, 0);
+    assert.equal(idleReturns, 1);
+    assert.equal(monitorStarts, dev ? 0 : 1);
+    assert.equal(state.coreSetupComplete, true);
   }
 });
 
@@ -137,17 +155,21 @@ test("startup failure stays visible on another launch and Retry exits the failed
   const dialogOpened = new Promise(resolve => {
     answer = { opened: resolve };
   });
-  const window = { isDestroyed: () => false, isMinimized: () => false,
-    show: () => { visible = true; }, focus() {}, };
+  const window = {
+    isDestroyed: () => false, isMinimized: () => false,
+    show: () => { visible = true; }, focus() { },
+  };
   const sandbox = {
     mainWindow: window, mainWindowReadyToShow: false, mainWindowShowRequested: false,
     startupFailed: false, quitting: false,
     browserHost: { destroy: () => events.push("destroy") },
     browserControl: { close: async () => events.push("control closed") },
     start: async () => { throw new Error("Browser idle document did not commit within 10000ms"); },
-    app: { getPath: () => "/unused", whenReady: async () => {},
-      relaunch: options => events.push(["relaunch", options.args]), exit: code => events.push(["exit", code]) },
-    fs: { appendFileSync() {} }, path,
+    app: {
+      getPath: () => "/unused", whenReady: async () => { },
+      relaunch: options => events.push(["relaunch", options.args]), exit: code => events.push(["exit", code])
+    },
+    fs: { appendFileSync() { } }, path,
     createStateStore: () => ({ read: () => ({ language: "ko" }) }),
     nativeCopyFor: language => {
       assert.equal(language, "ko");
@@ -283,13 +305,14 @@ test("saved ChatGPT authentication is refreshed before setup is presented", () =
   assert.match(appSource, /browser\?\.status === "loading"[\s\S]*?\? copy\.checkingSignIn/);
 });
 
-test("completed model setup remains a repeatable capability probe", () => {
+test("completed model setup remains a repeatable capability probe without auth gating", () => {
   assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{install\}[\s\S]*?repeatable/);
   assert.match(appSource, /complete && !repeatable/);
-  assert.match(
-    ipcRouterSource,
-    /!setupState\.coreSetupComplete[\s\S]*?isSmokePassedThisSession\(\)[\s\S]*?smokePassedForCurrentVersion\(setupState\)/,
+  const setupCoreBlock = ipcRouterSource.slice(
+    ipcRouterSource.indexOf('handle("launcher:setup-core",'),
+    ipcRouterSource.indexOf('handle("launcher:connector-name",'),
   );
+  assert.doesNotMatch(setupCoreBlock, /probeAuthentication|!browser\.authenticated|!setupState\.coreSetupComplete/);
 });
 
 test("catalog verification reports a failed request instead of requesting another restart, then recovers", async () => {
@@ -316,18 +339,20 @@ test("catalog verification reports a failed request instead of requesting anothe
     lastOperation: null,
     runtimeSupervisor: { readConfig: () => ({}), proxyHealthPayload: async () => payload },
     stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
-    setInterval: callback => { tick = callback; return { unref() {} }; },
-    clearInterval() {},
-    logger: { info: (...args) => events.push(args), warn: (...args) => events.push(args), debug() {} },
-    send() {}, publishOperation: op => operations.push(op),
+    setInterval: callback => { tick = callback; return { unref() { } }; },
+    clearInterval() { },
+    logger: { info: (...args) => events.push(args), warn: (...args) => events.push(args), debug() { } },
+    send() { }, publishOperation: op => operations.push(op),
     nativeCopyFor: () => ({ catalogFailure: "Catalog failed (HTTP {status}; {reason})." }),
   });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(operations.length, 0);
   assert.equal(state.codexRestartRequired, true);
-  payload = { ...payload, model_catalog_requests: 1, last_model_catalog_result: {
-    request: 1, at: "2026-09-16T10:00:00Z", status: 502, failure: { stage: "transport", code: "UnsupportedProxyProtocol" },
-  } };
+  payload = {
+    ...payload, model_catalog_requests: 1, last_model_catalog_result: {
+      request: 1, at: "2026-09-16T10:00:00Z", status: 502, failure: { stage: "transport", code: "UnsupportedProxyProtocol" },
+    }
+  };
   await tick();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(state.codexCatalogVerified, false);
@@ -361,13 +386,15 @@ test("fresh-conversation IPC commits only after setup succeeds and refuses activ
     const events = [];
     let handler, finishSetup, setupFailure, calls = 0;
     const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };
-    const runtimeHost = { currentOperation: () => null, runtimeConfigSnapshot: () => ({ config }), [method]: async enabled => {
-      calls++;
-      if (setupFailure) throw setupFailure;
-      await new Promise(resolve => { finishSetup = resolve; });
-      config[property] = enabled;
-      return { enabled };
-    } };
+    const runtimeHost = {
+      currentOperation: () => null, runtimeConfigSnapshot: () => ({ config }), [method]: async enabled => {
+        calls++;
+        if (setupFailure) throw setupFailure;
+        await new Promise(resolve => { finishSetup = resolve; });
+        config[property] = enabled;
+        return { enabled };
+      }
+    };
     const syncSource = ipcRouterSource.slice(
       ipcRouterSource.indexOf("function syncFreshConversationPreference("),
       ipcRouterSource.indexOf("class IpcRouter"),
@@ -395,13 +422,17 @@ test("fresh-conversation IPC commits only after setup succeeds and refuses activ
     assert.equal(calls, 0);
     browserHost.currentOperation = () => null;
     let api;
-    vm.runInNewContext(preloadSource, { require: () => ({
-      contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
-      ipcRenderer: { invoke: (actualChannel, enabled) => {
-        assert.equal(actualChannel, channel);
-        return handler(null, enabled);
-      } },
-    }) });
+    vm.runInNewContext(preloadSource, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
+        ipcRenderer: {
+          invoke: (actualChannel, enabled) => {
+            assert.equal(actualChannel, channel);
+            return handler(null, enabled);
+          }
+        },
+      })
+    });
     const changing = api[method](true);
     assert.equal(state[property], false);
     assert.equal(events.length, 0);
@@ -436,7 +467,7 @@ test("fresh-conversation snapshot uses runtime configuration", async () => {
     getLastOperation: () => null,
     releaseRetainedConversation: require("../electron/browser/retained-turn-release.cjs").releaseRetainedConversation,
     stateStore,
-    isDevProfile: false, send() {}, startCatalogVerificationMonitor() {},
+    isDevProfile: false, send() { }, startCatalogVerificationMonitor() { },
     launcherProfile: { kind: "production", codexHome: "/fixture/codex" }, coreHome: "/fixture/core",
     launcherUserData: "/fixture/launcher", logger: { recent: () => [] },
     githubUrl: "", xUrl: "",
@@ -465,16 +496,18 @@ test("fresh-conversation control is translated and invokes the async setting", a
   const vm = require("node:vm");
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
   const transpile = (source, fileName) => ts.transpileModule(source, {
-    fileName, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-      jsx: ts.JsxEmit.React, jsxFactory: "element" },
+    fileName, compilerOptions: {
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.React, jsxFactory: "element"
+    },
   }).outputText;
   const translated = { exports: {} };
   vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
   let render, invocation, saved;
   const sandbox = {
     element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: value => [value, () => {}],
-    useEffect() {},
+    useState: value => [value, () => { }],
+    useEffect() { },
     api: { setFreshConversationPerTurn: async enabled => { invocation = enabled; return { experimentalFreshConversationPerTurn: enabled }; } },
     messageOf: String, platformLabel: String,
   };
@@ -490,7 +523,8 @@ test("fresh-conversation control is translated and invokes the async setting", a
       assert.ok(copy[key].length > 10);
     }
     for (const [configured, enabled] of [[true, false], [false, false]]) {
-      const tree = render({ copy, devProfile: false, language, openSetup() {}, setError() {},
+      const tree = render({
+        copy, devProfile: false, language, openSetup() { }, setError() { },
         snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled } },
         updateState: value => { saved = value; },
       });
@@ -547,8 +581,10 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   const ts = require("typescript");
   const vm = require("node:vm");
   const transpile = (source, fileName) => ts.transpileModule(source, {
-    fileName, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-      jsx: ts.JsxEmit.React, jsxFactory: "element", jsxFragmentFactory: "Fragment" },
+    fileName, compilerOptions: {
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.React, jsxFactory: "element", jsxFragmentFactory: "Fragment"
+    },
   }).outputText;
   const translated = { exports: {} };
   vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
@@ -557,9 +593,11 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   let cursor = 0, submitted, openedSetup = false;
   const sandbox = {
     element: (type, props, ...children) => ({ type, props: props ?? {}, children }), Fragment: "Fragment",
-    useState: initial => { const index = cursor++; if (!(index in hooks)) hooks[index] = initial;
-      return [hooks[index], value => { hooks[index] = value; }]; },
-    useEffect() {}, messageOf: String, platformLabel: String,
+    useState: initial => {
+      const index = cursor++; if (!(index in hooks)) hooks[index] = initial;
+      return [hooks[index], value => { hooks[index] = value; }];
+    },
+    useEffect() { }, messageOf: String, platformLabel: String,
     api: { setConnectorNameSuffix: async suffix => { submitted = suffix; return { mcpSetupComplete: false }; } },
   };
   for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
@@ -567,10 +605,13 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", sandbox);
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
     ? [tree, ...visit(tree.children ?? [])] : [];
-  const render = () => { cursor = 0; return visit(sandbox.render({ copy, devProfile: false, language: "en",
-    snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: true } },
-    openSetup: () => { openedSetup = true; }, setError: error => { if (error) throw new Error(error); }, updateState() {},
-  })); };
+  const render = () => {
+    cursor = 0; return visit(sandbox.render({
+      copy, devProfile: false, language: "en",
+      snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: true } },
+      openSetup: () => { openedSetup = true; }, setError: error => { if (error) throw new Error(error); }, updateState() { },
+    }));
+  };
   let nodes = render();
   const group = nodes.find(node => node.props.className === "plugin-name-input");
   assert.ok(visit(group).some(node => node.type === "span" && node.children[0] === "Codex"));
@@ -623,7 +664,7 @@ test("multi-provider IPC channels and dynamic provider rendering stay wired clea
     {
       handle: (name, handler) => handlers.set(name, handler),
       getBrowserHost: () => browserHost,
-      awaitRuntimeStartup: async () => {},
+      awaitRuntimeStartup: async () => { },
       stateStore: {
         read: () => state,
         update: (patch) => {
@@ -633,7 +674,7 @@ test("multi-provider IPC channels and dynamic provider rendering stay wired clea
       },
       app: { getVersion: () => "1.2.3" },
       send: (channel, body) => events.push({ channel, body }),
-      markSmokePassedThisSession() {},
+      markSmokePassedThisSession() { },
     },
   );
 
