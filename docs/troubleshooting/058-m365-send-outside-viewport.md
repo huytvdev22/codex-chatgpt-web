@@ -1,6 +1,6 @@
 # 058 - Lỗi `element is outside of the viewport` khi click nút Send trên M365 Copilot
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm  
 > **Ngày phát hiện:** 2026-11-16  
 > **Phạm vi:** `src/adapters/m365-copilot/m365-browser-worker.ts`
 

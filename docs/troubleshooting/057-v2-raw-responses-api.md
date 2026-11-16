@@ -1,6 +1,6 @@
 # 057 - Triển khai `POST /v2/responses` (Raw Passthrough & Target Conversation Persistence)
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm  
 > **Ngày thực hiện:** 2026-11-16  
 > **Phạm vi:** `src/adapters/`, `src/services/`, `src/controllers/`, `src/server.ts`, `docs/swagger.html`
 

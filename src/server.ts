@@ -4,9 +4,11 @@ import { formatErrorResponse } from "./bridge";
 import { reconcileCodexModelCatalogConfig, type CodexModelContextOverride } from "./codex-integration";
 import type { AppConfig } from "./config";
 import { AdminController } from "./controllers/admin-controller";
+import { GeminiSpeechController } from "./controllers/gemini-speech-controller";
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./controllers/http-turn-counter";
 import { ModelsController, type ModelCatalogFailure } from "./controllers/models-controller";
 import { ResponsesController } from "./controllers/responses-controller";
+import type { GeminiSpeechMethod } from "./services/gemini-speech-service";
 import { applyLoopbackCors, serveUniversal, type UniversalServer } from "./controllers/universal-http-server";
 import { ModelCatalog } from "./models/model-catalog";
 import { flushResponseState } from "./responses/state";
@@ -76,6 +78,7 @@ export function startServer(
   const httpTurns = new HttpTurnCounter();
   const modelsController = new ModelsController();
   const responsesController = new ResponsesController(new ResponsesService());
+  const geminiSpeechController = new GeminiSpeechController();
 
   let server!: UniversalServer;
   const shutdown = (): void => {
@@ -171,6 +174,28 @@ export function startServer(
       return httpTurns.track(
         (signal) => responsesController.handleV2Responses(
           new Request(req, { signal }),
+          dependencies.adapterFactory,
+        ),
+        req.signal,
+        process.platform,
+        "responses",
+      );
+    }
+
+    const geminiSpeechMatch = req.method === "POST"
+      ? /^\/v1beta\/models\/([^/:]+):(generateContent|streamGenerateContent)$/.exec(url.pathname)
+      : null;
+    if (geminiSpeechMatch) {
+      if (draining) {
+        return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+      }
+      const modelId = decodeURIComponent(geminiSpeechMatch[1]);
+      const method = geminiSpeechMatch[2] as GeminiSpeechMethod;
+      return httpTurns.track(
+        (signal) => geminiSpeechController.handleSpeech(
+          new Request(req, { signal }),
+          modelId,
+          method,
           dependencies.adapterFactory,
         ),
         req.signal,

@@ -33,6 +33,7 @@
         { name: "Health", description: "Kiểm tra trạng thái server" },
         { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Microsoft 365 Copilot / AI Studio" },
         { name: "Responses v2 (Raw)", description: "Endpoint raw passthrough non-stream, không bọc prompt hệ thống và duy trì target conversation" },
+        { name: "Gemini Speech (TTS)", description: "Endpoint tương thích Gemini Text-to-Speech / Podcast chạy qua Google AI Studio UI" },
         { name: "Admin Control", description: "Endpoint điều khiển nội bộ (cần Control Bearer token)" }
       ],
       components: {
@@ -258,6 +259,79 @@
               "400": { description: "Payload không hợp lệ hoặc truyền stream: true" },
               "409": { description: "Xung đột: đang có lượt chạy song song trên cùng conversation hoặc conversation_key không khớp conversation_id" },
               "502": { description: "Lỗi từ Web Adapter / Browser Worker" },
+              "503": { description: "Server đang draining" }
+            }
+          }
+        },
+        "/v1beta/models/gemini-2.5-pro-preview-tts:streamGenerateContent": {
+          post: {
+            tags: ["Gemini Speech (TTS)"],
+            summary: "Tạo Podcast / Speech tương thích Gemini API (không cần GEMINI_API_KEY)",
+            description:
+              "Nhận đúng payload chuẩn Gemini `streamGenerateContent` / `generateContent` (`contents`, `generationConfig.speech_config.multi_speaker_voice_config`, `temperature`) và điều khiển trực tiếp trang Google AI Studio Speech Generation (`/generate-speech`) qua Launcher đã đăng nhập.\n\n"
+              + "- **Không cần API key thật:** có thể giữ hoặc bỏ query `?key=...`, phía server bỏ qua và chạy qua phiên Google của Launcher.\n"
+              + "- **Thứ tự Speaker tự động:** khớp theo đúng tên `speaker` (`Speaker 1`, `Speaker 2`) trong panel Speaker settings ngay cả khi dòng đầu tiên của transcript là `Speaker 2:`.\n"
+              + "- **Đầu ra:** trả về JSON chuẩn Gemini chứa `candidates[0].content.parts[0].inlineData` (`mimeType: \"audio/wav\"`, `data: \"<base64>\"`). (Nếu thêm `?alt=sse` trả định dạng `text/event-stream`).",
+            parameters: [
+              {
+                name: "key",
+                in: "query",
+                required: false,
+                schema: { type: "string" },
+                description: "Tùy chọn (server bỏ qua, giữ để tương thích URL Gemini SDK)."
+              },
+              {
+                name: "alt",
+                in: "query",
+                required: false,
+                schema: { type: "string", enum: ["sse"] },
+                description: "Truyền `sse` nếu muốn nhận `text/event-stream` thay cho JSON array."
+              }
+            ],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: { type: "object" },
+                  example: {
+                    contents: [
+                      {
+                        role: "user",
+                        parts: [
+                          {
+                            text: "Read the following transcript based on the audio profile and director's note.\n\n# Audio Profile\nFor Speaker 1: An authoritative main news anchor.\nFor Speaker 2: A professional field correspondent.\n\n# Director's note\nFor Speaker 1: Style: Vocal Smile. Pace: Rapid Fire. Accent: American (Gen).\nFor Speaker 2: Style: Newscaster. Pace: Rapid Fire. Accent: American (Gen).\n\n## Scene:\nA high-quality recording studio, two friends talking casually into dynamic mics.\n\n## Sample Context:\nPodcast style. Fast, slightly overlapping pacing. Tone is energetic, conversational, and warm.\n\n## Transcript:\nSpeaker 1: [enthusiastic] Welcome back to the show! Today we're diving into the intersection of AI and creative expression.\nSpeaker 2: [agreement] Exactly. I've got so many thoughts on what happened this week.\nSpeaker 1: [animation] It really is shifting daily. I mean, did you see the demo they dropped on Tuesday?\nSpeaker 2: [amazement] Oh, absolutely. It blew my mind! [laughter] But it also raised some pretty huge questions about how we define art in the first place.\nSpeaker 1: Right! So let's get right into it, because we have a lot to unpack today."
+                          }
+                        ]
+                      }
+                    ],
+                    generationConfig: {
+                      responseModalities: ["audio"],
+                      temperature: 1,
+                      speech_config: {
+                        multi_speaker_voice_config: {
+                          speaker_voice_configs: [
+                            {
+                              speaker: "Speaker 1",
+                              voice_config: { prebuilt_voice_config: { voice_name: "Puck" } }
+                            },
+                            {
+                              speaker: "Speaker 2",
+                              voice_config: { prebuilt_voice_config: { voice_name: "Zephyr" } }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": {
+                description: "JSON array chuẩn Gemini `streamGenerateContent` chứa `inlineData` audio WAV base64"
+              },
+              "400": { description: "Payload không hợp lệ" },
+              "502": { description: "Lỗi từ Google AI Studio Web UI (vd: permission denied)" },
               "503": { description: "Server đang draining" }
             }
           }

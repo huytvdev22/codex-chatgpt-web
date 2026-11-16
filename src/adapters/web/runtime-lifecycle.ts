@@ -180,6 +180,7 @@ export async function releaseWebTurnSurface(options: {
   parsed?: CodexParsedRequest;
   hasPriorAssistantReply?: boolean;
   hasToolResults?: boolean;
+  retainOverride?: boolean;
   abortSignal?: AbortSignal;
   ops?: Partial<WebRuntimeLifecycleOps>;
 }): Promise<void> {
@@ -205,7 +206,13 @@ export async function releaseWebTurnSurface(options: {
   if (!manageInEngine) return;
 
   if (acquired.descriptorPath && acquired.leaseStarted) {
-    const binding = definition.conversation.resolveEndTurnBinding
+    const binding = options.retainOverride === false
+      ? {
+          connectorBound: false,
+          conversationId: activeConversationId,
+          retain: false,
+        }
+      : definition.conversation.resolveEndTurnBinding
       ? definition.conversation.resolveEndTurnBinding({
           finalStatus,
           activeConversationId,

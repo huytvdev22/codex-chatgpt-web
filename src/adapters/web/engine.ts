@@ -1,3 +1,4 @@
+import type { Page } from "playwright-core";
 import {
   hasActualPriorAssistantReply,
   type IncomingMeta,
@@ -504,6 +505,87 @@ export class WebTurnEngine {
           hasPriorAssistantReply: !isNewConversation,
           hasToolResults: false,
           abortSignal: turnRegistration.signal,
+          ops: this.lifecycleOps,
+        });
+      }
+    } finally {
+      turnRegistration.finish();
+    }
+  }
+
+  /**
+   * Cấp phát một tab Launcher tạm thời (`retain: false`) để thực thi tác vụ chuyên biệt
+   * trên cùng phiên đăng nhập của provider (ví dụ Google AI Studio Speech Generation).
+   */
+  async runEphemeralSurfaceTask<T>(
+    incoming: IncomingMeta,
+    task: (context: {
+      page: Page;
+      signal: AbortSignal;
+      heartbeat?: () => Promise<void>;
+    }) => Promise<T>,
+  ): Promise<T> {
+    if (incoming.abortSignal?.aborted) {
+      throw new DOMException(
+        this.definition.abortMessage ||
+          `${this.definition.assistantName} task aborted before start`,
+        "AbortError",
+      );
+    }
+
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+      ...this.definition.policies?.traceIdOptions,
+    });
+    const conversationKey = buildWebConversationKey({
+      provider: this.definition.id,
+      source: `ephemeral:${turnTraceId}`,
+      modelId: "ephemeral",
+    });
+
+    const turnRegistration = activeWebTurnRegistry.register(
+      turnTraceId,
+      incoming.abortSignal,
+    );
+    const turnSignal = turnRegistration.signal;
+
+    try {
+      const acquired = await acquireWebTurnSurface({
+        definition: this.definition,
+        localBrowser: this.localBrowser,
+        turnTraceId,
+        conversationKey,
+        abortSignal: turnSignal,
+        ops: this.lifecycleOps,
+      });
+
+      if (!acquired.page) {
+        throw new Error(
+          `[${this.definition.logPrefix}] Không có trình duyệt khả dụng để thực thi tác vụ.`,
+        );
+      }
+
+      let finalStatus: WebTurnFinalStatus = "failed";
+      try {
+        const result = await task({
+          page: acquired.page,
+          signal: turnSignal,
+          heartbeat: acquired.heartbeat,
+        });
+        finalStatus = "completed";
+        return result;
+      } catch (error) {
+        finalStatus = turnSignal.aborted ? "aborted" : "failed";
+        throw error;
+      } finally {
+        await releaseWebTurnSurface({
+          definition: this.definition,
+          acquired,
+          turnTraceId,
+          finalStatus,
+          conversationKey,
+          retainOverride: false,
+          abortSignal: turnSignal,
           ops: this.lifecycleOps,
         });
       }

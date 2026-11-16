@@ -27,6 +27,23 @@ export interface RawTurnResult {
   conversationId?: string;
 }
 
+export interface SpeechSpeakerInput {
+  speaker: string;
+  voiceName: string;
+}
+
+export interface SpeechTurnRequest {
+  modelId: string;
+  text: string;
+  temperature?: number;
+  speakers: SpeechSpeakerInput[];
+}
+
+export interface SpeechTurnResult {
+  audioBase64: string;
+  mimeType: string;
+}
+
 export interface ProviderAdapter {
   name: string;
   runTurn(
@@ -38,6 +55,10 @@ export interface ProviderAdapter {
     request: RawTurnRequest,
     incoming: IncomingMeta,
   ): Promise<RawTurnResult>;
+  runSpeechTurn?(
+    request: SpeechTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<SpeechTurnResult>;
 }
 
 /**

@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { hasActualPriorAssistantReply, type ProviderAdapter } from "../base";
+import {
+  hasActualPriorAssistantReply,
+  type IncomingMeta,
+  type ProviderAdapter,
+  type SpeechTurnRequest,
+  type SpeechTurnResult,
+} from "../base";
 import type { CodexParsedRequest } from "../../types";
 import { CodexRawPayload } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
 import { AiStudioBrowserWorker } from "./ai-studio-browser-worker";
+import { AiStudioSpeechWorker } from "./ai-studio-speech-worker";
 import { aiStudioConversationKey } from "./conversation-key";
 
 export {
@@ -12,6 +19,16 @@ export {
   type AiStudioBrowserRunOptions,
   type AiStudioTurnResult,
 } from "./ai-studio-browser-worker";
+export {
+  AiStudioSpeechWorker,
+  AI_STUDIO_DEFAULT_TTS_MODEL,
+  buildAiStudioSpeechUrl,
+  parseGeminiSpeechScript,
+  type AiStudioSpeechResult,
+  type AiStudioSpeechRunOptions,
+  type ParsedSpeechScript,
+  type SpeechSpeakerConfig,
+} from "./ai-studio-speech-worker";
 export {
   AiStudioModelProvider,
   type AiStudioModelRouteDefinition,
@@ -51,6 +68,7 @@ function isEphemeralStructuredTurn(
 export class AiStudioAdapter extends WebProviderAdapter {
   override readonly name = "ai-studio";
   private readonly worker: AiStudioBrowserWorker;
+  private readonly speechWorker = new AiStudioSpeechWorker();
 
   constructor() {
     const worker = new AiStudioBrowserWorker();
@@ -183,6 +201,26 @@ export class AiStudioAdapter extends WebProviderAdapter {
       },
     });
     this.worker = worker;
+  }
+
+  /**
+   * Thực thi tác vụ Text-to-Speech / Podcast trên giao diện `/generate-speech`
+   * qua tab Launcher tạm thời và trả về audio base64 chuẩn Gemini `inlineData`.
+   */
+  async runSpeechTurn(
+    request: SpeechTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<SpeechTurnResult> {
+    return await this.engine.runEphemeralSurfaceTask(incoming, async ({ page, signal, heartbeat }) => {
+      return await this.speechWorker.executeSpeech(page, {
+        modelId: request.modelId,
+        text: request.text,
+        temperature: request.temperature,
+        speakers: request.speakers,
+        signal,
+        heartbeat,
+      });
+    });
   }
 }
 
