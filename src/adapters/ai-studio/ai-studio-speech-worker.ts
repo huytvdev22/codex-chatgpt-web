@@ -34,7 +34,8 @@ export interface AiStudioSpeechResult {
 
 const SPEECH_SELECTORS = {
   presetCoHost: 'button:has-text("The Energetic Co-Host"), [role="button"]:has-text("The Energetic Co-Host")',
-  textModeToggle: 'button.toggle-button:has-text("Text"), [role="radio"]:has-text("Text")',
+  textModeToggle:
+    'button.toggle-button[data-value="TEXT"], button[role="radio"][data-value="TEXT"], button.toggle-button:has-text("Text")',
   sceneTextarea: 'textarea[aria-label="Scene"]',
   sampleContextTextarea: 'textarea[aria-label="Sample Context"]',
   promptTextarea: 'textarea[aria-label="Enter a prompt"]',
@@ -128,6 +129,30 @@ export function parseGeminiSpeechScript(rawText: string): ParsedSpeechScript {
   };
 }
 
+function findSpeakerFirstIndex(transcript: string, speakerName: string): number {
+  const escaped = speakerName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!escaped) return Number.MAX_SAFE_INTEGER;
+  const match = new RegExp(`(?:^|\\n)\\s*${escaped}\\s*:`, "i").exec(transcript);
+  return match ? match.index : Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * Sắp xếp danh sách speaker theo thứ tự xuất hiện lần đầu trong transcript để khớp vị trí card trên AI Studio UI.
+ */
+export function orderSpeakersByTranscript(
+  speakers: SpeechSpeakerConfig[],
+  transcript: string,
+): SpeechSpeakerConfig[] {
+  return speakers
+    .map((speaker, originalIndex) => ({
+      speaker,
+      originalIndex,
+      firstIndex: findSpeakerFirstIndex(transcript, speaker.speaker),
+    }))
+    .sort((a, b) => a.firstIndex - b.firstIndex || a.originalIndex - b.originalIndex)
+    .map((item) => item.speaker);
+}
+
 export function buildAiStudioSpeechUrl(modelId = AI_STUDIO_DEFAULT_TTS_MODEL): string {
   const cleanModel = modelId.replace(/^ai-studio\//i, "").trim() || AI_STUDIO_DEFAULT_TTS_MODEL;
   return `${AI_STUDIO_ORIGIN}/generate-speech?model=${encodeURIComponent(cleanModel)}`;
@@ -178,12 +203,7 @@ export class AiStudioSpeechWorker {
 
     // Preset "The Energetic Co-Host" mở ở chế độ Composer (không có textarea Enter a prompt),
     // nên phải bấm chuyển sang chế độ Text TRƯỚC khi chờ promptLocator xuất hiện.
-    if (await textToggle.isVisible().catch(() => false)) {
-      const checked = await textToggle.getAttribute("aria-checked").catch(() => null);
-      if (checked !== "true") {
-        await textToggle.click({ timeout: 3_000 });
-      }
-    }
+    await this.ensureTextMode(page, textToggle, promptLocator, options.signal);
     await promptLocator.waitFor({ state: "visible", timeout: 15_000 });
 
     // Chụp baseline audio.src trước khi chạy (preset mặc định load sẵn file mẫu enthusiastic-co-host.wav)
@@ -216,6 +236,48 @@ export class AiStudioSpeechWorker {
     return await this.waitForGeneratedAudio(page, baselineAudioSrc, options);
   }
 
+  /**
+   * Đảm bảo playground chuyển hẳn sang chế độ Text; thử click lại hoặc fallback DOM click nếu Angular chưa ăn lần đầu.
+   */
+  private async ensureTextMode(
+    page: Page,
+    textToggle: ReturnType<Page["locator"]>,
+    promptLocator: ReturnType<Page["locator"]>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const deadline = Date.now() + 6_000;
+    let attempt = 0;
+
+    while (Date.now() < deadline) {
+      this.throwIfAborted(signal);
+      if (await promptLocator.isVisible().catch(() => false)) return;
+
+      const toggleVisible = await textToggle.isVisible().catch(() => false);
+      if (!toggleVisible) {
+        await page.waitForTimeout(150);
+        continue;
+      }
+
+      const checked = await textToggle.getAttribute("aria-checked").catch(() => null);
+      if (checked === "true") return;
+
+      if (attempt % 2 === 0) {
+        await textToggle.click({ timeout: 2_000, force: attempt > 0 }).catch(() => {});
+      } else {
+        await textToggle
+          .evaluate((el) => {
+            (el as HTMLElement).click();
+          })
+          .catch(() => {});
+      }
+      attempt += 1;
+
+      await page.waitForTimeout(200);
+      if (await promptLocator.isVisible().catch(() => false)) return;
+      if ((await textToggle.getAttribute("aria-checked").catch(() => null)) === "true") return;
+    }
+  }
+
   private async fillTextareaIfPresent(page: Page, selector: string, value: string): Promise<void> {
     const locator = page.locator(selector).first();
     if (await locator.isVisible().catch(() => false)) {
@@ -244,6 +306,22 @@ export class AiStudioSpeechWorker {
     await page.waitForTimeout(150);
   }
 
+  private async setCardAlias(card: Locator, alias: string): Promise<void> {
+    const aliasInput = card.locator(SPEECH_SELECTORS.speakerAliasInput).first();
+    if (!(await aliasInput.isVisible().catch(() => false))) return;
+    await aliasInput.fill(alias);
+    await aliasInput.press("Enter").catch(() => {});
+    await aliasInput.evaluate((el) => (el as HTMLElement).blur()).catch(() => {});
+  }
+
+  private async readCardAlias(card: Locator): Promise<string> {
+    return (
+      (await card.locator(SPEECH_SELECTORS.speakerAliasInput).first().inputValue().catch(() => "")) ||
+      (await card.locator(SPEECH_SELECTORS.speakerAliasTag).first().textContent().catch(() => "")) ||
+      ""
+    ).trim().toLowerCase();
+  }
+
   private async configureSpeakers(
     page: Page,
     speakers: SpeechSpeakerConfig[],
@@ -254,51 +332,34 @@ export class AiStudioSpeechWorker {
     const cardCount = await cards.count();
     if (cardCount === 0) return;
 
-    const usedCardIndices = new Set<number>();
+    // Đưa speaker xuất hiện trước trong transcript lên card đầu tiên trên UI,
+    // tránh model TTS Preview ở chế độ Text lấy giọng card 0 đọc cho người mở đầu.
+    const orderedSpeakers = orderSpeakersByTranscript(speakers, script.transcript);
+    const currentAliases: string[] = [];
+    for (let i = 0; i < cardCount; i += 1) {
+      currentAliases.push(await this.readCardAlias(cards.nth(i)));
+    }
 
-    for (const speakerConfig of speakers) {
+    const pairCount = Math.min(cardCount, orderedSpeakers.length);
+    for (let i = 0; i < pairCount; i += 1) {
       this.throwIfAborted(signal);
+      const speakerConfig = orderedSpeakers[i];
       const targetName = speakerConfig.speaker.trim();
       const targetLower = targetName.toLowerCase();
 
-      // Ưu tiên tìm đúng card có speaker-alias-input / tag khớp tên speaker
-      // để tránh lệch Speaker 1 / Speaker 2 khi script đảo thứ tự xuất hiện.
-      let matchedIndex = -1;
-      for (let i = 0; i < cardCount; i += 1) {
-        if (usedCardIndices.has(i)) continue;
-        const card = cards.nth(i);
-        const aliasValue = (
-          (await card.locator(SPEECH_SELECTORS.speakerAliasInput).first().inputValue().catch(() => "")) ||
-          (await card.locator(SPEECH_SELECTORS.speakerAliasTag).first().textContent().catch(() => "")) ||
-          ""
-        ).trim().toLowerCase();
-        if (aliasValue === targetLower) {
-          matchedIndex = i;
-          break;
-        }
-      }
-
-      // Nếu không tìm thấy card có tên trùng sẵn, lấy card chưa dùng tiếp theo và đồng bộ tên alias
-      if (matchedIndex === -1) {
-        for (let i = 0; i < cardCount; i += 1) {
-          if (!usedCardIndices.has(i)) {
-            matchedIndex = i;
-            break;
+      if (currentAliases[i] !== targetLower) {
+        for (let j = i + 1; j < cardCount; j += 1) {
+          if (currentAliases[j] === targetLower) {
+            const tmpAlias = `__speaker_tmp_${j}__`;
+            await this.setCardAlias(cards.nth(j), tmpAlias);
+            currentAliases[j] = tmpAlias;
           }
         }
-        if (matchedIndex !== -1) {
-          const aliasInput = cards.nth(matchedIndex).locator(SPEECH_SELECTORS.speakerAliasInput).first();
-          if (await aliasInput.isVisible().catch(() => false)) {
-            await aliasInput.fill(targetName);
-            await aliasInput.press("Enter").catch(() => {});
-          }
-        }
+        await this.setCardAlias(cards.nth(i), targetName);
+        currentAliases[i] = targetLower;
       }
 
-      if (matchedIndex === -1) continue;
-      usedCardIndices.add(matchedIndex);
-
-      const card = cards.nth(matchedIndex);
+      const card = cards.nth(i);
       const profileText = script.audioProfiles[targetLower];
       const directorNote = script.directorNotes[targetLower];
       await this.applySpeakerDrawerSettings(page, card, speakerConfig.voiceName, profileText, directorNote);
@@ -361,19 +422,30 @@ export class AiStudioSpeechWorker {
     }
 
     const targetVoiceLower = voiceName.trim().toLowerCase();
-    const voiceButtons = voicesRegion.locator("button");
+    const voiceButtons = voicesRegion.locator("button.voice-card-content, button[aria-label]:not(.play-icon)");
     const count = await voiceButtons.count();
+    let matchedVoice = false;
+
     for (let i = 0; i < count; i += 1) {
       const btn = voiceButtons.nth(i);
-      const text = ((await btn.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
-      const normalized = text.replace(/\s*\(Current\)\s*$/i, "").trim().toLowerCase();
+      const ariaLabel = ((await btn.getAttribute("aria-label").catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      const spanName = ((await btn.locator(".voice-name").first().textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      const fallbackText = ((await btn.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      const rawLabel = ariaLabel || spanName || fallbackText;
+      const normalized = rawLabel.replace(/\s*\(Current\)\s*$/i, "").trim().toLowerCase();
+
       if (normalized === targetVoiceLower) {
-        if (!/\(Current\)$/i.test(text)) {
+        matchedVoice = true;
+        if (!/\(Current\)$/i.test(ariaLabel || fallbackText)) {
           await btn.click({ timeout: 3_000 });
-          await page.waitForTimeout(150);
+          await page.waitForTimeout(200);
         }
         break;
       }
+    }
+
+    if (!matchedVoice) {
+      throw new Error(`Could not find voice '${voiceName}' in AI Studio Available voices`);
     }
 
     const closeBtn = page.locator(SPEECH_SELECTORS.closeDrawerButton).first();

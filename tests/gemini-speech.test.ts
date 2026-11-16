@@ -5,6 +5,7 @@ import type { Page } from "playwright-core";
 import {
   AiStudioSpeechWorker,
   buildAiStudioSpeechUrl,
+  orderSpeakersByTranscript,
   parseGeminiSpeechScript,
 } from "../src/adapters/ai-studio";
 import type { SpeechTurnRequest } from "../src/adapters/base";
@@ -99,9 +100,12 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
       },
     });
 
-    // Mô phỏng UI xếp Speaker 2 ở card 0 và Speaker 1 ở card 1 (trường hợp script bắt đầu bằng Speaker 2)
+    // Mô phỏng UI xếp Speaker 2 ở card 0 và Speaker 1 ở card 1, đồng thời button có textContent kèm mô tả trait
     const cards = [makeCard("Speaker 2"), makeCard("Speaker 1")];
-    const voices = ["Puck", "Zephyr"];
+    const voices = [
+      { name: "Umbriel", text: "UmbrielEasy-goingLower middle pitch" },
+      { name: "Callirrhoe", text: "CallirrhoeEasy-goingMiddle pitch" },
+    ];
 
     const fakePage = {
       waitForTimeout: async () => {},
@@ -120,9 +124,15 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
               locator: () => ({
                 count: async () => voices.length,
                 nth: (i: number) => ({
-                  textContent: async () => voices[i],
+                  getAttribute: async (attr: string) => (attr === "aria-label" ? voices[i].name : null),
+                  locator: () => ({
+                    first: () => ({
+                      textContent: async () => voices[i].name,
+                    }),
+                  }),
+                  textContent: async () => voices[i].text,
                   click: async () => {
-                    selectedByCard.push({ cardAlias: openCardAlias, voice: voices[i] });
+                    selectedByCard.push({ cardAlias: openCardAlias, voice: voices[i].name });
                   },
                 }),
               }),
@@ -149,16 +159,133 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     await worker.testConfigureSpeakers(
       fakePage,
       [
-        { speaker: "Speaker 1", voiceName: "Puck" },
-        { speaker: "Speaker 2", voiceName: "Zephyr" },
+        { speaker: "Speaker 1", voiceName: "Umbriel" },
+        { speaker: "Speaker 2", voiceName: "Callirrhoe" },
       ],
       "Speaker 2: Chào bạn\nSpeaker 1: Xin chào!",
     );
 
     expect(selectedByCard).toEqual([
-      { cardAlias: "Speaker 1", voice: "Puck" },
-      { cardAlias: "Speaker 2", voice: "Zephyr" },
+      { cardAlias: "Speaker 2", voice: "Callirrhoe" },
+      { cardAlias: "Speaker 1", voice: "Umbriel" },
     ]);
+  });
+
+  test("configureSpeakers tự đồng bộ thứ tự card trên UI (Speaker 1/2 -> Speaker 2/1) khớp thứ tự xuất hiện trong transcript", async () => {
+    class TestSpeechWorker extends AiStudioSpeechWorker {
+      public async testConfigureSpeakers(
+        page: Page,
+        speakers: Array<{ speaker: string; voiceName: string }>,
+        rawText: string,
+      ): Promise<void> {
+        await (this as any).configureSpeakers(page, speakers, parseGeminiSpeechScript(rawText));
+      }
+    }
+
+    const ordered = orderSpeakersByTranscript(
+      [
+        { speaker: "Speaker 1", voiceName: "Umbriel" },
+        { speaker: "Speaker 2", voiceName: "Callirrhoe" },
+      ],
+      "Speaker 2: [agreement] Exactly.\nSpeaker 1: [enthusiastic] Welcome back!",
+    );
+    expect(ordered).toEqual([
+      { speaker: "Speaker 2", voiceName: "Callirrhoe" },
+      { speaker: "Speaker 1", voiceName: "Umbriel" },
+    ]);
+
+    const worker = new TestSpeechWorker();
+    const cardAliases = ["Speaker 1", "Speaker 2"];
+    const cardVoices = ["Puck", "Zephyr"];
+    let openCardIndex = -1;
+
+    const makeMutableCard = (idx: number) => ({
+      locator: (selector: string) => {
+        if (selector.includes("speaker-alias-input")) {
+          return {
+            first: () => ({
+              inputValue: async () => cardAliases[idx],
+              isVisible: async () => true,
+              fill: async (val: string) => {
+                cardAliases[idx] = val;
+              },
+              press: async () => {},
+              evaluate: async () => {},
+            }),
+          };
+        }
+        if (selector.includes("active-voice-card-trigger")) {
+          return {
+            first: () => ({
+              waitFor: async () => {},
+              click: async () => {
+                openCardIndex = idx;
+              },
+            }),
+          };
+        }
+        return { first: () => ({ textContent: async () => cardAliases[idx] }) };
+      },
+    });
+
+    const cards = [makeMutableCard(0), makeMutableCard(1)];
+    const voices = ["Umbriel", "Callirrhoe"];
+    const fakePage = {
+      waitForTimeout: async () => {},
+      keyboard: { press: async () => {} },
+      locator: (selector: string) => {
+        if (selector === ".active-voice-card") {
+          return {
+            count: async () => cards.length,
+            nth: (index: number) => cards[index],
+          };
+        }
+        if (selector.includes("Available voices")) {
+          return {
+            first: () => ({
+              waitFor: async () => {},
+              locator: () => ({
+                count: async () => voices.length,
+                nth: (i: number) => ({
+                  getAttribute: async (attr: string) => (attr === "aria-label" ? voices[i] : null),
+                  locator: () => ({ first: () => ({ textContent: async () => voices[i] }) }),
+                  textContent: async () => voices[i],
+                  click: async () => {
+                    cardVoices[openCardIndex] = voices[i];
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (selector.includes("Close panel")) {
+          return {
+            first: () => ({
+              isVisible: async () => true,
+              click: async () => {},
+            }),
+          };
+        }
+        return {
+          first: () => ({
+            isVisible: async () => false,
+            waitFor: async () => {},
+          }),
+        };
+      },
+    } as unknown as Page;
+
+    await worker.testConfigureSpeakers(
+      fakePage,
+      [
+        { speaker: "Speaker 1", voiceName: "Umbriel" },
+        { speaker: "Speaker 2", voiceName: "Callirrhoe" },
+      ],
+      "Speaker 2: [agreement] Exactly.\nSpeaker 1: [enthusiastic] Welcome back!",
+    );
+
+    expect(cardAliases).toEqual(["Speaker 2", "Speaker 1"]);
+    expect(cardVoices).toEqual(["Callirrhoe", "Umbriel"]);
   });
 
   test("GeminiSpeechService hỗ trợ generateContent, streamGenerateContent (JSON array & SSE) và validate payload", async () => {
@@ -370,6 +497,101 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     expect(promptValues).toEqual(["Speaker 1: Test Composer -> Text"]);
     expect(result.mimeType).toBe("audio/wav");
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_NEW");
+  });
+
+  test("executeSpeech dùng selector data-value=\"TEXT\" và fallback DOM click khi click đầu không đổi aria-checked", async () => {
+    const worker = new AiStudioSpeechWorker();
+    let mode: "composer" | "text" = "composer";
+    let generated = false;
+    let toggleSelectorUsed = "";
+    let clickAttempts = 0;
+    let domFallbackAttempts = 0;
+
+    const fakePage = {
+      goto: async () => {},
+      waitForTimeout: async () => {},
+      evaluate: async (fn: any) => {
+        const src = String(fn);
+        if (src.includes("fetch(src)")) {
+          return {
+            mimeType: "audio/wav",
+            audioBase64: Buffer.from("WAV_RETRY").toString("base64"),
+            byteLength: 9,
+          };
+        }
+        if (src.includes("errorSelector")) {
+          return {
+            detectedError: "",
+            audioSrc: generated ? "blob:https://aistudio.google.com/retry-audio" : "",
+            isGenerating: false,
+          };
+        }
+        return "";
+      },
+      locator: (selector: string) => {
+        if (selector.includes("data-value=\"TEXT\"")) {
+          toggleSelectorUsed = selector;
+          return {
+            first: () => ({
+              isVisible: async () => true,
+              waitFor: async () => {},
+              getAttribute: async () => (mode === "text" ? "true" : "false"),
+              click: async () => {
+                // Giả lập lần click đầu bị Angular/tooltip nuốt chưa chuyển mode
+                clickAttempts += 1;
+              },
+              evaluate: async () => {
+                domFallbackAttempts += 1;
+                mode = "text";
+              },
+            }),
+          };
+        }
+        if (selector.includes("Enter a prompt")) {
+          return {
+            first: () => ({
+              isVisible: async () => mode === "text",
+              waitFor: async () => {
+                if (mode !== "text") throw new Error("Enter a prompt requires Text mode");
+              },
+              click: async () => {},
+              fill: async () => {},
+            }),
+          };
+        }
+        if (selector.includes("ctrl-enter-submits")) {
+          return {
+            first: () => ({
+              waitFor: async () => {},
+              click: async () => {
+                generated = true;
+              },
+            }),
+          };
+        }
+        if (selector === ".active-voice-card") {
+          return { count: async () => 0 };
+        }
+        return {
+          first: () => ({
+            isVisible: async () => false,
+            fill: async () => {},
+          }),
+        };
+      },
+    } as unknown as Page;
+
+    const result = await worker.executeSpeech(fakePage, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 1: Retry text toggle",
+      speakers: [],
+    });
+
+    expect(toggleSelectorUsed).toContain('data-value="TEXT"');
+    expect(clickAttempts).toBe(1);
+    expect(domFallbackAttempts).toBe(1);
+    expect(mode as string).toBe("text");
+    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_RETRY");
   });
 
   test("waitForGeneratedAudio fail-fast ngay khi AI Studio hiện banner lỗi HTTP 403 / 400-500", async () => {

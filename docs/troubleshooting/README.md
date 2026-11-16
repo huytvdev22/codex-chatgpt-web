@@ -5,6 +5,9 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **064** | Đảo `Speaker 2:` lên đầu Transcript nhưng dòng mở đầu vẫn đọc giọng `Speaker 1` (Card 0) | `ai-studio`, `speech` | ✅ Đã Confirm | [064-ai-studio-speech-reversed-speaker-order.md](./064-ai-studio-speech-reversed-speaker-order.md) |
+| **063** | Treo 15s chờ `Enter a prompt` do nút `Text` (`data-value="TEXT"`) không được click | `ai-studio`, `speech` | ✅ Đã Confirm | [063-ai-studio-speech-text-toggle-not-clicked.md](./063-ai-studio-speech-text-toggle-not-clicked.md) |
+| **062** | Không đổi được giọng đọc trên AI Studio Speech UI do `btn.textContent()` dính mô tả trait | `ai-studio`, `speech` | ✅ Đã Confirm | [062-ai-studio-speech-voice-selection-mismatch.md](./062-ai-studio-speech-voice-selection-mismatch.md) |
 | **061** | AI Studio TTS hiện lỗi `http status code: 403` nhưng API bị treo không phản hồi lỗi | `ai-studio`, `speech` | ✅ Đã Confirm | [061-ai-studio-speech-403-toast-hang.md](./061-ai-studio-speech-403-toast-hang.md) |
 | **060** | Lỗi timeout `textarea[aria-label="Enter a prompt"]` do preset AI Studio mở mặc định ở chế độ `Composer` | `ai-studio`, `speech` | ✅ Đã Confirm | [060-ai-studio-speech-composer-mode-timeout.md](./060-ai-studio-speech-composer-mode-timeout.md) |
 | **059** | Triển khai API tạo Voice Podcast tương thích Gemini TTS qua Google AI Studio `/generate-speech` | `ai-studio`, `server`, `speech` | ✅ Đã Confirm | [059-gemini-tts-podcast-api.md](./059-gemini-tts-podcast-api.md) |

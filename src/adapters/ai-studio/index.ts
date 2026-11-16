@@ -23,6 +23,7 @@ export {
   AiStudioSpeechWorker,
   AI_STUDIO_DEFAULT_TTS_MODEL,
   buildAiStudioSpeechUrl,
+  orderSpeakersByTranscript,
   parseGeminiSpeechScript,
   type AiStudioSpeechResult,
   type AiStudioSpeechRunOptions,
