@@ -31,7 +31,7 @@ describe("M365 browser worker migration contract", () => {
       "await this.findVisibleLocator(\n        page,\n        CHAT_SELECTORS.sendButton,",
     );
     expect(source).toContain(
-      "await this.findVisibleLocator(\n        page,\n        CHAT_SELECTORS.stopButton,",
+      "await this.findVisibleLocator(\n      page,\n      CHAT_SELECTORS.stopButton,",
     );
   });
 
@@ -281,6 +281,9 @@ describe("M365 browser worker migration contract", () => {
     let submitted = false;
     let mouseClickedAt: { x: number; y: number } | null = null;
     let scrolledIntoView = false;
+    let evaluateTimeout: number | undefined;
+    let boundingBoxTimeouts: Array<number | undefined> = [];
+    let heartbeatCalls = 0;
 
     const editorLocator = {
       isVisible: async () => true,
@@ -290,11 +293,15 @@ describe("M365 browser worker migration contract", () => {
     const sendLocator = {
       isVisible: async () => true,
       isEnabled: async () => true,
-      boundingBox: async () => ({ x: 700, y: 760, width: 32, height: 32 }),
+      boundingBox: async (opts?: { timeout?: number }) => {
+        boundingBoxTimeouts.push(opts?.timeout);
+        return { x: 700, y: 760, width: 32, height: 32 };
+      },
       click: async () => {
         throw new Error("TimeoutError: click: Timeout 1000ms exceeded. element is outside of the viewport");
       },
-      evaluate: async () => {
+      evaluate: async (_fn: unknown, _arg: unknown, opts?: { timeout?: number }) => {
+        evaluateTimeout = opts?.timeout;
         scrolledIntoView = true;
       },
     };
@@ -318,9 +325,78 @@ describe("M365 browser worker migration contract", () => {
       },
     };
 
-    await worker.testSubmit(fakePage, { prompt: "hello world" });
+    await worker.testSubmit(fakePage, {
+      prompt: "hello world",
+      heartbeat: async () => {
+        heartbeatCalls += 1;
+      },
+    });
     expect(scrolledIntoView).toBe(true);
+    expect(evaluateTimeout).toBe(1_000);
+    expect(boundingBoxTimeouts).toEqual([1_000, 1_000]);
+    expect(heartbeatCalls).toBeGreaterThanOrEqual(1);
     expect(mouseClickedAt as { x: number; y: number } | null).toEqual({ x: 716, y: 776 });
+  });
+
+  test("submitPrompt thoát ngay không chạy fallback 30s nếu click đã kích hoạt gửi prompt trước khi timeout", async () => {
+    class TestSubmitWorker extends M365BrowserWorker {
+      public async testSubmit(page: any, options: any): Promise<void> {
+        await this.submitPrompt(page, options);
+      }
+    }
+
+    const worker = new TestSubmitWorker();
+    let submitted = false;
+    let fallbackCalled = false;
+
+    const editorLocator = {
+      isVisible: async () => true,
+      boundingBox: async () => ({ x: 100, y: 500, width: 400, height: 40 }),
+      textContent: async () => (submitted ? "" : "hello world"),
+    };
+    const sendLocator = {
+      isVisible: async () => !submitted,
+      isEnabled: async () => !submitted,
+      boundingBox: async () => {
+        if (submitted) fallbackCalled = true;
+        return submitted ? null : { x: 700, y: 760, width: 32, height: 32 };
+      },
+      click: async () => {
+        // Mô phỏng nút Send đã gửi prompt và biến mất ngay trước khi Playwright timeout
+        submitted = true;
+        throw new Error("TimeoutError: click: Timeout 1000ms exceeded.");
+      },
+      evaluate: async () => {
+        fallbackCalled = true;
+      },
+    };
+
+    const fakePage: any = {
+      waitForTimeout: async () => {},
+      mouse: {
+        click: async () => {
+          fallbackCalled = true;
+        },
+      },
+      locator: (selector: string) => {
+        if (selector.includes("Stop generating")) {
+          return {
+            count: async () => (submitted ? 1 : 0),
+            nth: () => ({
+              isVisible: async () => submitted,
+              boundingBox: async () => ({ x: 700, y: 760, width: 32, height: 32 }),
+            }),
+          };
+        }
+        if (selector.includes('aria-label="Send"')) {
+          return { count: async () => (submitted ? 0 : 1), nth: () => sendLocator };
+        }
+        return { count: async () => 1, nth: () => editorLocator };
+      },
+    };
+
+    await worker.testSubmit(fakePage, { prompt: "hello world" });
+    expect(fallbackCalled).toBe(false);
   });
 
   test("navigate chấp nhận copilot.cloud.microsoft/chat và chịu lỗi ERR_ABORTED khi redirect sang copilot.cloud.microsoft", async () => {

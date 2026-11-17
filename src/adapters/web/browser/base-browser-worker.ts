@@ -82,6 +82,7 @@ export abstract class BaseWebBrowserWorker<
     try {
       await this.navigate(page, options);
       await this.prepareProvider(page, options);
+      await this.sendHeartbeat(options);
 
       const baseline = await this.captureResponseBaseline(page, options);
 
@@ -276,12 +277,7 @@ export abstract class BaseWebBrowserWorker<
         now - lastHeartbeatAt >= heartbeatIntervalMs
       ) {
         lastHeartbeatAt = now;
-        await options.heartbeat().catch(error => {
-          console.warn(
-            `[${this.logPrefix}] Không thể gửi heartbeat:`,
-            error,
-          );
-        });
+        await this.sendHeartbeat(options);
       }
 
       if (now - startedAt >= hardTimeoutMs) {
@@ -355,6 +351,19 @@ export abstract class BaseWebBrowserWorker<
 
       await page.waitForTimeout(pollingIntervalMs);
     }
+  }
+
+  /**
+   * Gửi heartbeat best-effort tới Launcher để giữ lease tab sống trong các pha chờ.
+   */
+  protected async sendHeartbeat(options: TOptions): Promise<void> {
+    if (!options.heartbeat) return;
+    await options.heartbeat().catch(error => {
+      console.warn(
+        `[${this.logPrefix}] Không thể gửi heartbeat:`,
+        error,
+      );
+    });
   }
 
   private throwIfAborted(

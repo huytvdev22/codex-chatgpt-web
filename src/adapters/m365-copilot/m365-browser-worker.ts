@@ -390,7 +390,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       const candidate = locators.nth(index);
       if (await candidate.isVisible().catch(() => false)) {
         if (!firstVisible) firstVisible = candidate;
-        const box = await candidate.boundingBox().catch(() => null);
+        const box = await candidate.boundingBox({ timeout: 1_000 }).catch(() => null);
         if (box && box.width > 0 && box.height > 0 && box.x >= 0 && box.y >= 0) {
           return candidate;
         }
@@ -713,6 +713,24 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     this.activeEditors.set(page, editorLocator);
   }
 
+  private async isPromptSubmitted(
+    page: Page,
+    activeEditor: Locator,
+  ): Promise<{ submitted: boolean; stopVisible: boolean; editorLength: number }> {
+    const stopLocator = await this.findVisibleLocator(
+      page,
+      CHAT_SELECTORS.stopButton,
+    );
+    const editorText = (
+      (await activeEditor.textContent({ timeout: 1_000 }).catch(() => "")) ?? ""
+    ).trim();
+    return {
+      submitted: Boolean(stopLocator) || editorText.length === 0,
+      stopVisible: Boolean(stopLocator),
+      editorLength: editorText.length,
+    };
+  }
+
   /**
    * Gửi prompt bằng một trusted Playwright click cho mỗi attempt.
    */
@@ -742,7 +760,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
           CHAT_SELECTORS.sendButton,
         );
         const enabled = sendLocator
-          ? await sendLocator.isEnabled().catch(() => false)
+          ? await sendLocator.isEnabled({ timeout: 1_000 }).catch(() => false)
           : false;
         if (enabled) break;
         await page.waitForTimeout(200);
@@ -755,18 +773,14 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         throw new DOMException("Aborted", "AbortError");
       }
 
-      const stopLocator = await this.findVisibleLocator(
-        page,
-        CHAT_SELECTORS.stopButton,
-      );
-      const editorText = (
-        (await activeEditor.textContent().catch(() => "")) ?? ""
-      ).trim();
-      promptSubmitted = Boolean(stopLocator) || editorText.length === 0;
+      await this.sendHeartbeat(options);
+
+      const submitState = await this.isPromptSubmitted(page, activeEditor);
+      promptSubmitted = submitState.submitted;
 
       if (promptSubmitted) {
         console.log(
-          `[m365-worker] [send] Đã xác nhận prompt được gửi thành công ở lần thử ${submitAttempt + 1} (stopVisible=${Boolean(stopLocator)}, editorLength=${editorText.length})`,
+          `[m365-worker] [send] Đã xác nhận prompt được gửi thành công ở lần thử ${submitAttempt + 1} (stopVisible=${submitState.stopVisible}, editorLength=${submitState.editorLength})`,
         );
         break;
       }
@@ -776,12 +790,12 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         CHAT_SELECTORS.sendButton,
       );
       const sendEnabled = sendLocator
-        ? await sendLocator.isEnabled().catch(() => false)
+        ? await sendLocator.isEnabled({ timeout: 1_000 }).catch(() => false)
         : false;
 
       if (sendLocator && sendEnabled) {
         console.log(
-          `[m365-worker] [send] Click Send visible ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length})`,
+          `[m365-worker] [send] Click Send visible ở lần thử ${submitAttempt + 1} (editorLength=${submitState.editorLength})`,
         );
         try {
           await sendLocator.click({ timeout: 1_000 });
@@ -790,16 +804,37 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
             `[m365-worker] [send] Click Send thất bại ở lần thử ${submitAttempt + 1}:`,
             error,
           );
+          if (options.signal?.aborted) {
+            throw new DOMException("Aborted", "AbortError");
+          }
+
+          // Nếu click đã kích hoạt M365 thay nút Send bằng Stop hoặc xóa editor trước khi
+          // Playwright nhận ack timeout, xác nhận gửi thành công ngay để tránh fallback chờ 30s.
+          const postClickState = await this.isPromptSubmitted(page, activeEditor);
+          if (postClickState.submitted) {
+            console.log(
+              `[m365-worker] [send] Đã xác nhận prompt được gửi sau click timeout ở lần thử ${submitAttempt + 1} (stopVisible=${postClickState.stopVisible}, editorLength=${postClickState.editorLength})`,
+            );
+            promptSubmitted = true;
+            break;
+          }
+
           await sendLocator
-            .evaluate((el) => {
-              (el as HTMLElement).scrollIntoView({
-                block: "center",
-                inline: "center",
-                behavior: "instant",
-              });
-            })
+            .evaluate(
+              (el) => {
+                (el as HTMLElement).scrollIntoView({
+                  block: "center",
+                  inline: "center",
+                  behavior: "instant",
+                });
+              },
+              undefined,
+              { timeout: 1_000 },
+            )
             .catch(() => {});
-          const box = await sendLocator.boundingBox().catch(() => null);
+          const box = await sendLocator
+            .boundingBox({ timeout: 1_000 })
+            .catch(() => null);
           if (box && box.width > 0 && box.height > 0) {
             await page.mouse
               .click(box.x + box.width / 2, box.y + box.height / 2)
@@ -813,7 +848,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         }
       } else {
         console.log(
-          `[m365-worker] [send] Send chưa visible/enabled ở lần thử ${submitAttempt + 1} (editorLength=${editorText.length}), chờ UI đồng bộ...`,
+          `[m365-worker] [send] Send chưa visible/enabled ở lần thử ${submitAttempt + 1} (editorLength=${submitState.editorLength}), chờ UI đồng bộ...`,
         );
       }
 
@@ -822,7 +857,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
 
     if (!promptSubmitted) {
       const remainingText = (
-        (await activeEditor.textContent().catch(() => "")) ?? ""
+        (await activeEditor.textContent({ timeout: 1_000 }).catch(() => "")) ?? ""
       ).trim();
       throw new Error(
         `[m365-worker] Không thể xác nhận prompt đã được gửi sau 10 lần thử (editorLength=${remainingText.length}).`,
