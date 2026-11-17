@@ -756,7 +756,8 @@ class TurnTabManager {
     const authenticationRequired = tab.authenticationRequired === true;
     if (authenticationRequired && status === "completed") status = "failed";
     let effectiveConnectorBound = connectorBound === true;
-    if (status === "completed" && retain) {
+    const requiresConversationIdBinding = Boolean(tab.connectorIdentity) || conversationId !== undefined;
+    if (status === "completed" && retain && requiresConversationIdBinding) {
       const normalizedConversationId = providerObj.normalizeConversationId(conversationId);
       if (!normalizedConversationId || !tab.conversationKey) {
         status = "failed";

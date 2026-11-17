@@ -362,4 +362,60 @@ describe("Google AI Studio Web Adapter", () => {
     });
     expect(actions).not.toContain("aiStudioWaitForBotGuardReady");
   });
+
+  test("runEphemeralSurfaceTask hỗ trợ retainOnCompleted & omitConnectorIdentity để giữ tab speech khi thành công và đóng khi lỗi", async () => {
+    const adapter = new AiStudioAdapter();
+    const engine = (adapter as any).engine;
+    const lifecycleCalls: Array<{ phase: string; body: Record<string, unknown> }> = [];
+
+    engine.lifecycleOps = {
+      resolveDescriptorPath: () => "/tmp/fake-launcher.json",
+      startTurn: async ({ activity }: { activity: Record<string, unknown> }) => {
+        lifecycleCalls.push({ phase: "start", body: activity });
+        return {
+          surfaceId: "speech-surface-1",
+          conversationId: undefined,
+          reused: lifecycleCalls.filter(c => c.phase === "start").length > 1,
+          descriptor: {
+            control: { endpoint: "http://127.0.0.1:9999", token: "tok" },
+          },
+          connection: null,
+        };
+      },
+      endTurn: async ({ activity }: { activity: Record<string, unknown> }) => {
+        lifecycleCalls.push({ phase: "end", body: activity });
+      },
+      heartbeatTurn: async () => {},
+      closeTurn: async () => {},
+    };
+
+    const opts = {
+      initialUrl: "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts",
+      conversationKeySource: "speech:gemini-2.5-pro-preview-tts",
+      retainOnCompleted: true,
+      omitConnectorIdentity: true,
+    };
+
+    await engine.runEphemeralSurfaceTask(
+      { headers: new Headers() },
+      async ({ launcherReused }: { launcherReused: boolean }) => ({ ok: true, launcherReused }),
+      opts,
+    );
+    await expect(
+      engine.runEphemeralSurfaceTask(
+        { headers: new Headers() },
+        async () => {
+          throw new Error("403 permission denied");
+        },
+        opts,
+      ),
+    ).rejects.toThrow("403 permission denied");
+
+    expect(lifecycleCalls[0]?.body.connectorIdentity).toBeUndefined();
+    expect(lifecycleCalls[0]?.body.conversationKey).toBe(lifecycleCalls[2]?.body.conversationKey);
+    expect(lifecycleCalls[1]?.body.retain).toBe(true);
+    expect(lifecycleCalls[1]?.body.status).toBe("completed");
+    expect(lifecycleCalls[3]?.body.retain).toBe(false);
+    expect(lifecycleCalls[3]?.body.status).toBe("failed");
+  });
 });

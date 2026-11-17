@@ -1130,10 +1130,10 @@ class SurfaceActionExecutor {
       await this.waitForSelector(null, null, contents, { selector: availableVoicesSelector, timeoutMs: 5_000 });
 
       const profileText = audioProfiles[targetLower];
-      if (profileText !== undefined) {
+      if (profileText !== undefined || args.resetOptionalProfiles === true) {
         const personaVisible = await this.queryElementCenter(contents, { selector: voicePersonaSelector, visibleOnly: true });
         if (personaVisible.found) {
-          await this.fillTextarea(null, null, contents, { selector: voicePersonaSelector, value: profileText });
+          await this.fillTextarea(null, null, contents, { selector: voicePersonaSelector, value: profileText ?? "" });
         }
       }
 

@@ -517,19 +517,23 @@ export class WebTurnEngine {
   }
 
   /**
-   * Cấp phát một tab Launcher tạm thời (`retain: false`) để thực thi tác vụ chuyên biệt
-   * trên cùng phiên đăng nhập của provider (ví dụ Google AI Studio Speech Generation).
+   * Cấp phát một tab Launcher cho tác vụ chuyên biệt (ví dụ Google AI Studio Speech Generation)
+   * với tùy chọn tái sử dụng tab theo `conversationKeySource` khi lượt trước thành công.
    */
   async runEphemeralSurfaceTask<T>(
     incoming: IncomingMeta,
     task: (context: {
       page: Page | null;
       electronClient?: ElectronSurfaceClient;
+      launcherReused: boolean;
       signal: AbortSignal;
       heartbeat?: () => Promise<void>;
     }) => Promise<T>,
     options?: {
       initialUrl?: string;
+      conversationKeySource?: string;
+      retainOnCompleted?: boolean;
+      omitConnectorIdentity?: boolean;
     },
   ): Promise<T> {
     if (incoming.abortSignal?.aborted) {
@@ -546,8 +550,8 @@ export class WebTurnEngine {
     });
     const conversationKey = buildWebConversationKey({
       provider: this.definition.id,
-      source: `ephemeral:${turnTraceId}`,
-      modelId: "ephemeral",
+      source: options?.conversationKeySource || `ephemeral:${turnTraceId}`,
+      modelId: options?.conversationKeySource ? "surface" : "ephemeral",
     });
 
     const turnRegistration = activeWebTurnRegistry.register(
@@ -562,6 +566,7 @@ export class WebTurnEngine {
         localBrowser: this.localBrowser,
         turnTraceId,
         conversationKey,
+        omitConnectorIdentity: options?.omitConnectorIdentity,
         initialUrl: options?.initialUrl,
         abortSignal: turnSignal,
         ops: this.lifecycleOps,
@@ -578,6 +583,7 @@ export class WebTurnEngine {
         const result = await task({
           page: acquired.page,
           electronClient: acquired.electronClient,
+          launcherReused: acquired.launcherReused,
           signal: turnSignal,
           heartbeat: acquired.heartbeat,
         });
@@ -593,7 +599,8 @@ export class WebTurnEngine {
           turnTraceId,
           finalStatus,
           conversationKey,
-          retainOverride: false,
+          retainOverride:
+            options?.retainOnCompleted && finalStatus === "completed",
           abortSignal: turnSignal,
           ops: this.lifecycleOps,
         });

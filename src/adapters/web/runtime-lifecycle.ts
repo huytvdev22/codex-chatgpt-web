@@ -48,6 +48,7 @@ export async function acquireWebTurnSurface(options: {
   localBrowser?: LocalBrowserRuntime;
   turnTraceId: string;
   conversationKey?: string;
+  omitConnectorIdentity?: boolean;
   initialUrl?: string;
   abortSignal?: AbortSignal;
   ops?: Partial<WebRuntimeLifecycleOps>;
@@ -57,6 +58,7 @@ export async function acquireWebTurnSurface(options: {
     localBrowser,
     turnTraceId,
     conversationKey,
+    omitConnectorIdentity,
     initialUrl,
     abortSignal,
   } = options;
@@ -101,7 +103,9 @@ export async function acquireWebTurnSurface(options: {
           ...(conversationKey
             ? {
                 conversationKey,
-                connectorIdentity: definition.browser.connectorIdentity,
+                ...(!omitConnectorIdentity && definition.browser.connectorIdentity
+                  ? { connectorIdentity: definition.browser.connectorIdentity }
+                  : {}),
               }
             : {}),
           provider: definition.browser.launcherProviderId,
@@ -244,6 +248,11 @@ export async function releaseWebTurnSurface(options: {
           connectorBound: false,
           conversationId: activeConversationId,
           retain: false,
+        }
+      : options.retainOverride === true
+      ? {
+          connectorBound: false,
+          retain: finalStatus === "completed",
         }
       : definition.conversation.resolveEndTurnBinding
       ? definition.conversation.resolveEndTurnBinding({

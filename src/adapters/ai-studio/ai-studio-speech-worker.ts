@@ -21,6 +21,7 @@ export interface AiStudioSpeechRunOptions {
   text: string;
   temperature?: number;
   speakers: SpeechSpeakerConfig[];
+  reusedSurface?: boolean;
   signal?: AbortSignal;
   heartbeat?: () => Promise<void>;
   hardTimeoutMs?: number;
@@ -237,6 +238,7 @@ export class AiStudioSpeechWorker {
           orderedSpeakers,
           audioProfiles: parsedScript.audioProfiles,
           directorNotes: parsedScript.directorNotes,
+          resetOptionalProfiles: Boolean(options.reusedSurface),
         },
         { signal: options.signal, timeoutMs: 45_000 },
       );
@@ -254,13 +256,15 @@ export class AiStudioSpeechWorker {
       timeoutMs: 10_000,
       signal: options.signal,
     });
-    await client
-      .call(
-        "aiStudioWaitForBotGuardReady",
-        { minPageAgeMs: 1_200, maxWaitMs: 1_500 },
-        { signal: options.signal },
-      )
-      .catch(() => {});
+    if (!options.reusedSurface) {
+      await client
+        .call(
+          "aiStudioWaitForBotGuardReady",
+          { minPageAgeMs: 1_200, maxWaitMs: 1_500 },
+          { signal: options.signal },
+        )
+        .catch(() => {});
+    }
     await client.clickSelector(SPEECH_SELECTORS.runButton, { signal: options.signal });
 
     return await this.waitForGeneratedAudio(client, baselineAudioSrc, options);
@@ -274,7 +278,6 @@ export class AiStudioSpeechWorker {
     const hardTimeoutMs = options.hardTimeoutMs ?? this.defaultHardTimeoutMs;
     const deadline = Date.now() + hardTimeoutMs;
     let lastHeartbeatAt = Date.now();
-    let seenRunStart = false;
 
     while (Date.now() < deadline) {
       this.throwIfAborted(options.signal);
@@ -302,13 +305,9 @@ export class AiStudioSpeechWorker {
         throw new Error(`[AI Studio Web Error] ${state.detectedError}`);
       }
 
-      if (state.isGenerating) {
-        seenRunStart = true;
-      }
-
       const hasNewAudio = Boolean(state.audioSrc) && state.audioSrc !== baselineAudioSrc;
       const readyAfterRun = hasNewAudio && !state.isGenerating;
-      if (readyAfterRun || (seenRunStart && !state.isGenerating && state.audioSrc.startsWith("blob:"))) {
+      if (readyAfterRun) {
         const extracted = await client
           .call<AiStudioSpeechResult | null>(
             "aiStudioSpeechExtractAudio",

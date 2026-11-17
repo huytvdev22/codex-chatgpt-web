@@ -389,5 +389,71 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     expect(navigateCalls).toBe(0);
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_PRELOADED");
   });
+
+  test("executeSpeech tái sử dụng tab không bốc nhầm audio blob cũ của lượt trước và bỏ qua BotGuard wait", async () => {
+    const worker = new AiStudioSpeechWorker();
+    const actions: Array<{ action: string; args: Record<string, unknown> }> = [];
+    let capturePoll = 0;
+
+    const client = createMockSurfaceClient((action, args) => {
+      actions.push({ action, args });
+      if (action === "getUrl") {
+        return { url: "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts" };
+      }
+      if (action === "aiStudioSpeechGetBaselineAudioSrc") {
+        return { audioSrc: "blob:https://aistudio.google.com/chunk-1-old" };
+      }
+      if (action === "aiStudioSpeechCaptureState") {
+        capturePoll += 1;
+        // Lượt poll 1 đang sinh (isGenerating=true) và vẫn còn blob cũ;
+        // lượt poll 2 vừa nhả isGenerating nhưng blob VẪN là của chunk 1 -> tuyệt đối không được lấy!
+        // lượt poll 3 mới ra blob của chunk 2.
+        if (capturePoll === 1) {
+          return {
+            detectedError: "",
+            audioSrc: "blob:https://aistudio.google.com/chunk-1-old",
+            isGenerating: true,
+          };
+        }
+        if (capturePoll === 2) {
+          return {
+            detectedError: "",
+            audioSrc: "blob:https://aistudio.google.com/chunk-1-old",
+            isGenerating: false,
+          };
+        }
+        return {
+          detectedError: "",
+          audioSrc: "blob:https://aistudio.google.com/chunk-2-new",
+          isGenerating: false,
+        };
+      }
+      if (action === "aiStudioSpeechExtractAudio") {
+        return {
+          mimeType: "audio/wav",
+          audioBase64: Buffer.from(`WAV_FROM_${String(args.audioSrc)}`).toString("base64"),
+        };
+      }
+      return {};
+    });
+
+    const result = await worker.executeSpeech(client, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Linh: Chunk 2\nMinh: Ok",
+      speakers: [
+        { speaker: "Minh", voiceName: "Charon" },
+        { speaker: "Linh", voiceName: "Aoede" },
+      ],
+      reusedSurface: true,
+    });
+
+    expect(actions.some(a => a.action === "aiStudioWaitForBotGuardReady")).toBe(false);
+    expect(
+      actions.find(a => a.action === "aiStudioSpeechConfigureSpeakers")?.args.resetOptionalProfiles,
+    ).toBe(true);
+    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe(
+      "WAV_FROM_blob:https://aistudio.google.com/chunk-2-new",
+    );
+  });
 });
 

@@ -1994,3 +1994,89 @@ test("TurnTabManager enforces ai-studio reopen cooldown after closing a tab and 
   );
   assert.equal(logs.slice(m365LogsBefore).some(([ev]) => ev === "browser.ai_studio_reopen_cooldown"), false);
 });
+
+test("TurnTabManager retains and reuses completed stateless surfaces (e.g. speech) without connectorIdentity or conversationId", async () => {
+  const { TurnTabManager } = require("../electron/browser/turn-tab-manager.cjs");
+  const speechKey = "e".repeat(64);
+  const bindCalls = [];
+  const speechTab = {
+    id: "ai-speech-1",
+    surfaceId: "surface-speech-1",
+    provider: "ai-studio",
+    traceId: "trace_speech_1",
+    helperPid: 777,
+    status: "running",
+    loading: true,
+    conversationKey: speechKey,
+    connectorIdentity: undefined,
+    connectorBound: false,
+    view: {
+      webContents: {
+        isDestroyed: () => false,
+        setBackgroundThrottling() {},
+      },
+    },
+  };
+  const fakeHost = {
+    provider: "ai-studio",
+    selectedTabId: speechTab.id,
+    activeTraceId: null,
+    manualOperation: null,
+    homeSurfaceOpen: false,
+    turnTabs: new Map([[speechTab.id, speechTab]]),
+    closedTurnOwners: new Map(),
+    userCancelledTurnOwners: new Map(),
+    providerRegistry: {
+      has: (id) => id === "ai-studio",
+      get: () => ({
+        id: "ai-studio",
+        displayName: "Google AI Studio",
+        normalizeConversationId: () => null,
+        bind: (k, id) => {
+          bindCalls.push([k, id]);
+          return id;
+        },
+        prepareAllocation() {},
+      }),
+    },
+    logger: { info() {}, warn() {} },
+    syncPowerSaveBlocker() {},
+    syncViewVisibility() {},
+    parkIdlePrimaryView() {},
+    publishState() {},
+    snapshot: () => ({ tabs: [] }),
+    writeDescriptor() {},
+    hide() {},
+    show() {},
+  };
+
+  const manager = new TurnTabManager(fakeHost, { standalone: true });
+  const endResult = await manager.endTurn(
+    "trace_speech_1",
+    777,
+    "completed",
+    false,
+    undefined,
+    true,
+    false,
+  );
+  assert.deepEqual(endResult, { cancelledByUser: false });
+  assert.equal(fakeHost.turnTabs.has(speechTab.id), true);
+  assert.equal(speechTab.status, "ready");
+  assert.equal(bindCalls.length, 0);
+
+  const reusedLease = await manager.beginTurn(
+    "trace_speech_2",
+    false,
+    888,
+    speechKey,
+    undefined,
+    false,
+    "ai-studio",
+    new AbortController().signal,
+    "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts",
+  );
+  assert.equal(reusedLease.reused, true);
+  assert.equal(reusedLease.tabId, speechTab.id);
+  assert.equal(speechTab.traceId, "trace_speech_2");
+});

@@ -11,7 +11,11 @@ import { CodexRawPayload } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
 import { AiStudioBrowserWorker } from "./ai-studio-browser-worker";
-import { AiStudioSpeechWorker, buildAiStudioSpeechUrl } from "./ai-studio-speech-worker";
+import {
+  AI_STUDIO_DEFAULT_TTS_MODEL,
+  AiStudioSpeechWorker,
+  buildAiStudioSpeechUrl,
+} from "./ai-studio-speech-worker";
 import { aiStudioConversationKey } from "./conversation-key";
 
 export {
@@ -211,31 +215,41 @@ export class AiStudioAdapter extends WebProviderAdapter {
   }
 
   /**
-   * Thực thi tác vụ Text-to-Speech / Podcast trên giao diện `/generate-speech`
-   * qua tab Launcher tạm thời và trả về audio base64 chuẩn Gemini `inlineData`.
+   * Thực thi tác vụ Text-to-Speech / Podcast trên giao diện `/generate-speech`,
+   * tái sử dụng tab Launcher đã giữ lại theo model khi lượt trước thành công
+   * và đóng bỏ tab nếu gặp lỗi để lượt sau mở tab sạch mới.
    */
   async runSpeechTurn(
     request: SpeechTurnRequest,
     incoming: IncomingMeta,
   ): Promise<SpeechTurnResult> {
+    const cleanModel =
+      request.modelId.replace(/^ai-studio\//i, "").trim() ||
+      AI_STUDIO_DEFAULT_TTS_MODEL;
     return await this.engine.runEphemeralSurfaceTask(
       incoming,
-      async ({ electronClient, signal, heartbeat }) => {
+      async ({ electronClient, launcherReused, signal, heartbeat }) => {
         if (!electronClient) {
           throw new Error(
             "[ai-studio-adapter] Không có kênh điều khiển Electron surface khả dụng cho Generate Speech.",
           );
         }
         return await this.speechWorker.executeSpeech(electronClient, {
-          modelId: request.modelId,
+          modelId: cleanModel,
           text: request.text,
           temperature: request.temperature,
           speakers: request.speakers,
+          reusedSurface: launcherReused,
           signal,
           heartbeat,
         });
       },
-      { initialUrl: buildAiStudioSpeechUrl(request.modelId) },
+      {
+        initialUrl: buildAiStudioSpeechUrl(cleanModel),
+        conversationKeySource: `speech:${cleanModel}`,
+        retainOnCompleted: true,
+        omitConnectorIdentity: true,
+      },
     );
   }
 }
