@@ -267,20 +267,12 @@ test("browser toolbar opens detached DevTools for the active embedded surface", 
   );
 });
 
-test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {
-  assert.match(
-    appSource,
-    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\([\s\S]*?snapshot\.state\.coreSetupComplete === true[\s\S]*?!snapshot\.state\.experimentalBiggerContext,/,
-  );
-  assert.match(appSource, /&& !biggerContextRecommendationOpen;/);
-  assert.match(appSource, /updateState\(await api!\.setBiggerContext\(enabled\)\)/);
-  assert.match(
-    appSource,
-    /<BiggerContextRecommendation[\s\S]*?checked=\{snapshot\.state\.experimentalBiggerContext\}[\s\S]*?onClose=\{\(\) => setBiggerContextRecommendationOpen\(false\)\}/,
-  );
-  assert.match(appSource, /<Switch checked=\{checked\} disabled=\{busy\} onChange=\{onChange\} \/>/);
-  assert.match(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*position:\s*fixed;/s);
-  assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*backdrop-filter:/s);
+test("Bigger Context startup recommendation popup is removed while preserving the Settings switch", () => {
+  assert.doesNotMatch(appSource, /BiggerContextRecommendation/);
+  assert.doesNotMatch(appSource, /biggerContextRecommendationOpen/);
+  assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation/);
+  assert.match(appSource, /copy\.biggerContextBody/);
+  assert.match(appSource, /onChange=\{\(checked\) => void setBiggerContext\(checked\)\}/);
 });
 
 test("failed doctor reports retain every failed check", () => {
