@@ -329,7 +329,7 @@ ProviderAdapter.runTurn()
           +-- kiểm tra abortSignal trước khi bắt đầu lượt
           +-- resolve threadId và conversationKey
           +-- kiểm tra early-exit trên final answer (nếu bật policy)
-          +-- acquireWebTurnSurface() (Launcher CDP lease hoặc LocalBrowserRuntime)
+          +-- acquireWebTurnSurface() (Launcher CDP lease, Electron control channel hoặc LocalBrowserRuntime)
           +-- resolve conversation state (existingConversationId, isNewConversation)
           +-- compile prompt (compileWebPrompt hoặc custom compilePrompt)
           +-- resolve reasoning effort (CapabilityPicker driver)
@@ -369,7 +369,7 @@ Provider Surface Manager
           +-- trả connector binding state nếu có
           |
           v
-Browser Worker kết nối surface qua Launcher descriptor/CDP
+Browser Worker kết nối surface qua Launcher CDP hoặc kênh nội bộ Electron (`POST /v1/surface/action` qua `SurfaceActionExecutor`)
 ```
 
 Trong khi turn chạy, browser worker gửi heartbeat. Khi kết thúc, adapter gọi turn `end`. Nếu người
@@ -1074,7 +1074,7 @@ Shared layer sở hữu toàn bộ cơ chế điều phối, chuẩn hóa, biên
 - `engine.ts`: `WebTurnEngine` — orchestrator duy nhất điều phối toàn bộ vòng đời một lượt tương tác (abort check, thread/conversation key, early-exit, acquire/release browser surface, normalize payload 1 lần, biên dịch prompt, format retry loop, `WebTurnLoopGuard`, event emission).
 - `definition.ts`: các hợp đồng trình điều khiển (`WebConversationDriver`, `WebCapabilityPickerDriver`, `WebAttachmentDriver`, `WebBrowserDriver`, `WebResponseDriver`, `WebProviderPolicies`, `WebProviderDefinition`).
 - `browser/`: lớp cơ sở `BaseWebBrowserWorker` cung cấp khung chờ DOM/stream (`waitForCompletion()`), heartbeat, dừng khẩn cấp và kiểm tra tiêu đề đăng nhập dùng chung cho browser worker của các provider.
-- `runtime-lifecycle.ts`, `launcher-runtime.ts`, `local-browser-runtime.ts`: quản lý kết nối Launcher CDP lease (`startLauncherBrowserTurn`, `endLauncherBrowserTurn`, `closeLauncherBrowserTurn`) và fallback sang `LocalBrowserRuntime`.
+- `runtime-lifecycle.ts`, `launcher-runtime.ts`, `electron-surface-client.ts`, `local-browser-runtime.ts`: quản lý kết nối Launcher lease (`startLauncherBrowserTurn`, `endLauncherBrowserTurn`, `closeLauncherBrowserTurn`), hỗ trợ cả `playwright-cdp` lẫn `electron-control` (gọi `POST /v1/surface/action` qua `SurfaceActionExecutor` mà không gắn CDP cho Google AI Studio) và fallback sang `LocalBrowserRuntime`.
 - `conversation/`: dẫn xuất khóa hội thoại ổn định (`deriveStableConversationKey`, `buildWebConversationKey`).
 - `execution/`: `WebTurnLoopGuard` (có cấu hình qua provider/TurnEngine), trạng thái và bộ bảo vệ vòng lặp công cụ (`MAX_TOOL_ITERATIONS`, `getMaxIdenticalToolCalls`, `isAssistantFinalAnswer`).
 - `normalization/`: raw Codex wire payload và canonical request normalization (`CodexRawPayload`, `CodexPayloadNormalizer`).

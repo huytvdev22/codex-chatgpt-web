@@ -34,6 +34,7 @@ import type {
   WebProviderDefinition,
   WebTurnFinalStatus,
 } from "./definition";
+import type { ElectronSurfaceClient } from "./electron-surface-client";
 import {
   acquireWebTurnSurface,
   releaseWebTurnSurface,
@@ -207,6 +208,7 @@ export class WebTurnEngine {
 
             const result = await this.definition.browser.executeTurn({
               page: acquired.page,
+              electronClient: acquired.electronClient,
               prompt,
               attempt,
               parsed,
@@ -454,6 +456,7 @@ export class WebTurnEngine {
       try {
         const result = await this.definition.browser.executeTurn({
           page: acquired.page,
+          electronClient: acquired.electronClient,
           prompt: request.prompt,
           attempt: 0,
           parsed: syntheticParsed,
@@ -520,7 +523,8 @@ export class WebTurnEngine {
   async runEphemeralSurfaceTask<T>(
     incoming: IncomingMeta,
     task: (context: {
-      page: Page;
+      page: Page | null;
+      electronClient?: ElectronSurfaceClient;
       signal: AbortSignal;
       heartbeat?: () => Promise<void>;
     }) => Promise<T>,
@@ -563,7 +567,7 @@ export class WebTurnEngine {
         ops: this.lifecycleOps,
       });
 
-      if (!acquired.page) {
+      if (!acquired.page && !acquired.electronClient) {
         throw new Error(
           `[${this.definition.logPrefix}] Không có trình duyệt khả dụng để thực thi tác vụ.`,
         );
@@ -573,6 +577,7 @@ export class WebTurnEngine {
       try {
         const result = await task({
           page: acquired.page,
+          electronClient: acquired.electronClient,
           signal: turnSignal,
           heartbeat: acquired.heartbeat,
         });

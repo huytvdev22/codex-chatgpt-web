@@ -30,6 +30,7 @@ const {
   scaleBrowserBounds,
   shellZoomActionForInput,
 } = require("./browser-state.cjs");
+const { SurfaceActionExecutor } = require("./surface-action-executor.cjs");
 
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
@@ -727,6 +728,13 @@ class BrowserHost {
 
   heartbeatTurn(traceId, helperPid, refreshViewport = false) {
     return turnManagerFor(this).heartbeatTurn(traceId, helperPid, refreshViewport);
+  }
+
+  async executeSurfaceAction(payload) {
+    if (!this.surfaceActionExecutor) {
+      this.surfaceActionExecutor = new SurfaceActionExecutor();
+    }
+    return await this.surfaceActionExecutor.execute(this, payload);
   }
 
   refreshTurnLeases(reason, now = Date.now()) {

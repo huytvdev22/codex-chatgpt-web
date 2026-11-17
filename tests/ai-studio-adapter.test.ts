@@ -266,4 +266,88 @@ describe("Google AI Studio Web Adapter", () => {
       retain: true,
     });
   });
+
+  test("AiStudioAdapter dùng browserTransport='electron-control' và AiStudioBrowserWorker thực thi turn qua ElectronSurfaceClient", async () => {
+    const { ElectronSurfaceClient } = await import("../src/adapters/web/electron-surface-client");
+    const { AiStudioBrowserWorker } = await import("../src/adapters/ai-studio");
+
+    const adapter = new AiStudioAdapter();
+    const policies = (
+      adapter as unknown as { definition: { policies?: { browserTransport?: string } } }
+    ).definition.policies;
+    expect(policies?.browserTransport).toBe("electron-control");
+
+    const actions: string[] = [];
+    let currentUrl = "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen";
+    let submitted = false;
+
+    const client = new ElectronSurfaceClient({
+      controlEndpoint: "http://127.0.0.1:9223",
+      controlToken: "test-token",
+      traceId: "trace-aistudio-turn",
+      helperPid: process.pid,
+      fetchFn: (async (_url, init) => {
+        const body = JSON.parse(String(init?.body || "{}")) as {
+          action: string;
+          args: Record<string, unknown>;
+        };
+        actions.push(body.action);
+        let result: unknown = {};
+        if (body.action === "getUrl") {
+          result = { url: currentUrl };
+        } else if (body.action === "aiStudioCheckCleanNewChat") {
+          result = { clean: true };
+        } else if (body.action === "aiStudioSelectThinkingLevel") {
+          result = { changed: false };
+        } else if (body.action === "aiStudioCheckComposerIdle") {
+          result = { idle: true };
+        } else if (body.action === "aiStudioCaptureBaseline") {
+          result = { modelContainerCount: 0, answerCount: 0, thoughtsCount: 0, lastAnswerText: "" };
+        } else if (body.action === "aiStudioCheckSubmitStatus") {
+          result = submitted
+            ? { isStop: true, isRunningLive: true, isDisabled: false, editorLength: 0 }
+            : { isStop: false, isRunningLive: false, isDisabled: false, editorLength: 10 };
+        } else if (body.action === "clickSelector") {
+          submitted = true;
+          currentUrl = "https://aistudio.google.com/prompts/1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
+          result = { clicked: true };
+        } else if (body.action === "aiStudioCaptureStatus") {
+          result = {
+            isGenerating: false,
+            responseReadyLive: true,
+            hasNewAnswerTurn: true,
+            hasTurnFooter: true,
+            thoughtsCount: 0,
+            rawHtml: "<p>OK</p>",
+            rawText: "OK",
+            singleMarkdownCodeBlockText: null,
+            hasContent: true,
+          };
+        } else if (body.action === "aiStudioCopyMarkdown") {
+          result = { text: "````markdown\n<webResponse>\nXin chào Electron\n</webResponse>\n````" };
+        }
+        return new Response(JSON.stringify({ ok: true, result }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+
+    const worker = new AiStudioBrowserWorker();
+    const res = await worker.executeTurn(client, {
+      prompt: "Chào",
+      modelSlug: "ai-studio/gemini-4-hydrogen",
+      pollingIntervalMs: 1,
+    });
+
+    expect(actions).toContain("aiStudioCheckCleanNewChat");
+    expect(actions).toContain("aiStudioCaptureBaseline");
+    expect(actions).toContain("fillTextarea");
+    expect(actions).toContain("aiStudioCaptureStatus");
+    expect(actions).toContain("aiStudioCopyMarkdown");
+    expect(res).toEqual({
+      rawResponse: "````markdown\n<webResponse>\nXin chào Electron\n</webResponse>\n````",
+      conversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
+    });
+  });
 });

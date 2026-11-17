@@ -1,5 +1,6 @@
-import type { Page } from "playwright-core";
+import type { ElectronSurfaceClient } from "../web/electron-surface-client";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
+import { AI_STUDIO_DOM_SELECTORS } from "./ai-studio-dom-observer";
 
 export interface AiStudioImagePayload {
   name: string;
@@ -16,7 +17,7 @@ export const AI_STUDIO_MEDIA_SELECTORS = {
 };
 
 /**
- * Chuyển đổi danh sách ảnh chuẩn hóa sang payload file upload của Playwright.
+ * Chuyển đổi danh sách ảnh chuẩn hóa sang payload ảnh cho AI Studio.
  */
 export function aiStudioImageFilePayloads(
   images: NormalizedImageAttachment[],
@@ -29,10 +30,11 @@ export function aiStudioImageFilePayloads(
 }
 
 /**
- * Đính kèm hình ảnh vào Google AI Studio thông qua nút Insert (+) -> "Upload files" -> filechooser.
+ * Đính kèm hình ảnh vào Google AI Studio qua sự kiện dán trên Electron surface
+ * (tránh dùng CDP filechooser hay mở hộp thoại Finder).
  */
 export async function attachAiStudioFiles(
-  page: Page,
+  client: ElectronSurfaceClient,
   files: AiStudioImagePayload[],
   options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<boolean> {
@@ -45,20 +47,15 @@ export async function attachAiStudioFiles(
     ? files.slice(0, MAX_AI_STUDIO_INPUT_IMAGES)
     : files;
 
-  const insertButton = page.locator(AI_STUDIO_MEDIA_SELECTORS.insertButton).first();
-  await insertButton.waitFor({ state: "visible", timeout: options?.timeoutMs ?? 8_000 });
-  await insertButton.click({ timeout: 3_000 });
-
-  const uploadItem = page.locator(AI_STUDIO_MEDIA_SELECTORS.uploadMenuItem).first();
-  await uploadItem.waitFor({ state: "visible", timeout: 4_000 });
-
-  const [fileChooser] = await Promise.all([
-    page.waitForEvent("filechooser", { timeout: options?.timeoutMs ?? 8_000 }),
-    uploadItem.click({ timeout: 3_000 }),
-  ]);
-
-  await fileChooser.setFiles(effectiveFiles);
-  await page.waitForTimeout(500);
-  return true;
+  const result = await client.pasteImages(
+    effectiveFiles.map(file => ({
+      name: file.name,
+      mimeType: file.mimeType,
+      dataBase64: file.buffer.toString("base64"),
+    })),
+    AI_STUDIO_DOM_SELECTORS.composer,
+    options?.signal,
+  );
+  return result.attachedCount > 0;
 }
 

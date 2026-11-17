@@ -1312,4 +1312,103 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       expect(recorded[1]?.signal).toBeUndefined();
     }
   });
+
+  test("24. Lifecycle: browserTransport='electron-control' bỏ qua connectBrowserHost (CDP) và cấp ElectronSurfaceClient", async () => {
+    let cdpConnected = false;
+    let receivedPage: unknown = "unset";
+    let receivedClient: unknown = null;
+
+    const session = await startLauncherBrowserTurn({
+      descriptorPath: "/tmp/mock-launcher-browser.json",
+      skipCdpConnection: true,
+      activity: {
+        phase: "start",
+        traceId: "trace-electron-control",
+        helperPid: process.pid,
+        provider: "ai-studio",
+        conversationKey: "conv-key-electron",
+        connectorIdentity: "ai-studio",
+      },
+      ops: {
+        readDescriptor: () => ({
+          version: 3,
+          kind: "codex-web-gpt-launcher",
+          profile: "development",
+          pid: process.pid,
+          endpoint: "http://127.0.0.1:9222",
+          control: { endpoint: "http://127.0.0.1:9223", token: "tok-electron" },
+          helper: { executable: "bun", script: "helper.ts" },
+          partition: "persist:test",
+          idleUrl: "about:blank",
+          surfaceId: "s".repeat(32),
+          surfaceTargets: {},
+          createdAt: new Date().toISOString(),
+        }),
+        isProcessRunning: () => true,
+        notifyTurn: async () => ({
+          surfaceId: "a".repeat(32),
+          reused: false,
+          connectorBound: false,
+        }),
+        connectBrowserHost: async () => {
+          cdpConnected = true;
+          throw new Error("Should never call connectBrowserHost when skipCdpConnection=true");
+        },
+      },
+    });
+
+    expect(cdpConnected).toBe(false);
+    expect(session?.connection).toBeNull();
+    expect(session?.descriptor?.control?.endpoint).toBe("http://127.0.0.1:9223");
+
+    const engine = new WebTurnEngine(
+      {
+        id: "ai-studio",
+        assistantName: "Gemini",
+        logPrefix: "ai-studio-adapter",
+        policies: {
+          browserTransport: "electron-control",
+          launcherFailureMode: "fail-closed",
+          emitErrorEventOnFailure: false,
+          rethrowError: true,
+        },
+        conversation: { resolveConversationKey: () => "key-ec-1" },
+        browser: {
+          launcherProviderId: "ai-studio",
+          connectorIdentity: "ai-studio",
+          executeTurn: async ({ page, electronClient }) => {
+            receivedPage = page;
+            receivedClient = electronClient;
+            return {
+              rawResponse: "````markdown\n<webResponse>\nOK EC\n</webResponse>\n````",
+            };
+          },
+        },
+      },
+      undefined,
+      {
+        resolveDescriptorPath: () => "/tmp/mock-launcher-browser.json",
+        startTurn: async (opts) => {
+          expect(opts.skipCdpConnection).toBe(true);
+          return session;
+        },
+        endTurn: async () => {},
+        closeTurn: async () => {},
+      },
+    );
+
+    const events: AdapterEvent[] = [];
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      ev => events.push(ev),
+    );
+
+    expect(receivedPage).toBeNull();
+    expect(receivedClient).toBeTruthy();
+    expect(events).toEqual([
+      { type: "text_delta", text: "OK EC" },
+      { type: "done" },
+    ]);
+  });
 });

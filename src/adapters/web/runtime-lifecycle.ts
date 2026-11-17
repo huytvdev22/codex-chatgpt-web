@@ -13,6 +13,7 @@ import type {
   WebProviderDefinition,
   WebTurnFinalStatus,
 } from "./definition";
+import { ElectronSurfaceClient } from "./electron-surface-client";
 
 export interface WebRuntimeLifecycleOps {
   resolveDescriptorPath: typeof resolveLauncherDescriptorPath;
@@ -34,6 +35,7 @@ export interface AcquiredWebTurnSurface {
   descriptorPath?: string;
   launcherConnection: LauncherBrowserConnection | null;
   page: Page | null;
+  electronClient?: ElectronSurfaceClient;
   surfaceId?: string;
   leaseConversationId?: string;
   launcherReused: boolean;
@@ -74,12 +76,14 @@ export async function acquireWebTurnSurface(options: {
     };
   }
 
+  const transport = definition.policies?.browserTransport ?? "playwright-cdp";
   const descriptorPath = ops.resolveDescriptorPath(
     definition.browser.descriptorPath,
     definition.browser.descriptorSubdirs,
   );
   let launcherConnection: LauncherBrowserConnection | null = null;
   let page: Page | null = null;
+  let electronClient: ElectronSurfaceClient | undefined;
   let surfaceId: string | undefined;
   let leaseConversationId: string | undefined;
   let launcherReused = false;
@@ -94,13 +98,18 @@ export async function acquireWebTurnSurface(options: {
           phase: "start",
           traceId: turnTraceId,
           helperPid: process.pid,
-          conversationKey,
-          connectorIdentity: definition.browser.connectorIdentity,
+          ...(conversationKey
+            ? {
+                conversationKey,
+                connectorIdentity: definition.browser.connectorIdentity,
+              }
+            : {}),
           provider: definition.browser.launcherProviderId,
           requireRetainedConversation: false,
           ...(initialUrl ? { initialUrl } : {}),
         },
         signal: abortSignal,
+        skipCdpConnection: transport === "electron-control",
         resolveSurfaceId: definition.browser.resolveSurfaceId,
       });
       if (session) {
@@ -109,24 +118,44 @@ export async function acquireWebTurnSurface(options: {
         leaseConversationId = session.conversationId;
         launcherReused = session.reused;
         launcherConnection = session.connection;
-        page = session.connection.page;
+        if (transport === "electron-control") {
+          const control = session.descriptor?.control;
+          if (!control?.endpoint || !control?.token) {
+            throw new Error(
+              "Launcher descriptor does not expose control endpoint/token for electron-control transport",
+            );
+          }
+          electronClient = new ElectronSurfaceClient({
+            controlEndpoint: control.endpoint,
+            controlToken: control.token,
+            traceId: turnTraceId,
+          });
+        } else {
+          page = session.connection?.page ?? null;
+        }
       }
     } catch (err) {
       launcherError = err instanceof Error ? err : new Error(String(err));
-      if (definition.policies?.launcherFailureMode === "fallback-local") {
+      if (definition.policies?.launcherFailureMode === "fallback-local" && transport !== "electron-control") {
         console.warn(
           `[${definition.logPrefix}] Không thể kết nối Launcher qua CDP: ${launcherError.message}. Sẽ thử local Chrome.`,
         );
       } else {
         console.error(
-          `[${definition.logPrefix}] Không thể kết nối Launcher qua CDP:`,
+          `[${definition.logPrefix}] Không thể kết nối Launcher (${transport}):`,
           err,
         );
       }
     }
   }
 
-  if (!page) {
+  if (transport === "electron-control") {
+    if (!electronClient) {
+      throw new Error(
+        `[${definition.logPrefix}] Không thể kết nối với Launcher browser tab${launcherError ? `: ${launcherError.message}` : "."}`,
+      );
+    }
+  } else if (!page) {
     const failureMode =
       definition.policies?.launcherFailureMode ?? "fail-closed";
     if (descriptorPath && failureMode === "fail-closed") {
@@ -146,6 +175,7 @@ export async function acquireWebTurnSurface(options: {
     descriptorPath: descriptorPath ?? undefined,
     launcherConnection,
     page,
+    ...(electronClient ? { electronClient } : {}),
     surfaceId,
     leaseConversationId,
     launcherReused,

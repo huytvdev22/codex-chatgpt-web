@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **071** | Chuyển toàn bộ `AiStudioAdapter` sang `electron-control` (bỏ Playwright CDP) xử lý triệt để `403` | `ai-studio`, `speech`, `web`, `launcher` | ⏳ Chờ User Test & Confirm | [071-ai-studio-electron-control-no-cdp.md](./071-ai-studio-electron-control-no-cdp.md) |
 | **070** | API `generateSpeech` (`streamGenerateContent`) thỉnh thoảng bị `403` do `page.goto` sau CDP và thiếu retry `502` | `ai-studio`, `speech`, `launcher`, `playwright` | ⏳ Chờ User Test & Confirm | [070-ai-studio-speech-initial-url-403.md](./070-ai-studio-speech-initial-url-403.md) |
 | **069** | Smoke Test AI Studio OK nhưng gọi qua API hay bị `403 permission denied` hoặc mất kết quả do thiếu `/prompts/{id}` | `ai-studio`, `web`, `playwright`, `launcher` | ⏳ Chờ User Test & Confirm | [069-ai-studio-api-403-permission-denied.md](./069-ai-studio-api-403-permission-denied.md) |
 | **068** | Fallback click Send trong `submitPrompt` treo 60s làm Launcher abort turn (`helper_heartbeat_expired`) | `m365-copilot`, `web`, `launcher` | ⏳ Chờ User Test & Confirm | [068-m365-submit-fallback-timeout-abort.md](./068-m365-submit-fallback-timeout-abort.md) |

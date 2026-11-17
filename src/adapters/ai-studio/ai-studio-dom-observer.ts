@@ -1,4 +1,4 @@
-import type { Page } from "playwright-core";
+import type { ElectronSurfaceClient } from "../web/electron-surface-client";
 import { SemanticMarkdownBuffer, webHtmlToMarkdown } from "../web/protocol";
 
 export interface AiStudioResponseBaseline {
@@ -71,150 +71,18 @@ export class AiStudioDomObserver {
     };
   }
 
-  public async captureBaseline(page: Page): Promise<AiStudioResponseBaseline> {
-    return await page.evaluate(({ containerSelector, thoughtSelector }) => {
-      const containers = Array.from(document.querySelectorAll<HTMLElement>(containerSelector));
-      const thoughts = containers.filter(el => Boolean(el.querySelector(thoughtSelector)));
-      const answers = containers.filter(el => !el.querySelector(thoughtSelector));
-      const lastAnswer = answers[answers.length - 1];
-      return {
-        modelContainerCount: containers.length,
-        answerCount: answers.length,
-        thoughtsCount: thoughts.length,
-        lastAnswerText: lastAnswer ? (lastAnswer.innerText || "").trim() : "",
-      };
-    }, {
+  public async captureBaseline(client: ElectronSurfaceClient): Promise<AiStudioResponseBaseline> {
+    return await client.call<AiStudioResponseBaseline>("aiStudioCaptureBaseline", {
       containerSelector: AI_STUDIO_DOM_SELECTORS.modelTurnContainer,
       thoughtSelector: AI_STUDIO_DOM_SELECTORS.thoughtPanel,
     });
   }
 
   public async captureStatus(
-    page: Page,
+    client: ElectronSurfaceClient,
     baseline: AiStudioResponseBaseline,
   ): Promise<AiStudioDomStatus> {
-    return await page.evaluate(({ selectors, baselineAnswerCount }) => {
-      const actionBtn = document.querySelector<HTMLButtonElement>(selectors.runOrStopButton);
-      const stopBtn =
-        actionBtn ||
-        document.querySelector<HTMLButtonElement>('button[aria-label*="Stop" i], button[aria-label*="Cancel generation" i]');
-      const btnText = (
-        stopBtn?.innerText ||
-        stopBtn?.getAttribute("aria-label") ||
-        stopBtn?.getAttribute("mattooltip") ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-      const liveText = Array.from(document.querySelectorAll<HTMLElement>(selectors.liveStatus))
-        .map(el => (el.innerText || el.textContent || "").trim())
-        .join(" ");
-      const isLiveRunning = /running/i.test(liveText);
-      const isResponseReadyLive = /response ready/i.test(liveText);
-      const isStopVisible = btnText.includes("stop") || btnText.includes("cancel");
-      const isGenerating = isStopVisible || isLiveRunning;
-
-      let detectedWebError = "";
-      const alertErrorRegex = /Failed to generate content|permission denied|quota exceeded|rate limit|service unavailable/i;
-      for (const alertEl of document.querySelectorAll<HTMLElement>(
-        '[role="alert"], mat-snack-bar-container, simple-snack-bar, [class*="error-banner" i], [class*="toast" i]',
-      )) {
-        const text = (alertEl.innerText || alertEl.textContent || "").trim();
-        if (text && alertErrorRegex.test(text)) {
-          detectedWebError = text.replace(/\s+/g, " ").slice(0, 300);
-          break;
-        }
-      }
-
-      const allContainers = Array.from(document.querySelectorAll<HTMLElement>(selectors.modelTurnContainer));
-      const thoughtsCount = allContainers.filter(el => Boolean(el.querySelector(selectors.thoughtPanel))).length;
-      const answerContainers = allContainers.filter(el => !el.querySelector(selectors.thoughtPanel));
-
-      const freshAnswers = answerContainers.slice(baselineAnswerCount);
-      const targetAnswer = freshAnswers[freshAnswers.length - 1];
-      if (!targetAnswer) {
-        return {
-          isGenerating,
-          responseReadyLive: isResponseReadyLive,
-          hasNewAnswerTurn: false,
-          hasTurnFooter: false,
-          thoughtsCount,
-          rawHtml: "",
-          rawText: "",
-          singleMarkdownCodeBlockText: null,
-          hasContent: false,
-          detectedWebError,
-        };
-      }
-
-      const hasTurnFooter = Boolean(targetAnswer.querySelector(selectors.turnFooter));
-      const clone = targetAnswer.cloneNode(true) as HTMLElement;
-      for (const noise of clone.querySelectorAll(
-        [
-          "h3.author-label",
-          ".actions",
-          ".turn-footer",
-          "mat-accordion",
-          "mat-expansion-panel.thought-panel",
-          "ms-code-block mat-expansion-panel-header",
-          ".code-block-header",
-          "[class*='code-block-decoration' i]",
-        ].join(", "),
-      )) {
-        noise.remove();
-      }
-
-      // Kiểm tra nếu toàn bộ câu trả lời là một code block `Markdown` duy nhất của AI Studio
-      // để giữ nguyên chuỗi nguyên bản bên trong (tránh mất 4-backtick transport fence khi fallback DOM).
-      let singleMarkdownCodeBlockText: string | null = null;
-      const originalCodeBlocks = Array.from(targetAnswer.querySelectorAll<HTMLElement>("ms-code-block"));
-      if (originalCodeBlocks.length === 1) {
-        const origBlock = originalCodeBlocks[0];
-        const headerLabel = (
-          origBlock.querySelector("mat-expansion-panel-header, .code-block-header")?.textContent || ""
-        )
-          .trim()
-          .toLowerCase();
-        const isMarkdownLang = headerLabel.includes("markdown") || /\bmd\b/.test(headerLabel);
-        const clonePre = clone.querySelector("ms-code-block pre code, pre code");
-        const cloneOutsideText = (() => {
-          const checkClone = clone.cloneNode(true) as HTMLElement;
-          for (const el of checkClone.querySelectorAll("ms-code-block")) el.remove();
-          return (checkClone.innerText || checkClone.textContent || "").trim();
-        })();
-        if (!cloneOutsideText && clonePre) {
-          const extracted = (clonePre.textContent || "").trim();
-          if (extracted && (isMarkdownLang || /^<webResponse\b/i.test(extracted))) {
-            singleMarkdownCodeBlockText = extracted;
-          }
-        }
-      }
-
-      const rawHtml = clone.innerHTML.trim();
-      const rawText = (clone.innerText || clone.textContent || "").trim();
-      if (
-        !detectedWebError &&
-        !hasTurnFooter &&
-        /^(?:Permission denied\.|Failed to generate content\b|An internal error has occurred\.|Quota exceeded\b|Please check your account permissions)/i.test(
-          rawText,
-        )
-      ) {
-        detectedWebError = rawText.replace(/\s+/g, " ").slice(0, 300);
-      }
-
-      return {
-        isGenerating,
-        responseReadyLive: isResponseReadyLive,
-        hasNewAnswerTurn: true,
-        hasTurnFooter,
-        thoughtsCount,
-        rawHtml,
-        rawText,
-        singleMarkdownCodeBlockText,
-        hasContent: rawText.length > 0 || Boolean(singleMarkdownCodeBlockText),
-        detectedWebError,
-      };
-    }, {
+    return await client.call<AiStudioDomStatus>("aiStudioCaptureStatus", {
       selectors: AI_STUDIO_DOM_SELECTORS,
       baselineAnswerCount: baseline.answerCount,
     });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
+import { ElectronSurfaceClient } from "../src/adapters/web/electron-surface-client";
 import {
   AiStudioSpeechWorker,
   buildAiStudioSpeechUrl,
@@ -59,129 +59,7 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     );
   });
 
-  test("configureSpeakers khớp đúng theo tên speaker ngay cả khi UI đảo Speaker 2 lên card đầu tiên", async () => {
-    class TestSpeechWorker extends AiStudioSpeechWorker {
-      public async testConfigureSpeakers(
-        page: Page,
-        speakers: Array<{ speaker: string; voiceName: string }>,
-        rawText: string,
-      ): Promise<void> {
-        await (this as any).configureSpeakers(page, speakers, parseGeminiSpeechScript(rawText));
-      }
-    }
-
-    const worker = new TestSpeechWorker();
-    const selectedByCard: Array<{ cardAlias: string; voice: string }> = [];
-    let openCardAlias = "";
-
-    const makeCard = (alias: string) => ({
-      locator: (selector: string) => {
-        if (selector.includes("speaker-alias-input")) {
-          return {
-            first: () => ({
-              inputValue: async () => alias,
-              isVisible: async () => true,
-              fill: async () => {},
-              press: async () => {},
-            }),
-          };
-        }
-        if (selector.includes("active-voice-card-trigger")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              click: async () => {
-                openCardAlias = alias;
-              },
-            }),
-          };
-        }
-        return { first: () => ({ textContent: async () => alias }) };
-      },
-    });
-
-    // Mô phỏng UI xếp Speaker 2 ở card 0 và Speaker 1 ở card 1, đồng thời button có textContent kèm mô tả trait
-    const cards = [makeCard("Speaker 2"), makeCard("Speaker 1")];
-    const voices = [
-      { name: "Umbriel", text: "UmbrielEasy-goingLower middle pitch" },
-      { name: "Callirrhoe", text: "CallirrhoeEasy-goingMiddle pitch" },
-    ];
-
-    const fakePage = {
-      waitForTimeout: async () => {},
-      keyboard: { press: async () => {} },
-      locator: (selector: string) => {
-        if (selector === ".active-voice-card") {
-          return {
-            count: async () => cards.length,
-            nth: (index: number) => cards[index],
-          };
-        }
-        if (selector.includes("Available voices")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              locator: () => ({
-                count: async () => voices.length,
-                nth: (i: number) => ({
-                  getAttribute: async (attr: string) => (attr === "aria-label" ? voices[i].name : null),
-                  locator: () => ({
-                    first: () => ({
-                      textContent: async () => voices[i].name,
-                    }),
-                  }),
-                  textContent: async () => voices[i].text,
-                  click: async () => {
-                    selectedByCard.push({ cardAlias: openCardAlias, voice: voices[i].name });
-                  },
-                }),
-              }),
-            }),
-          };
-        }
-        if (selector.includes("Close panel")) {
-          return {
-            first: () => ({
-              isVisible: async () => true,
-              click: async () => {},
-            }),
-          };
-        }
-        return {
-          first: () => ({
-            isVisible: async () => false,
-            waitFor: async () => {},
-          }),
-        };
-      },
-    } as unknown as Page;
-
-    await worker.testConfigureSpeakers(
-      fakePage,
-      [
-        { speaker: "Speaker 1", voiceName: "Umbriel" },
-        { speaker: "Speaker 2", voiceName: "Callirrhoe" },
-      ],
-      "Speaker 2: Chào bạn\nSpeaker 1: Xin chào!",
-    );
-
-    expect(selectedByCard).toEqual([
-      { cardAlias: "Speaker 2", voice: "Callirrhoe" },
-      { cardAlias: "Speaker 1", voice: "Umbriel" },
-    ]);
-  });
-
-  test("configureSpeakers tự đồng bộ thứ tự card trên UI (Speaker 1/2 -> Speaker 2/1) khớp thứ tự xuất hiện trong transcript", async () => {
-    class TestSpeechWorker extends AiStudioSpeechWorker {
-      public async testConfigureSpeakers(
-        page: Page,
-        speakers: Array<{ speaker: string; voiceName: string }>,
-        rawText: string,
-      ): Promise<void> {
-        await (this as any).configureSpeakers(page, speakers, parseGeminiSpeechScript(rawText));
-      }
-    }
-
+  test("orderSpeakersByTranscript & executeSpeech đồng bộ thứ tự card khớp thứ tự xuất hiện trong transcript", async () => {
     const ordered = orderSpeakersByTranscript(
       [
         { speaker: "Speaker 1", voiceName: "Umbriel" },
@@ -194,98 +72,62 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
       { speaker: "Speaker 1", voiceName: "Umbriel" },
     ]);
 
-    const worker = new TestSpeechWorker();
-    const cardAliases = ["Speaker 1", "Speaker 2"];
-    const cardVoices = ["Puck", "Zephyr"];
-    let openCardIndex = -1;
+    const worker = new AiStudioSpeechWorker();
+    let capturedSpeakerArgs: Record<string, unknown> | null = null;
+    let generated = false;
 
-    const makeMutableCard = (idx: number) => ({
-      locator: (selector: string) => {
-        if (selector.includes("speaker-alias-input")) {
-          return {
-            first: () => ({
-              inputValue: async () => cardAliases[idx],
-              isVisible: async () => true,
-              fill: async (val: string) => {
-                cardAliases[idx] = val;
-              },
-              press: async () => {},
-              evaluate: async () => {},
-            }),
+    const client = new ElectronSurfaceClient({
+      controlEndpoint: "http://127.0.0.1:9223",
+      controlToken: "test-token",
+      traceId: "trace-speech-speakers",
+      helperPid: process.pid,
+      fetchFn: (async (_url, init) => {
+        const body = JSON.parse(String(init?.body || "{}")) as {
+          action: string;
+          args: Record<string, unknown>;
+        };
+        let result: unknown = {};
+        if (body.action === "getUrl") {
+          result = { url: "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts" };
+        } else if (body.action === "aiStudioSpeechConfigureSpeakers") {
+          capturedSpeakerArgs = body.args;
+          result = { configured: 2 };
+        } else if (body.action === "clickSelector") {
+          generated = true;
+          result = { clicked: true };
+        } else if (body.action === "aiStudioSpeechCaptureState") {
+          result = {
+            detectedError: "",
+            audioSrc: generated ? "blob:https://aistudio.google.com/speakers-ok" : "",
+            isGenerating: false,
+          };
+        } else if (body.action === "aiStudioSpeechExtractAudio") {
+          result = {
+            mimeType: "audio/wav",
+            audioBase64: Buffer.from("WAV_SPEAKERS").toString("base64"),
           };
         }
-        if (selector.includes("active-voice-card-trigger")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              click: async () => {
-                openCardIndex = idx;
-              },
-            }),
-          };
-        }
-        return { first: () => ({ textContent: async () => cardAliases[idx] }) };
-      },
+        return new Response(JSON.stringify({ ok: true, result }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
     });
 
-    const cards = [makeMutableCard(0), makeMutableCard(1)];
-    const voices = ["Umbriel", "Callirrhoe"];
-    const fakePage = {
-      waitForTimeout: async () => {},
-      keyboard: { press: async () => {} },
-      locator: (selector: string) => {
-        if (selector === ".active-voice-card") {
-          return {
-            count: async () => cards.length,
-            nth: (index: number) => cards[index],
-          };
-        }
-        if (selector.includes("Available voices")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              locator: () => ({
-                count: async () => voices.length,
-                nth: (i: number) => ({
-                  getAttribute: async (attr: string) => (attr === "aria-label" ? voices[i] : null),
-                  locator: () => ({ first: () => ({ textContent: async () => voices[i] }) }),
-                  textContent: async () => voices[i],
-                  click: async () => {
-                    cardVoices[openCardIndex] = voices[i];
-                  },
-                }),
-              }),
-            }),
-          };
-        }
-        if (selector.includes("Close panel")) {
-          return {
-            first: () => ({
-              isVisible: async () => true,
-              click: async () => {},
-            }),
-          };
-        }
-        return {
-          first: () => ({
-            isVisible: async () => false,
-            waitFor: async () => {},
-          }),
-        };
-      },
-    } as unknown as Page;
-
-    await worker.testConfigureSpeakers(
-      fakePage,
-      [
+    const result = await worker.executeSpeech(client, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 2: Chào bạn\nSpeaker 1: Xin chào!",
+      speakers: [
         { speaker: "Speaker 1", voiceName: "Umbriel" },
         { speaker: "Speaker 2", voiceName: "Callirrhoe" },
       ],
-      "Speaker 2: [agreement] Exactly.\nSpeaker 1: [enthusiastic] Welcome back!",
-    );
+    });
 
-    expect(cardAliases).toEqual(["Speaker 2", "Speaker 1"]);
-    expect(cardVoices).toEqual(["Callirrhoe", "Umbriel"]);
+    expect((capturedSpeakerArgs as any)?.orderedSpeakers).toEqual([
+      { speaker: "Speaker 2", voiceName: "Callirrhoe" },
+      { speaker: "Speaker 1", voiceName: "Umbriel" },
+    ]);
+    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_SPEAKERS");
   });
 
   test("GeminiSpeechService hỗ trợ generateContent, streamGenerateContent (JSON array & SSE) và validate payload", async () => {
@@ -399,214 +241,104 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     }
   });
 
-  test("executeSpeech chuyển từ Composer sang Text trước khi chờ textarea Enter a prompt", async () => {
-    const worker = new AiStudioSpeechWorker();
-    let mode: "landing" | "composer" | "text" = "landing";
-    let generated = false;
-    const promptValues: string[] = [];
-
-    const fakePage = {
-      goto: async () => {},
-      waitForTimeout: async () => {},
-      evaluate: async (fn: any) => {
-        const src = String(fn);
-        if (src.includes("fetch(src)")) {
-          return {
-            mimeType: "audio/wav",
-            audioBase64: Buffer.from("WAV_NEW").toString("base64"),
-            byteLength: 7,
-          };
-        }
-        if (src.includes("errorSelector")) {
-          return {
-            detectedError: "",
-            audioSrc: generated ? "blob:https://aistudio.google.com/new-audio" : "https://www.gstatic.com/aistudio/tts/enthusiastic-co-host.wav",
-            isGenerating: false,
-          };
-        }
-        return "https://www.gstatic.com/aistudio/tts/enthusiastic-co-host.wav";
-      },
-      locator: (selector: string) => {
-        if (selector.includes("The Energetic Co-Host")) {
-          return {
-            first: () => ({
-              isVisible: async () => mode === "landing",
-              click: async () => {
-                mode = "composer";
-              },
-            }),
-          };
-        }
-        if (selector.includes("toggle-button")) {
-          return {
-            first: () => ({
-              isVisible: async () => mode !== "landing",
-              waitFor: async () => {
-                if (mode === "landing") throw new Error("not visible");
-              },
-              getAttribute: async () => (mode === "text" ? "true" : "false"),
-              click: async () => {
-                mode = "text";
-              },
-            }),
-          };
-        }
-        if (selector.includes("Enter a prompt")) {
-          return {
-            first: () => ({
-              isVisible: async () => mode === "text",
-              waitFor: async () => {
-                if (mode !== "text") throw new Error("Enter a prompt requires Text mode");
-              },
-              click: async () => {},
-              fill: async (val: string) => {
-                promptValues.push(val);
-              },
-            }),
-          };
-        }
-        if (selector.includes("ctrl-enter-submits")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              click: async () => {
-                generated = true;
-              },
-            }),
-          };
-        }
-        if (selector === ".active-voice-card") {
-          return { count: async () => 0 };
-        }
-        return {
-          first: () => ({
-            isVisible: async () => false,
-            fill: async () => {},
-          }),
+  function createMockSurfaceClient(
+    handler: (action: string, args: Record<string, unknown>) => unknown,
+  ): ElectronSurfaceClient {
+    return new ElectronSurfaceClient({
+      controlEndpoint: "http://127.0.0.1:9223",
+      controlToken: "test-token",
+      traceId: "trace-speech-unit",
+      helperPid: process.pid,
+      fetchFn: (async (_url, init) => {
+        const body = JSON.parse(String(init?.body || "{}")) as {
+          action: string;
+          args: Record<string, unknown>;
         };
-      },
-    } as unknown as Page;
+        const result = await handler(body.action, body.args || {});
+        return new Response(JSON.stringify({ ok: true, result }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+  }
 
-    const result = await worker.executeSpeech(fakePage, {
-      modelId: "gemini-2.5-pro-preview-tts",
-      text: "Speaker 1: Test Composer -> Text",
-      speakers: [],
+  test("executeSpeech điều phối qua ElectronSurfaceClient (không CDP), chuẩn bị Text mode và trích xuất WAV", async () => {
+    const worker = new AiStudioSpeechWorker();
+    const actions: Array<{ action: string; args: Record<string, unknown> }> = [];
+    let generated = false;
+
+    const client = createMockSurfaceClient((action, args) => {
+      actions.push({ action, args });
+      if (action === "getUrl") {
+        return { url: "https://aistudio.google.com/prompts/new_chat" };
+      }
+      if (action === "navigate") {
+        return { url: args.url };
+      }
+      if (action === "aiStudioSpeechPrepareEditor") {
+        return { ready: true };
+      }
+      if (action === "aiStudioSpeechGetBaselineAudioSrc") {
+        return { audioSrc: "https://www.gstatic.com/aistudio/tts/enthusiastic-co-host.wav" };
+      }
+      if (action === "clickSelector" && String(args.selector).includes("ctrl-enter-submits")) {
+        generated = true;
+        return { clicked: true };
+      }
+      if (action === "aiStudioSpeechCaptureState") {
+        return {
+          detectedError: "",
+          audioSrc: generated
+            ? "blob:https://aistudio.google.com/new-audio"
+            : "https://www.gstatic.com/aistudio/tts/enthusiastic-co-host.wav",
+          isGenerating: false,
+        };
+      }
+      if (action === "aiStudioSpeechExtractAudio") {
+        return {
+          mimeType: "audio/wav",
+          audioBase64: Buffer.from("WAV_NEW").toString("base64"),
+        };
+      }
+      return {};
     });
 
-    expect(mode as string).toBe("text");
-    expect(promptValues).toEqual(["Speaker 1: Test Composer -> Text"]);
+    const result = await worker.executeSpeech(client, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 1: Test Electron control TTS",
+      temperature: 0.9,
+      speakers: [
+        { speaker: "Speaker 1", voiceName: "Charon" },
+      ],
+    });
+
+    expect(actions.some(a => a.action === "navigate")).toBe(true);
+    expect(actions.some(a => a.action === "aiStudioSpeechPrepareEditor")).toBe(true);
+    expect(actions.some(a => a.action === "aiStudioSpeechConfigureSpeakers")).toBe(true);
+    expect(actions.some(a => a.action === "aiStudioSpeechConfigureTemperature")).toBe(true);
+    expect(
+      actions.find(a => a.action === "fillTextarea" && String(a.args.selector).includes("Enter a prompt"))?.args.value,
+    ).toBe("Speaker 1: Test Electron control TTS");
     expect(result.mimeType).toBe("audio/wav");
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_NEW");
   });
 
-  test("executeSpeech dùng selector data-value=\"TEXT\" và fallback DOM click khi click đầu không đổi aria-checked", async () => {
-    const worker = new AiStudioSpeechWorker();
-    let mode: "composer" | "text" = "composer";
-    let generated = false;
-    let toggleSelectorUsed = "";
-    let clickAttempts = 0;
-    let domFallbackAttempts = 0;
-
-    const fakePage = {
-      goto: async () => {},
-      waitForTimeout: async () => {},
-      evaluate: async (fn: any) => {
-        const src = String(fn);
-        if (src.includes("fetch(src)")) {
-          return {
-            mimeType: "audio/wav",
-            audioBase64: Buffer.from("WAV_RETRY").toString("base64"),
-            byteLength: 9,
-          };
-        }
-        if (src.includes("errorSelector")) {
-          return {
-            detectedError: "",
-            audioSrc: generated ? "blob:https://aistudio.google.com/retry-audio" : "",
-            isGenerating: false,
-          };
-        }
-        return "";
-      },
-      locator: (selector: string) => {
-        if (selector.includes("data-value=\"TEXT\"")) {
-          toggleSelectorUsed = selector;
-          return {
-            first: () => ({
-              isVisible: async () => true,
-              waitFor: async () => {},
-              getAttribute: async () => (mode === "text" ? "true" : "false"),
-              click: async () => {
-                // Giả lập lần click đầu bị Angular/tooltip nuốt chưa chuyển mode
-                clickAttempts += 1;
-              },
-              evaluate: async () => {
-                domFallbackAttempts += 1;
-                mode = "text";
-              },
-            }),
-          };
-        }
-        if (selector.includes("Enter a prompt")) {
-          return {
-            first: () => ({
-              isVisible: async () => mode === "text",
-              waitFor: async () => {
-                if (mode !== "text") throw new Error("Enter a prompt requires Text mode");
-              },
-              click: async () => {},
-              fill: async () => {},
-            }),
-          };
-        }
-        if (selector.includes("ctrl-enter-submits")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              click: async () => {
-                generated = true;
-              },
-            }),
-          };
-        }
-        if (selector === ".active-voice-card") {
-          return { count: async () => 0 };
-        }
-        return {
-          first: () => ({
-            isVisible: async () => false,
-            fill: async () => {},
-          }),
-        };
-      },
-    } as unknown as Page;
-
-    const result = await worker.executeSpeech(fakePage, {
-      modelId: "gemini-2.5-pro-preview-tts",
-      text: "Speaker 1: Retry text toggle",
-      speakers: [],
-    });
-
-    expect(toggleSelectorUsed).toContain('data-value="TEXT"');
-    expect(clickAttempts).toBe(1);
-    expect(domFallbackAttempts).toBe(1);
-    expect(mode as string).toBe("text");
-    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_RETRY");
-  });
-
   test("waitForGeneratedAudio fail-fast ngay khi AI Studio hiện banner lỗi HTTP 403 / 400-500", async () => {
     const worker = new AiStudioSpeechWorker();
-    const fakePage = {
-      waitForTimeout: async () => {},
-      evaluate: async () => ({
-        detectedError: "Http response at 400 or 500 level, error: , http status code: 403",
-        audioSrc: "",
-        isGenerating: false,
-      }),
-    } as unknown as Page;
+    const client = createMockSurfaceClient((action) => {
+      if (action === "aiStudioSpeechCaptureState") {
+        return {
+          detectedError: "Http response at 400 or 500 level, error: , http status code: 403",
+          audioSrc: "",
+          isGenerating: false,
+        };
+      }
+      return {};
+    });
 
     await expect(
-      (worker as any).waitForGeneratedAudio(fakePage, "", {
+      (worker as any).waitForGeneratedAudio(client, "", {
         modelId: "gemini-2.5-pro-preview-tts",
         text: "hi",
         speakers: [],
@@ -614,172 +346,46 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     ).rejects.toThrow("http status code: 403");
   });
 
-  test("clickResilient tự cuộn và fallback DOM click khi preset 'The Energetic Co-Host' nằm ngoài viewport", async () => {
+  test("executeSpeech bỏ qua navigate nếu tab Launcher đã mở sẵn đúng URL /generate-speech?model=...", async () => {
     const worker = new AiStudioSpeechWorker();
-    let mode: "landing" | "text" = "landing";
+    let navigateCalls = 0;
     let generated = false;
-    let scrollCalls = 0;
-    let domClickCalls = 0;
 
-    const fakePage = {
-      goto: async () => {},
-      waitForTimeout: async () => {},
-      evaluate: async (fn: any) => {
-        const src = String(fn);
-        if (src.includes("fetch(src)")) {
-          return {
-            mimeType: "audio/wav",
-            audioBase64: Buffer.from("WAV_VIEWPORT_OK").toString("base64"),
-            byteLength: 15,
-          };
-        }
-        if (src.includes("errorSelector")) {
-          return {
-            detectedError: "",
-            audioSrc: generated ? "blob:https://aistudio.google.com/ok-preset" : "",
-            isGenerating: false,
-          };
-        }
-        return "";
-      },
-      locator: (selector: string) => {
-        if (selector.includes("The Energetic Co-Host")) {
-          return {
-            first: () => ({
-              isVisible: async () => mode === "landing",
-              scrollIntoViewIfNeeded: async () => {
-                scrollCalls += 1;
-              },
-              click: async () => {
-                throw new Error("element is outside of the viewport");
-              },
-              evaluate: async () => {
-                domClickCalls += 1;
-                mode = "text";
-              },
-            }),
-          };
-        }
-        if (selector.includes("data-value=\"TEXT\"")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              isVisible: async () => false,
-            }),
-          };
-        }
-        if (selector.includes("Enter a prompt")) {
-          return {
-            first: () => ({
-              isVisible: async () => mode === "text",
-              waitFor: async () => {},
-              click: async () => {},
-              fill: async () => {},
-            }),
-          };
-        }
-        if (selector.includes("ctrl-enter-submits")) {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              click: async () => {
-                generated = true;
-              },
-            }),
-          };
-        }
-        if (selector === ".active-voice-card") {
-          return { count: async () => 0 };
-        }
+    const client = createMockSurfaceClient((action) => {
+      if (action === "getUrl") {
+        return { url: "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts" };
+      }
+      if (action === "navigate") {
+        navigateCalls += 1;
+        return { url: "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts" };
+      }
+      if (action === "clickSelector") {
+        generated = true;
+        return { clicked: true };
+      }
+      if (action === "aiStudioSpeechCaptureState") {
         return {
-          first: () => ({
-            isVisible: async () => false,
-            fill: async () => {},
-          }),
+          detectedError: "",
+          audioSrc: generated ? "blob:https://aistudio.google.com/preloaded" : "",
+          isGenerating: false,
         };
-      },
-    } as unknown as Page;
-
-    const result = await worker.executeSpeech(fakePage, {
-      modelId: "gemini-2.5-pro-preview-tts",
-      text: "Speaker 1: Viewport test",
-      speakers: [],
+      }
+      if (action === "aiStudioSpeechExtractAudio") {
+        return {
+          mimeType: "audio/wav",
+          audioBase64: Buffer.from("WAV_PRELOADED").toString("base64"),
+        };
+      }
+      return {};
     });
 
-    expect(scrollCalls).toBe(1);
-    expect(domClickCalls).toBe(1);
-    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_VIEWPORT_OK");
-  });
-
-  test("executeSpeech bỏ qua page.goto nếu tab Launcher đã mở sẵn đúng URL /generate-speech?model=...", async () => {
-    const worker = new AiStudioSpeechWorker();
-    let gotoCalls = 0;
-    let generated = false;
-
-    const fakePage = {
-      url: () => "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts",
-      goto: async () => {
-        gotoCalls += 1;
-      },
-      waitForTimeout: async () => {},
-      evaluate: async (fn: any) => {
-        const src = String(fn);
-        if (src.includes("fetch(src)")) {
-          return {
-            mimeType: "audio/wav",
-            audioBase64: Buffer.from("WAV_PRELOADED").toString("base64"),
-            byteLength: 13,
-          };
-        }
-        if (src.includes("errorSelector")) {
-          return {
-            detectedError: "",
-            audioSrc: generated ? "blob:https://aistudio.google.com/preloaded" : "",
-            isGenerating: false,
-          };
-        }
-        return "";
-      },
-      locator: (selector: string) => {
-        if (selector.includes('Enter a prompt')) {
-          return {
-            first: () => ({
-              isVisible: async () => true,
-              waitFor: async () => {},
-              click: async () => {},
-              fill: async () => {},
-            }),
-          };
-        }
-        if (selector === "button.ctrl-enter-submits") {
-          return {
-            first: () => ({
-              waitFor: async () => {},
-              click: async () => {
-                generated = true;
-              },
-            }),
-          };
-        }
-        if (selector === ".active-voice-card") {
-          return { count: async () => 0 };
-        }
-        return {
-          first: () => ({
-            isVisible: async () => false,
-            fill: async () => {},
-          }),
-        };
-      },
-    } as unknown as Page;
-
-    const result = await worker.executeSpeech(fakePage, {
+    const result = await worker.executeSpeech(client, {
       modelId: "gemini-2.5-pro-preview-tts",
       text: "Speaker 1: Preloaded tab test",
       speakers: [],
     });
 
-    expect(gotoCalls).toBe(0);
+    expect(navigateCalls).toBe(0);
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_PRELOADED");
   });
 });

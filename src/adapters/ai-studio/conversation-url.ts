@@ -1,4 +1,4 @@
-import type { Page } from "playwright-core";
+import type { ElectronSurfaceClient } from "../web/electron-surface-client";
 
 export const AI_STUDIO_ORIGIN = "https://aistudio.google.com";
 export const AI_STUDIO_DEFAULT_MODEL_SLUG = "gemini-4-hydrogen";
@@ -57,14 +57,15 @@ export function parseAiStudioConversationId(rawUrl: string): string | undefined 
  * `MakerSuiteService/CreatePrompt` lưu hội thoại mới bất đồng bộ.
  */
 export async function waitForAiStudioConversationId(
-  page: Page,
+  client: ElectronSurfaceClient,
   timeoutMs = 12_000,
 ): Promise<string | undefined> {
   const deadline = Date.now() + timeoutMs;
   do {
-    const conversationId = parseAiStudioConversationId(page.url());
+    const rawUrl = await client.getUrl().catch(() => "");
+    const conversationId = parseAiStudioConversationId(rawUrl);
     if (conversationId) return conversationId;
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await client.sleep(150);
   } while (Date.now() < deadline);
   return undefined;
 }

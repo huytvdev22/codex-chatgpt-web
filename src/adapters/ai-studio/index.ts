@@ -79,6 +79,7 @@ export class AiStudioAdapter extends WebProviderAdapter {
       logPrefix: "ai-studio-adapter",
       abortMessage: "AI Studio turn aborted before start",
       policies: {
+        browserTransport: "electron-control",
         launcherFailureMode: "fail-closed",
         enableEarlyExitOnFinalAnswer: true,
         enableToolLoopGuard: true,
@@ -156,7 +157,7 @@ export class AiStudioAdapter extends WebProviderAdapter {
         resolveSurfaceId: (descriptor, leaseSurfaceId) =>
           leaseSurfaceId || descriptor.providerSurfaceIds?.["ai-studio"] || descriptor.surfaceId,
         executeTurn: async ({
-          page,
+          electronClient,
           prompt,
           attempt,
           parsed,
@@ -169,12 +170,12 @@ export class AiStudioAdapter extends WebProviderAdapter {
           attachments,
           heartbeat,
         }) => {
-          if (!page) {
+          if (!electronClient) {
             throw new Error(
-              "[ai-studio-adapter] Không có trình duyệt khả dụng để thực thi lượt.",
+              "[ai-studio-adapter] Không có kênh điều khiển Electron surface khả dụng để thực thi lượt.",
             );
           }
-          return worker.executeTurn(page, {
+          return worker.executeTurn(electronClient, {
             prompt,
             onChunk: () => {},
             signal: incoming.abortSignal,
@@ -219,8 +220,13 @@ export class AiStudioAdapter extends WebProviderAdapter {
   ): Promise<SpeechTurnResult> {
     return await this.engine.runEphemeralSurfaceTask(
       incoming,
-      async ({ page, signal, heartbeat }) => {
-        return await this.speechWorker.executeSpeech(page, {
+      async ({ electronClient, signal, heartbeat }) => {
+        if (!electronClient) {
+          throw new Error(
+            "[ai-studio-adapter] Không có kênh điều khiển Electron surface khả dụng cho Generate Speech.",
+          );
+        }
+        return await this.speechWorker.executeSpeech(electronClient, {
           modelId: request.modelId,
           text: request.text,
           temperature: request.temperature,
