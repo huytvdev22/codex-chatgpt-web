@@ -254,6 +254,13 @@ export class AiStudioSpeechWorker {
       timeoutMs: 10_000,
       signal: options.signal,
     });
+    await client
+      .call(
+        "aiStudioWaitForBotGuardReady",
+        { minPageAgeMs: 1_200, maxWaitMs: 1_500 },
+        { signal: options.signal },
+      )
+      .catch(() => {});
     await client.clickSelector(SPEECH_SELECTORS.runButton, { signal: options.signal });
 
     return await this.waitForGeneratedAudio(client, baselineAudioSrc, options);

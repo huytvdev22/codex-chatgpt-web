@@ -1935,3 +1935,62 @@ test("beginTurn reconciles multiple retained tabs by keeping the newest and clos
   assert.equal(fixture.turnTabs.has("newer-retained"), true);
   assert.equal(fixture.turnTabs.has("older-retained"), false);
 });
+
+test("TurnTabManager enforces ai-studio reopen cooldown after closing a tab and supports AbortSignal", async () => {
+  const { TurnTabManager } = require("../electron/browser/turn-tab-manager.cjs");
+  const logs = [];
+  const closedTab = {
+    id: "ai-closed-1",
+    traceId: "trace-closed-1",
+    provider: "ai-studio",
+    status: "error",
+    view: {
+      webContents: {
+        isDestroyed: () => true,
+      },
+    },
+  };
+  const fakeHost = {
+    provider: "ai-studio",
+    selectedTabId: "home",
+    turnTabs: new Map([[closedTab.id, closedTab]]),
+    closedTurnOwners: new Map(),
+    userCancelledTurnOwners: new Map(),
+    window: { contentView: { removeChildView() {} } },
+    view: { webContents: { getURL: () => IDLE_BROWSER_URL } },
+    logger: { info: (ev, detail) => logs.push([ev, detail]) },
+    syncPowerSaveBlocker() {},
+    syncViewVisibility() {},
+    publishState() {},
+    snapshot: () => ({}),
+    writeDescriptor() {},
+    hide() {},
+  };
+
+  const manager = new TurnTabManager(fakeHost, {
+    standalone: true,
+    aiStudioReopenCooldownMs: 150,
+  });
+
+  // Đóng tab ai-studio để ghi nhận mốc cooldown
+  manager.removeTurnTab(closedTab, false);
+  assert.ok(manager.lastClosedAtByProvider.get("ai-studio") > 0);
+
+  // Mở lại tab ai-studio ngay lập tức phải đợi hết cooldown rồi mới đi tiếp (tới MAX_BROWSER_TABS/WebContentsView check)
+  const controller = new AbortController();
+  const startedWait = Date.now();
+  setTimeout(() => controller.abort(new DOMException("cancelled during cooldown", "AbortError")), 40);
+  await assert.rejects(
+    () => manager.createTurnTab("trace-reopen-abort", process.pid, "k".repeat(64), "ai-studio", controller.signal, "ai-studio"),
+    /cancelled during cooldown/i,
+  );
+  assert.ok(Date.now() - startedWait >= 30);
+  assert.equal(logs.some(([ev]) => ev === "browser.ai_studio_reopen_cooldown"), true);
+
+  // Mở tab M365 không bị chặn bởi cooldown của ai-studio
+  const m365LogsBefore = logs.length;
+  await assert.rejects(
+    () => manager.createTurnTab("trace-m365", process.pid, "k".repeat(64), "m365-copilot", new AbortController().signal, "m365"),
+  );
+  assert.equal(logs.slice(m365LogsBefore).some(([ev]) => ev === "browser.ai_studio_reopen_cooldown"), false);
+});

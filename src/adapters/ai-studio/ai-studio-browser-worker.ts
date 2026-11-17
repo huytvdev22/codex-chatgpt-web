@@ -83,6 +83,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   private readonly clipboardSalvage = new AiStudioClipboardSalvage();
   private readonly runtimeStates = new WeakMap<ElectronSurfaceClient, AiStudioResponseRuntimeState>();
   private readonly retainedConversationIds = new WeakMap<ElectronSurfaceClient, string>();
+  private readonly botGuardSettledClients = new WeakSet<ElectronSurfaceClient>();
 
   protected override async initializeTurnState(
     client: ElectronSurfaceClient,
@@ -198,6 +199,17 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     });
 
     await this.waitForComposerIdle(client, options.signal);
+
+    if (!options.launcherReused && !this.botGuardSettledClients.has(client)) {
+      this.botGuardSettledClients.add(client);
+      await client
+        .call(
+          "aiStudioWaitForBotGuardReady",
+          { minPageAgeMs: 1_200, maxWaitMs: 1_500 },
+          { signal: options.signal },
+        )
+        .catch(() => {});
+    }
   }
 
   protected override async captureResponseBaseline(

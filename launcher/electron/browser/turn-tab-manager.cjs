@@ -17,8 +17,26 @@ const TURN_HEARTBEAT_SWEEP_MS = 5_000;
 const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
 const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
+const AI_STUDIO_REOPEN_COOLDOWN_MS = 3_000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function sleepWithAbort(milliseconds, signal) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return Promise.resolve();
+  signal?.throwIfAborted?.();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason || new Error("Aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    timer.unref?.();
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+  });
+}
 
 function hasProviderOnHost(host, providerId) {
   const id = providerId || host?.provider || "m365";
@@ -123,11 +141,19 @@ function loadCommittedBrowserSurface(
  * bootstrap + retry, heartbeat/lease reaping, power-save blocking và dọn dẹp tài nguyên.
  */
 class TurnTabManager {
-  constructor(host, { standalone = false } = {}) {
+  constructor(host, { standalone = false, aiStudioReopenCooldownMs } = {}) {
     this.host = host;
     this.turnTabs = host.turnTabs instanceof Map ? host.turnTabs : new Map();
     this.closedTurnOwners = host.closedTurnOwners instanceof Map ? host.closedTurnOwners : new Map();
     this.userCancelledTurnOwners = host.userCancelledTurnOwners instanceof Map ? host.userCancelledTurnOwners : new Map();
+    this.lastClosedAtByProvider = host.lastClosedAtByProvider instanceof Map
+      ? host.lastClosedAtByProvider
+      : new Map();
+    this.aiStudioReopenCooldownMs = typeof aiStudioReopenCooldownMs === "number"
+      ? aiStudioReopenCooldownMs
+      : typeof host.aiStudioReopenCooldownMs === "number"
+        ? host.aiStudioReopenCooldownMs
+        : AI_STUDIO_REOPEN_COOLDOWN_MS;
     this.turnLeaseSweep = null;
     this.resumeListener = null;
 
@@ -206,6 +232,15 @@ class TurnTabManager {
 
   async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365", initialUrl = null) {
     signal?.throwIfAborted();
+    if (providerId === "ai-studio" && this.aiStudioReopenCooldownMs > 0) {
+      const lastClosedAt = this.lastClosedAtByProvider?.get("ai-studio") || 0;
+      const elapsed = Date.now() - lastClosedAt;
+      if (lastClosedAt > 0 && elapsed < this.aiStudioReopenCooldownMs) {
+        const remainingMs = this.aiStudioReopenCooldownMs - elapsed;
+        this.host.logger?.info?.("browser.ai_studio_reopen_cooldown", { traceId, remainingMs });
+        await sleepWithAbort(remainingMs, signal);
+      }
+    }
     const evictReclaimable = this.host.evictOldestReclaimableTurnTab || (() => this.evictOldestReclaimableTurnTab());
     if (this.turnTabs.size >= MAX_BROWSER_TABS && !evictReclaimable.call(this.host)) {
       const providerLabel = this.hasProvider(providerId)
@@ -477,6 +512,9 @@ class TurnTabManager {
   removeTurnTab(tab, abortRunning) {
     if (!this.turnTabs.has(tab.id)) return;
     this.turnTabs.delete(tab.id);
+    if ((tab.provider || this.host?.provider) === "ai-studio") {
+      this.lastClosedAtByProvider?.set?.("ai-studio", Date.now());
+    }
     this.syncPowerSaveBlocker();
     if (abortRunning && tab.status === "running") {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
@@ -781,6 +819,7 @@ class TurnTabManager {
 }
 
 module.exports = {
+  AI_STUDIO_REOPEN_COOLDOWN_MS,
   BrowserTurnCancelledError,
   HIDDEN_TURN_VIEWPORT,
   IDLE_BROWSER_URL,

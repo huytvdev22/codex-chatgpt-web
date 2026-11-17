@@ -341,6 +341,7 @@ describe("Google AI Studio Web Adapter", () => {
     });
 
     expect(actions).toContain("aiStudioCheckCleanNewChat");
+    expect(actions).toContain("aiStudioWaitForBotGuardReady");
     expect(actions).toContain("aiStudioCaptureBaseline");
     expect(actions).toContain("fillTextarea");
     expect(actions).toContain("aiStudioCaptureStatus");
@@ -349,5 +350,16 @@ describe("Google AI Studio Web Adapter", () => {
       rawResponse: "````markdown\n<webResponse>\nXin chào Electron\n</webResponse>\n````",
       conversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
     });
+
+    // Lượt tái sử dụng tab (launcherReused=true) bỏ qua aiStudioWaitForBotGuardReady để không chờ thừa
+    actions.length = 0;
+    submitted = false;
+    await worker.executeTurn(client, {
+      prompt: "Lượt 2",
+      existingConversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
+      launcherReused: true,
+      pollingIntervalMs: 1,
+    });
+    expect(actions).not.toContain("aiStudioWaitForBotGuardReady");
   });
 });

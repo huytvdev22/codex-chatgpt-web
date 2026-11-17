@@ -18,6 +18,7 @@ const ALLOWED_ACTION_NAMES = new Set([
   "aiStudioCheckComposerIdle",
   "aiStudioSelectThinkingLevel",
   "aiStudioCheckSubmitStatus",
+  "aiStudioWaitForBotGuardReady",
   "aiStudioCaptureBaseline",
   "aiStudioCaptureStatus",
   "aiStudioStopGeneration",
@@ -588,6 +589,38 @@ class SurfaceActionExecutor {
         editorLength: (editor?.value || "").trim().length,
       };
     })(${JSON.stringify(args)})`);
+  }
+
+  async aiStudioWaitForBotGuardReady(_host, _tab, contents, args) {
+    const minPageAgeMs = Number.isFinite(args.minPageAgeMs) ? Math.max(0, args.minPageAgeMs) : 1_200;
+    const maxWaitMs = Number.isFinite(args.maxWaitMs) ? Math.max(0, args.maxWaitMs) : 1_500;
+    const startedAt = Date.now();
+
+    while (true) {
+      const probe = await this.execJs(contents, `(() => {
+        const resources = performance.getEntriesByType("resource") || [];
+        const waaReady = resources.some((entry) => {
+          const name = String(entry?.name || "");
+          return (/waa-pa\\.clients6\\.google\\.com|google\\.com\\/js\\/th/i.test(name))
+            && (!Number.isFinite(entry?.responseEnd) || entry.responseEnd > 0);
+        });
+        return {
+          waaReady,
+          pageAgeMs: performance.now(),
+        };
+      })()`).catch(() => ({ waaReady: false, pageAgeMs: 0 }));
+
+      const elapsedMs = Date.now() - startedAt;
+      if ((probe.waaReady && probe.pageAgeMs >= minPageAgeMs) || elapsedMs >= maxWaitMs) {
+        return {
+          settled: true,
+          waaReady: Boolean(probe.waaReady),
+          pageAgeMs: Math.round(probe.pageAgeMs || 0),
+          elapsedMs,
+        };
+      }
+      await sleep(Math.min(150, Math.max(20, maxWaitMs - elapsedMs)));
+    }
   }
 
   async aiStudioCaptureBaseline(_host, _tab, contents, args) {

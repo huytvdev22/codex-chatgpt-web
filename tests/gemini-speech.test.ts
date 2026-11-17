@@ -317,6 +317,7 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     expect(actions.some(a => a.action === "aiStudioSpeechPrepareEditor")).toBe(true);
     expect(actions.some(a => a.action === "aiStudioSpeechConfigureSpeakers")).toBe(true);
     expect(actions.some(a => a.action === "aiStudioSpeechConfigureTemperature")).toBe(true);
+    expect(actions.some(a => a.action === "aiStudioWaitForBotGuardReady")).toBe(true);
     expect(
       actions.find(a => a.action === "fillTextarea" && String(a.args.selector).includes("Enter a prompt"))?.args.value,
     ).toBe("Speaker 1: Test Electron control TTS");

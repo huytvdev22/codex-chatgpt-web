@@ -147,3 +147,35 @@ test("SurfaceActionExecutor aiStudioCopyMarkdown prioritizes Copy as markdown ov
   assert.equal(res.text, "````markdown\n<webResponse>\nFrom hook\n</webResponse>\n````");
   assert.deepEqual(menuClicks, [[100, 120], [300, 400]]);
 });
+
+test("SurfaceActionExecutor aiStudioWaitForBotGuardReady settles immediately once WAA is ready and respects maxWaitMs cap", async () => {
+  const executor = new SurfaceActionExecutor();
+  let waaReady = true;
+  let pageAgeMs = 1500;
+  const contents = {
+    isDestroyed: () => false,
+    executeJavaScript: async () => ({ waaReady, pageAgeMs }),
+  };
+
+  const quickRes = await executor.execute(createFakeHost(contents), {
+    traceId: "trace_exec_01",
+    helperPid: process.pid,
+    action: "aiStudioWaitForBotGuardReady",
+    args: { minPageAgeMs: 1200, maxWaitMs: 500 },
+  });
+  assert.equal(quickRes.settled, true);
+  assert.equal(quickRes.waaReady, true);
+  assert.ok(quickRes.elapsedMs < 50);
+
+  waaReady = false;
+  pageAgeMs = 100;
+  const cappedRes = await executor.execute(createFakeHost(contents), {
+    traceId: "trace_exec_01",
+    helperPid: process.pid,
+    action: "aiStudioWaitForBotGuardReady",
+    args: { minPageAgeMs: 1200, maxWaitMs: 120 },
+  });
+  assert.equal(cappedRes.settled, true);
+  assert.equal(cappedRes.waaReady, false);
+  assert.ok(cappedRes.elapsedMs >= 100);
+});
