@@ -192,6 +192,5 @@ test("plugin setup instructions show configured connector name in every language
   for (const language of Object.keys(languages)) {
     const copy = copyFor(language, connectorName);
     assert.ok(copy.connectorMigrationNotice.includes(connectorName));
-    assert.ok(copy.pluginNameWarning.length > 0);
   }
 });

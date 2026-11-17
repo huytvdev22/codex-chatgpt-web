@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **073** | Gỡ bỏ mục chỉnh sửa `Plugin name` khỏi giao diện Settings Launcher | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [073-remove-settings-plugin-name-ui.md](./073-remove-settings-plugin-name-ui.md) |
 | **072** | Gỡ bỏ popup gợi ý `Bigger Context (experimental)` khi khởi động Launcher | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [072-remove-bigger-context-startup-popup.md](./072-remove-bigger-context-startup-popup.md) |
 | **071** | Chuyển toàn bộ `AiStudioAdapter` sang `electron-control` (bỏ Playwright CDP) xử lý triệt để `403` | `ai-studio`, `speech`, `web`, `launcher` | ⏳ Chờ User Test & Confirm | [071-ai-studio-electron-control-no-cdp.md](./071-ai-studio-electron-control-no-cdp.md) |
 | **070** | API `generateSpeech` (`streamGenerateContent`) thỉnh thoảng bị `403` do `page.goto` sau CDP và thiếu retry `502` | `ai-studio`, `speech`, `launcher`, `playwright` | ⏳ Chờ User Test & Confirm | [070-ai-studio-speech-initial-url-403.md](./070-ai-studio-speech-initial-url-403.md) |

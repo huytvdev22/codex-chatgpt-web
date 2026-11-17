@@ -1,12 +1,6 @@
 import type { Language } from "./types";
 
 const en = {
-  pluginName: "Plugin name",
-  pluginNameBody: "Codex stays fixed. Edit the rest of the name.",
-  pluginNameChange: "Change name",
-  pluginNameWarning: "Create a new plugin with the displayed name, then verify MCP again. This changes only the current mode. Tunnel credentials and your ChatGPT login are kept.",
-  pluginNameConfirm: "Change and configure",
-
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "Set up the isolated DEV profile",
@@ -185,12 +179,6 @@ const en = {
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
-  pluginName: "插件名称",
-  pluginNameBody: "Codex 保持不变，可以修改其后的名称。",
-  pluginNameChange: "更改名称",
-  pluginNameWarning: "请使用显示的名称创建新插件，然后重新验证 MCP。仅更改当前模式，隧道凭据和 ChatGPT 登录状态将保留。",
-  pluginNameConfirm: "更改并配置",
-
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "设置隔离的 DEV 配置",
@@ -369,12 +357,6 @@ const zh: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
-  pluginName: "プラグイン名",
-  pluginNameBody: "Codex は固定です。それ以降の名前を編集できます。",
-  pluginNameChange: "名前を変更",
-  pluginNameWarning: "表示された名前で新しいプラグインを作成し、MCP を再確認してください。現在のモードだけが変わります。トンネルの認証情報と ChatGPT のログインは保持されます。",
-  pluginNameConfirm: "変更して設定",
-
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "隔離された DEV プロファイルをセットアップ",
@@ -553,12 +535,6 @@ const ja: Record<keyof typeof en, string> = {
 };
 
 const ko: Record<keyof typeof en, string> = {
-  pluginName: "플러그인 이름",
-  pluginNameBody: "Codex는 고정입니다. 뒤에 오는 이름을 변경하세요.",
-  pluginNameChange: "이름 변경",
-  pluginNameWarning: "표시된 이름으로 새 플러그인을 만들고 MCP를 다시 확인하세요. 현재 모드에만 적용됩니다. 터널 인증 정보와 ChatGPT 로그인은 유지됩니다.",
-  pluginNameConfirm: "변경 및 설정",
-
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "격리된 DEV 프로필 설정",
@@ -737,12 +713,6 @@ const ko: Record<keyof typeof en, string> = {
 };
 
 const zhTW: Record<keyof typeof en, string> = {
-  pluginName: "外掛程式名稱",
-  pluginNameBody: "Codex 保持不變，可以修改後面的名稱。",
-  pluginNameChange: "變更名稱",
-  pluginNameWarning: "請使用顯示的名稱建立新的外掛程式，再重新驗證 MCP。僅變更目前模式，隧道憑證和 ChatGPT 登入狀態將保留。",
-  pluginNameConfirm: "變更並設定",
-
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "設定隔離的 DEV 設定檔",

@@ -569,7 +569,7 @@ test("plugin rename rejects active browser work and emits updated connector name
   assert.equal(events[1].channel, "launcher:state-changed");
 });
 
-test("plugin name editor fixes Codex and edits Native2 before asking to reconfigure", async () => {
+test("Settings surface removes the plugin name editor while keeping other settings rows", () => {
   const ts = require("typescript");
   const vm = require("node:vm");
   const transpile = (source, fileName) => ts.transpileModule(source, {
@@ -582,44 +582,30 @@ test("plugin name editor fixes Codex and edits Native2 before asking to reconfig
   vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
   const copy = translated.exports.copyFor("en");
   const hooks = [];
-  let cursor = 0, submitted, openedSetup = false;
+  let cursor = 0;
   const sandbox = {
     element: (type, props, ...children) => ({ type, props: props ?? {}, children }), Fragment: "Fragment",
     useState: initial => {
       const index = cursor++; if (!(index in hooks)) hooks[index] = initial;
       return [hooks[index], value => { hooks[index] = value; }];
     },
-    useEffect() { }, messageOf: String, platformLabel: String,
-    api: { setConnectorNameSuffix: async suffix => { submitted = suffix; return { mcpSetupComplete: false }; } },
+    messageOf: String, platformLabel: String, api: {},
   };
   for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", sandbox);
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
     ? [tree, ...visit(tree.children ?? [])] : [];
-  const render = () => {
-    cursor = 0; return visit(sandbox.render({
-      copy, devProfile: false, language: "en",
-      snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: true } },
-      openSetup: () => { openedSetup = true; }, setError: error => { if (error) throw new Error(error); }, updateState() { },
-    }));
-  };
-  let nodes = render();
-  const group = nodes.find(node => node.props.className === "plugin-name-input");
-  assert.ok(visit(group).some(node => node.type === "span" && node.children[0] === "Codex"));
-  const input = visit(group).find(node => node.type === "input");
-  assert.equal(input.props.value, "Native2");
-  input.props.onChange({ target: { value: "Work" } });
-  nodes = render();
-  assert.ok(nodes.some(node => node.type === "code" && node.children[0] === "Codex Work"));
-  nodes.find(node => node.type === "SecondaryButton" && node.children[0] === copy.pluginNameChange).props.onClick();
-  assert.equal(submitted, undefined);
-  nodes = render();
-  assert.ok(nodes.some(node => node.type === "p" && node.children[0] === copy.pluginNameWarning));
-  nodes.find(node => node.type === "PrimaryButton" && node.children[0] === copy.pluginNameConfirm).props.onClick();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(submitted, "Work");
-  assert.equal(openedSetup, true);
+  cursor = 0;
+  const nodes = visit(sandbox.render({
+    copy, devProfile: false, language: "en",
+    snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: true } },
+    setError: error => { if (error) throw new Error(error); }, updateState() { },
+  }));
+  assert.doesNotMatch(appSource, /plugin-name-setting|plugin-name-input|changePluginName/);
+  assert.doesNotMatch(stylesSource, /\.plugin-name-setting|\.plugin-name-input|\.plugin-name-actions/);
+  assert.equal(nodes.some(node => node.props.className === "plugin-name-input"), false);
+  assert.ok(nodes.some(node => node.type === "SettingRow" && node.props.label === copy.launchAtLogin && !node.props.flushAfter));
 });
 
 test("setup shows uninstall action after core setup and calls uninstallIntegration", () => {
