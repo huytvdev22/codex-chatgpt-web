@@ -397,8 +397,8 @@ class BrowserHost {
     return turnManagerFor(this).selectedTurnTab();
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider = "m365") {
-    return turnManagerFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider);
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider = "m365", initialUrl = null) {
+    return turnManagerFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider, initialUrl);
   }
 
   async initializeTurnTab(tab, signal) {
@@ -1129,8 +1129,9 @@ class BrowserHost {
     requireRetainedConversation = false,
     providerOrSignal = this.provider || "m365",
     acquisitionSignal,
+    initialUrl,
   ) {
-    return turnManagerFor(this).beginTurn(
+    const args = [
       traceId,
       reveal,
       helperPid,
@@ -1139,7 +1140,11 @@ class BrowserHost {
       requireRetainedConversation,
       providerOrSignal,
       acquisitionSignal,
-    );
+    ];
+    if (initialUrl !== undefined) {
+      args.push(initialUrl);
+    }
+    return turnManagerFor(this).beginTurn(...args);
   }
 
   async endTurn(

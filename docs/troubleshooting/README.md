@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **070** | API `generateSpeech` (`streamGenerateContent`) thỉnh thoảng bị `403` do `page.goto` sau CDP và thiếu retry `502` | `ai-studio`, `speech`, `launcher`, `playwright` | ⏳ Chờ User Test & Confirm | [070-ai-studio-speech-initial-url-403.md](./070-ai-studio-speech-initial-url-403.md) |
 | **069** | Smoke Test AI Studio OK nhưng gọi qua API hay bị `403 permission denied` hoặc mất kết quả do thiếu `/prompts/{id}` | `ai-studio`, `web`, `playwright`, `launcher` | ⏳ Chờ User Test & Confirm | [069-ai-studio-api-403-permission-denied.md](./069-ai-studio-api-403-permission-denied.md) |
 | **068** | Fallback click Send trong `submitPrompt` treo 60s làm Launcher abort turn (`helper_heartbeat_expired`) | `m365-copilot`, `web`, `launcher` | ⏳ Chờ User Test & Confirm | [068-m365-submit-fallback-timeout-abort.md](./068-m365-submit-fallback-timeout-abort.md) |
 | **067** | M365 Copilot redirect sang `copilot.cloud.microsoft` gây lỗi `ERR_FAILED (-2)` và `net::ERR_ABORTED` | `m365-copilot`, `launcher` | ⏳ Chờ User Test & Confirm | [067-m365-copilot-domain-redirect-err-aborted.md](./067-m365-copilot-domain-redirect-err-aborted.md) |

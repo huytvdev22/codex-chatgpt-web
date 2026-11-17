@@ -354,6 +354,7 @@ export type LauncherTurnActivity =
       connectorIdentity?: string;
       provider?: string;
       requireRetainedConversation?: boolean;
+      initialUrl?: string;
     }
   | {
       phase: "heartbeat";

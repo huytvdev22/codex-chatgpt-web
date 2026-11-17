@@ -11,7 +11,7 @@ import { CodexRawPayload } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
 import { AiStudioBrowserWorker } from "./ai-studio-browser-worker";
-import { AiStudioSpeechWorker } from "./ai-studio-speech-worker";
+import { AiStudioSpeechWorker, buildAiStudioSpeechUrl } from "./ai-studio-speech-worker";
 import { aiStudioConversationKey } from "./conversation-key";
 
 export {
@@ -217,16 +217,20 @@ export class AiStudioAdapter extends WebProviderAdapter {
     request: SpeechTurnRequest,
     incoming: IncomingMeta,
   ): Promise<SpeechTurnResult> {
-    return await this.engine.runEphemeralSurfaceTask(incoming, async ({ page, signal, heartbeat }) => {
-      return await this.speechWorker.executeSpeech(page, {
-        modelId: request.modelId,
-        text: request.text,
-        temperature: request.temperature,
-        speakers: request.speakers,
-        signal,
-        heartbeat,
-      });
-    });
+    return await this.engine.runEphemeralSurfaceTask(
+      incoming,
+      async ({ page, signal, heartbeat }) => {
+        return await this.speechWorker.executeSpeech(page, {
+          modelId: request.modelId,
+          text: request.text,
+          temperature: request.temperature,
+          speakers: request.speakers,
+          signal,
+          heartbeat,
+        });
+      },
+      { initialUrl: buildAiStudioSpeechUrl(request.modelId) },
+    );
   }
 }
 

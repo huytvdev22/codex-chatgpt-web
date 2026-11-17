@@ -205,7 +205,25 @@ export class AiStudioSpeechWorker {
     this.throwIfAborted(options.signal);
 
     const targetUrl = buildAiStudioSpeechUrl(options.modelId);
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 25_000 });
+    const isAlreadyOnTargetSpeechUrl = (() => {
+      try {
+        const rawUrl = typeof page.url === "function" ? page.url() : "";
+        if (!rawUrl) return false;
+        const current = new URL(rawUrl);
+        const target = new URL(targetUrl);
+        return (
+          current.origin === target.origin &&
+          current.pathname === target.pathname &&
+          current.searchParams.get("model") === target.searchParams.get("model")
+        );
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!isAlreadyOnTargetSpeechUrl) {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 25_000 });
+    }
 
     // Chờ vào editor/toggle hoặc chọn preset Podcast ("The Energetic Co-Host") nếu đang ở màn landing
     const promptLocator = page.locator(SPEECH_SELECTORS.promptTextarea).first();

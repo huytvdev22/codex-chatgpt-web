@@ -710,5 +710,77 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     expect(domClickCalls).toBe(1);
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_VIEWPORT_OK");
   });
+
+  test("executeSpeech bỏ qua page.goto nếu tab Launcher đã mở sẵn đúng URL /generate-speech?model=...", async () => {
+    const worker = new AiStudioSpeechWorker();
+    let gotoCalls = 0;
+    let generated = false;
+
+    const fakePage = {
+      url: () => "https://aistudio.google.com/generate-speech?model=gemini-2.5-pro-preview-tts",
+      goto: async () => {
+        gotoCalls += 1;
+      },
+      waitForTimeout: async () => {},
+      evaluate: async (fn: any) => {
+        const src = String(fn);
+        if (src.includes("fetch(src)")) {
+          return {
+            mimeType: "audio/wav",
+            audioBase64: Buffer.from("WAV_PRELOADED").toString("base64"),
+            byteLength: 13,
+          };
+        }
+        if (src.includes("errorSelector")) {
+          return {
+            detectedError: "",
+            audioSrc: generated ? "blob:https://aistudio.google.com/preloaded" : "",
+            isGenerating: false,
+          };
+        }
+        return "";
+      },
+      locator: (selector: string) => {
+        if (selector.includes('Enter a prompt')) {
+          return {
+            first: () => ({
+              isVisible: async () => true,
+              waitFor: async () => {},
+              click: async () => {},
+              fill: async () => {},
+            }),
+          };
+        }
+        if (selector === "button.ctrl-enter-submits") {
+          return {
+            first: () => ({
+              waitFor: async () => {},
+              click: async () => {
+                generated = true;
+              },
+            }),
+          };
+        }
+        if (selector === ".active-voice-card") {
+          return { count: async () => 0 };
+        }
+        return {
+          first: () => ({
+            isVisible: async () => false,
+            fill: async () => {},
+          }),
+        };
+      },
+    } as unknown as Page;
+
+    const result = await worker.executeSpeech(fakePage, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 1: Preloaded tab test",
+      speakers: [],
+    });
+
+    expect(gotoCalls).toBe(0);
+    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_PRELOADED");
+  });
 });
 

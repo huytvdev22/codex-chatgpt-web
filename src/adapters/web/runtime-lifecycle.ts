@@ -46,6 +46,7 @@ export async function acquireWebTurnSurface(options: {
   localBrowser?: LocalBrowserRuntime;
   turnTraceId: string;
   conversationKey?: string;
+  initialUrl?: string;
   abortSignal?: AbortSignal;
   ops?: Partial<WebRuntimeLifecycleOps>;
 }): Promise<AcquiredWebTurnSurface> {
@@ -54,6 +55,7 @@ export async function acquireWebTurnSurface(options: {
     localBrowser,
     turnTraceId,
     conversationKey,
+    initialUrl,
     abortSignal,
   } = options;
   const ops: WebRuntimeLifecycleOps = {
@@ -96,6 +98,7 @@ export async function acquireWebTurnSurface(options: {
           connectorIdentity: definition.browser.connectorIdentity,
           provider: definition.browser.launcherProviderId,
           requireRetainedConversation: false,
+          ...(initialUrl ? { initialUrl } : {}),
         },
         signal: abortSignal,
         resolveSurfaceId: definition.browser.resolveSurfaceId,

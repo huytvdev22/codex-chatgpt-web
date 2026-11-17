@@ -204,7 +204,7 @@ class TurnTabManager {
       : this.evictOldestRetainedTurnTab();
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365") {
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365", initialUrl = null) {
     signal?.throwIfAborted();
     const evictReclaimable = this.host.evictOldestReclaimableTurnTab || (() => this.evictOldestReclaimableTurnTab());
     if (this.turnTabs.size >= MAX_BROWSER_TABS && !evictReclaimable.call(this.host)) {
@@ -221,7 +221,10 @@ class TurnTabManager {
     const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("Browser tab allocation is inconsistent");
-    const bootstrapUrl = providerObj.initialUrl?.(conversationKey) || providerObj.homeUrl;
+    const resolvedInitialUrl = typeof initialUrl === "string" && initialUrl.trim() && providerObj.isAllowedNavigation(initialUrl)
+      ? initialUrl.trim()
+      : null;
+    const bootstrapUrl = resolvedInitialUrl || providerObj.initialUrl?.(conversationKey) || providerObj.homeUrl;
     const conversationId = providerObj.conversationId?.(conversationKey) || null;
     const view = new WebContentsView({
       webPreferences: {
@@ -557,6 +560,7 @@ class TurnTabManager {
     requireRetainedConversation = false,
     providerOrSignal = "m365",
     acquisitionSignal,
+    initialUrl = null,
   ) {
     const providerId = typeof providerOrSignal === "string" ? providerOrSignal : "m365";
     const signal = typeof providerOrSignal === "string" ? acquisitionSignal : providerOrSignal;
@@ -655,15 +659,18 @@ class TurnTabManager {
       tab => (this.host.removeTurnTab || this.removeTurnTab).call(this.host, tab, false),
     );
     const createTab = this.host.createTurnTab || ((...args) => this.createTurnTab(...args));
-    const tab = await createTab.call(
-      this.host,
+    const createTabArgs = [
       traceId,
       helperPid,
       conversationKey,
       connectorIdentity,
       signal,
       providerId,
-    );
+    ];
+    if (typeof initialUrl === "string" && initialUrl.trim()) {
+      createTabArgs.push(initialUrl);
+    }
+    const tab = await createTab.call(this.host, ...createTabArgs);
     this.host.homeSurfaceOpen = false;
     this.host.selectedTabId = tab.id;
     this.host.parkIdlePrimaryView?.();

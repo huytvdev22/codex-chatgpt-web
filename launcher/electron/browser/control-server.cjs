@@ -180,6 +180,21 @@ class BrowserControlServer {
       if (body.refreshViewport !== undefined && request.url !== "/v1/turn/heartbeat") {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
+      if (body.initialUrl !== undefined) {
+        if (request.url !== "/v1/turn/start") {
+          throw new Error("initialUrl is only valid for a turn start");
+        }
+        if (typeof body.initialUrl !== "string" || !body.initialUrl.trim()) {
+          throw new Error("initialUrl is invalid");
+        }
+        const targetProvider = typeof host?._resolveProvider === "function"
+          ? host._resolveProvider(body.provider)
+          : host?.providerRegistry?.get?.(body.provider || host?.provider || "m365");
+        if (targetProvider && typeof targetProvider.isAllowedNavigation === "function"
+          && !targetProvider.isAllowedNavigation(body.initialUrl)) {
+          throw new Error("initialUrl is not allowed for this provider");
+        }
+      }
       if (request.url === "/v1/turn/start") {
         const acquisition = new AbortController();
         const onClose = () => {
@@ -197,9 +212,18 @@ class BrowserControlServer {
             body.connectorIdentity,
             body.requireRetainedConversation === true,
           ];
-          lease = body.provider === undefined
-            ? await host.beginTurn(...baseArguments, acquisition.signal)
-            : await host.beginTurn(...baseArguments, body.provider, acquisition.signal);
+          if (body.initialUrl !== undefined) {
+            lease = await host.beginTurn(
+              ...baseArguments,
+              body.provider,
+              acquisition.signal,
+              body.initialUrl,
+            );
+          } else {
+            lease = body.provider === undefined
+              ? await host.beginTurn(...baseArguments, acquisition.signal)
+              : await host.beginTurn(...baseArguments, body.provider, acquisition.signal);
+          }
         } finally {
           response.off("close", onClose);
         }

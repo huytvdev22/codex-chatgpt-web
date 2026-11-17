@@ -524,6 +524,9 @@ export class WebTurnEngine {
       signal: AbortSignal;
       heartbeat?: () => Promise<void>;
     }) => Promise<T>,
+    options?: {
+      initialUrl?: string;
+    },
   ): Promise<T> {
     if (incoming.abortSignal?.aborted) {
       throw new DOMException(
@@ -555,6 +558,7 @@ export class WebTurnEngine {
         localBrowser: this.localBrowser,
         turnTraceId,
         conversationKey,
+        initialUrl: options?.initialUrl,
         abortSignal: turnSignal,
         ops: this.lifecycleOps,
       });
