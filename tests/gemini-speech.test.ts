@@ -613,5 +613,102 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
       }),
     ).rejects.toThrow("http status code: 403");
   });
+
+  test("clickResilient tự cuộn và fallback DOM click khi preset 'The Energetic Co-Host' nằm ngoài viewport", async () => {
+    const worker = new AiStudioSpeechWorker();
+    let mode: "landing" | "text" = "landing";
+    let generated = false;
+    let scrollCalls = 0;
+    let domClickCalls = 0;
+
+    const fakePage = {
+      goto: async () => {},
+      waitForTimeout: async () => {},
+      evaluate: async (fn: any) => {
+        const src = String(fn);
+        if (src.includes("fetch(src)")) {
+          return {
+            mimeType: "audio/wav",
+            audioBase64: Buffer.from("WAV_VIEWPORT_OK").toString("base64"),
+            byteLength: 15,
+          };
+        }
+        if (src.includes("errorSelector")) {
+          return {
+            detectedError: "",
+            audioSrc: generated ? "blob:https://aistudio.google.com/ok-preset" : "",
+            isGenerating: false,
+          };
+        }
+        return "";
+      },
+      locator: (selector: string) => {
+        if (selector.includes("The Energetic Co-Host")) {
+          return {
+            first: () => ({
+              isVisible: async () => mode === "landing",
+              scrollIntoViewIfNeeded: async () => {
+                scrollCalls += 1;
+              },
+              click: async () => {
+                throw new Error("element is outside of the viewport");
+              },
+              evaluate: async () => {
+                domClickCalls += 1;
+                mode = "text";
+              },
+            }),
+          };
+        }
+        if (selector.includes("data-value=\"TEXT\"")) {
+          return {
+            first: () => ({
+              waitFor: async () => {},
+              isVisible: async () => false,
+            }),
+          };
+        }
+        if (selector.includes("Enter a prompt")) {
+          return {
+            first: () => ({
+              isVisible: async () => mode === "text",
+              waitFor: async () => {},
+              click: async () => {},
+              fill: async () => {},
+            }),
+          };
+        }
+        if (selector.includes("ctrl-enter-submits")) {
+          return {
+            first: () => ({
+              waitFor: async () => {},
+              click: async () => {
+                generated = true;
+              },
+            }),
+          };
+        }
+        if (selector === ".active-voice-card") {
+          return { count: async () => 0 };
+        }
+        return {
+          first: () => ({
+            isVisible: async () => false,
+            fill: async () => {},
+          }),
+        };
+      },
+    } as unknown as Page;
+
+    const result = await worker.executeSpeech(fakePage, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 1: Viewport test",
+      speakers: [],
+    });
+
+    expect(scrollCalls).toBe(1);
+    expect(domClickCalls).toBe(1);
+    expect(Buffer.from(result.audioBase64, "base64").toString()).toBe("WAV_VIEWPORT_OK");
+  });
 });
 

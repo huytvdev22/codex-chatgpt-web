@@ -172,6 +172,32 @@ export class AiStudioSpeechWorker {
     }
   }
 
+  private async clickResilient(locator: Locator, timeoutMs = 3_000): Promise<void> {
+    if (typeof (locator as { scrollIntoViewIfNeeded?: unknown }).scrollIntoViewIfNeeded === "function") {
+      await locator.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
+    }
+
+    try {
+      await locator.click({ timeout: timeoutMs });
+      return;
+    } catch (firstError) {
+      try {
+        await locator.click({ force: true, timeout: Math.min(timeoutMs, 1_500) });
+        return;
+      } catch {
+        if (typeof (locator as { evaluate?: unknown }).evaluate === "function") {
+          await locator.evaluate((el) => {
+            const node = el as HTMLElement;
+            node.scrollIntoView?.({ block: "center", inline: "center" });
+            node.click();
+          });
+          return;
+        }
+        throw firstError;
+      }
+    }
+  }
+
   public async executeSpeech(
     page: Page,
     options: AiStudioSpeechRunOptions,
@@ -192,7 +218,7 @@ export class AiStudioSpeechWorker {
       if (await promptLocator.isVisible().catch(() => false)) break;
       if (await textToggle.isVisible().catch(() => false)) break;
       if (await presetLocator.isVisible().catch(() => false)) {
-        await presetLocator.click({ timeout: 3_000 });
+        await this.clickResilient(presetLocator, 3_000);
         await textToggle.waitFor({ state: "visible", timeout: 15_000 }).catch(async () => {
           await promptLocator.waitFor({ state: "visible", timeout: 5_000 });
         });
@@ -231,7 +257,7 @@ export class AiStudioSpeechWorker {
 
     const runButton = page.locator(SPEECH_SELECTORS.runButton).first();
     await runButton.waitFor({ state: "visible", timeout: 10_000 });
-    await runButton.click({ timeout: 5_000 });
+    await this.clickResilient(runButton, 5_000);
 
     return await this.waitForGeneratedAudio(page, baselineAudioSrc, options);
   }
@@ -403,7 +429,7 @@ export class AiStudioSpeechWorker {
   ): Promise<void> {
     const trigger = card.locator(SPEECH_SELECTORS.voiceCardTrigger).first();
     await trigger.waitFor({ state: "visible", timeout: 5_000 });
-    await trigger.click({ timeout: 3_000 });
+    await this.clickResilient(trigger, 3_000);
 
     const voicesRegion = page.locator(SPEECH_SELECTORS.availableVoicesRegion).first();
     await voicesRegion.waitFor({ state: "visible", timeout: 5_000 });
@@ -437,7 +463,7 @@ export class AiStudioSpeechWorker {
       if (normalized === targetVoiceLower) {
         matchedVoice = true;
         if (!/\(Current\)$/i.test(ariaLabel || fallbackText)) {
-          await btn.click({ timeout: 3_000 });
+          await this.clickResilient(btn, 3_000);
           await page.waitForTimeout(200);
         }
         break;
