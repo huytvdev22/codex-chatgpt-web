@@ -2,6 +2,7 @@ const { shell } = require("electron");
 
 const ALLOWED_M365_HOSTS = new Set([
   "m365.cloud.microsoft",
+  "copilot.cloud.microsoft",
   "login.microsoftonline.com",
   "login.live.com",
   "account.activedirectory.windowsazure.com",
@@ -13,7 +14,7 @@ function allowedM365Navigation(rawUrl) {
   catch { return false; }
   return url.protocol === "https:"
     && (ALLOWED_M365_HOSTS.has(url.hostname)
-      || url.hostname.endsWith(".m365.cloud.microsoft")
+      || url.hostname.endsWith(".cloud.microsoft")
       || url.hostname.endsWith(".microsoft.com"));
 }
 

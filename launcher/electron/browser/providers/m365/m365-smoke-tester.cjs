@@ -25,8 +25,10 @@ class M365SmokeTester {
       await view.webContents.loadURL(homeUrl);
       currentUrl = view.webContents.getURL() || "";
     }
-    const isM365 = currentUrl.includes("m365.cloud.microsoft");
-    const isLogin = currentUrl.includes("login.microsoftonline.com") || currentUrl.includes("login.live.com");
+    const isM365 = currentUrl.includes("m365.cloud.microsoft") || currentUrl.includes("copilot.cloud.microsoft");
+    const isLogin = currentUrl.includes("login.microsoftonline.com")
+      || currentUrl.includes("login.live.com")
+      || /^https:\/\/[^/]*\.cloud\.microsoft\/login(?:[/?#]|$)/i.test(currentUrl);
     if (!isM365 || isLogin) {
       throw new Error("Vui lòng đăng nhập vào Microsoft 365 Copilot trước khi chạy kiểm tra!");
     }

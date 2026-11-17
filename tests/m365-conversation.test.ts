@@ -26,6 +26,9 @@ describe("M365 persistent conversation identity", () => {
       `https://m365.cloud.microsoft/chat/conversation/${CONVERSATION_ID}`,
     )).toBe(CONVERSATION_ID);
     expect(parseM365ConversationId(
+      `https://copilot.cloud.microsoft/chat/conversation/${CONVERSATION_ID}`,
+    )).toBe(CONVERSATION_ID);
+    expect(parseM365ConversationId(
       `https://example.com/chat/conversation/${CONVERSATION_ID}`,
     )).toBeUndefined();
     expect(parseM365ConversationId(

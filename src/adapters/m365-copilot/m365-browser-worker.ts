@@ -14,9 +14,12 @@ import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import {
   buildM365ConversationUrl,
+  isM365ChatHomeUrl,
+  isM365LoginUrl,
   M365_CHAT_URL,
   normalizeM365ConversationId,
   parseM365ConversationId,
+  resolveM365Origin,
   waitForM365ConversationId,
 } from "./conversation-url";
 import { M365ClipboardSalvage } from "./m365-clipboard-salvage";
@@ -396,6 +399,49 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     return firstVisible;
   }
 
+  private async gotoM365Url(
+    page: Page,
+    targetUrl: string,
+    isTargetReady: (currentUrl: string) => boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    try {
+      await page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (signal?.aborted || !message.includes("ERR_ABORTED")) {
+        throw error;
+      }
+
+      // Microsoft có thể redirect giữa m365.cloud.microsoft <-> copilot.cloud.microsoft
+      // hoặc điều hướng SPA ngay khi goto vừa khởi tạo.
+      await page
+        .waitForLoadState?.("domcontentloaded", { timeout: 10_000 })
+        .catch(() => {});
+      const currentUrl = page.url();
+      if (isTargetReady(currentUrl)) return;
+      if (isM365LoginUrl(currentUrl)) {
+        throw new Error(
+          "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.",
+        );
+      }
+
+      await page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+    }
+
+    if (isM365LoginUrl(page.url())) {
+      throw new Error(
+        "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.",
+      );
+    }
+  }
+
   /**
    * Xác thực surface và điều hướng theo retained-conversation contract.
    * Mismatch luôn fail-closed để không làm Codex tiếp tục nhầm conversation.
@@ -404,7 +450,8 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     page: Page,
     options: M365BrowserRunOptions,
   ): Promise<void> {
-    const currentConversationId = parseM365ConversationId(page.url());
+    const currentUrl = page.url();
+    const currentConversationId = parseM365ConversationId(currentUrl);
 
     if (options.existingConversationId) {
       if (
@@ -413,16 +460,26 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       ) {
         if (options.launcherReused) {
           throw new Error(
-            `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${page.url()}`,
+            `M365 retained conversation mismatch: expected ${options.existingConversationId}, current URL is ${currentUrl}`,
           );
         }
-        await page.goto(buildM365ConversationUrl(options.existingConversationId), {
-          waitUntil: "domcontentloaded",
-          timeout: 20_000,
-        });
+        const targetId =
+          normalizeM365ConversationId(options.existingConversationId) ??
+          options.existingConversationId.toLowerCase();
+        const targetUrl = buildM365ConversationUrl(
+          options.existingConversationId,
+          resolveM365Origin(currentUrl),
+        );
+        await this.gotoM365Url(
+          page,
+          targetUrl,
+          url => parseM365ConversationId(url) === targetId,
+          options.signal,
+        );
       }
-      const targetId = normalizeM365ConversationId(options.existingConversationId)
-        ?? options.existingConversationId.toLowerCase();
+      const targetId =
+        normalizeM365ConversationId(options.existingConversationId) ??
+        options.existingConversationId.toLowerCase();
       this.retainedConversationIds.set(page, targetId);
       return;
     }
@@ -433,13 +490,20 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       );
     }
 
-    if (page.url() !== M365_CHAT_URL) {
-      await page.goto(M365_CHAT_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 20_000,
-      });
+    if (isM365LoginUrl(currentUrl)) {
+      throw new Error(
+        "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.",
+      );
     }
 
+    if (!isM365ChatHomeUrl(currentUrl)) {
+      await this.gotoM365Url(
+        page,
+        M365_CHAT_URL,
+        isM365ChatHomeUrl,
+        options.signal,
+      );
+    }
   }
 
   /**

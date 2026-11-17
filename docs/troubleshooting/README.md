@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **067** | M365 Copilot redirect sang `copilot.cloud.microsoft` gây lỗi `ERR_FAILED (-2)` và `net::ERR_ABORTED` | `m365-copilot`, `launcher` | ⏳ Chờ User Test & Confirm | [067-m365-copilot-domain-redirect-err-aborted.md](./067-m365-copilot-domain-redirect-err-aborted.md) |
 | **066** | `tests/m365-base-browser-worker.test.ts` fail 1/12 trên Windows do `\r\n` vs `\n` | `ci`, `windows` | ⏳ Chờ User Test & Confirm | [066-windows-ci-crlf-source-assertion.md](./066-windows-ci-crlf-source-assertion.md) |
 | **065** | Job `windows-latest` treo vô hạn tại `tests/base-browser-worker.test.ts` do race `Bun.sleep(2)` | `ci`, `windows` | ✅ Đã Confirm | [065-windows-ci-base-browser-worker-test-hang.md](./065-windows-ci-base-browser-worker-test-hang.md) |
 | **064** | Đảo `Speaker 2:` lên đầu Transcript nhưng dòng mở đầu vẫn đọc giọng `Speaker 1` (Card 0) | `ai-studio`, `speech` | ✅ Đã Confirm | [064-ai-studio-speech-reversed-speaker-order.md](./064-ai-studio-speech-reversed-speaker-order.md) |

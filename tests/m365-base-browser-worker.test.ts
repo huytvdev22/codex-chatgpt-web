@@ -322,4 +322,53 @@ describe("M365 browser worker migration contract", () => {
     expect(scrolledIntoView).toBe(true);
     expect(mouseClickedAt as { x: number; y: number } | null).toEqual({ x: 716, y: 776 });
   });
+
+  test("navigate chấp nhận copilot.cloud.microsoft/chat và chịu lỗi ERR_ABORTED khi redirect sang copilot.cloud.microsoft", async () => {
+    class TestNavigateWorker extends M365BrowserWorker {
+      public async testNavigate(page: any, options: any): Promise<void> {
+        await this.navigate(page, options);
+      }
+    }
+
+    const worker = new TestNavigateWorker();
+    const visited: string[] = [];
+
+    // 1. Đã ở copilot.cloud.microsoft/chat -> không gọi page.goto thừa
+    await worker.testNavigate(
+      {
+        url: () => "https://copilot.cloud.microsoft/chat/?auth=2",
+        goto: async (url: string) => {
+          visited.push(url);
+        },
+      },
+      { prompt: "hi", conversationKey: "k1" },
+    );
+    expect(visited).toEqual([]);
+
+    // 2. goto bị ERR_ABORTED nhưng đã redirect sang copilot.cloud.microsoft/chat -> thành công
+    let currentUrl = "about:blank";
+    await worker.testNavigate(
+      {
+        url: () => currentUrl,
+        goto: async (url: string) => {
+          visited.push(url);
+          currentUrl = "https://copilot.cloud.microsoft/chat";
+          throw new Error("page.goto: net::ERR_ABORTED at https://m365.cloud.microsoft/chat");
+        },
+        waitForLoadState: async () => {},
+      },
+      { prompt: "hi", conversationKey: "k1" },
+    );
+    expect(visited).toEqual(["https://m365.cloud.microsoft/chat"]);
+
+    // 3. Kẹt ở trang đăng nhập -> báo lỗi đăng nhập rõ ràng
+    await expect(
+      worker.testNavigate(
+        {
+          url: () => "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        },
+        { prompt: "hi", conversationKey: "k1" },
+      ),
+    ).rejects.toThrow(/Phiên đăng nhập M365 Copilot/);
+  });
 });

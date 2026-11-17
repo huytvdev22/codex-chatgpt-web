@@ -41,10 +41,14 @@ export {
 export { m365ConversationKey } from "./conversation-key";
 export {
   buildM365ConversationUrl,
+  COPILOT_CONVERSATION_ORIGIN,
+  isM365ChatHomeUrl,
+  isM365LoginUrl,
   M365_CHAT_URL,
   M365_CONVERSATION_ORIGIN,
   normalizeM365ConversationId,
   parseM365ConversationId,
+  resolveM365Origin,
   waitForM365ConversationId,
 } from "./conversation-url";
 

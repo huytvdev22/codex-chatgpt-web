@@ -206,10 +206,12 @@ test("M365BrowserProvider encapsulates Microsoft 365 URL, cookie, and fallback p
   assert.equal(provider.isAuthCookieDomain(null), false);
 
   assert.equal(provider.isAuthOrAppUrl("https://m365.cloud.microsoft/chat"), true);
+  assert.equal(provider.isAuthOrAppUrl("https://copilot.cloud.microsoft/chat"), true);
   assert.equal(provider.isAuthOrAppUrl("https://login.microsoftonline.com/common"), true);
   assert.equal(provider.isAuthOrAppUrl("https://example.com"), false);
 
   assert.equal(provider.allowedAuthUrl("https://tenant.m365.cloud.microsoft/oauth"), true);
+  assert.equal(provider.allowedAuthUrl("https://copilot.cloud.microsoft/chat"), true);
   assert.equal(provider.allowedAuthUrl("https://accounts.google.com/o/oauth2/v2/auth"), true);
   assert.equal(provider.allowedAuthUrl("http://m365.cloud.microsoft/chat"), false);
 
@@ -219,11 +221,22 @@ test("M365BrowserProvider encapsulates Microsoft 365 URL, cookie, and fallback p
   });
   assert.equal(readyProbe.authenticated, true);
 
+  const copilotReadyProbe = await provider.probeAuthentication({
+    executeJavaScript: async () => Promise.reject(new Error("renderer busy")),
+    getURL: () => "https://copilot.cloud.microsoft/chat",
+  });
+  assert.equal(copilotReadyProbe.authenticated, true);
+
   const loginProbe = await provider.probeAuthentication({
     executeJavaScript: async () => Promise.reject(new Error("renderer busy")),
     getURL: () => "https://login.microsoftonline.com/common/login",
   });
   assert.equal(loginProbe.authenticated, false);
+
+  const { allowedM365Navigation } = require("../electron/browser/providers/m365/m365-turn-surface.cjs");
+  assert.equal(allowedM365Navigation("https://copilot.cloud.microsoft/chat"), true);
+  assert.equal(allowedM365Navigation("https://m365.cloud.microsoft/chat"), true);
+  assert.equal(allowedM365Navigation("https://example.com/chat"), false);
 });
 
 test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-provider AI Studio registration", async () => {
