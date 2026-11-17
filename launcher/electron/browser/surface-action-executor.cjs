@@ -1052,6 +1052,33 @@ class SurfaceActionExecutor {
     return { updated: true };
   }
 
+  async ensureAiStudioVoicesDrawerClosed(contents, regionSel, closeBtnSel) {
+    const deadline = Date.now() + 2_000;
+    let closeAttempted = false;
+    while (Date.now() < deadline) {
+      const isOpen = await this.execJs(contents, `((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      })(${JSON.stringify(regionSel)})`).catch(() => false);
+      if (!isOpen) return true;
+      if (!closeAttempted) {
+        closeAttempted = true;
+        const closed = await this.clickLocatedElement(contents, { selector: closeBtnSel, visibleOnly: true }).catch(() => ({ clicked: false }));
+        if (!closed?.clicked) {
+          await this.sendKey(contents, "Escape").catch(() => {});
+        }
+      }
+      await sleep(60);
+    }
+    await this.sendKey(contents, "Escape").catch(() => {});
+    await sleep(100);
+    return false;
+  }
+
   async aiStudioSpeechConfigureSpeakers(_host, _tab, contents, args) {
     const orderedSpeakers = Array.isArray(args.orderedSpeakers) ? args.orderedSpeakers : [];
     const audioProfiles = args.audioProfiles || {};
@@ -1066,25 +1093,47 @@ class SurfaceActionExecutor {
     const voicePersonaSelector = 'textarea[aria-label*="voice persona" i]';
     const closeDrawerSelector = 'button[aria-label="Close panel"]';
 
-    const cardCount = await this.execJs(contents, `document.querySelectorAll(${JSON.stringify(voiceCardSelector)}).length`).catch(() => 0);
+    const readCardSnapshot = async () => {
+      return await this.execJs(contents, `((cardSel, inputSel, tagSel, triggerSel) => {
+        return Array.from(document.querySelectorAll(cardSel)).map((card, idx) => {
+          const inputEl = card.querySelector(inputSel);
+          const tagEl = card.querySelector(tagSel);
+          const triggerEl = card.querySelector(triggerSel);
+          const cardText = (card.innerText || card.textContent || "").trim();
+          const lines = cardText.split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean);
+          let alias = (inputEl?.value || tagEl?.textContent || "").trim();
+          if (!alias) {
+            const matchedAlias = lines.find((line) => /^speaker\\s*\\d+$/i.test(line));
+            if (matchedAlias) alias = matchedAlias;
+          }
+          const voiceEl = card.querySelector(".voice-name, [class*='voice-name' i]");
+          const rawTriggerText = (voiceEl?.textContent || triggerEl?.innerText || triggerEl?.textContent || "").trim();
+          const voiceLines = rawTriggerText.split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean);
+          const currentVoice = (voiceLines[0] || lines[0] || "").trim();
+          return {
+            index: idx,
+            alias,
+            aliasLower: alias.toLowerCase(),
+            hasAliasInput: Boolean(inputEl),
+            currentVoice,
+            currentVoiceLower: currentVoice.toLowerCase(),
+          };
+        });
+      })(${JSON.stringify(voiceCardSelector)}, ${JSON.stringify(aliasInputSelector)}, ${JSON.stringify(aliasTagSelector)}, ${JSON.stringify(cardTriggerSelector)})`);
+    };
+
+    const cardsBefore = await readCardSnapshot();
+    const cardCount = Array.isArray(cardsBefore) ? cardsBefore.length : 0;
     if (cardCount === 0) return { configured: 0 };
 
-    const currentAliases = await this.execJs(contents, `((cardSel, inputSel, tagSel) => {
-      return Array.from(document.querySelectorAll(cardSel)).map((card) => {
-        const inputVal = card.querySelector(inputSel)?.value || "";
-        const tagText = card.querySelector(tagSel)?.textContent || "";
-        return (inputVal || tagText).trim().toLowerCase();
-      });
-    })(${JSON.stringify(voiceCardSelector)}, ${JSON.stringify(aliasInputSelector)}, ${JSON.stringify(aliasTagSelector)})`);
-
-    const setCardAlias = async (cardIndex, aliasValue) => {
+    const setCardAliasOutside = async (cardIndex, aliasValue) => {
       const clicked = await this.clickLocatedElement(contents, {
         selector: aliasInputSelector,
         containerSelector: voiceCardSelector,
         containerNth: cardIndex,
         visibleOnly: true,
       });
-      if (!clicked.clicked) return;
+      if (!clicked.clicked) return false;
       await this.execJs(contents, `((cardSel, idx, inputSel, val) => {
         const card = document.querySelectorAll(cardSel)[idx];
         const el = card?.querySelector(inputSel);
@@ -1098,36 +1147,72 @@ class SurfaceActionExecutor {
         el.blur();
       })(${JSON.stringify(voiceCardSelector)}, ${cardIndex}, ${JSON.stringify(aliasInputSelector)}, ${JSON.stringify(aliasValue)})`);
       await this.sendKey(contents, "Enter");
+      await sleep(80);
+      return true;
     };
 
-    const pairCount = Math.min(cardCount, orderedSpeakers.length);
-    for (let i = 0; i < pairCount; i += 1) {
-      const speakerConfig = orderedSpeakers[i];
+    // Bước 1: Đồng bộ alias nếu card hỗ trợ đổi tên ngoài card; nếu alias read-only (khóa Speaker 1 / Speaker 2),
+    // map từng speaker về đúng card đang giữ tên tương ứng thay vì ghi ngược giọng sang card của speaker kia.
+    const currentAliases = cardsBefore.map((c) => c.aliasLower);
+    const hasEditableAliasOutside = cardsBefore.some((c) => c.hasAliasInput);
+    const cardAssignments = [];
+
+    if (hasEditableAliasOutside) {
+      const pairCount = Math.min(cardCount, orderedSpeakers.length);
+      for (let i = 0; i < pairCount; i += 1) {
+        const speakerConfig = orderedSpeakers[i];
+        const targetName = String(speakerConfig.speaker || "").trim();
+        const targetLower = targetName.toLowerCase();
+        if (currentAliases[i] !== targetLower) {
+          for (let j = i + 1; j < cardCount; j += 1) {
+            if (currentAliases[j] === targetLower) {
+              const tmpAlias = `__speaker_tmp_${j}__`;
+              await setCardAliasOutside(j, tmpAlias);
+              currentAliases[j] = tmpAlias;
+            }
+          }
+          await setCardAliasOutside(i, targetName);
+          currentAliases[i] = targetLower;
+        }
+        cardAssignments.push({ cardIndex: i, speakerConfig });
+      }
+    } else {
+      const usedCardIndices = new Set();
+      for (const speakerConfig of orderedSpeakers) {
+        const targetLower = String(speakerConfig.speaker || "").trim().toLowerCase();
+        let matchedIdx = cardsBefore.findIndex(
+          (c, idx) => !usedCardIndices.has(idx) && c.aliasLower === targetLower,
+        );
+        if (matchedIdx < 0) {
+          matchedIdx = cardsBefore.findIndex((_c, idx) => !usedCardIndices.has(idx));
+        }
+        if (matchedIdx >= 0) {
+          usedCardIndices.add(matchedIdx);
+          cardAssignments.push({ cardIndex: matchedIdx, speakerConfig });
+        }
+      }
+    }
+
+    // Bước 2: Đóng drawer nếu đang mở từ lượt trước để tránh click trượt khi reuse tab
+    await this.ensureAiStudioVoicesDrawerClosed(contents, availableVoicesSelector, closeDrawerSelector);
+
+    for (const { cardIndex, speakerConfig } of cardAssignments) {
       const targetName = String(speakerConfig.speaker || "").trim();
       const targetLower = targetName.toLowerCase();
-
-      if (currentAliases[i] !== targetLower) {
-        for (let j = i + 1; j < cardCount; j += 1) {
-          if (currentAliases[j] === targetLower) {
-            const tmpAlias = `__speaker_tmp_${j}__`;
-            await setCardAlias(j, tmpAlias);
-            currentAliases[j] = tmpAlias;
-          }
-        }
-        await setCardAlias(i, targetName);
-        currentAliases[i] = targetLower;
-      }
+      const targetVoice = String(speakerConfig.voiceName || "").trim();
+      const targetVoiceLower = targetVoice.toLowerCase();
 
       const triggerClick = await this.clickLocatedElement(contents, {
         selector: cardTriggerSelector,
         containerSelector: voiceCardSelector,
-        containerNth: i,
+        containerNth: cardIndex,
         visibleOnly: true,
       });
       if (!triggerClick.clicked) {
-        throw new Error(`Could not open voice drawer for speaker card ${i}`);
+        throw new Error(`Could not open voice drawer for speaker card ${cardIndex}`);
       }
       await this.waitForSelector(null, null, contents, { selector: availableVoicesSelector, timeoutMs: 5_000 });
+      await sleep(180);
 
       const profileText = audioProfiles[targetLower];
       if (profileText !== undefined || args.resetOptionalProfiles === true) {
@@ -1162,41 +1247,124 @@ class SurfaceActionExecutor {
         }
       }
 
-      const targetVoiceLower = String(speakerConfig.voiceName || "").trim().toLowerCase();
-      const voiceBtnMatch = await this.execJs(contents, `((regionSel, targetVoice) => {
-        const region = document.querySelector(regionSel);
-        if (!region) return { found: false };
-        const btns = Array.from(region.querySelectorAll("button.voice-card-content, button[aria-label]:not(.play-icon)"));
-        for (const btn of btns) {
-          const ariaLabel = (btn.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim();
-          const spanName = (btn.querySelector(".voice-name")?.textContent || "").replace(/\\s+/g, " ").trim();
-          const fallbackText = (btn.textContent || "").replace(/\\s+/g, " ").trim();
-          const rawLabel = ariaLabel || spanName || fallbackText;
-          const normalized = rawLabel.replace(/\\s*\\(Current\\)\\s*$/i, "").trim().toLowerCase();
-          if (normalized === targetVoice) {
-            const alreadyCurrent = /\\(Current\\)$/i.test(ariaLabel || fallbackText);
-            if (alreadyCurrent) return { found: true, alreadyCurrent: true };
-            btn.scrollIntoView?.({ block: "center", inline: "center" });
-            const rect = btn.getBoundingClientRect();
-            return { found: true, alreadyCurrent: false, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const findVoiceBtnScript = `
+        const findVoiceBtn = (region, voiceNeedle) => {
+          const btns = Array.from(region.querySelectorAll("button.voice-card-content, button[aria-label]:not(.play-icon)"));
+          const extractNames = (btn) => {
+            const ariaLabel = (btn.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim();
+            const spanName = (btn.querySelector(".voice-name")?.textContent || "").replace(/\\s+/g, " ").trim();
+            const rawText = (btn.innerText || btn.textContent || "").trim();
+            const firstLine = (rawText.split(/\\r?\\n/)[0] || "").replace(/\\s+/g, " ").trim();
+            const ariaHead = (ariaLabel.split(/\\(|,/)[0] || "").trim();
+            return {
+              ariaLabel,
+              rawText,
+              candidates: [
+                spanName.replace(/\\s*\\(Current\\)\\s*$/i, "").trim().toLowerCase(),
+                ariaLabel.replace(/\\s*\\(Current\\)\\s*$/i, "").trim().toLowerCase(),
+                firstLine.replace(/\\s*\\(Current\\)\\s*$/i, "").trim().toLowerCase(),
+                ariaHead.toLowerCase(),
+              ].filter(Boolean),
+            };
+          };
+          for (const btn of btns) {
+            const info = extractNames(btn);
+            if (info.candidates.includes(voiceNeedle)) {
+              const isCurrent = /\\(Current\\)/i.test(info.ariaLabel || info.rawText)
+                || btn.classList.contains("selected")
+                || btn.getAttribute("aria-pressed") === "true"
+                || btn.getAttribute("aria-selected") === "true";
+              return { btn, isCurrent };
+            }
           }
+          return null;
+        };
+      `;
+
+      // Chọn đúng giọng với bước scrollIntoView -> chờ cuộn ổn định -> đọc rect -> click -> verify lại
+      let voiceVerified = false;
+      let lastObservedVoice = "";
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const scrollRes = await this.execJs(contents, `((regionSel, voiceNeedle) => {
+          ${findVoiceBtnScript}
+          const region = document.querySelector(regionSel);
+          if (!region) return { found: false };
+          const found = findVoiceBtn(region, voiceNeedle);
+          if (!found) return { found: false };
+          if (found.isCurrent) return { found: true, alreadyCurrent: true };
+          found.btn.scrollIntoView?.({ block: "center", inline: "nearest" });
+          return { found: true, alreadyCurrent: false };
+        })(${JSON.stringify(availableVoicesSelector)}, ${JSON.stringify(targetVoiceLower)})`);
+
+        if (!scrollRes?.found) {
+          throw new Error(`Could not find voice '${targetVoice}' in AI Studio Available voices`);
         }
-        return { found: false };
-      })(${JSON.stringify(availableVoicesSelector)}, ${JSON.stringify(targetVoiceLower)})`);
+        if (scrollRes.alreadyCurrent) {
+          voiceVerified = true;
+          break;
+        }
 
-      if (!voiceBtnMatch.found) {
-        throw new Error(`Could not find voice '${speakerConfig.voiceName}' in AI Studio Available voices`);
-      }
-      if (!voiceBtnMatch.alreadyCurrent) {
-        await this.sendTrustedClick(contents, voiceBtnMatch.x, voiceBtnMatch.y);
-        await sleep(200);
+        // Chờ smooth scroll & layout của drawer Available voices ổn định trước khi đọc tọa độ click
+        await sleep(180 + attempt * 80);
+
+        const coordsRes = await this.execJs(contents, `((regionSel, voiceNeedle) => {
+          ${findVoiceBtnScript}
+          const region = document.querySelector(regionSel);
+          if (!region) return { found: false };
+          const found = findVoiceBtn(region, voiceNeedle);
+          if (!found) return { found: false };
+          const rect = found.btn.getBoundingClientRect();
+          const playEl = found.btn.querySelector(".play-icon, button");
+          const playRect = playEl ? playEl.getBoundingClientRect() : null;
+          let x = rect.left + rect.width * 0.6;
+          if (playRect && x >= playRect.left - 4 && x <= playRect.right + 4) {
+            x = Math.min(rect.right - 8, playRect.right + 12);
+          }
+          const y = rect.top + rect.height / 2;
+          const vw = Math.max(1, window.innerWidth || 800);
+          const vh = Math.max(1, window.innerHeight || 600);
+          return {
+            found: rect.width > 0 && rect.height > 0,
+            x: Math.min(vw - 2, Math.max(2, x)),
+            y: Math.min(vh - 2, Math.max(2, y)),
+          };
+        })(${JSON.stringify(availableVoicesSelector)}, ${JSON.stringify(targetVoiceLower)})`);
+
+        if (coordsRes?.found) {
+          await this.sendTrustedClick(contents, coordsRes.x, coordsRes.y);
+          await sleep(240);
+        }
+
+        const verifyRes = await this.execJs(contents, `((regionSel, cardSel, cIdx, voiceNeedle) => {
+          ${findVoiceBtnScript}
+          const region = document.querySelector(regionSel);
+          const found = region ? findVoiceBtn(region, voiceNeedle) : null;
+          const card = document.querySelectorAll(cardSel)[cIdx];
+          const cardText = (card?.innerText || card?.textContent || "").trim();
+          const cardLines = cardText.split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean);
+          const cardVoice = (card?.querySelector(".voice-name, [class*='voice-name' i]")?.textContent || cardLines[0] || "").trim();
+          const cardMatched = cardVoice.toLowerCase() === voiceNeedle
+            || cardLines.some((line) => line.toLowerCase() === voiceNeedle);
+          return { verified: Boolean(found?.isCurrent) || cardMatched, cardVoice };
+        })(${JSON.stringify(availableVoicesSelector)}, ${JSON.stringify(voiceCardSelector)}, ${cardIndex}, ${JSON.stringify(targetVoiceLower)})`);
+
+        lastObservedVoice = verifyRes?.cardVoice || "";
+        if (verifyRes?.verified) {
+          voiceVerified = true;
+          break;
+        }
       }
 
-      await this.clickLocatedElement(contents, { selector: closeDrawerSelector, visibleOnly: true }).catch(() => {});
-      await sleep(150);
+      await this.ensureAiStudioVoicesDrawerClosed(contents, availableVoicesSelector, closeDrawerSelector);
+
+      if (!voiceVerified) {
+        throw new Error(
+          `Failed to apply voice '${targetVoice}' for '${targetName}' on card #${cardIndex} (observed: '${lastObservedVoice || "unknown"}')`,
+        );
+      }
     }
 
-    return { configured: pairCount };
+    return { configured: cardAssignments.length };
   }
 
   async aiStudioSpeechCaptureState(_host, _tab, contents, args) {

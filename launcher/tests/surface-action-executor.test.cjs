@@ -179,3 +179,111 @@ test("SurfaceActionExecutor aiStudioWaitForBotGuardReady settles immediately onc
   assert.equal(cappedRes.waaReady, false);
   assert.ok(cappedRes.elapsedMs >= 100);
 });
+
+test("SurfaceActionExecutor aiStudioSpeechConfigureSpeakers maps fixed card aliases without swapping voices and retries failed click", async () => {
+  const executor = new SurfaceActionExecutor();
+  const cards = [
+    { alias: "Speaker 1", voice: "Puck" },
+    { alias: "Speaker 2", voice: "Zephyr" },
+  ];
+  let openedCardIdx = -1;
+  let drawerOpen = false;
+  let aoedeClickAttempts = 0;
+
+  const contents = {
+    isDestroyed: () => false,
+    focus: () => {},
+    getZoomFactor: () => 1,
+    sendInputEvent: (ev) => {
+      if (ev.type !== "mouseUp") return;
+      if (ev.x === 10 && ev.y === 10) {
+        openedCardIdx = 0;
+        drawerOpen = true;
+      } else if (ev.x === 20 && ev.y === 20) {
+        openedCardIdx = 1;
+        drawerOpen = true;
+      } else if (ev.x === 300 && ev.y === 300 && openedCardIdx >= 0) {
+        // Click vào Charon thành công ngay
+        cards[openedCardIdx].voice = "Charon";
+      } else if (ev.x === 400 && ev.y === 400 && openedCardIdx >= 0) {
+        aoedeClickAttempts += 1;
+        // Lần đầu trượt thành Autonoe, lần 2 mới chọn đúng Aoede
+        cards[openedCardIdx].voice = aoedeClickAttempts === 1 ? "Autonoe" : "Aoede";
+      } else if (ev.x === 999 && ev.y === 10) {
+        drawerOpen = false;
+      }
+    },
+    executeJavaScript: async (expr) => {
+      // readCardSnapshot
+      if (expr.includes("currentVoiceLower") && expr.includes("hasAliasInput")) {
+        return cards.map((c, idx) => ({
+          index: idx,
+          alias: c.alias,
+          aliasLower: c.alias.toLowerCase(),
+          hasAliasInput: false,
+          currentVoice: c.voice,
+          currentVoiceLower: c.voice.toLowerCase(),
+        }));
+      }
+      // ensureAiStudioVoicesDrawerClosed check
+      if (expr.includes("const el = document.querySelector(sel)") && expr.includes("rect.width > 0 && rect.height > 0")) {
+        return drawerOpen;
+      }
+      // queryElementCenter for trigger / close panel
+      if (expr.includes("querySelectorAll(opts.selector)")) {
+        if (expr.includes("active-voice-card-trigger")) {
+          const idx = expr.includes('"containerNth":0') ? 0 : 1;
+          return { found: true, x: idx === 0 ? 10 : 20, y: idx === 0 ? 10 : 20, disabled: false, text: cards[idx].voice };
+        }
+        if (expr.includes("Close panel")) {
+          return drawerOpen ? { found: true, x: 999, y: 10, disabled: false, text: "Close" } : { found: false };
+        }
+        if (expr.includes("voice persona")) {
+          return { found: false };
+        }
+        return { found: false };
+      }
+      // waitForSelector availableVoices
+      if (expr.includes("document.querySelectorAll(sel)") && expr.includes("Available voices")) {
+        return drawerOpen;
+      }
+      // scrollRes
+      if (expr.includes("alreadyCurrent") && expr.includes("findVoiceBtn")) {
+        const needle = expr.includes('"aoede"') ? "aoede" : "charon";
+        const cur = (cards[openedCardIdx]?.voice || "").toLowerCase();
+        return { found: true, alreadyCurrent: cur === needle };
+      }
+      // coordsRes
+      if (expr.includes("playRect") && expr.includes("findVoiceBtn")) {
+        const isAoede = expr.includes('"aoede"');
+        return { found: true, x: isAoede ? 400 : 300, y: isAoede ? 400 : 300 };
+      }
+      // verifyRes
+      if (expr.includes("cardMatched") && expr.includes("findVoiceBtn")) {
+        const needle = expr.includes('"aoede"') ? "aoede" : "charon";
+        const cur = cards[openedCardIdx]?.voice || "";
+        return { verified: cur.toLowerCase() === needle, cardVoice: cur };
+      }
+      return null;
+    },
+  };
+
+  const result = await executor.execute(createFakeHost(contents), {
+    traceId: "trace_exec_01",
+    helperPid: process.pid,
+    action: "aiStudioSpeechConfigureSpeakers",
+    args: {
+      orderedSpeakers: [
+        { speaker: "Speaker 2", voiceName: "Aoede" },
+        { speaker: "Speaker 1", voiceName: "Charon" },
+      ],
+    },
+  });
+
+  assert.equal(result.configured, 2);
+  assert.equal(aoedeClickAttempts, 2, "Phải tự retry click khi lần đầu trượt sang Autonoe");
+  assert.deepEqual(cards, [
+    { alias: "Speaker 1", voice: "Charon" },
+    { alias: "Speaker 2", voice: "Aoede" },
+  ]);
+});
