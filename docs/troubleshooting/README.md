@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **074** | Gỡ bỏ `Bigger Context` và `New browser chat for each turn` khỏi giao diện Settings | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [074-remove-settings-bigger-context-and-fresh-chat-ui.md](./074-remove-settings-bigger-context-and-fresh-chat-ui.md) |
 | **073** | Gỡ bỏ mục chỉnh sửa `Plugin name` khỏi giao diện Settings Launcher | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [073-remove-settings-plugin-name-ui.md](./073-remove-settings-plugin-name-ui.md) |
 | **072** | Gỡ bỏ popup gợi ý `Bigger Context (experimental)` khi khởi động Launcher | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [072-remove-bigger-context-startup-popup.md](./072-remove-bigger-context-startup-popup.md) |
 | **071** | Chuyển toàn bộ `AiStudioAdapter` sang `electron-control` (bỏ Playwright CDP) xử lý triệt để `403` | `ai-studio`, `speech`, `web`, `launcher` | ⏳ Chờ User Test & Confirm | [071-ai-studio-electron-control-no-cdp.md](./071-ai-studio-electron-control-no-cdp.md) |

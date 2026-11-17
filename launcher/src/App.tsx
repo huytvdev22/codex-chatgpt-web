@@ -1008,33 +1008,11 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const setBiggerContext = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setBiggerContext(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
   const setSkillAttachments = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
     try {
       updateState(await api!.setSkillAttachments(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setFreshConversationPerTurn = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setFreshConversationPerTurn(enabled));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -1096,28 +1074,11 @@ function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
-        <SettingRow
-          body={copy.biggerContextBody}
-          label={copy.biggerContext}
-        >
-          <Switch
-            checked={snapshot.state.experimentalBiggerContext}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
-            onChange={(checked) => void setBiggerContext(checked)}
-          />
-        </SettingRow>
         <SettingRow body={copy.skillAttachmentsBody} label={copy.skillAttachments}>
           <Switch
             checked={snapshot.state.experimentalSkillAttachments}
             disabled={busy || !snapshot.state.coreSetupComplete}
             onChange={(checked) => void setSkillAttachments(checked)}
-          />
-        </SettingRow>
-        <SettingRow body={copy.freshConversationBody} label={copy.freshConversation}>
-          <Switch
-            checked={snapshot.state.experimentalFreshConversationPerTurn}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
-            onChange={(checked) => void setFreshConversationPerTurn(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

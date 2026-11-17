@@ -242,8 +242,6 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(electronMain, /onboardingComplete:\s*true,[\s\S]*?autoStart:\s*false/);
   assert.match(appSource, /snapshot\.profile === "development"/);
   assert.match(appSource, /data-profile=\{snapshot\.profile\}/);
-  assert.match(appSource, /copy\.biggerContextBody/);
-  assert.match(appSource, /api!\.setBiggerContext\(enabled\)/);
   assert.match(ipcRouterSource, /getRuntimeHost\(\)\.setBiggerContext\(enabled === true\)/);
   assert.doesNotMatch(ipcRouterSource, /isDevProfile && key === "experimentalBiggerContext"/);
 });
@@ -267,12 +265,11 @@ test("browser toolbar opens detached DevTools for the active embedded surface", 
   );
 });
 
-test("Bigger Context startup recommendation popup is removed while preserving the Settings switch", () => {
+test("Bigger Context startup popup and Settings switch are both removed from renderer", () => {
   assert.doesNotMatch(appSource, /BiggerContextRecommendation/);
   assert.doesNotMatch(appSource, /biggerContextRecommendationOpen/);
   assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation/);
-  assert.match(appSource, /copy\.biggerContextBody/);
-  assert.match(appSource, /onChange=\{\(checked\) => void setBiggerContext\(checked\)\}/);
+  assert.doesNotMatch(appSource, /biggerContext|setBiggerContext/);
 });
 
 test("failed doctor reports retain every failed check", () => {
@@ -483,57 +480,9 @@ test("fresh-conversation snapshot uses runtime configuration", async () => {
   assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, false);
 });
 
-test("fresh-conversation control is translated and invokes the async setting", async () => {
-  const ts = require("typescript");
-  const vm = require("node:vm");
+test("fresh-conversation setting row is removed from SettingsSurface", () => {
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
-  const transpile = (source, fileName) => ts.transpileModule(source, {
-    fileName, compilerOptions: {
-      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-      jsx: ts.JsxEmit.React, jsxFactory: "element"
-    },
-  }).outputText;
-  const translated = { exports: {} };
-  vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
-  let render, invocation, saved;
-  const sandbox = {
-    element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: value => [value, () => { }],
-    useEffect() { },
-    api: { setFreshConversationPerTurn: async enabled => { invocation = enabled; return { experimentalFreshConversationPerTurn: enabled }; } },
-    messageOf: String, platformLabel: String,
-  };
-  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
-  vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", Object.assign(sandbox, { render }));
-  render = sandbox.render;
-  const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
-    ? [tree, ...visit(tree.children ?? [])] : [];
-  for (const language of Object.keys(require("../electron/languages.json"))) {
-    const copy = translated.exports.copyFor(language);
-    for (const key of ["freshConversation", "freshConversationBody"]) {
-      assert.equal(typeof copy[key], "string");
-      assert.ok(copy[key].length > 10);
-    }
-    for (const [configured, enabled] of [[true, false], [false, false]]) {
-      const tree = render({
-        copy, devProfile: false, language, openSetup() { }, setError() { },
-        snapshot: { connectorName: "Codex Native2", state: { coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled } },
-        updateState: value => { saved = value; },
-      });
-      const row = visit(tree).find(node => node.type === "SettingRow" && node.props.label === copy.freshConversation);
-      assert.ok(row);
-      assert.equal(row.props.body, copy.freshConversationBody);
-      const control = visit(row).find(node => node.type === "Switch");
-      assert.equal(control.props.checked, enabled);
-      assert.equal(control.props.disabled, !configured);
-      if (!control.props.disabled) {
-        control.props.onChange(true);
-        await new Promise(resolve => setImmediate(resolve));
-        assert.equal(invocation, true);
-        assert.equal(saved.experimentalFreshConversationPerTurn, true);
-      }
-    }
-  }
+  assert.doesNotMatch(settings, /freshConversation|setFreshConversationPerTurn|experimentalFreshConversationPerTurn/);
 });
 
 test("plugin rename rejects active browser work and emits updated connector name", async () => {
