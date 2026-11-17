@@ -26,7 +26,8 @@ export async function ensureAiStudioThinkingLevel(
   if (!visible) return;
 
   const currentText = ((await select.innerText().catch(() => "")) || "").trim().toLowerCase();
-  if (currentText === targetLevel.toLowerCase()) return;
+  const currentFirstLine = currentText.split(/\r?\n/)[0]?.trim() || "";
+  if (currentText === targetLevel.toLowerCase() || currentFirstLine === targetLevel.toLowerCase()) return;
 
   await select.click({ timeout: 3_000 });
   const options = page.locator(SELECT_OPTION_SELECTOR);

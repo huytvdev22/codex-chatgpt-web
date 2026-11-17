@@ -135,10 +135,16 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const targetNewChatUrl = buildAiStudioNewChatUrl(modelName);
     const currentUrl = page.url();
     const isOnNewChatUrl = currentUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
+    if (isOnNewChatUrl) {
+      // Đợi composer hiện trước khi kiểm tra trạng thái trang mới để tránh reload thừa khi Playwright CDP đang gắn.
+      await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 }).catch(() => {});
+    }
     const isCleanBlankNewChat = isOnNewChatUrl
       ? await page.evaluate((targetModel) => {
           const turns = document.querySelectorAll(".chat-session-content ms-chat-turn, .chat-session-content .chat-turn-container");
           if (turns.length > 0) return false;
+          const urlModel = new URLSearchParams(location.search).get("model") || "";
+          if (urlModel.toLowerCase() === targetModel.toLowerCase()) return true;
           const panelText = (document.querySelector(".run-settings-panel, ms-run-settings")?.textContent || "").toLowerCase();
           return panelText.includes(targetModel.toLowerCase());
         }, modelName).catch(() => false)
@@ -203,12 +209,14 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         const el = document.querySelector<HTMLTextAreaElement>(selector);
         if (!el) return;
         el.focus();
-        el.value = value;
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+        if (setter) setter.call(el, value);
+        else el.value = value;
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
       }, { selector: AI_STUDIO_DOM_SELECTORS.composer, value: promptText });
     }
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(250);
   }
 
   protected override async submitPrompt(
@@ -362,14 +370,17 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     const conversationId =
       parseAiStudioConversationId(page.url()) ||
-      (await waitForAiStudioConversationId(page, 12_000)) ||
+      (await waitForAiStudioConversationId(page, 6_000)) ||
       this.retainedConversationIds.get(page) ||
       options.existingConversationId;
 
     if (!conversationId) {
-      throw new Error(
-        "AI Studio did not expose a persistent /prompts/{id} URL after completing the turn",
+      // Khi GenerateTitle/CreatePrompt bị 403, AI Studio giữ URL tại /prompts/new_chat dù câu trả lời đã hoàn tất;
+      // không ném lỗi để tránh vứt bỏ kết quả đã generate thành công.
+      console.warn(
+        "[ai-studio-worker] AI Studio did not expose a persistent /prompts/{id} URL after completing the turn; keeping generated output without retaining conversation.",
       );
+      return undefined;
     }
 
     return conversationId;

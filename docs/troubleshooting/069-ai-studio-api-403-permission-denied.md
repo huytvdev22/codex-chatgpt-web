@@ -1,0 +1,24 @@
+# Lỗi 069: Smoke Test AI Studio vẫn OK nhưng gọi qua API (`/v1/responses`, `/v2/responses`) hay lỗi `permission denied`
+
+> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Providers:** `ai-studio`, `web`, `playwright`, `launcher`  
+> **Keywords:** `GenerateContent`, `GenerateTitle`, `403`, `permission denied`, `BotGuard`, `WAA`, `connectOverCDP`, `Runtime.enable`, `hiddenTurnBounds`, `AiStudioBrowserWorker`
+
+## ⚡ TL;DR
+1. **Triệu chứng:** Smoke test trên giao diện Launcher (`AiStudioSmokeTester`) vẫn pass đều, nhưng gọi API `/v1/responses` hoặc `/v2/responses` (ví dụ từ `1.dailypodcast-studio`) rất hay gặp `[AI Studio Web Error] error Failed to generate content: permission denied. Please try again. close` (`HTTP 403 [7, "The caller does not have permission"]`), hoặc mất kết quả sau khi sinh xong với lỗi `AI Studio did not expose a persistent /prompts/{id} URL`.
+2. **Nguyên nhân gốc rễ:** Header auth (`SAPISIDHASH`, `X-Goog-Api-Key`, `Waa/Create`, `GenerateAccessToken`) giống hệt nhau, khác biệt nằm ở **chữ ký BotGuard/WAA (`!...`)** và **`AiStudioBrowserWorker`**: (a) gắn Playwright `chromium.connectOverCDP` (bật `Runtime.enable` + `__playwright__binding__`) khiến `page.goto` reload ở `navigate()` hoặc chạy song song bị Google BotGuard đánh dấu `403` (100% khi CDP gắn trước lúc tải trang); (b) chạy trên tab ngầm/ngoài viewport (`hiddenTurnBounds()` + `enableDeviceEmulation`, `hasFocus()=false`) và `composer.fill()` tức thì khác hoàn toàn Smoke Test (`view.webContents.executeJavaScript`, visible + focused, không CDP); (c) `GenerateTitle` bị `403` khiến không có `/prompts/{id}` và `resolveConversationId` ném lỗi vứt luôn phản hồi `GenerateContent` `200`.
+3. **Cách sửa (Phương án A):** Trong [ai-studio-browser-worker.ts](../../src/adapters/ai-studio/ai-studio-browser-worker.ts) đợi `composer` trước khi kiểm tra `isCleanBlankNewChat` (tránh `page.goto` reload thừa khi CDP đang gắn), **giữ nguyên** `composer.click()`/`composer.fill()`/`runBtn.click()` tạo sự kiện chuột `isTrusted: true` của Playwright (thực nghiệm thay bằng DOM `btn.click()` `isTrusted: false` làm BotGuard chặn 3/3), và cho `resolveConversationId` + `resolveEndTurnBinding` ở [index.ts](../../src/adapters/ai-studio/index.ts) giữ nguyên kết quả đã sinh nếu thiếu `/prompts/{id}`; đồng thời thêm retry `502` + fallback phiên mới bên `1.dailypodcast-studio`. *(Ghi chú hướng căn cơ B nếu vẫn cần ổn định tuyệt đối: bỏ Playwright `connectOverCDP` cho `ai-studio` và điều khiển trực tiếp qua Electron `webContents.executeJavaScript` + `focus()` như Smoke Test).*
+
+## Bằng chứng đo đạc (2026-11-17)
+- **Playwright `connectOverCDP` gắn sẵn khi tải trang (`diag1..4`):** `MakerSuiteService/GenerateContent` trả `HTTP 403 [7, "The caller does not have permission"]` **5/5 lần (100%)** (kể cả không gắn listener nào).
+- **Tab ẩn (`setVisible(false)` + `backgroundThrottling: true`, không Playwright `Runtime.enable`):** `GenerateContent` bị `403` **3/3 lần (100%)**.
+- **Đổi sang DOM setter + `btn.click()` (`isTrusted: false`) trên turn tab:** `GenerateContent` bị `403` **3/3 lần (100%)**.
+- **Sau khi sửa Phương án A (tránh `page.goto` thừa + giữ trusted Playwright click + giữ output khi thiếu `/prompts/{id}`):** Test live 3 lượt liên tiếp -> **2/3 thành công** (trong đó 1 lượt thiếu `/prompts/{id}` vẫn trả đủ 818 ký tự thay vì fail), 1/3 lỗi `403` được tầng retry `502` ở `1.dailypodcast-studio` xử lý tiếp.
+- **Smoke Test (`AiStudioSmokeTester`):** Chạy `webContents.executeJavaScript` trên Primary View (`show()` + `focus()`, không Playwright CDP) → pass **100%** ngay xen giữa các lượt API bị `403`.
+
+## Thay đổi
+- [src/adapters/ai-studio/ai-studio-browser-worker.ts](../../src/adapters/ai-studio/ai-studio-browser-worker.ts): Chờ `composer` trước `isCleanBlankNewChat` (fallback khớp `?model=`) để không `page.goto` thừa; giữ trusted click/fill + fallback DOM setter; rút `waitForAiStudioConversationId` còn `6_000ms` và trả `undefined` thay vì ném lỗi khi thiếu `/prompts/{id}`.
+- [src/adapters/ai-studio/capability-picker.ts](../../src/adapters/ai-studio/capability-picker.ts): So khớp thêm dòng đầu `innerText` của `mat-select` để tránh mở dropdown thừa khi đã đúng Thinking Level.
+- [src/adapters/ai-studio/index.ts](../../src/adapters/ai-studio/index.ts): `resolveEndTurnBinding` trả `{ connectorBound: false, retain: false }` khi chưa có `activeConversationId` để giải phóng tab sạch sẽ mà vẫn giữ `output_text`.
+- [tests/ai-studio-adapter.test.ts](../../tests/ai-studio-adapter.test.ts): Bổ sung test `resolveEndTurnBinding` cho trường hợp có/không có `activeConversationId`.
+- `/Users/huytv/IdeaProjects/1.dailypodcast-studio/electron/web-gateway-service.cjs` & `workflow-scenario-runner.cjs`: Tự retry `502`/`503` tối đa 2 lần trong `runV2Response`, và ở bước 1 nếu `conversationKey` lưu của project bị `502` (`GATEWAY_ADAPTER_ERROR`) thì xóa phiên cũ để mở phiên mới.

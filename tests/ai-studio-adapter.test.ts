@@ -222,4 +222,48 @@ describe("Google AI Studio Web Adapter", () => {
       source: "clipboard",
     });
   });
+
+  test("AiStudioAdapter resolveEndTurnBinding không retain tab nếu không có conversationId sau khi hoàn tất", () => {
+    const adapter = new AiStudioAdapter();
+    const resolveEndTurnBinding = (
+      adapter as unknown as {
+        definition: {
+          conversation: {
+            resolveEndTurnBinding?: (ctx: {
+              finalStatus: "completed" | "failed" | "aborted";
+              activeConversationId?: string;
+              hasPriorAssistantReply?: boolean;
+              hasToolResults?: boolean;
+            }) => { connectorBound: boolean; conversationId?: string; retain?: boolean };
+          };
+        };
+      }
+    ).definition.conversation.resolveEndTurnBinding;
+    expect(resolveEndTurnBinding).toBeDefined();
+
+    expect(
+      resolveEndTurnBinding!({
+        finalStatus: "completed",
+        activeConversationId: undefined,
+        hasPriorAssistantReply: false,
+        hasToolResults: false,
+      }),
+    ).toEqual({
+      connectorBound: false,
+      retain: false,
+    });
+
+    expect(
+      resolveEndTurnBinding!({
+        finalStatus: "completed",
+        activeConversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
+        hasPriorAssistantReply: false,
+        hasToolResults: false,
+      }),
+    ).toEqual({
+      connectorBound: true,
+      conversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
+      retain: true,
+    });
+  });
 });

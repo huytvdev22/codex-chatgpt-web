@@ -134,9 +134,14 @@ export class AiStudioAdapter extends WebProviderAdapter {
               retain: false,
             };
           }
+          if (!activeConversationId) {
+            return {
+              connectorBound: false,
+              retain: false,
+            };
+          }
           return {
-            connectorBound:
-              finalStatus === "completed" && Boolean(activeConversationId),
+            connectorBound: finalStatus === "completed",
             conversationId: activeConversationId,
             retain: true,
           };
