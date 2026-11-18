@@ -9,6 +9,12 @@ import {
   type AiStudioSpeechRunOptions,
 } from "../ai-studio/ai-studio-speech-worker";
 import { isAiStudioGenerationRequest } from "./ai-studio-pw-browser-worker";
+import {
+  clickResilient,
+  fillFieldNatural,
+  humanPause,
+  waitForBotGuardReady,
+} from "./ai-studio-pw-human-timing";
 
 const SPEECH_SELECTORS = {
   presetCoHost:
@@ -64,58 +70,6 @@ export class AiStudioPlaywrightSpeechWorker {
     }
   }
 
-  private async humanPause(page: Page, minMs: number, maxMs: number): Promise<void> {
-    const low = Math.max(0, Math.round(minMs));
-    const high = Math.max(low, Math.round(maxMs));
-    const duration = low === high ? low : low + Math.floor(Math.random() * (high - low + 1));
-    await page.waitForTimeout(duration);
-  }
-
-  private async clickResilient(locator: Locator, timeoutMs = 3_000): Promise<void> {
-    const page = locator.page();
-    await locator.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
-    await locator.hover({ timeout: 1_000 }).catch(() => {});
-    await this.humanPause(page, 140, 280);
-    try {
-      await locator.click({ timeout: timeoutMs });
-    } catch (firstError) {
-      try {
-        await locator.click({ force: true, timeout: Math.min(timeoutMs, 1_500) });
-      } catch {
-        const clicked = await locator
-          .evaluate((el) => {
-            const node = el as HTMLElement;
-            node.scrollIntoView?.({ block: "center", inline: "center" });
-            node.click();
-            return true;
-          })
-          .catch(() => false);
-        if (!clicked) throw firstError;
-      }
-    }
-  }
-
-  private async fillFieldNatural(
-    page: Page,
-    selector: string,
-    value: string,
-    optional = false,
-  ): Promise<void> {
-    const loc = page.locator(selector).first();
-    const visible = await loc.isVisible().catch(() => false);
-    if (!visible) {
-      if (optional) return;
-      throw new Error(`Speech input not found: ${selector}`);
-    }
-    await loc.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
-    await loc.hover({ timeout: 1_000 }).catch(() => {});
-    await this.humanPause(page, 160, 300);
-    await loc.click({ timeout: 2_000 }).catch(() => {});
-    await this.humanPause(page, 260, 460);
-    await loc.fill(value);
-    await this.humanPause(page, 380, 650);
-  }
-
   public async executeSpeech(
     page: Page,
     options: AiStudioSpeechRunOptions,
@@ -151,19 +105,19 @@ export class AiStudioPlaywrightSpeechWorker {
 
     const parsedScript = parseGeminiSpeechScript(options.text);
 
-    await this.fillFieldNatural(
+    await fillFieldNatural(
       page,
       SPEECH_SELECTORS.sceneTextarea,
       parsedScript.scene,
       true,
     );
-    await this.fillFieldNatural(
+    await fillFieldNatural(
       page,
       SPEECH_SELECTORS.sampleContextTextarea,
       parsedScript.sampleContext,
       true,
     );
-    await this.fillFieldNatural(
+    await fillFieldNatural(
       page,
       SPEECH_SELECTORS.promptTextarea,
       parsedScript.transcript,
@@ -171,7 +125,7 @@ export class AiStudioPlaywrightSpeechWorker {
     );
 
     // Chờ Angular cập nhật danh sách speaker cards tự nhiên như người đọc kiểm tra lại
-    await this.humanPause(page, 650, 950);
+    await humanPause(page, 650, 950);
 
     if (options.speakers.length > 0) {
       const orderedSpeakers = orderSpeakersByTranscript(
@@ -197,9 +151,9 @@ export class AiStudioPlaywrightSpeechWorker {
       .waitFor({ state: "visible", timeout: 10_000 });
 
     if (!options.reusedSurface) {
-      await this.waitForBotGuardReady(page, 2_000, 2_800).catch(() => {});
+      await waitForBotGuardReady(page, 2_000, 2_800).catch(() => {});
     }
-    await this.humanPause(page, 650, 1_050);
+    await humanPause(page, 650, 1_050);
 
     const inFlight = new Set<Request>();
     const onReq = (req: Request) => {
@@ -211,7 +165,7 @@ export class AiStudioPlaywrightSpeechWorker {
     page.on("requestfailed", onDone);
 
     try {
-      await this.clickResilient(page.locator(SPEECH_SELECTORS.runButton).first(), 3_000);
+      await clickResilient(page.locator(SPEECH_SELECTORS.runButton).first(), 3_000);
       return await this.waitForGeneratedAudio(
         page,
         baselineAudioSrc,
@@ -237,9 +191,9 @@ export class AiStudioPlaywrightSpeechWorker {
       if (await promptLocator.isVisible().catch(() => false)) break;
       if (await textToggle.isVisible().catch(() => false)) break;
       if (await presetLocator.isVisible().catch(() => false)) {
-        await this.humanPause(page, 350, 600);
-        await this.clickResilient(presetLocator, 3_000);
-        await this.humanPause(page, 400, 700);
+        await humanPause(page, 350, 600);
+        await clickResilient(presetLocator, 3_000);
+        await humanPause(page, 400, 700);
         await textToggle.waitFor({ state: "visible", timeout: 15_000 }).catch(async () => {
           await promptLocator.waitFor({ state: "visible", timeout: 5_000 });
         });
@@ -252,9 +206,9 @@ export class AiStudioPlaywrightSpeechWorker {
       const pressed = await textToggle.getAttribute("aria-pressed").catch(() => null);
       const checked = await textToggle.getAttribute("aria-checked").catch(() => null);
       if (pressed !== "true" && checked !== "true") {
-        await this.humanPause(page, 300, 550);
-        await this.clickResilient(textToggle, 3_000);
-        await this.humanPause(page, 350, 600);
+        await humanPause(page, 300, 550);
+        await clickResilient(textToggle, 3_000);
+        await humanPause(page, 350, 600);
       }
     }
 
@@ -293,18 +247,18 @@ export class AiStudioPlaywrightSpeechWorker {
     if (!(await input.isVisible().catch(() => false))) {
       const toggle = page.locator(SPEECH_SELECTORS.modelSettingsToggle).first();
       if (await toggle.isVisible().catch(() => false)) {
-        await this.humanPause(page, 250, 450);
-        await this.clickResilient(toggle, 2_000).catch(() => {});
+        await humanPause(page, 250, 450);
+        await clickResilient(toggle, 2_000).catch(() => {});
         await input.waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
-        await this.humanPause(page, 250, 450);
+        await humanPause(page, 250, 450);
       }
     }
     if (await input.isVisible().catch(() => false)) {
       await input.click({ timeout: 2_000 }).catch(() => {});
-      await this.humanPause(page, 180, 320);
+      await humanPause(page, 180, 320);
       await input.fill(String(temperature));
       await page.keyboard.press("Enter").catch(() => {});
-      await this.humanPause(page, 250, 450);
+      await humanPause(page, 250, 450);
     }
   }
 
@@ -336,9 +290,9 @@ export class AiStudioPlaywrightSpeechWorker {
 
     if (isVis) {
       await aliasInput.hover({ timeout: 1_000 }).catch(() => {});
-      await this.humanPause(page, 140, 260);
+      await humanPause(page, 140, 260);
       await aliasInput.click({ timeout: 2_000 }).catch(() => {});
-      await this.humanPause(page, 180, 320);
+      await humanPause(page, 180, 320);
       await aliasInput.fill(cleanTarget).catch(() => {});
       await page.keyboard.press("Enter").catch(() => {});
       await aliasInput.evaluate((el) => (el as HTMLInputElement).blur()).catch(() => {});
@@ -367,7 +321,7 @@ export class AiStudioPlaywrightSpeechWorker {
       }, cleanTarget);
     }
 
-    await this.humanPause(page, 260, 440);
+    await humanPause(page, 260, 440);
     const afterAlias = ((await aliasInput.inputValue().catch(() => "")) || "").trim();
     console.log(
       `[ai-studio-pw-speech] setCardSpeakerAlias idx=${cardIndex} vis=${isVis} before="${currentAlias}" target="${cleanTarget}" after="${afterAlias}"`,
@@ -516,9 +470,9 @@ export class AiStudioPlaywrightSpeechWorker {
       const personaInput = card.locator(SPEECH_SELECTORS.voicePersonaTextarea).first();
       if ((personaText || resetOptionalProfiles) && (await personaInput.isVisible().catch(() => false))) {
         await personaInput.click({ timeout: 2_000 }).catch(() => {});
-        await this.humanPause(page, 180, 320);
+        await humanPause(page, 180, 320);
         await personaInput.fill(personaText);
-        await this.humanPause(page, 300, 500);
+        await humanPause(page, 300, 500);
       }
 
       const targetVoice = config.voiceName.trim();
@@ -530,12 +484,12 @@ export class AiStudioPlaywrightSpeechWorker {
       }
 
       const trigger = card.locator(SPEECH_SELECTORS.voiceCardTrigger).first();
-      await this.humanPause(page, 280, 480);
-      await this.clickResilient(trigger, 3_000);
+      await humanPause(page, 280, 480);
+      await clickResilient(trigger, 3_000);
 
       const voicesRegion = page.locator(SPEECH_SELECTORS.availableVoicesRegion).first();
       await voicesRegion.waitFor({ state: "visible", timeout: 5_000 });
-      await this.humanPause(page, 400, 700);
+      await humanPause(page, 400, 700);
 
       const findVoiceTarget = async (): Promise<Locator | null> => {
         const voiceCards = voicesRegion.locator(".voice-card");
@@ -576,9 +530,9 @@ export class AiStudioPlaywrightSpeechWorker {
           const searchInput = voicesRegion.locator(SPEECH_SELECTORS.voiceSearchInput).first();
           if (await searchInput.isVisible().catch(() => false)) {
             await searchInput.click({ timeout: 2_000 }).catch(() => {});
-            await this.humanPause(page, 160, 280);
+            await humanPause(page, 160, 280);
             await searchInput.fill(targetVoice);
-            await this.humanPause(page, 500, 750);
+            await humanPause(page, 500, 750);
             targetBtn = await findVoiceTarget();
           }
         }
@@ -588,8 +542,8 @@ export class AiStudioPlaywrightSpeechWorker {
           );
         }
 
-        await this.clickResilient(targetBtn, 3_000);
-        await this.humanPause(page, 350, 550);
+        await clickResilient(targetBtn, 3_000);
+        await humanPause(page, 350, 550);
 
         const cardSnap = await readSnapshot();
         if (cardSnap[cardIndex]?.currentVoiceLower === targetVoiceLower) {
@@ -600,14 +554,14 @@ export class AiStudioPlaywrightSpeechWorker {
 
       const closeBtn = page.locator(SPEECH_SELECTORS.closeDrawerButton).first();
       if (await closeBtn.isVisible().catch(() => false)) {
-        await this.humanPause(page, 220, 380);
-        await this.clickResilient(closeBtn, 2_000).catch(() => {});
+        await humanPause(page, 220, 380);
+        await clickResilient(closeBtn, 2_000).catch(() => {});
       }
       if (await voicesRegion.isVisible().catch(() => false)) {
         await page.keyboard.press("Escape").catch(() => {});
         await voicesRegion.waitFor({ state: "hidden", timeout: 2_000 }).catch(() => {});
       }
-      await this.humanPause(page, 320, 550);
+      await humanPause(page, 320, 550);
 
       if (!verified) {
         console.warn(

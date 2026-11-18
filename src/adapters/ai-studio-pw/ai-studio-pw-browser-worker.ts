@@ -25,6 +25,11 @@ import {
 } from "../ai-studio/conversation-url";
 import { AiStudioPlaywrightModelProvider } from "./model-provider";
 import {
+  clickResilient,
+  humanPause,
+  waitForBotGuardReady,
+} from "./ai-studio-pw-human-timing";
+import {
   AiStudioPlaywrightDomObserver,
   type AiStudioPlaywrightObservation,
   type AiStudioPlaywrightRuntimeState,
@@ -162,6 +167,7 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
       }
 
       if (currentConversationId !== options.existingConversationId) {
+        this.botGuardSettledPages.delete(page);
         await page.goto(buildAiStudioConversationUrl(options.existingConversationId), {
           waitUntil: "domcontentloaded",
           timeout: 25_000,
@@ -216,6 +222,7 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
       : false;
 
     if (!isCleanBlankNewChat || currentConversationId) {
+      this.botGuardSettledPages.delete(page);
       await page.goto(targetNewChatUrl, {
         waitUntil: "domcontentloaded",
         timeout: 25_000,
@@ -244,10 +251,11 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
 
     await this.waitForComposerIdle(page);
 
-    if (!options.launcherReused && !this.botGuardSettledPages.has(page)) {
+    if (!this.botGuardSettledPages.has(page)) {
       this.botGuardSettledPages.add(page);
-      await this.waitForBotGuardReady(page, 1_800, 2_500).catch(() => {});
+      await waitForBotGuardReady(page, 2_000, 2_800).catch(() => {});
     }
+    await humanPause(page, 280, 480);
   }
 
   private async ensureThinkingLevel(page: Page, targetLevel: string): Promise<void> {
@@ -260,7 +268,8 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
       return;
     }
 
-    await select.click({ timeout: 3_000 });
+    await clickResilient(select, 3_000);
+    await humanPause(page, 220, 380);
     const options = page.locator(SELECT_OPTION_SELECTOR);
     await options.first().waitFor({ state: "visible", timeout: 3_000 });
     const count = await options.count();
@@ -268,41 +277,12 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
       const opt = options.nth(i);
       const label = ((await opt.innerText().catch(() => "")) || "").trim();
       if (label.toLowerCase() === targetLevel.toLowerCase()) {
-        await opt.click({ timeout: 2_000 });
-        await page.waitForTimeout(250);
+        await clickResilient(opt, 2_000);
+        await humanPause(page, 260, 440);
         return;
       }
     }
     await page.keyboard.press("Escape").catch(() => {});
-  }
-
-  private async waitForBotGuardReady(
-    page: Page,
-    minPageAgeMs: number,
-    maxWaitMs: number,
-  ): Promise<void> {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < maxWaitMs) {
-      const probe = await page
-        .evaluate(() => {
-          const resources = performance.getEntriesByType("resource") || [];
-          const waaReady = resources.some((entry) => {
-            const name = String(entry?.name || "");
-            return (
-              /waa-pa\.clients6\.google\.com|google\.com\/js\/th/i.test(name) &&
-              (!Number.isFinite((entry as PerformanceResourceTiming)?.responseEnd) ||
-                (entry as PerformanceResourceTiming).responseEnd > 0)
-            );
-          });
-          return { waaReady, pageAgeMs: performance.now() };
-        })
-        .catch(() => ({ waaReady: false, pageAgeMs: 0 }));
-
-      if (probe.waaReady && probe.pageAgeMs >= minPageAgeMs) {
-        return;
-      }
-      await page.waitForTimeout(150);
-    }
   }
 
   protected override async captureResponseBaseline(
@@ -326,9 +306,12 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
 
     const composer = page.locator(AI_STUDIO_DOM_SELECTORS.composer).first();
     await composer.waitFor({ state: "visible", timeout: 10_000 });
+    await composer.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
+    await composer.hover({ timeout: 1_000 }).catch(() => {});
+    await humanPause(page, 180, 340);
     await composer.click({ timeout: 2_500 }).catch(() => {});
     // Nhịp nghỉ tự nhiên sau khi focus trước khi điền prompt
-    await page.waitForTimeout(300);
+    await humanPause(page, 280, 480);
 
     await composer.fill(promptText);
     const currentValue = await composer.inputValue().catch(() => "");
@@ -351,8 +334,8 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
       );
     }
 
-    // Chờ Angular + BotGuard xử lý input event trước khi bấm Run
-    await page.waitForTimeout(650);
+    // Chờ Angular + BotGuard xử lý input event tự nhiên trước khi bấm Run
+    await humanPause(page, 550, 950);
   }
 
   private async attachImages(
@@ -363,14 +346,15 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
     if (signal?.aborted) return;
     const insertBtn = page.locator(INSERT_BUTTON_SELECTOR).first();
     await insertBtn.waitFor({ state: "visible", timeout: 8_000 });
-    await insertBtn.click({ timeout: 3_000 });
+    await clickResilient(insertBtn, 3_000);
+    await humanPause(page, 180, 320);
 
     const uploadItem = page.locator(UPLOAD_MENU_ITEM_SELECTOR).first();
     await uploadItem.waitFor({ state: "visible", timeout: 4_000 });
 
     const [fileChooser] = await Promise.all([
       page.waitForEvent("filechooser", { timeout: 8_000 }),
-      uploadItem.click({ timeout: 3_000 }),
+      clickResilient(uploadItem, 3_000),
     ]);
 
     await fileChooser.setFiles(
@@ -380,7 +364,7 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
         buffer: img.buffer,
       })),
     );
-    await page.waitForTimeout(500);
+    await humanPause(page, 420, 720);
   }
 
   protected override async submitPrompt(
@@ -467,13 +451,13 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
       }
 
       if (status.hasPrimaryBtn && !status.isDisabled) {
-        await page.waitForTimeout(150);
         if (attempt === 0) {
-          await runBtn.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
-          await runBtn.click({ timeout: 2_500 }).catch(async () => {
+          await humanPause(page, 320, 580);
+          await clickResilient(runBtn, 2_500).catch(async () => {
             await composer.press("Meta+Enter").catch(() => {});
           });
         } else if (attempt === 1) {
+          await humanPause(page, 220, 380);
           await composer.press("Meta+Enter").catch(async () => {
             await runBtn.click({ force: true, timeout: 1_500 }).catch(() => {});
           });
@@ -488,7 +472,7 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
         clickedAtLeastOnce = true;
       }
 
-      await page.waitForTimeout(300);
+      await humanPause(page, 260, 420);
     }
 
     if (!submitted) {

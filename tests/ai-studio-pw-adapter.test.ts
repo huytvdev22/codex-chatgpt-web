@@ -416,4 +416,93 @@ describe("Google AI Studio Playwright Adapter (ai-studio-pw)", () => {
       { alias: "Speaker 1", voice: "Umbriel" },
     ]);
   });
+
+  test("AiStudioPlaywrightWorker chờ BotGuard lại sau page.goto (kể cả khi launcherReused) và hover trước khi fill/click Run", async () => {
+    const worker = new AiStudioPlaywrightWorker();
+    const events: string[] = [];
+    let currentUrl = "https://aistudio.google.com/prompts/new_chat?model=gemini-2.5-flash";
+    let isComposerFilled = false;
+    let runClicked = false;
+
+    const fakePage = {
+      url: () => currentUrl,
+      goto: async (url: string) => {
+        currentUrl = url;
+        events.push(`goto:${url}`);
+      },
+      waitForSelector: async () => {},
+      waitForTimeout: async (ms: number) => {
+        events.push(`wait:${ms}`);
+      },
+      keyboard: { press: async () => {} },
+      on: () => {},
+      off: () => {},
+      locator: (sel: string) => {
+        const makeLoc = (name: string) => ({
+          page: () => fakePage,
+          first: () => makeLoc(name),
+          waitFor: async () => {},
+          isVisible: async () => name === "composer",
+          scrollIntoViewIfNeeded: async () => {
+            events.push(`scroll:${name}`);
+          },
+          hover: async () => {
+            events.push(`hover:${name}`);
+          },
+          click: async () => {
+            events.push(`click:${name}`);
+            if (name === "runBtn") runClicked = true;
+          },
+          fill: async (val: string) => {
+            events.push(`fill:${name}:${val.length}`);
+            if (name === "composer") isComposerFilled = true;
+          },
+          inputValue: async () => (isComposerFilled ? "hello" : ""),
+          innerText: async () => "",
+          count: async () => 0,
+          press: async () => {},
+        });
+        if (sel.includes("Enter a prompt")) return makeLoc("composer");
+        if (sel.includes("Thinking Level")) return makeLoc("thinking");
+        return makeLoc("runBtn");
+      },
+      evaluate: async (_fn: unknown, arg?: Record<string, unknown>) => {
+        if (arg && "expectedModel" in arg) return false;
+        if (arg && "btnSelector" in arg) {
+          return {
+            isStop: runClicked,
+            isRunningLive: false,
+            isDisabled: false,
+            hasPrimaryBtn: true,
+            editorLength: isComposerFilled ? 5 : 0,
+          };
+        }
+        if (arg === undefined) {
+          events.push("botguard_probe");
+          return { waaReady: true, pageAgeMs: 2_500 };
+        }
+        return false;
+      },
+    } as never;
+
+    const runHelper = worker as unknown as {
+      navigate: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      prepareProvider: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      insertPrompt: (p: unknown, t: string, o: Record<string, unknown>) => Promise<void>;
+      submitPrompt: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      botGuardSettledPages: WeakSet<object>;
+    };
+
+    // Giả lập page đã settle trước đó ở cuộc chat cũ và đang được launcherReused
+    runHelper.botGuardSettledPages.add(fakePage);
+    await runHelper.navigate(fakePage, { launcherReused: true, modelSlug: "ai-studio-pw/gemini-4-hydrogen" });
+    await runHelper.prepareProvider(fakePage, { launcherReused: true, modelSlug: "ai-studio-pw/gemini-4-hydrogen" });
+    await runHelper.insertPrompt(fakePage, "hello", {});
+    await runHelper.submitPrompt(fakePage, {});
+
+    expect(events.some((e) => e.startsWith("goto:https://aistudio.google.com/prompts/new_chat"))).toBe(true);
+    expect(events).toContain("botguard_probe");
+    expect(events.indexOf("hover:composer")).toBeLessThan(events.indexOf("fill:composer:5"));
+    expect(events.indexOf("hover:runBtn")).toBeLessThan(events.indexOf("click:runBtn"));
+  });
 });
