@@ -21,13 +21,18 @@ const SPEECH_SELECTORS = {
   runButton: "button.ctrl-enter-submits",
   modelSettingsToggle: 'button[aria-label="Expand or collapse Model settings"]',
   temperatureInput: 'input.slider-number-input[role="spinbutton"]',
-  voiceCard: ".active-voice-card",
-  voiceCardTrigger: "button.active-voice-card-trigger",
-  speakerAliasInput: 'input.speaker-alias-input[aria-label="Speaker name"]',
+  voiceSettingsCard: "ms-voice-settings",
+  voiceCardFallback: ".active-voice-card",
+  voiceCardTrigger:
+    'button.active-voice-card-trigger, .active-voice-card-trigger, button[aria-label="Open voice settings"]',
+  speakerAliasInput: 'input[aria-label="Speaker name"], input.speaker-alias-input',
   speakerAliasTag: ".speaker-alias-tag",
   voicePersonaTextarea: 'textarea[aria-label*="voice persona" i]',
-  availableVoicesRegion: '[aria-label="Available voices"]',
-  closeDrawerButton: 'button[aria-label="Close panel"]',
+  availableVoicesRegion:
+    'mat-dialog-container, ms-speaker-settings-panel, [aria-label="Available voices"]',
+  voiceSearchInput: 'input[aria-label="Search voices"], .voice-search-input input',
+  closeDrawerButton:
+    'button[aria-label="Close panel"], button[data-test-close-button], button[mat-dialog-close]',
   downloadButton: 'button.download-button[aria-label="Download"]',
   errorBanner:
     '[role="alert"], [role="status"], mat-snack-bar-container, simple-snack-bar, .mdc-snackbar, [class*="error-banner" i], [class*="toast" i], [class*="snackbar" i]',
@@ -303,6 +308,73 @@ export class AiStudioPlaywrightSpeechWorker {
     }
   }
 
+  private async setCardSpeakerAlias(
+    page: Page,
+    cardSelector: string,
+    cardIndex: number,
+    aliasValue: string,
+  ): Promise<boolean> {
+    const cleanTarget = aliasValue.trim();
+    const card = page.locator(cardSelector).nth(cardIndex);
+    const aliasInput = card.locator(SPEECH_SELECTORS.speakerAliasInput).first();
+    const inputCount = await aliasInput.count().catch(() => 0);
+    if (inputCount === 0) {
+      console.warn(
+        `[ai-studio-pw-speech] setCardSpeakerAlias idx=${cardIndex}: input not found in ${cardSelector}`,
+      );
+      return false;
+    }
+
+    const currentAlias = ((await aliasInput.inputValue().catch(() => "")) || "").trim();
+    if (currentAlias.toLowerCase() === cleanTarget.toLowerCase()) {
+      return true;
+    }
+
+    await card.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
+    await card.hover({ timeout: 1_000 }).catch(() => {});
+    const isVis = await aliasInput.isVisible().catch(() => false);
+
+    if (isVis) {
+      await aliasInput.hover({ timeout: 1_000 }).catch(() => {});
+      await this.humanPause(page, 140, 260);
+      await aliasInput.click({ timeout: 2_000 }).catch(() => {});
+      await this.humanPause(page, 180, 320);
+      await aliasInput.fill(cleanTarget).catch(() => {});
+      await page.keyboard.press("Enter").catch(() => {});
+      await aliasInput.evaluate((el) => (el as HTMLInputElement).blur()).catch(() => {});
+    } else {
+      await aliasInput.evaluate((el, valueToSet) => {
+        const input = el as HTMLInputElement;
+        input.focus();
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        if (setter) setter.call(input, valueToSet);
+        else input.value = valueToSet;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        try {
+          input.dispatchEvent(
+            new InputEvent("input", {
+              bubbles: true,
+              inputType: "insertText",
+              data: valueToSet,
+            }),
+          );
+        } catch {}
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.blur();
+      }, cleanTarget);
+    }
+
+    await this.humanPause(page, 260, 440);
+    const afterAlias = ((await aliasInput.inputValue().catch(() => "")) || "").trim();
+    console.log(
+      `[ai-studio-pw-speech] setCardSpeakerAlias idx=${cardIndex} vis=${isVis} before="${currentAlias}" target="${cleanTarget}" after="${afterAlias}"`,
+    );
+    return afterAlias.toLowerCase() === cleanTarget.toLowerCase();
+  }
+
   private async configureSpeakers(
     page: Page,
     orderedSpeakers: Array<{ speaker: string; voiceName: string }>,
@@ -310,6 +382,15 @@ export class AiStudioPlaywrightSpeechWorker {
     directorNotes: Record<string, { style?: string; pace?: string; accent?: string }>,
     resetOptionalProfiles: boolean,
   ): Promise<void> {
+    const primaryCount = await page
+      .locator(SPEECH_SELECTORS.voiceSettingsCard)
+      .count()
+      .catch(() => 0);
+    const cardSelector =
+      primaryCount > 0
+        ? SPEECH_SELECTORS.voiceSettingsCard
+        : SPEECH_SELECTORS.voiceCardFallback;
+
     const readSnapshot = async () =>
       await page.evaluate(
         ({ cardSel, inputSel, tagSel, triggerSel }) => {
@@ -328,7 +409,9 @@ export class AiStudioPlaywrightSpeechWorker {
                 const matched = lines.find((line) => /^speaker\s*\d+$/i.test(line));
                 if (matched) alias = matched;
               }
-              const voiceEl = card.querySelector(".voice-name, [class*='voice-name' i]");
+              const voiceEl = card.querySelector(
+                ".voice-display-name, .voice-name, [class*='voice-name' i]",
+              );
               const rawTrigger = (
                 voiceEl?.textContent ||
                 triggerEl?.innerText ||
@@ -344,58 +427,80 @@ export class AiStudioPlaywrightSpeechWorker {
                 index: idx,
                 alias,
                 aliasLower: alias.toLowerCase(),
+                hasAliasInput: Boolean(inputEl),
+                currentVoice,
                 currentVoiceLower: currentVoice.toLowerCase(),
               };
             },
           );
         },
         {
-          cardSel: SPEECH_SELECTORS.voiceCard,
+          cardSel: cardSelector,
           inputSel: SPEECH_SELECTORS.speakerAliasInput,
           tagSel: SPEECH_SELECTORS.speakerAliasTag,
           triggerSel: SPEECH_SELECTORS.voiceCardTrigger,
         },
       );
 
-    const cards = await readSnapshot();
-    if (cards.length === 0) return;
+    const cardsBefore = await readSnapshot();
+    console.log(
+      `[ai-studio-pw-speech] Speaker cards before: selector=${cardSelector} ordered=${JSON.stringify(
+        orderedSpeakers.map((s) => `${s.speaker}:${s.voiceName}`),
+      )} cards=${JSON.stringify(cardsBefore)}`,
+    );
+    if (cardsBefore.length === 0) return;
 
-    const usedIndices = new Set<number>();
+    const hasEditableAliasOutside = cardsBefore.some((c) => c.hasAliasInput);
     const assignments: Array<{
       cardIndex: number;
       config: { speaker: string; voiceName: string };
     }> = [];
 
-    for (let i = 0; i < orderedSpeakers.length; i += 1) {
-      const cfg = orderedSpeakers[i];
-      const targetLower = cfg.speaker.trim().toLowerCase();
-      const matched = cards.find(
-        (c) => !usedIndices.has(c.index) && c.aliasLower === targetLower,
-      );
-      if (matched) {
-        usedIndices.add(matched.index);
-        assignments.push({ cardIndex: matched.index, config: cfg });
-      } else {
-        const fallback = cards.find((c) => !usedIndices.has(c.index)) ?? cards[i];
-        if (fallback) {
-          usedIndices.add(fallback.index);
-          assignments.push({ cardIndex: fallback.index, config: cfg });
+    if (hasEditableAliasOutside) {
+      // Đúng thứ tự mở đầu trong kịch bản: Card 0 = orderedSpeakers[0], Card 1 = orderedSpeakers[1]
+      const currentAliases = cardsBefore.map((c) => c.aliasLower);
+      const pairCount = Math.min(cardsBefore.length, orderedSpeakers.length);
+      for (let i = 0; i < pairCount; i += 1) {
+        const speakerConfig = orderedSpeakers[i];
+        const targetName = speakerConfig.speaker.trim();
+        const targetLower = targetName.toLowerCase();
+        if (currentAliases[i] !== targetLower) {
+          for (let j = i + 1; j < cardsBefore.length; j += 1) {
+            if (currentAliases[j] === targetLower) {
+              const tmpAlias = `__speaker_tmp_${j}__`;
+              await this.setCardSpeakerAlias(page, cardSelector, j, tmpAlias);
+              currentAliases[j] = tmpAlias;
+            }
+          }
+          await this.setCardSpeakerAlias(page, cardSelector, i, targetName);
+          currentAliases[i] = targetLower;
+        }
+        assignments.push({ cardIndex: i, config: speakerConfig });
+      }
+    } else {
+      const usedIndices = new Set<number>();
+      for (let i = 0; i < orderedSpeakers.length; i += 1) {
+        const cfg = orderedSpeakers[i];
+        const targetLower = cfg.speaker.trim().toLowerCase();
+        const matched = cardsBefore.find(
+          (c) => !usedIndices.has(c.index) && c.aliasLower === targetLower,
+        );
+        if (matched) {
+          usedIndices.add(matched.index);
+          assignments.push({ cardIndex: matched.index, config: cfg });
+        } else {
+          const fallback =
+            cardsBefore.find((c) => !usedIndices.has(c.index)) ?? cardsBefore[i];
+          if (fallback) {
+            usedIndices.add(fallback.index);
+            assignments.push({ cardIndex: fallback.index, config: cfg });
+          }
         }
       }
     }
 
     for (const { cardIndex, config } of assignments) {
-      const card = page.locator(SPEECH_SELECTORS.voiceCard).nth(cardIndex);
-      const aliasInput = card.locator(SPEECH_SELECTORS.speakerAliasInput).first();
-      if (await aliasInput.isVisible().catch(() => false)) {
-        const currentAlias = ((await aliasInput.inputValue().catch(() => "")) || "").trim();
-        if (currentAlias.toLowerCase() !== config.speaker.trim().toLowerCase()) {
-          await aliasInput.click({ timeout: 2_000 }).catch(() => {});
-          await this.humanPause(page, 180, 320);
-          await aliasInput.fill(config.speaker.trim());
-          await this.humanPause(page, 280, 480);
-        }
-      }
+      const card = page.locator(cardSelector).nth(cardIndex);
 
       const key = config.speaker.trim().toLowerCase();
       const profileText = audioProfiles[key] || "";
@@ -418,6 +523,12 @@ export class AiStudioPlaywrightSpeechWorker {
 
       const targetVoice = config.voiceName.trim();
       const targetVoiceLower = targetVoice.toLowerCase();
+
+      const snapBeforeVoice = await readSnapshot();
+      if (snapBeforeVoice[cardIndex]?.currentVoiceLower === targetVoiceLower) {
+        continue;
+      }
+
       const trigger = card.locator(SPEECH_SELECTORS.voiceCardTrigger).first();
       await this.humanPause(page, 280, 480);
       await this.clickResilient(trigger, 3_000);
@@ -426,11 +537,24 @@ export class AiStudioPlaywrightSpeechWorker {
       await voicesRegion.waitFor({ state: "visible", timeout: 5_000 });
       await this.humanPause(page, 400, 700);
 
-      let verified = false;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      const findVoiceTarget = async (): Promise<Locator | null> => {
+        const voiceCards = voicesRegion.locator(".voice-card");
+        const vcCount = await voiceCards.count().catch(() => 0);
+        for (let idx = 0; idx < vcCount; idx += 1) {
+          const vc = voiceCards.nth(idx);
+          const dataName = (await vc.getAttribute("data-voice-name").catch(() => "")) || "";
+          const nameText =
+            ((await vc.locator(".voice-name").first().innerText().catch(() => "")) || "").trim();
+          if (
+            dataName.trim().toLowerCase() === targetVoiceLower ||
+            nameText.toLowerCase() === targetVoiceLower
+          ) {
+            const btn = vc.locator("button.voice-card-content").first();
+            return (await btn.count().catch(() => 0)) > 0 ? btn : vc;
+          }
+        }
         const voiceButtons = voicesRegion.locator('button, [role="button"], [role="option"]');
         const count = await voiceButtons.count();
-        let targetBtn: Locator | null = null;
         for (let bIdx = 0; bIdx < count; bIdx += 1) {
           const btn = voiceButtons.nth(bIdx);
           const txt = ((await btn.innerText().catch(() => "")) || "").trim();
@@ -439,8 +563,23 @@ export class AiStudioPlaywrightSpeechWorker {
             lines.some((line) => line.toLowerCase() === targetVoiceLower) ||
             txt.toLowerCase().startsWith(targetVoiceLower)
           ) {
-            targetBtn = btn;
-            break;
+            return btn;
+          }
+        }
+        return null;
+      };
+
+      let verified = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        let targetBtn = await findVoiceTarget();
+        if (!targetBtn) {
+          const searchInput = voicesRegion.locator(SPEECH_SELECTORS.voiceSearchInput).first();
+          if (await searchInput.isVisible().catch(() => false)) {
+            await searchInput.click({ timeout: 2_000 }).catch(() => {});
+            await this.humanPause(page, 160, 280);
+            await searchInput.fill(targetVoice);
+            await this.humanPause(page, 500, 750);
+            targetBtn = await findVoiceTarget();
           }
         }
         if (!targetBtn) {
@@ -476,6 +615,13 @@ export class AiStudioPlaywrightSpeechWorker {
         );
       }
     }
+
+    const finalCards = await readSnapshot();
+    console.log(
+      `[ai-studio-pw-speech] Speaker cards configured (ordered): ${JSON.stringify(
+        finalCards.map((c) => ({ index: c.index, alias: c.alias, voice: c.currentVoice })),
+      )}`,
+    );
   }
 
   private async waitForGeneratedAudio(

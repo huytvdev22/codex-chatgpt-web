@@ -4,6 +4,7 @@ import { WebProviderAdapter } from "../src/adapters/web/web-provider-adapter";
 import {
   AiStudioPlaywrightAdapter,
   AiStudioPlaywrightModelProvider,
+  AiStudioPlaywrightSpeechWorker,
   AiStudioPlaywrightWorker,
   buildAiStudioPlaywrightSpeechUrl,
   isAiStudioGenerationRequest,
@@ -247,6 +248,172 @@ describe("Google AI Studio Playwright Adapter (ai-studio-pw)", () => {
     expect(dispatchedProviders).toEqual([
       "ai-studio-pw:ai-studio-pw/gemini-2.5-pro-preview-tts",
       "ai-studio:gemini-2.5-pro-preview-tts",
+    ]);
+  });
+
+  test("AiStudioPlaywrightSpeechWorker đảo thứ tự Card 0 ⇄ Card 1 theo speaker mở đầu kể cả khi input alias ẩn (vis=false)", async () => {
+    const worker = new AiStudioPlaywrightSpeechWorker();
+    const cards = [
+      { alias: "Speaker 1", voice: "Puck" },
+      { alias: "Speaker 2", voice: "Zephyr" },
+    ];
+    let drawerOpen = false;
+    let openedCardIdx = -1;
+
+    const makeAliasLocator = (cardIdx: number) => ({
+      first: () => makeAliasLocator(cardIdx),
+      count: async () => 1,
+      isVisible: async () => false,
+      inputValue: async () => cards[cardIdx].alias,
+      evaluate: async (fn: (el: HTMLInputElement, val?: string) => unknown, arg?: string) => {
+        if (typeof arg === "string") {
+          cards[cardIdx].alias = arg;
+          return undefined;
+        }
+        return fn({ focus() {}, blur() {}, dispatchEvent() { return true; } } as unknown as HTMLInputElement);
+      },
+    });
+
+    const makeCardLocator = (cardIdx: number) => ({
+      locator: (sel: string) => {
+        if (sel.includes("speaker-alias-input")) return makeAliasLocator(cardIdx);
+        if (sel.includes("voice-persona")) {
+          return { first: () => ({ isVisible: async () => false }) };
+        }
+        if (sel.includes("active-voice-card-trigger")) {
+          return {
+            first: () => ({
+              page: () => fakePage,
+              scrollIntoViewIfNeeded: async () => {},
+              hover: async () => {},
+              click: async () => {
+                openedCardIdx = cardIdx;
+                drawerOpen = true;
+              },
+            }),
+          };
+        }
+        return { first: () => ({ isVisible: async () => false, count: async () => 0 }) };
+      },
+      scrollIntoViewIfNeeded: async () => {},
+      hover: async () => {},
+    });
+
+    const voiceOptions = ["Callirrhoe", "Umbriel"];
+    const voicesRegion = {
+      first: () => voicesRegion,
+      waitFor: async () => {},
+      isVisible: async () => drawerOpen,
+      locator: (sel: string) => {
+        if (sel === ".voice-card") {
+          return {
+            count: async () => voiceOptions.length,
+            nth: (vIdx: number) => ({
+              getAttribute: async () => voiceOptions[vIdx],
+              locator: () => ({ first: () => ({ innerText: async () => voiceOptions[vIdx] }) }),
+              click: async () => {
+                if (openedCardIdx >= 0) cards[openedCardIdx].voice = voiceOptions[vIdx];
+              },
+              scrollIntoViewIfNeeded: async () => {},
+              hover: async () => {},
+              evaluate: async () => false,
+            }),
+          };
+        }
+        return { count: async () => 0 };
+      },
+    };
+    // Fix child button.voice-card-content inside .voice-card
+    const origVoicesLoc = voicesRegion.locator;
+    voicesRegion.locator = (sel: string) => {
+      if (sel === ".voice-card") {
+        return {
+          count: async () => voiceOptions.length,
+          nth: (vIdx: number) => ({
+            getAttribute: async () => voiceOptions[vIdx],
+            locator: () => ({
+              first: () => ({
+                innerText: async () => voiceOptions[vIdx],
+                count: async () => 1,
+                page: () => fakePage,
+                scrollIntoViewIfNeeded: async () => {},
+                hover: async () => {},
+                click: async () => {
+                  if (openedCardIdx >= 0) cards[openedCardIdx].voice = voiceOptions[vIdx];
+                },
+              }),
+            }),
+          }),
+        } as never;
+      }
+      return origVoicesLoc(sel) as never;
+    };
+
+    const fakePage = {
+      waitForTimeout: async () => {},
+      keyboard: { press: async () => { drawerOpen = false; } },
+      locator: (sel: string) => {
+        if (sel === "ms-voice-settings") {
+          return {
+            count: async () => cards.length,
+            nth: (idx: number) => makeCardLocator(idx),
+          };
+        }
+        if (sel.includes("Available voices") || sel.includes("mat-dialog-container")) {
+          return voicesRegion;
+        }
+        if (sel.includes("Close panel")) {
+          return {
+            first: () => ({
+              page: () => fakePage,
+              isVisible: async () => drawerOpen,
+              scrollIntoViewIfNeeded: async () => {},
+              hover: async () => {},
+              click: async () => { drawerOpen = false; },
+            }),
+          };
+        }
+        return { first: () => ({ isVisible: async () => false, count: async () => 0 }) };
+      },
+      evaluate: async (_fn: unknown, arg?: { cardSel?: string }) => {
+        if (arg?.cardSel === "ms-voice-settings") {
+          return cards.map((c, idx) => ({
+            index: idx,
+            alias: c.alias,
+            aliasLower: c.alias.toLowerCase(),
+            hasAliasInput: true,
+            currentVoice: c.voice,
+            currentVoiceLower: c.voice.toLowerCase(),
+          }));
+        }
+        return [];
+      },
+    } as never;
+
+    await (
+      worker as unknown as {
+        configureSpeakers: (
+          p: unknown,
+          s: Array<{ speaker: string; voiceName: string }>,
+          a: Record<string, string>,
+          d: Record<string, unknown>,
+          r: boolean,
+        ) => Promise<void>;
+      }
+    ).configureSpeakers(
+      fakePage,
+      [
+        { speaker: "Speaker 2", voiceName: "Callirrhoe" },
+        { speaker: "Speaker 1", voiceName: "Umbriel" },
+      ],
+      {},
+      {},
+      false,
+    );
+
+    expect(cards).toEqual([
+      { alias: "Speaker 2", voice: "Callirrhoe" },
+      { alias: "Speaker 1", voice: "Umbriel" },
     ]);
   });
 });
