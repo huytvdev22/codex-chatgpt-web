@@ -183,7 +183,7 @@ export function startServer(
     }
 
     const geminiSpeechMatch = req.method === "POST"
-      ? /^\/v1beta\/models\/([^/:]+):(generateContent|streamGenerateContent)$/.exec(url.pathname)
+      ? /^\/v1beta\/models\/(.+):(generateContent|streamGenerateContent)$/.exec(url.pathname)
       : null;
     if (geminiSpeechMatch) {
       if (draining) {

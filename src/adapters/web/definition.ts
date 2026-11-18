@@ -115,6 +115,10 @@ export interface WebBrowserDriver {
     descriptor: LauncherBrowserHostDescriptor,
     leaseSurfaceId?: string,
   ) => string | undefined;
+  resolveInitialUrl?: (context: {
+    modelId: string;
+    existingConversationId?: string;
+  }) => string | undefined;
   executeTurn(
     input: WebBrowserTurnExecutionInput,
   ): Promise<WebBrowserTurnExecutionOutput>;

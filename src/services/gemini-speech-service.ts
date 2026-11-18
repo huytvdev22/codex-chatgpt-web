@@ -171,15 +171,19 @@ export class GeminiSpeechService {
     if (params.req.signal.aborted) abort.abort();
     else params.req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
+    const targetProviderId = parsed.modelId.toLowerCase().startsWith("ai-studio-pw/")
+      ? "ai-studio-pw"
+      : "ai-studio";
+
     try {
       const adapter = params.adapterFactory
         ? params.adapterFactory()
-        : this.adapterRegistry.createAdapter("ai-studio");
+        : this.adapterRegistry.createAdapter(targetProviderId);
       if (typeof adapter.runSpeechTurn !== "function") {
         return formatErrorResponse(
           400,
           "invalid_request_error",
-          "Configured 'ai-studio' adapter does not support TTS speech generation",
+          `Configured '${targetProviderId}' adapter does not support TTS speech generation`,
         );
       }
 

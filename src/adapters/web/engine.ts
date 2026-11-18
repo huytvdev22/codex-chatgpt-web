@@ -118,11 +118,15 @@ export class WebTurnEngine {
     };
 
     try {
+      const initialUrl = this.definition.browser.resolveInitialUrl?.({
+        modelId: parsed.modelId,
+      });
       const acquired = await acquireWebTurnSurface({
         definition: this.definition,
         localBrowser: this.localBrowser,
         turnTraceId,
         conversationKey,
+        ...(initialUrl ? { initialUrl } : {}),
         abortSignal: turnRegistration.signal,
         ops: this.lifecycleOps,
       });
@@ -420,11 +424,16 @@ export class WebTurnEngine {
     };
 
     try {
+      const initialUrl = this.definition.browser.resolveInitialUrl?.({
+        modelId: request.modelId,
+        existingConversationId: request.existingConversationId,
+      });
       const acquired = await acquireWebTurnSurface({
         definition: this.definition,
         localBrowser: this.localBrowser,
         turnTraceId,
         conversationKey,
+        ...(initialUrl ? { initialUrl } : {}),
         abortSignal: turnRegistration.signal,
         ops: this.lifecycleOps,
       });
