@@ -12,6 +12,10 @@ const M365_PARTITION = "persist:codex-m365-copilot";
 const M365_CONVERSATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_M365_SURFACES = 3;
 const MAX_PERSISTED_M365_BINDINGS = 256;
+const M365_AUTH_SETTLE_TIMEOUT_MS = 8_000;
+const M365_AUTH_SETTLE_POLL_MS = 200;
+const M365_INTERACTIVE_LOGIN_STABLE_MS = 1_500;
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const M365_AUTH_PROVIDER_HOSTS = new Set([
   "accounts.google.com",
@@ -49,6 +53,20 @@ function parseM365ConversationId(rawUrl) {
   if (!M365_ALLOWED_ORIGINS.has(url.origin) || url.username || url.password) return null;
   const match = url.pathname.match(/^\/chat\/conversation\/([^/]+)\/?$/i);
   return normalizeM365ConversationId(match?.[1]);
+}
+
+function isMicrosoftLoginUrl(value) {
+  if (typeof value !== "string") return false;
+  return value.includes("login.microsoftonline.com")
+    || value.includes("login.live.com")
+    || value.includes("account.activedirectory.windowsazure.com")
+    || /^https:\/\/[^/]*\.cloud\.microsoft\/login(?:[/?#]|$)/i.test(value);
+}
+
+function isM365AppUrl(value) {
+  if (typeof value !== "string") return false;
+  return (value.includes("m365.cloud.microsoft") || value.includes("copilot.cloud.microsoft"))
+    && !isMicrosoftLoginUrl(value);
 }
 
 function isMicrosoftAuthOrAppUrl(value) {
@@ -156,18 +174,61 @@ class M365BrowserProvider extends BaseBrowserProvider {
       };
     })()`, true).catch(() => {
       const liveUrl = contents.getURL() || "";
-      const isM365 = liveUrl.includes("m365.cloud.microsoft") || liveUrl.includes("copilot.cloud.microsoft");
-      const isLogin = liveUrl.includes("login.microsoftonline.com")
-        || liveUrl.includes("login.live.com")
-        || liveUrl.includes("account.activedirectory.windowsazure.com")
-        || /^https:\/\/[^/]*\.cloud\.microsoft\/login(?:[/?#]|$)/i.test(liveUrl);
       return {
         url: liveUrl,
         composer: false,
-        authenticated: isM365 && !isLogin,
+        authenticated: isM365AppUrl(liveUrl),
         readyState: "complete",
       };
     });
+  }
+
+  async waitForAuthenticationSettle(contents, timeoutMs = M365_AUTH_SETTLE_TIMEOUT_MS) {
+    if (!contents || contents.isDestroyed?.() || typeof contents.getURL !== "function") return;
+    const canCheckLoading = typeof contents.isLoading === "function";
+    const initialUrl = contents.getURL() || "";
+    if (!canCheckLoading && !isMicrosoftLoginUrl(initialUrl)) return;
+
+    const deadline = Date.now() + timeoutMs;
+    const pollMs = Math.min(M365_AUTH_SETTLE_POLL_MS, Math.max(10, Math.floor(timeoutMs / 3)));
+    const stableLimitMs = Math.min(M365_INTERACTIVE_LOGIN_STABLE_MS, timeoutMs);
+    let lastLoginUrl = "";
+    let interactiveSince = null;
+
+    while (Date.now() < deadline) {
+      if (contents.isDestroyed?.()) return;
+      const currentUrl = contents.getURL() || "";
+      const loading = canCheckLoading ? contents.isLoading() : false;
+
+      if (isM365AppUrl(currentUrl) && !loading) {
+        return;
+      }
+
+      if (isMicrosoftLoginUrl(currentUrl) && !loading && typeof contents.executeJavaScript === "function") {
+        if (currentUrl !== lastLoginUrl) {
+          lastLoginUrl = currentUrl;
+          interactiveSince = null;
+        }
+        const interactive = await contents.executeJavaScript(`(() => {
+          if (document.readyState !== "complete") return false;
+          return Boolean(document.querySelector(
+            'input[name="loginfmt"]:not([type="hidden"]), input[name="passwd"]:not([type="hidden"]), input[name="otc"]:not([type="hidden"]), input[type="password"]:not([type="hidden"]), #tilesHolder [data-test-id], [data-testid="signin-prompt"]'
+          ));
+        })()`, true).catch(() => false);
+        if (interactive) {
+          interactiveSince ??= Date.now();
+          if (Date.now() - interactiveSince >= stableLimitMs) return;
+        } else {
+          interactiveSince = null;
+        }
+      } else {
+        interactiveSince = null;
+      }
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(pollMs, remaining));
+    }
   }
 
   async runSmokeTest(context) {

@@ -438,13 +438,76 @@ describe("M365 browser worker migration contract", () => {
     expect(visited).toEqual(["https://m365.cloud.microsoft/chat"]);
 
     // 3. Kẹt ở trang đăng nhập -> báo lỗi đăng nhập rõ ràng
+    const fastFailWorker = new TestNavigateWorker({ authSettleTimeoutMs: 40 });
     await expect(
-      worker.testNavigate(
+      fastFailWorker.testNavigate(
         {
           url: () => "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
         },
         { prompt: "hi", conversationKey: "k1" },
       ),
     ).rejects.toThrow(/Phiên đăng nhập M365 Copilot/);
+  });
+
+  test("navigate chờ Silent SSO redirect xong thay vì refresh đè hoặc fail sớm ở login.microsoftonline.com", async () => {
+    class TestNavigateWorker extends M365BrowserWorker {
+      public async testNavigate(page: any, options: any): Promise<void> {
+        await this.navigate(page, options);
+      }
+    }
+
+    const worker = new TestNavigateWorker({ authSettleTimeoutMs: 500 });
+    const convId = "01a1ea2f-c3b5-4863-9da2-7974ae30a53b";
+
+    // 1. Conversation cũ đang chạy Silent SSO -> chờ về copilot.cloud.microsoft/chat rồi mới điều hướng conversation
+    let pollCount = 0;
+    let ssoUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
+    const visitedExisting: string[] = [];
+    await worker.testNavigate(
+      {
+        url: () => {
+          pollCount += 1;
+          if (pollCount >= 3 && ssoUrl.includes("login.microsoftonline.com")) {
+            ssoUrl = "https://copilot.cloud.microsoft/chat";
+          }
+          return ssoUrl;
+        },
+        goto: async (url: string) => {
+          visitedExisting.push(url);
+          ssoUrl = url;
+        },
+        waitForLoadState: async () => {},
+      },
+      {
+        prompt: "continue",
+        conversationKey: "k-existing",
+        existingConversationId: convId,
+      },
+    );
+    expect(visitedExisting).toEqual([
+      `https://copilot.cloud.microsoft/chat/conversation/${convId}`,
+    ]);
+
+    // 2. Conversation mới đang chạy Silent SSO -> chờ về copilot.cloud.microsoft/chat mà không gọi page.goto
+    let newPollCount = 0;
+    let newSsoUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
+    const visitedNew: string[] = [];
+    await worker.testNavigate(
+      {
+        url: () => {
+          newPollCount += 1;
+          if (newPollCount >= 3) {
+            newSsoUrl = "https://copilot.cloud.microsoft/chat";
+          }
+          return newSsoUrl;
+        },
+        goto: async (url: string) => {
+          visitedNew.push(url);
+        },
+        waitForLoadState: async () => {},
+      },
+      { prompt: "hello", conversationKey: "k-new" },
+    );
+    expect(visitedNew).toEqual([]);
   });
 });

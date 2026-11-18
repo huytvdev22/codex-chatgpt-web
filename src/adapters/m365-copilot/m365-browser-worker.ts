@@ -16,7 +16,6 @@ import {
   buildM365ConversationUrl,
   isM365ChatHomeUrl,
   isM365LoginUrl,
-  M365_CHAT_URL,
   normalizeM365ConversationId,
   parseM365ConversationId,
   resolveM365Origin,
@@ -64,6 +63,15 @@ export type M365TurnResult = {
   conversationId?: string;
 };
 
+const M365_AUTH_EXPIRED_MESSAGE =
+  "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.";
+const DEFAULT_M365_AUTH_SETTLE_TIMEOUT_MS = 15_000;
+const INTERACTIVE_LOGIN_STABLE_MS = 2_500;
+
+export interface M365BrowserWorkerOptions {
+  authSettleTimeoutMs?: number;
+}
+
 /**
  * Thực thi một lượt hội thoại với Microsoft 365 Copilot nhúng trong Launcher Desktop
  * thông qua Page do WebTurnEngine cấp, đồng nhất contract với các Web Adapter khác.
@@ -79,6 +87,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
   protected readonly defaultIdleTimeoutMs = 30_000;
   protected readonly defaultPollingIntervalMs = 250;
   protected readonly defaultHeartbeatIntervalMs = 10_000;
+  private readonly authSettleTimeoutMs: number;
   private readonly domObserver = new M365DomObserver();
   private readonly clipboardSalvage = new M365ClipboardSalvage();
   private readonly activeEditors = new WeakMap<Page, Locator>();
@@ -87,6 +96,16 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     Page,
     M365ResponseRuntimeState
   >();
+
+  constructor(options: M365BrowserWorkerOptions = {}) {
+    super();
+    this.authSettleTimeoutMs =
+      typeof options.authSettleTimeoutMs === "number" &&
+      Number.isFinite(options.authSettleTimeoutMs) &&
+      options.authSettleTimeoutMs >= 0
+        ? options.authSettleTimeoutMs
+        : DEFAULT_M365_AUTH_SETTLE_TIMEOUT_MS;
+  }
 
   private createResponseRuntimeState(): M365ResponseRuntimeState {
     return this.domObserver.createRuntimeState();
@@ -399,7 +418,91 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     return firstVisible;
   }
 
-  private async gotoM365Url(
+  private async detectInteractiveLoginPrompt(page: Page): Promise<boolean> {
+    if (typeof page.evaluate !== "function") return false;
+    return await page
+      .evaluate(() => {
+        if (document.readyState !== "complete") return false;
+        return Boolean(
+          document.querySelector(
+            [
+              'input[name="loginfmt"]:not([type="hidden"])',
+              'input[name="passwd"]:not([type="hidden"])',
+              'input[name="otc"]:not([type="hidden"])',
+              'input[type="password"]:not([type="hidden"])',
+              "#tilesHolder [data-test-id]",
+              '[data-testid="signin-prompt"]',
+            ].join(", "),
+          ),
+        );
+      })
+      .catch(() => false);
+  }
+
+  /**
+   * Chờ luồng Silent SSO của Microsoft Entra ID tự redirect hoàn tất trước khi
+   * kết luận phiên đăng nhập hết hạn. Chỉ kết thúc sớm nếu phát hiện form
+   * đăng nhập tương tác đứng ổn định trên trang login.
+   */
+  private async waitForM365AuthSettle(
+    page: Page,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!isM365LoginUrl(page.url())) return;
+    if (this.authSettleTimeoutMs <= 0) {
+      throw new Error(M365_AUTH_EXPIRED_MESSAGE);
+    }
+
+    const deadline = Date.now() + this.authSettleTimeoutMs;
+    const pollMs = Math.min(
+      250,
+      Math.max(10, Math.floor(this.authSettleTimeoutMs / 3)),
+    );
+    const stableLimitMs = Math.min(
+      INTERACTIVE_LOGIN_STABLE_MS,
+      this.authSettleTimeoutMs,
+    );
+    let lastUrl = page.url();
+    let interactiveSince: number | null = null;
+
+    while (true) {
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error("M365 Copilot turn aborted while waiting for authentication");
+      }
+      const currentUrl = page.url();
+      if (!isM365LoginUrl(currentUrl)) {
+        await page
+          .waitForLoadState?.("domcontentloaded", { timeout: 5_000 })
+          .catch(() => {});
+        if (!isM365LoginUrl(page.url())) return;
+      }
+
+      if (currentUrl !== lastUrl) {
+        lastUrl = currentUrl;
+        interactiveSince = null;
+      }
+
+      const interactive = await this.detectInteractiveLoginPrompt(page);
+      if (interactive) {
+        interactiveSince ??= Date.now();
+        if (Date.now() - interactiveSince >= stableLimitMs) {
+          break;
+        }
+      } else {
+        interactiveSince = null;
+      }
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise(resolve => setTimeout(resolve, Math.min(pollMs, remaining)));
+    }
+
+    if (isM365LoginUrl(page.url())) {
+      throw new Error(M365_AUTH_EXPIRED_MESSAGE);
+    }
+  }
+
+  private async runPageGotoAllowingRedirectAbort(
     page: Page,
     targetUrl: string,
     isTargetReady: (currentUrl: string) => boolean,
@@ -417,28 +520,60 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       }
 
       // Microsoft có thể redirect giữa m365.cloud.microsoft <-> copilot.cloud.microsoft
-      // hoặc điều hướng SPA ngay khi goto vừa khởi tạo.
+      // hoặc qua login.microsoftonline.com ngay khi goto vừa khởi tạo.
       await page
         .waitForLoadState?.("domcontentloaded", { timeout: 10_000 })
         .catch(() => {});
-      const currentUrl = page.url();
-      if (isTargetReady(currentUrl)) return;
-      if (isM365LoginUrl(currentUrl)) {
-        throw new Error(
-          "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.",
-        );
-      }
-
-      await page.goto(targetUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20_000,
-      });
+      if (isTargetReady(page.url())) return;
     }
+  }
+
+  private async gotoM365Url(
+    page: Page,
+    targetUrl: string,
+    isTargetReady: (currentUrl: string) => boolean,
+    signal?: AbortSignal,
+    resolveRetryTargetUrl?: (settledUrl: string) => string,
+  ): Promise<void> {
+    await this.runPageGotoAllowingRedirectAbort(
+      page,
+      targetUrl,
+      isTargetReady,
+      signal,
+    );
+    if (isTargetReady(page.url())) return;
 
     if (isM365LoginUrl(page.url())) {
-      throw new Error(
-        "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.",
+      await this.waitForM365AuthSettle(page, signal);
+      if (isTargetReady(page.url())) return;
+    }
+
+    const retryUrl = resolveRetryTargetUrl
+      ? resolveRetryTargetUrl(page.url())
+      : targetUrl;
+    await this.runPageGotoAllowingRedirectAbort(
+      page,
+      retryUrl,
+      isTargetReady,
+      signal,
+    );
+    if (isTargetReady(page.url())) return;
+
+    if (isM365LoginUrl(page.url())) {
+      await this.waitForM365AuthSettle(page, signal);
+      if (isTargetReady(page.url())) return;
+      const postAuthUrl = resolveRetryTargetUrl
+        ? resolveRetryTargetUrl(page.url())
+        : retryUrl;
+      await this.runPageGotoAllowingRedirectAbort(
+        page,
+        postAuthUrl,
+        isTargetReady,
+        signal,
       );
+      if (isM365LoginUrl(page.url())) {
+        throw new Error(M365_AUTH_EXPIRED_MESSAGE);
+      }
     }
   }
 
@@ -450,6 +585,10 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     page: Page,
     options: M365BrowserRunOptions,
   ): Promise<void> {
+    if (isM365LoginUrl(page.url())) {
+      await this.waitForM365AuthSettle(page, options.signal);
+    }
+
     const currentUrl = page.url();
     const currentConversationId = parseM365ConversationId(currentUrl);
 
@@ -466,8 +605,9 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         const targetId =
           normalizeM365ConversationId(options.existingConversationId) ??
           options.existingConversationId.toLowerCase();
+        const existingId = options.existingConversationId;
         const targetUrl = buildM365ConversationUrl(
-          options.existingConversationId,
+          existingId,
           resolveM365Origin(currentUrl),
         );
         await this.gotoM365Url(
@@ -475,6 +615,8 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
           targetUrl,
           url => parseM365ConversationId(url) === targetId,
           options.signal,
+          settledUrl =>
+            buildM365ConversationUrl(existingId, resolveM365Origin(settledUrl)),
         );
       }
       const targetId =
@@ -490,18 +632,14 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       );
     }
 
-    if (isM365LoginUrl(currentUrl)) {
-      throw new Error(
-        "Phiên đăng nhập M365 Copilot đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại trong Launcher.",
-      );
-    }
-
     if (!isM365ChatHomeUrl(currentUrl)) {
+      const targetHomeUrl = `${resolveM365Origin(currentUrl)}/chat`;
       await this.gotoM365Url(
         page,
-        M365_CHAT_URL,
+        targetHomeUrl,
         isM365ChatHomeUrl,
         options.signal,
+        settledUrl => `${resolveM365Origin(settledUrl)}/chat`,
       );
     }
   }

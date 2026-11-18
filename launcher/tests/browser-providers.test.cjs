@@ -237,6 +237,21 @@ test("M365BrowserProvider encapsulates Microsoft 365 URL, cookie, and fallback p
   assert.equal(allowedM365Navigation("https://copilot.cloud.microsoft/chat"), true);
   assert.equal(allowedM365Navigation("https://m365.cloud.microsoft/chat"), true);
   assert.equal(allowedM365Navigation("https://example.com/chat"), false);
+
+  // Silent SSO settle: chờ thoát login.microsoftonline.com về app URL
+  let ssoTicks = 0;
+  await provider.waitForAuthenticationSettle({
+    isDestroyed: () => false,
+    isLoading: () => false,
+    getURL: () => {
+      ssoTicks += 1;
+      return ssoTicks >= 3
+        ? "https://copilot.cloud.microsoft/chat"
+        : "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
+    },
+    executeJavaScript: async () => false,
+  }, 500);
+  assert.ok(ssoTicks >= 3);
 });
 
 test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-provider AI Studio registration", async () => {

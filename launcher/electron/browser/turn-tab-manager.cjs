@@ -106,8 +106,10 @@ function loadCommittedBrowserSurface(
         : currentUrl === url;
       if (committed) finish();
     };
+    const allowRedirectAbort = typeof isCommittedUrl === "function";
     const onFailed = (_event, errorCode, errorDescription, failedUrl, mainFrame) => {
       if (!mainFrame) return;
+      if (allowRedirectAbort && errorCode === -3) return;
       finish(new Error(
         `Browser idle document failed: ${errorDescription} (${errorCode}) at ${failedUrl}`,
       ));
@@ -128,6 +130,12 @@ function loadCommittedBrowserSurface(
     contents.on("destroyed", onDestroyed);
     try {
       Promise.resolve(contents.loadURL(url)).then(onReady, error => {
+        const isAbort = error && typeof error === "object"
+          && (error.code === "ERR_ABORTED" || error.errno === -3 || String(error.message || "").includes("ERR_ABORTED"));
+        if (allowRedirectAbort && isAbort) {
+          onReady();
+          return;
+        }
         finish(error instanceof Error ? error : new Error(String(error)));
       });
     } catch (error) {

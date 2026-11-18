@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **075** | M365 Copilot báo hết hạn đăng nhập khi khởi động lại Launcher và tab tự refresh không chờ SSO | `m365-copilot`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [075-m365-silent-sso-auth-lost-on-restart.md](./075-m365-silent-sso-auth-lost-on-restart.md) |
 | **074** | Gỡ bỏ `Bigger Context` và `New browser chat for each turn` khỏi giao diện Settings | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [074-remove-settings-bigger-context-and-fresh-chat-ui.md](./074-remove-settings-bigger-context-and-fresh-chat-ui.md) |
 | **073** | Gỡ bỏ mục chỉnh sửa `Plugin name` khỏi giao diện Settings Launcher | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [073-remove-settings-plugin-name-ui.md](./073-remove-settings-plugin-name-ui.md) |
 | **072** | Gỡ bỏ popup gợi ý `Bigger Context (experimental)` khi khởi động Launcher | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [072-remove-bigger-context-startup-popup.md](./072-remove-bigger-context-startup-popup.md) |

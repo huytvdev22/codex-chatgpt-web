@@ -1233,11 +1233,13 @@ class BrowserHost {
     const targetView = this.primaryViewManager?.get?.(providerObj.id)
       || this.providerViews?.get?.(providerObj.id)
       || this.view;
-    const currentUrl = targetView?.webContents?.getURL() || "";
+    const contents = targetView?.webContents;
+    const currentUrl = contents?.getURL?.() || "";
     const loadPromise = !providerObj.isAuthOrAppUrl(currentUrl)
-      ? Promise.resolve(targetView?.webContents?.loadURL?.(providerObj.homeUrl)).catch(() => {})
+      ? Promise.resolve(contents?.loadURL?.(providerObj.homeUrl)).catch(() => {})
       : Promise.resolve();
     return loadPromise
+      .then(() => providerObj.waitForAuthenticationSettle?.(contents))
       .then(() => this.probeAuthentication())
       .finally(() => {
         if (this.primaryViewManager) {
@@ -1427,11 +1429,20 @@ class BrowserHost {
   }
 
   async persistSession() {
-    const contents = this.view?.webContents;
-    if (!contents || contents.isDestroyed()) return;
-    const browserSession = contents.session;
-    browserSession.flushStorageData();
-    await browserSession.cookies.flushStore();
+    const sessions = new Set();
+    const candidates = [
+      this.view?.webContents,
+      ...(this.providerViews ? [...this.providerViews.values()].map(view => view?.webContents) : []),
+      ...(this.turnTabs ? [...this.turnTabs.values()].map(tab => tab?.view?.webContents) : []),
+    ];
+    for (const contents of candidates) {
+      if (!contents || contents.isDestroyed?.() || !contents.session) continue;
+      sessions.add(contents.session);
+    }
+    await Promise.allSettled([...sessions].map(async (browserSession) => {
+      browserSession.flushStorageData?.();
+      await browserSession.cookies?.flushStore?.();
+    }));
   }
 
   destroy() {

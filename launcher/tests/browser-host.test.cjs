@@ -118,6 +118,29 @@ test("primary browser bootstrap fails closed on navigation, renderer, and timeou
       /idle document did not commit within 5ms/,
     );
     assert.deepEqual(calls, ["stop"]);
+
+    // Redirect ERR_ABORTED (-3) trong lúc bootstrap HTTPS surface được bỏ qua để chờ trang đích commit
+    const redirecting = new EventEmitter();
+    let redirectedUrl = "https://m365.cloud.microsoft/chat";
+    redirecting.isDestroyed = () => false;
+    redirecting.getURL = () => redirectedUrl;
+    redirecting.stop = () => {};
+    redirecting.loadURL = async () => {
+      const abortErr = new Error("ERR_ABORTED (-3)");
+      abortErr.code = "ERR_ABORTED";
+      queueMicrotask(() => {
+        redirecting.emit("did-fail-load", {}, -3, "ERR_ABORTED", redirectedUrl, true);
+        redirectedUrl = "https://copilot.cloud.microsoft/chat";
+        redirecting.emit("did-finish-load");
+      });
+      throw abortErr;
+    };
+    await loadCommittedBrowserSurface(
+      redirecting,
+      "https://m365.cloud.microsoft/chat",
+      100,
+      { isCommittedUrl: (current) => current === "https://copilot.cloud.microsoft/chat" },
+    );
   } finally {
     clearTimeout(keepTestAlive);
   }
