@@ -26,6 +26,10 @@ export interface RunWebProtocolRetryOptions {
     result: Extract<StrictWebResponseResult, { kind: "protocol_error" }>,
     context: WebProtocolRetryAttempt,
   ) => void;
+  resolveRetryPrompt?: (
+    result: Extract<StrictWebResponseResult, { kind: "protocol_error" }>,
+    context: WebProtocolRetryAttempt,
+  ) => string | undefined;
 }
 
 /**
@@ -61,11 +65,13 @@ export async function runWebProtocolRetry(
 
     options.onProtocolError?.(lastResult, context);
     if (attempt < options.maxRetries) {
-      attemptPrompt = buildFormatRetryPrompt({
-        code: lastResult.code,
-        message: lastResult.message,
-        outputFormat: options.outputFormat,
-      });
+      attemptPrompt =
+        options.resolveRetryPrompt?.(lastResult, context) ??
+        buildFormatRetryPrompt({
+          code: lastResult.code,
+          message: lastResult.message,
+          outputFormat: options.outputFormat,
+        });
     }
   }
 

@@ -28,4 +28,11 @@ export {
   type TurnTraceRecord,
   type TurnTraceRecorderOptions,
 } from "./turn-trace-recorder";
+export {
+  WebPromptSessionStore,
+  webPromptSessionStore,
+  type PendingSchemaErrorState,
+  type PromptTurnDirectives,
+  type WebPromptSessionSnapshot,
+} from "./web-prompt-session-store";
 

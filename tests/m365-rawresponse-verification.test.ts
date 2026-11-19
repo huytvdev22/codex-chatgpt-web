@@ -150,7 +150,7 @@ describe("M365 Raw Response Reproduction & Analysis", () => {
 
       expect(retryPrompt).toContain("công cụ bạn vừa yêu cầu gọi không tồn tại");
       expect(retryPrompt).toContain("[UNKNOWN_TOOL]");
-      expect(retryPrompt).toContain("chỉ sử dụng công cụ đang xuất hiện trong danh sách AVAILABLE TOOLS");
+      expect(retryPrompt).toContain("chỉ sử dụng công cụ đang xuất hiện trong [MCP TOOL CATALOG]");
     }
   });
 
