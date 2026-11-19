@@ -266,6 +266,12 @@ export class AiStudioPlaywrightDomObserver {
       normalizedText = /^`{4}markdown\b/i.test(inner)
         ? inner
         : `\`\`\`\`markdown\n${inner}\n\`\`\`\``;
+    } else if (
+      status.rawHtml &&
+      status.rawHtml === state.lastHtml &&
+      state.lastObservedText
+    ) {
+      normalizedText = state.lastObservedText;
     } else {
       const htmlMarkdown = status.rawHtml
         ? aiStudioHtmlToMarkdown(status.rawHtml).trim()

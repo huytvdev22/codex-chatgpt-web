@@ -231,18 +231,42 @@ export async function selectLauncherPage(
     const candidates = browser.contexts().flatMap(context => context.pages().map(page => ({ context, page })));
     // Target metadata belongs to the browser process. Evaluating every page here makes an
     // unrelated busy/paused renderer block acquisition of an already-responsive owned page.
-    const inspected = await Promise.all(candidates.map(async candidate => {
-      const session = await candidate.context.newCDPSession(candidate.page).catch(() => undefined);
-      if (!session) return { ...candidate, targetId: undefined };
+    const inspectCandidate = async (candidate: { context: BrowserContext; page: Page }) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const sessionPromise = candidate.context.newCDPSession(candidate.page).catch(() => undefined);
       try {
-        const { targetInfo } = await session.send("Target.getTargetInfo");
-        return { ...candidate, targetId: targetInfo.targetId };
-      } catch {
-        return { ...candidate, targetId: undefined };
+        const session = await Promise.race([
+          sessionPromise,
+          new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), 1_500);
+            timer.unref?.();
+          }),
+        ]);
+        if (!session) {
+          void sessionPromise.then(s => s?.detach().catch(() => {}));
+          return { ...candidate, targetId: undefined };
+        }
+        let innerTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const { targetInfo } = await Promise.race([
+            session.send("Target.getTargetInfo"),
+            new Promise<never>((_resolve, reject) => {
+              innerTimer = setTimeout(() => reject(new Error("Target.getTargetInfo timed out")), 1_500);
+              innerTimer.unref?.();
+            }),
+          ]);
+          return { ...candidate, targetId: targetInfo.targetId };
+        } catch {
+          return { ...candidate, targetId: undefined };
+        } finally {
+          if (innerTimer) clearTimeout(innerTimer);
+          await session.detach().catch(() => {});
+        }
       } finally {
-        await session.detach().catch(() => {});
+        if (timer) clearTimeout(timer);
       }
-    }));
+    };
+    const inspected = await Promise.all(candidates.map(inspectCandidate));
     const owned = inspected.filter(candidate => candidate.targetId === targetId);
     if (owned.length === 1) {
       return { context: owned[0].context, page: owned[0].page };
@@ -375,8 +399,8 @@ export type LauncherTurnActivity =
       provider?: string;
     };
 
-// Startup must outlast the launcher's ten-second idle bootstrap. This is not a model-turn budget.
-export const LAUNCHER_TURN_START_TIMEOUT_MS = 30_000;
+// Startup must exceed the launcher's bootstrap + retry budget (20s + 0.5s + 30s). This is not a model-turn budget.
+export const LAUNCHER_TURN_START_TIMEOUT_MS = 60_000;
 export const LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS = 5_000;
 export const LAUNCHER_TURN_END_TIMEOUT_MS = 15_000;

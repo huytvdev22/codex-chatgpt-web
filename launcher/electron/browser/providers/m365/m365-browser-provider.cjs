@@ -37,10 +37,22 @@ function normalizeM365ConversationId(value) {
     : null;
 }
 
-function m365ConversationUrl(conversationId) {
+function resolveM365OriginFromUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    if (M365_ALLOWED_ORIGINS.has(parsed.origin) && !isMicrosoftLoginUrl(rawUrl)) {
+      return parsed.origin;
+    }
+  } catch {}
+  return null;
+}
+
+function m365ConversationUrl(conversationId, origin = M365_ORIGIN) {
   const normalized = normalizeM365ConversationId(conversationId);
   if (!normalized) throw new Error("M365 conversation id is invalid");
-  return `${M365_CHAT_URL}/conversation/${normalized}`;
+  const resolvedOrigin = M365_ALLOWED_ORIGINS.has(origin) ? origin : M365_ORIGIN;
+  return `${resolvedOrigin}/chat/conversation/${normalized}`;
 }
 
 function parseM365ConversationId(rawUrl) {
@@ -115,14 +127,32 @@ class M365BrowserProvider extends BaseBrowserProvider {
       descriptorPath,
     });
     this.smokeTester = smokeTester;
+    this.preferredOrigin = M365_ORIGIN;
+  }
+
+  noteObservedAppUrl(rawUrl) {
+    const observed = resolveM365OriginFromUrl(rawUrl);
+    if (observed && observed !== this.preferredOrigin) {
+      this.preferredOrigin = observed;
+    }
+    return this.preferredOrigin;
+  }
+
+  effectiveHomeUrl() {
+    return `${this.preferredOrigin}/chat`;
+  }
+
+  initialUrl(conversationKey) {
+    const conversationId = this.conversationId(conversationKey);
+    return conversationId ? this.conversationUrl(conversationId) : this.effectiveHomeUrl();
   }
 
   normalizeConversationId(value) {
     return normalizeM365ConversationId(value);
   }
 
-  conversationUrl(conversationId) {
-    return m365ConversationUrl(conversationId);
+  conversationUrl(conversationId, origin = this.preferredOrigin) {
+    return m365ConversationUrl(conversationId, origin);
   }
 
   parseConversationId(rawUrl) {
@@ -158,7 +188,7 @@ class M365BrowserProvider extends BaseBrowserProvider {
   }
 
   async probeAuthentication(contents) {
-    return await contents.executeJavaScript(`(() => {
+    const result = await contents.executeJavaScript(`(() => {
       const href = location.href;
       const isM365 = href.includes("m365.cloud.microsoft") || href.includes("copilot.cloud.microsoft");
       const isLogin = href.includes("login.microsoftonline.com")
@@ -181,6 +211,10 @@ class M365BrowserProvider extends BaseBrowserProvider {
         readyState: "complete",
       };
     });
+    if (result?.authenticated) {
+      this.noteObservedAppUrl(result.url);
+    }
+    return result;
   }
 
   async waitForAuthenticationSettle(contents, timeoutMs = M365_AUTH_SETTLE_TIMEOUT_MS) {
@@ -201,6 +235,7 @@ class M365BrowserProvider extends BaseBrowserProvider {
       const loading = canCheckLoading ? contents.isLoading() : false;
 
       if (isM365AppUrl(currentUrl) && !loading) {
+        this.noteObservedAppUrl(currentUrl);
         return;
       }
 

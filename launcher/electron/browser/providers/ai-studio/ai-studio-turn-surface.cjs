@@ -30,6 +30,7 @@ async function markAiStudioTurnSurface(tab) {
 
 function bindAiStudioTurnContents(host, tab) {
   const contents = tab.view.webContents;
+  const shouldPublishUiState = () => host.window?.isVisible?.() !== false;
   contents.setWindowOpenHandler(({ url }) => {
     if (!allowedAiStudioNavigation(url)) {
       let parsed;
@@ -49,16 +50,16 @@ function bindAiStudioTurnContents(host, tab) {
     tab.url = url;
     tab.loading = true;
     if (!inPlace) tab.rendererReady = false;
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-start-loading", () => {
     tab.loading = true;
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-stop-loading", () => {
     tab.loading = false;
     tab.url = contents.getURL();
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-finish-load", () => {
     tab.url = contents.getURL();
@@ -67,12 +68,22 @@ function bindAiStudioTurnContents(host, tab) {
     tab.bootstrapReady = allowedAiStudioNavigation(tab.url);
     host.syncViewVisibility();
     if (tab.initializingSurface) {
-      host.publishState?.(host.snapshot());
+      if (shouldPublishUiState()) host.publishState?.(host.snapshot());
       return;
     }
     void markAiStudioTurnSurface(tab).then(
-      () => host.publishState?.(host.snapshot()),
+      () => {
+        if (shouldPublishUiState()) host.publishState?.(host.snapshot());
+      },
       error => {
+        if (contents.isDestroyed?.() || contents.isLoadingMainFrame?.()) {
+          host.logger?.warn?.("browser.ai_studio_surface_mark_deferred", {
+            tabId: tab.id,
+            traceId: tab.traceId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
         tab.status = "error";
         tab.message = `AI Studio browser ownership failed: ${error instanceof Error ? error.message : String(error)}`;
         host.syncPowerSaveBlocker();
@@ -82,11 +93,11 @@ function bindAiStudioTurnContents(host, tab) {
   });
   contents.on("page-title-updated", (_event, title) => {
     if (typeof title === "string" && title.trim()) tab.pageTitle = title.trim();
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
     if (mainFrame) tab.url = url;
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
     if (!mainFrame || errorCode === -3) return;

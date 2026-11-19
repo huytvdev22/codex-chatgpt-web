@@ -490,6 +490,17 @@ export class AiStudioPlaywrightWorker extends BaseWebBrowserWorker<
     return false;
   }
 
+  protected override resolveNextPollDelayMs(
+    observation: AiStudioPlaywrightObservation,
+    defaultDelayMs: number,
+    options: AiStudioPlaywrightRunOptions,
+  ): number {
+    if (options.pollingIntervalMs === undefined && observation.isGenerating) {
+      return Math.max(defaultDelayMs, 450);
+    }
+    return defaultDelayMs;
+  }
+
   protected override shouldEnforceIdleTimeout(
     observation: AiStudioPlaywrightObservation,
   ): boolean {

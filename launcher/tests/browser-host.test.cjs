@@ -2103,3 +2103,63 @@ test("TurnTabManager retains and reuses completed stateless surfaces (e.g. speec
   assert.equal(reusedLease.tabId, speechTab.id);
   assert.equal(speechTab.traceId, "trace_speech_2");
 });
+
+test("Windows occlusion policy disables CalculateNativeWinOcclusion while keeping background throttling removal", () => {
+  const mainSource = fs.readFileSync(require.resolve("../electron/main.cjs"), "utf8");
+  assert.match(mainSource, /removeSwitch\("disable-background-timer-throttling"\)/);
+  assert.match(mainSource, /removeSwitch\("disable-backgrounding-occluded-windows"\)/);
+  assert.match(mainSource, /removeSwitch\("disable-renderer-backgrounding"\)/);
+  assert.match(mainSource, /features\.add\("CalculateNativeWinOcclusion"\)/);
+  assert.match(mainSource, /commandLine\.appendSwitch\("disable-features"/);
+});
+
+test("initializeTurnTab absorbs ERR_ABORTED redirect and retries on commit timeout", async () => {
+  const { TurnTabManager } = require("../electron/browser/turn-tab-manager.cjs");
+  let loadCalls = 0;
+  let currentUrl = "about:blank";
+  const contents = new (require("node:events").EventEmitter)();
+  contents.isDestroyed = () => false;
+  contents.getURL = () => currentUrl;
+  contents.stop = () => {};
+  contents.loadURL = async () => {
+    loadCalls += 1;
+    if (loadCalls === 1) {
+      throw new Error("Browser idle document did not commit within 20000ms");
+    }
+    // Attempt 2: simulates ERR_ABORTED during mcmToCcm redirect before did-finish-load settles
+    queueMicrotask(() => {
+      currentUrl = "https://copilot.cloud.microsoft/chat";
+      contents.emit("did-finish-load");
+    });
+    throw Object.assign(new Error("ERR_ABORTED (-3)"), { code: "ERR_ABORTED", errno: -3 });
+  };
+
+  let marked = false;
+  const tab = {
+    id: "tab-retry-abort",
+    traceId: "trace-retry-abort",
+    provider: "m365",
+    url: "https://m365.cloud.microsoft/chat",
+    initializingSurface: true,
+    view: { webContents: contents },
+  };
+  const fakeHost = {
+    turnTabs: new Map([[tab.id, tab]]),
+    providerRegistry: {
+      has: (id) => id === "m365",
+      get: () => ({
+        id: "m365",
+        isAllowedNavigation: (url) => url.startsWith("https://copilot.cloud.microsoft"),
+        markOwnedSurface: async () => { marked = true; },
+      }),
+    },
+    logger: { warn() {}, error() {} },
+    removeTurnTab() { assert.fail("tab must not be removed when retry succeeds"); },
+  };
+
+  const manager = new TurnTabManager(fakeHost, { standalone: true });
+  await manager.initializeTurnTab(tab, new AbortController().signal);
+  assert.equal(loadCalls, 2);
+  assert.equal(marked, true);
+  assert.equal(tab.initializingSurface, false);
+});

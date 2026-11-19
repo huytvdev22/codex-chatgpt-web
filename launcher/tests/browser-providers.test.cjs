@@ -252,6 +252,18 @@ test("M365BrowserProvider encapsulates Microsoft 365 URL, cookie, and fallback p
     executeJavaScript: async () => false,
   }, 500);
   assert.ok(ssoTicks >= 3);
+
+  // Sau khi quan sát thấy copilot.cloud.microsoft, provider ưu tiên origin mới để tránh redirect mcmToCcm lặp lại
+  assert.equal(provider.preferredOrigin, "https://copilot.cloud.microsoft");
+  assert.equal(provider.initialUrl(), "https://copilot.cloud.microsoft/chat");
+  const sampleConvId = "01a1ea2f-c3b5-4863-9da2-7974ae30a53b";
+  assert.equal(
+    provider.conversationUrl(sampleConvId),
+    `https://copilot.cloud.microsoft/chat/conversation/${sampleConvId}`,
+  );
+  // Trang login không được ghi đè preferredOrigin
+  provider.noteObservedAppUrl("https://copilot.cloud.microsoft/login");
+  assert.equal(provider.preferredOrigin, "https://copilot.cloud.microsoft");
 });
 
 test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-provider AI Studio registration", async () => {

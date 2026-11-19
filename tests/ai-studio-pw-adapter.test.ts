@@ -505,4 +505,55 @@ describe("Google AI Studio Playwright Adapter (ai-studio-pw)", () => {
     expect(events.indexOf("hover:composer")).toBeLessThan(events.indexOf("fill:composer:5"));
     expect(events.indexOf("hover:runBtn")).toBeLessThan(events.indexOf("click:runBtn"));
   });
+
+  test("AiStudioPlaywrightDomObserver tái sử dụng cache khi rawHtml không đổi và Worker giãn nhịp poll khi generating", () => {
+    const observer = new AiStudioPlaywrightDomObserver();
+    const state = observer.createRuntimeState();
+    const sameHtml = "<p><strong>Hello</strong> world</p>";
+
+    const first = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 0,
+        thoughtTextLength: 0,
+        rawHtml: sameHtml,
+        rawText: "Hello world",
+        hasContent: true,
+      },
+      true,
+    );
+    state.lastObservedText = "CACHED_MARKDOWN";
+
+    const second = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 0,
+        thoughtTextLength: 0,
+        rawHtml: sameHtml,
+        rawText: "Hello world",
+        hasContent: true,
+      },
+      true,
+    );
+
+    expect(first.text).toBe("**Hello** world");
+    expect(second.text).toBe("CACHED_MARKDOWN");
+
+    class PollTestWorker extends AiStudioPlaywrightWorker {
+      public getPollDelay(obs: any, baseMs: number, opts: any): number {
+        return this.resolveNextPollDelayMs(obs, baseMs, opts);
+      }
+    }
+    const pwWorker = new PollTestWorker();
+    expect(pwWorker.getPollDelay({ isGenerating: true }, 250, {})).toBe(450);
+    expect(pwWorker.getPollDelay({ isGenerating: false }, 250, {})).toBe(250);
+  });
 });

@@ -195,6 +195,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
             prompt,
             // Quarantine: browser vẫn thu thập stream nhưng adapter không emit trước validation.
             onChunk: () => {},
+            streamIncremental: false,
             signal: incoming.abortSignal,
             conversationKey,
             existingConversationId,

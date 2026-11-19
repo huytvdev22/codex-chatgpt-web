@@ -70,6 +70,10 @@ export abstract class BaseWebBrowserWorker<
   protected readonly defaultIdleTimeoutMs = 2 * 60_000;
   protected readonly defaultPollingIntervalMs = 250;
   protected readonly defaultHeartbeatIntervalMs = 10_000;
+  private readonly heartbeatStates = new WeakMap<
+    BaseBrowserRunOptions,
+    { lastSentAt: number; inFlight: boolean }
+  >();
 
   protected abstract readonly logPrefix: string;
 
@@ -80,10 +84,11 @@ export abstract class BaseWebBrowserWorker<
     this.throwIfAborted(options.signal, "before start");
 
     await this.initializeTurnState(page, options);
+    const stopHeartbeatLoop = this.startHeartbeatLoop(options);
     try {
       await this.navigate(page, options);
       await this.prepareProvider(page, options);
-      await this.sendHeartbeat(options);
+      await this.sendTrackedHeartbeat(options);
 
       const baseline = await this.captureResponseBaseline(page, options);
 
@@ -116,6 +121,7 @@ export abstract class BaseWebBrowserWorker<
       await this.handleExecutionError(error, page, options);
       throw error;
     } finally {
+      stopHeartbeatLoop();
       await this.cleanupTurnState(page, options);
     }
   }
@@ -154,6 +160,18 @@ export abstract class BaseWebBrowserWorker<
     _options: TOptions,
   ): boolean {
     return false;
+  }
+
+  /**
+   * Cho phép provider điều chỉnh nhịp polling giữa các chu kỳ (vd: giãn nhịp
+   * khi model vẫn đang generating để giảm chi phí CDP/DOM).
+   */
+  protected resolveNextPollDelayMs(
+    _observation: TObservation,
+    defaultDelayMs: number,
+    _options: TOptions,
+  ): number {
+    return defaultDelayMs;
   }
 
   protected async beforeObserveResponse(
@@ -280,11 +298,14 @@ export abstract class BaseWebBrowserWorker<
 
     const startedAt = Date.now();
     let lastActivityAt = startedAt;
-    let lastHeartbeatAt = startedAt - heartbeatIntervalMs;
     let lastActivityKey: string | undefined;
     let lastRenderedText = "";
     let lastObservation: TObservation | undefined;
     let isFirstObservation = true;
+    const heartbeatState = this.getOrCreateHeartbeatState(
+      options,
+      startedAt - heartbeatIntervalMs,
+    );
 
     while (true) {
       if (options.signal?.aborted) {
@@ -295,10 +316,10 @@ export abstract class BaseWebBrowserWorker<
       const now = Date.now();
       if (
         options.heartbeat &&
-        now - lastHeartbeatAt >= heartbeatIntervalMs
+        !heartbeatState.inFlight &&
+        now - heartbeatState.lastSentAt >= heartbeatIntervalMs
       ) {
-        lastHeartbeatAt = now;
-        await this.sendHeartbeat(options);
+        await this.sendTrackedHeartbeat(options);
       }
 
       if (now - startedAt >= hardTimeoutMs) {
@@ -370,7 +391,63 @@ export abstract class BaseWebBrowserWorker<
         throw idleTimeoutError;
       }
 
-      await this.sleepSurface(page, pollingIntervalMs, options.signal);
+      const nextPollDelayMs = this.resolveNextPollDelayMs(
+        observation,
+        pollingIntervalMs,
+        options,
+      );
+      await this.sleepSurface(page, nextPollDelayMs, options.signal);
+    }
+  }
+
+  private getOrCreateHeartbeatState(
+    options: TOptions,
+    initialLastSentAt = 0,
+  ): { lastSentAt: number; inFlight: boolean } {
+    let state = this.heartbeatStates.get(options);
+    if (!state) {
+      state = { lastSentAt: initialLastSentAt, inFlight: false };
+      this.heartbeatStates.set(options, state);
+    }
+    return state;
+  }
+
+  private startHeartbeatLoop(options: TOptions): () => void {
+    if (!options.heartbeat) return () => {};
+    const heartbeatIntervalMs =
+      options.heartbeatIntervalMs ?? this.defaultHeartbeatIntervalMs;
+    if (!Number.isFinite(heartbeatIntervalMs) || heartbeatIntervalMs <= 0) {
+      return () => {};
+    }
+
+    const state = this.getOrCreateHeartbeatState(options, Date.now());
+    const tickMs = Math.max(10, Math.min(Math.floor(heartbeatIntervalMs / 2), 2_500));
+    const timer = setInterval(() => {
+      if (options.signal?.aborted || state.inFlight) return;
+      if (Date.now() - state.lastSentAt < heartbeatIntervalMs) return;
+      void this.sendTrackedHeartbeat(options);
+    }, tickMs);
+    timer.unref?.();
+
+    const stop = () => {
+      clearInterval(timer);
+      options.signal?.removeEventListener("abort", stop);
+    };
+    options.signal?.addEventListener("abort", stop, { once: true });
+    return stop;
+  }
+
+  private async sendTrackedHeartbeat(options: TOptions): Promise<void> {
+    if (!options.heartbeat) return;
+    const state = this.getOrCreateHeartbeatState(options, 0);
+    if (state.inFlight) return;
+    state.inFlight = true;
+    state.lastSentAt = Date.now();
+    try {
+      await this.sendHeartbeat(options);
+    } finally {
+      state.lastSentAt = Date.now();
+      state.inFlight = false;
     }
   }
 

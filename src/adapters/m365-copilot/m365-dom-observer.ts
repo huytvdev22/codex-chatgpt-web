@@ -34,6 +34,13 @@ export interface M365ResponseDomStatus {
   detectedWebError: string;
   fastPathRawText: string | null;
   isInputActionsIdle?: boolean;
+  lightweight?: boolean;
+  lightweightTextLength?: number;
+  hasCodeBlocks?: boolean;
+}
+
+export interface M365CaptureStatusOptions {
+  lightweightWhileGenerating?: boolean;
 }
 
 export interface M365ResponseObservation {
@@ -61,6 +68,7 @@ export interface M365ResponseRuntimeState {
   attempts: number;
   lastStatus: M365ResponseDomStatus | null;
   pendingStatus: M365ResponseDomStatus | null;
+  lastLightweightTextLength?: number;
 }
 
 /**
@@ -160,12 +168,17 @@ export class M365DomObserver {
 
   /**
    * Trích xuất các khối ngữ nghĩa (Semantic Blocks) và trạng thái generating từ DOM hiện tại.
+   * Khi `lightweightWhileGenerating: true` và M365 vẫn đang sinh nội dung, bỏ qua cloneNode/HTML
+   * để giảm mạnh CPU và lưu lượng CDP; chỉ parse đầy đủ khi hoàn tất.
    */
   public async captureStatus(
     page: Page,
     beforeState: M365ResponseBaseline,
+    captureOptions: M365CaptureStatusOptions = {},
   ): Promise<M365ResponseDomStatus> {
-    const status = await page.evaluate((before) => {
+    const lightweightWhileGenerating =
+      captureOptions.lightweightWhileGenerating === true;
+    const status = await page.evaluate(({ before, lightweightWhileGenerating: lightweightMode }) => {
       const stopBtn = document.querySelector(
         'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]',
       );
@@ -272,7 +285,6 @@ export class M365DomObserver {
         return {
           isGenerating: isEditorBusy,
           blocks: [],
-          rawHtml: "",
           isNew: false,
           hasContent: false,
           detectedWebError,
@@ -312,17 +324,6 @@ export class M365DomObserver {
           !all.some(other => other !== el && other.contains(el)),
       );
 
-      let monacoModelsText: string[] = [];
-      try {
-        const win = window as any;
-        const models = win.monaco?.editor?.getModels?.();
-        if (Array.isArray(models) && models.length > 0) {
-          monacoModelsText = models
-            .map((m: any) => (typeof m.getValue === "function" ? m.getValue() : ""))
-            .filter(Boolean);
-        }
-      } catch {}
-
       const win = window as any;
       if (!win.__m365_code_lines_cache_by_block) {
         win.__m365_code_lines_cache_by_block = new Map<
@@ -330,6 +331,63 @@ export class M365DomObserver {
           Map<number, string>
         >();
       }
+
+      const actionsEl = document.querySelector(".fai-BebopLiteChatInput__actions");
+      const hasSubmitBtn = Boolean(
+        actionsEl?.querySelector('button[type="submit"], .fai-SendButton'),
+      );
+      const isInputActionsIdle = Boolean(actionsEl) && !hasSubmitBtn && !stopBtn;
+
+      if (lightweightMode && isGenerating) {
+        let codeLineCacheSize = 0;
+        liveCodeBlocks.forEach((block, blockIdx) => {
+          let blockCache = win.__m365_code_lines_cache_by_block.get(blockIdx);
+          if (!blockCache) {
+            blockCache = new Map<number, string>();
+            win.__m365_code_lines_cache_by_block.set(blockIdx, blockCache);
+          }
+          block.querySelectorAll("[data-line-index]").forEach((el) => {
+            const idxAttr = el.getAttribute("data-line-index");
+            if (idxAttr !== null) {
+              const idx = parseInt(idxAttr, 10);
+              if (!isNaN(idx)) {
+                blockCache.set(
+                  idx,
+                  (el.textContent || "").replace(/\u00a0/g, " "),
+                );
+              }
+            }
+          });
+          codeLineCacheSize += blockCache.size;
+        });
+
+        const lightweightTextLength =
+          currentLastText.length + codeLineCacheSize * 16;
+        return {
+          isGenerating: true,
+          blocks: [],
+          isNew: true,
+          hasContent:
+            (currentLastText.length > 0 || liveCodeBlocks.length > 0) &&
+            !isCancellationMessage,
+          detectedWebError,
+          fastPathRawText: null,
+          isInputActionsIdle,
+          lightweight: true,
+          lightweightTextLength,
+          hasCodeBlocks: liveCodeBlocks.length > 0,
+        };
+      }
+
+      let monacoModelsText: string[] = [];
+      try {
+        const models = win.monaco?.editor?.getModels?.();
+        if (Array.isArray(models) && models.length > 0) {
+          monacoModelsText = models
+            .map((m: any) => (typeof m.getValue === "function" ? m.getValue() : ""))
+            .filter(Boolean);
+        }
+      } catch {}
 
       const codeData = liveCodeBlocks.map((block, blockIdx) => {
         const langEl = block.querySelector(
@@ -611,13 +669,6 @@ export class M365DomObserver {
         };
       });
 
-      const actionsEl = document.querySelector(".fai-BebopLiteChatInput__actions");
-      const hasSubmitBtn = Boolean(
-        actionsEl?.querySelector('button[type="submit"], .fai-SendButton'),
-      );
-      const isInputActionsIdle = Boolean(actionsEl) && !hasSubmitBtn && !stopBtn;
-
-      const rawHtml = clone.innerHTML || "";
       const hasContent =
         (blocks.length > 0 ||
           Boolean(fastPathRawText && fastPathRawText.length > 0)) &&
@@ -626,14 +677,14 @@ export class M365DomObserver {
       return {
         isGenerating,
         blocks,
-        rawHtml,
         isNew,
         hasContent,
         detectedWebError,
         fastPathRawText,
         isInputActionsIdle,
+        hasCodeBlocks: liveCodeBlocks.length > 0,
       };
-    }, beforeState);
+    }, { before: beforeState, lightweightWhileGenerating });
 
     return status as M365ResponseDomStatus;
   }
@@ -664,6 +715,7 @@ export class M365DomObserver {
       isCompleted: !status.isGenerating && status.hasContent,
       activityKey: [
         status.isGenerating,
+        status.lightweight === true ? status.lightweightTextLength ?? 0 : "",
         responseState.fastPathActive,
         responseState.lastFastPathText.length,
         responseState.lastBlocks
@@ -714,7 +766,10 @@ export class M365DomObserver {
       );
     }
 
-    if (responseState.attempts % 4 === 0) {
+    if (
+      (responseState.fastPathActive || status.hasCodeBlocks) &&
+      responseState.attempts % 6 === 0
+    ) {
       await page
         .evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
@@ -737,6 +792,21 @@ export class M365DomObserver {
             });
         })
         .catch(() => {});
+    }
+
+    if (status.lightweight) {
+      const nextLen = status.lightweightTextLength ?? 0;
+      if (nextLen !== responseState.lastLightweightTextLength) {
+        responseState.lastLightweightTextLength = nextLen;
+        responseState.lastTextChangeAt = Date.now();
+        responseState.stableCycles = 0;
+      } else {
+        responseState.stableCycles++;
+      }
+      responseState.lastStatus = status;
+      const observation = this.createObservation(responseState, false);
+      observation.isCompleted = false;
+      return observation;
     }
 
     if (

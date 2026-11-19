@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { M365BrowserWorker } from "../src/adapters/m365-copilot/m365-browser-worker";
+import { M365ClipboardSalvage } from "../src/adapters/m365-copilot/m365-clipboard-salvage";
 
 const workerPath = path.resolve(
   process.cwd(),
@@ -509,5 +510,158 @@ describe("M365 browser worker migration contract", () => {
       { prompt: "hello", conversationKey: "k-new" },
     );
     expect(visitedNew).toEqual([]);
+  });
+
+  test("M365BrowserWorker bật lightweightWhileGenerating khi streamIncremental=false và giãn nhịp 450ms khi generating", async () => {
+    class TestLightWorker extends M365BrowserWorker {
+      public getPollDelay(obs: any, baseMs: number, opts: any): number {
+        return this.resolveNextPollDelayMs(obs, baseMs, opts);
+      }
+      protected override async navigate(): Promise<void> {}
+      protected override async prepareProvider(): Promise<void> {}
+      protected override async captureResponseBaseline() {
+        return { aiCount: 0, count: 0, lastText: "", lastHtml: "" };
+      }
+      protected override async insertPrompt(): Promise<void> {}
+      protected override async submitPrompt(): Promise<void> {}
+      protected override async stopGeneration(): Promise<boolean> { return true; }
+      protected override async resolveConversationId(): Promise<string> { return "conv-light"; }
+      protected override shouldDelayFirstObservation(): boolean { return false; }
+    }
+
+    const worker = new TestLightWorker();
+    const captureOpts: unknown[] = [];
+    let polls = 0;
+
+    (worker as any).domObserver = {
+      createRuntimeState: () => ({
+        markdownBuffer: { observe: () => "", finish: () => ({ markdown: "", delta: "" }) },
+        fastPathBuffer: { observe: () => "", finish: () => ({ markdown: "", delta: "" }), getText: () => "" },
+        fastPathActive: false,
+        lastFastPathText: "",
+        seenGenerating: false,
+        hasSeenGenerating: false,
+        completedCandidateAt: null,
+        stableCycles: 0,
+        lastTextChangeAt: Date.now(),
+        lastBlocks: [],
+        attempts: 0,
+        lastStatus: null,
+        pendingStatus: null,
+      }),
+      captureStatus: async (_p: unknown, _b: unknown, opts?: unknown) => {
+        captureOpts.push(opts);
+        polls += 1;
+        return {
+          isGenerating: polls === 1,
+          blocks: polls === 1 ? [] : [{ key: "p::ok#1", tag: "p", html: "<p>OK</p>", text: "OK", streamable: false }],
+          isNew: true,
+          hasContent: true,
+          detectedWebError: "",
+          fastPathRawText: null,
+          isInputActionsIdle: polls > 1,
+          lightweight: polls === 1,
+        };
+      },
+      applyStatus: async (_p: unknown, state: any, status: any) => {
+        state.lastBlocks = status.blocks;
+        state.lastStatus = status;
+        return {
+          text: polls === 1 ? "" : "OK",
+          isGenerating: status.isGenerating,
+          isCompleted: polls >= 2,
+          activityKey: `k-${polls}`,
+          status,
+          blocks: status.blocks,
+          fastPathActive: false,
+          timedOut: false,
+        };
+      },
+    };
+    (worker as any).clipboardSalvage = {
+      tryExtractCodeViaCopyButton: async () => null,
+    };
+
+    const fakePage: any = {
+      url: () => "https://copilot.cloud.microsoft/chat/conversation/conv-light",
+      waitForTimeout: async () => {},
+      locator: () => ({ count: async () => 0 }),
+    };
+
+    const res = await worker.executeTurn(fakePage, {
+      prompt: "hi",
+      conversationKey: "conv-light",
+      streamIncremental: false,
+      pollingIntervalMs: 1,
+    });
+
+    expect(res.rawResponse).toBe("OK");
+    expect(captureOpts).toEqual([
+      { lightweightWhileGenerating: true },
+      { lightweightWhileGenerating: true },
+    ]);
+    expect(worker.getPollDelay({ isGenerating: true }, 250, {})).toBe(450);
+    expect(worker.getPollDelay({ isGenerating: false }, 250, {})).toBe(250);
+  });
+
+  test("M365ClipboardSalvage dùng fast-path bộ nhớ không gọi bringToFront và đặt timeout 1.5s cho locator", async () => {
+    const salvage = new M365ClipboardSalvage();
+    let bringToFrontCalled = false;
+    let evaluateCalls = 0;
+
+    const fastResult = await salvage.tryExtractCodeViaCopyButton({
+      bringToFront: async () => {
+        bringToFrontCalled = true;
+      },
+      evaluate: async () => {
+        evaluateCalls += 1;
+        return {
+          text: "<webResponse><final_answer>Xong</final_answer></webResponse>",
+          source: "React Fiber Props (code)",
+        };
+      },
+    } as any);
+
+    expect(fastResult).toBe("<webResponse><final_answer>Xong</final_answer></webResponse>");
+    expect(bringToFrontCalled).toBe(false);
+    expect(evaluateCalls).toBe(1);
+
+    // Fallback path: verifies locator scrollIntoViewIfNeeded and click both receive explicit timeout
+    const recordedTimeouts: Array<number | undefined> = [];
+    const fallbackLocator: any = {
+      last: () => fallbackLocator,
+      locator: () => fallbackLocator,
+      count: async () => 1,
+      scrollIntoViewIfNeeded: async (opts?: { timeout?: number }) => {
+        recordedTimeouts.push(opts?.timeout);
+      },
+      click: async (opts?: { timeout?: number }) => {
+        recordedTimeouts.push(opts?.timeout);
+      },
+    };
+    let fallbackEvaluateCalls = 0;
+    const fallbackResult = await salvage.tryExtractCodeViaCopyButton({
+      bringToFront: async () => {
+        bringToFrontCalled = true;
+      },
+      waitForTimeout: async () => {},
+      context: () => ({ grantPermissions: async () => {} }),
+      locator: () => fallbackLocator,
+      evaluate: async () => {
+        fallbackEvaluateCalls += 1;
+        if (fallbackEvaluateCalls === 2) {
+          return {
+            hasCodeCopyBtn: true,
+            hasPreviewToggle: false,
+            isCurrentlyInCodeView: true,
+          };
+        }
+        return null;
+      },
+    } as any);
+
+    expect(fallbackResult).toBeNull();
+    expect(bringToFrontCalled).toBe(false);
+    expect(recordedTimeouts).toEqual([1_500, 1_500]);
   });
 });

@@ -298,6 +298,25 @@ async function requestQuit() {
   }
 }
 
+function configureWindowsOcclusionPolicy(commandLine, platform = process.platform) {
+  // Trên Windows, khi BrowserWindow gọi hide() xuống tray hoặc bị che khuất,
+  // CalculateNativeWinOcclusion làm Chromium ngưng compositor/frame của các WebContentsView con
+  // dù đã gọi setBackgroundThrottling(false), khiến Playwright click/scroll treo tới timeout.
+  // Tắt riêng feature này nhưng vẫn giữ cơ chế backgroundThrottling cho các tab idle (lỗi 008).
+  if (platform !== "win32" || !commandLine) return;
+  const existing = typeof commandLine.getSwitchValue === "function"
+    ? commandLine.getSwitchValue("disable-features")
+    : "";
+  const features = new Set(
+    String(existing || "")
+      .split(",")
+      .map(item => item.trim())
+      .filter(Boolean),
+  );
+  features.add("CalculateNativeWinOcclusion");
+  commandLine.appendSwitch("disable-features", [...features].join(","));
+}
+
 async function start() {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
@@ -317,6 +336,7 @@ async function start() {
   app.commandLine.removeSwitch("disable-background-timer-throttling");
   app.commandLine.removeSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.removeSwitch("disable-renderer-backgrounding");
+  configureWindowsOcclusionPolicy(app.commandLine);
   app.commandLine.appendSwitch("disable-component-update");
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));

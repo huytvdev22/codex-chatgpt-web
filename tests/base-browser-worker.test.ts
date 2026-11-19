@@ -342,4 +342,84 @@ describe("BaseWebBrowserWorker", () => {
     ).rejects.toBeInstanceOf(BrowserIdleTimeoutError);
     expect(worker.stopCalls).toBe(1);
   });
+
+  test("duy trì background heartbeat xuyên suốt mọi pha kể cả navigate/extract chậm mà không chồng lấn", async () => {
+    class SlowNonPollingWorker extends TestBrowserWorker {
+      protected override async navigate(): Promise<void> {
+        this.calls.push("navigate");
+        await new Promise((resolve) => setTimeout(resolve, 45));
+      }
+
+      protected override async extractCompletedResponse(
+        _page: Page,
+        context: BrowserCompletionContext<TestBaseline, BrowserObservation>,
+      ): Promise<string> {
+        this.calls.push("extractCompletedResponse");
+        await new Promise((resolve) => setTimeout(resolve, 45));
+        return context.observation.text;
+      }
+    }
+
+    const worker = new SlowNonPollingWorker();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let heartbeatCalls = 0;
+
+    const result = await worker.executeTurn(createFakePage(), {
+      prompt: "Long phase heartbeat",
+      heartbeatIntervalMs: 12,
+      pollingIntervalMs: 1,
+      heartbeat: async () => {
+        heartbeatCalls += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        inFlight -= 1;
+      },
+      observations: [
+        {
+          text: "Xong",
+          isGenerating: false,
+          isCompleted: true,
+          activityKey: "done",
+        },
+      ],
+    });
+
+    expect(result.rawResponse).toBe("Xong");
+    expect(heartbeatCalls).toBeGreaterThanOrEqual(3);
+    expect(maxInFlight).toBe(1);
+  });
+
+  test("resolveNextPollDelayMs cho phép giãn nhịp polling khi đang generating", async () => {
+    const recordedDelays: number[] = [];
+
+    class AdaptivePollWorker extends TestBrowserWorker {
+      protected override resolveNextPollDelayMs(
+        observation: BrowserObservation,
+        defaultDelayMs: number,
+      ): number {
+        return observation.isGenerating ? Math.max(defaultDelayMs, 15) : defaultDelayMs;
+      }
+    }
+
+    const worker = new AdaptivePollWorker();
+    const fakePage = {
+      waitForTimeout: async (ms: number) => {
+        recordedDelays.push(ms);
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      },
+    } as unknown as Page;
+
+    await worker.executeTurn(fakePage, {
+      prompt: "Adaptive poll",
+      pollingIntervalMs: 2,
+      observations: [
+        { text: "Đang sinh", isGenerating: true, isCompleted: false, activityKey: "1" },
+        { text: "Hoàn tất", isGenerating: false, isCompleted: true, activityKey: "2" },
+      ],
+    });
+
+    expect(recordedDelays).toEqual([15]);
+  });
 });

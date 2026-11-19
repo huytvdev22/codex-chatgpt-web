@@ -34,6 +34,7 @@ export interface M365BrowserRunOptions extends BaseBrowserRunOptions {
   existingConversationId?: string;
   launcherReused?: boolean;
   shouldStop?: () => boolean;
+  streamIncremental?: boolean;
   modelSlug?: string;
   reasoning?: string;
   images?: NormalizedImageAttachment[];
@@ -202,16 +203,28 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     return true;
   }
 
+  protected override resolveNextPollDelayMs(
+    observation: M365ResponseObservation,
+    defaultDelayMs: number,
+    options: M365BrowserRunOptions,
+  ): number {
+    if (options.pollingIntervalMs === undefined && observation.isGenerating) {
+      return Math.max(defaultDelayMs, 450);
+    }
+    return defaultDelayMs;
+  }
+
   protected override async beforeObserveResponse(
     page: Page,
     baseline: M365ResponseBaseline,
-    _options: M365BrowserRunOptions,
+    options: M365BrowserRunOptions,
   ): Promise<void> {
     const responseState = this.getResponseRuntimeState(page);
     responseState.attempts++;
     responseState.pendingStatus = await this.domObserver.captureStatus(
       page,
       baseline,
+      { lightweightWhileGenerating: options.streamIncremental === false },
     );
   }
 
@@ -272,6 +285,23 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     options: M365BrowserRunOptions,
   ): Promise<string> {
     const responseState = this.getResponseRuntimeState(page);
+    if (
+      context.observation.timedOut &&
+      !responseState.fastPathActive &&
+      responseState.lastBlocks.length === 0
+    ) {
+      const fullStatus = await this.domObserver
+        .captureStatus(page, context.baseline, {
+          lightweightWhileGenerating: false,
+        })
+        .catch(() => null);
+      if (fullStatus) {
+        await this.domObserver
+          .applyStatus(page, responseState, fullStatus, options)
+          .catch(() => {});
+      }
+    }
+
     let fullMarkdown = "";
     let finalDelta = "";
 
@@ -314,24 +344,22 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     const hasUnclosedMarkers =
       /(?:<custom_tool_call|\*{3}\s*Begin Patch)/i.test(fullMarkdown) &&
       !/(?:<\/custom_tool_call>|\*{3}\s*End Patch)/i.test(fullMarkdown);
-    const hasCodeBlockOnPage =
-      (await page
-        .locator(
-          "button#copy-button, button#preview-toggle-button, button[aria-label='Copy code'], button[aria-label='Code']",
-        )
-        .count()
-        .catch(() => 0)) > 0;
+    const alreadyNeedsSalvage =
+      needsEnvelopeFix || hasUnclosedMarkers || responseState.fastPathActive;
+    const hasCodeBlockOnPage = alreadyNeedsSalvage
+      ? false
+      : (await page
+          .locator(
+            "button#copy-button, button#preview-toggle-button, button[aria-label='Copy code'], button[aria-label='Code']",
+          )
+          .count()
+          .catch(() => 0)) > 0;
 
     console.log(
       `[m365-worker] [salvage-eval] Đánh giá điều kiện cứu hộ: needsEnvelopeFix=${needsEnvelopeFix}, hasUnclosedMarkers=${hasUnclosedMarkers}, fastPathActive=${responseState.fastPathActive}, hasCodeBlockOnPage=${hasCodeBlockOnPage}, textLen=${fullMarkdown.length}`,
     );
 
-    if (
-      needsEnvelopeFix ||
-      hasUnclosedMarkers ||
-      responseState.fastPathActive ||
-      hasCodeBlockOnPage
-    ) {
+    if (alreadyNeedsSalvage || hasCodeBlockOnPage) {
       console.log(
         "[m365-worker] [salvage-eval] -> Phát hiện response cần cứu hộ hoặc có Code Block trên trang. Kích hoạt tryExtractCodeViaCopyButton...",
       );

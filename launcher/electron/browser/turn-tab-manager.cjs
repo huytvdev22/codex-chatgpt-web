@@ -10,6 +10,8 @@ const { M365BrowserProvider } = require("./providers/m365/m365-browser-provider.
 
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
+const TURN_TAB_INITIAL_LOAD_TIMEOUT_MS = 20_000;
+const TURN_TAB_RETRY_LOAD_TIMEOUT_MS = 30_000;
 const MAX_BROWSER_TABS = 5;
 const MAX_CANCELLED_TURN_TRACES = 256;
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
@@ -339,13 +341,14 @@ class TurnTabManager {
           await loadCommittedBrowserSurface(
             contents,
             targetUrl,
-            PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS,
+            TURN_TAB_INITIAL_LOAD_TIMEOUT_MS,
             { isCommittedUrl: urlMatcher },
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const retryableTimeout = message.includes("Browser idle document did not commit within");
-          if (!retryableTimeout || contents.isDestroyed()) throw error;
+          const retryable = message.includes("Browser idle document did not commit within")
+            || (Boolean(urlMatcher) && (message.includes("ERR_ABORTED") || message.includes("(-3)")));
+          if (!retryable || contents.isDestroyed()) throw error;
           this.host.logger.warn("browser.tab_initialization_retry", {
             tabId: tab.id,
             traceId: tab.traceId,
@@ -354,12 +357,15 @@ class TurnTabManager {
           });
           await sleep(500);
           signal?.throwIfAborted();
-          await loadCommittedBrowserSurface(
-            contents,
-            targetUrl,
-            PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS * 3,
-            { isCommittedUrl: urlMatcher },
-          );
+          const currentUrl = typeof contents.getURL === "function" ? contents.getURL() : "";
+          if (!urlMatcher || !urlMatcher(currentUrl)) {
+            await loadCommittedBrowserSurface(
+              contents,
+              targetUrl,
+              TURN_TAB_RETRY_LOAD_TIMEOUT_MS,
+              { isCommittedUrl: urlMatcher },
+            );
+          }
         }
         signal?.throwIfAborted();
         await providerObj.markOwnedSurface(tab);

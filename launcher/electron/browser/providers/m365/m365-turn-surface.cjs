@@ -35,6 +35,7 @@ async function markM365TurnSurface(tab) {
 /** Bind only M365-safe navigation and lifecycle behavior; no ChatGPT DOM hooks. */
 function bindM365TurnContents(host, tab) {
   const contents = tab.view.webContents;
+  const shouldPublishUiState = () => host.window?.isVisible?.() !== false;
   contents.setWindowOpenHandler(({ url }) => {
     if (!allowedM365Navigation(url)) {
       let parsed;
@@ -54,30 +55,41 @@ function bindM365TurnContents(host, tab) {
     tab.url = url;
     tab.loading = true;
     if (!inPlace) tab.rendererReady = false;
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-start-loading", () => {
     tab.loading = true;
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-stop-loading", () => {
     tab.loading = false;
     tab.url = contents.getURL();
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-finish-load", () => {
     tab.url = contents.getURL();
     tab.loading = false;
     tab.rendererReady = true;
     tab.bootstrapReady = allowedM365Navigation(tab.url);
+    host._resolveProvider?.("m365")?.noteObservedAppUrl?.(tab.url);
     host.syncViewVisibility();
     if (tab.initializingSurface) {
-      host.publishState?.(host.snapshot());
+      if (shouldPublishUiState()) host.publishState?.(host.snapshot());
       return;
     }
     void markM365TurnSurface(tab).then(
-      () => host.publishState?.(host.snapshot()),
+      () => {
+        if (shouldPublishUiState()) host.publishState?.(host.snapshot());
+      },
       error => {
+        if (contents.isDestroyed?.() || contents.isLoadingMainFrame?.()) {
+          host.logger?.warn?.("browser.m365_surface_mark_deferred", {
+            tabId: tab.id,
+            traceId: tab.traceId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
         tab.status = "error";
         tab.message = `M365 browser ownership failed: ${error instanceof Error ? error.message : String(error)}`;
         host.syncPowerSaveBlocker();
@@ -87,11 +99,14 @@ function bindM365TurnContents(host, tab) {
   });
   contents.on("page-title-updated", (_event, title) => {
     if (typeof title === "string" && title.trim()) tab.pageTitle = title.trim();
-    host.publishState?.(host.snapshot());
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
-    if (mainFrame) tab.url = url;
-    host.publishState?.(host.snapshot());
+    if (mainFrame) {
+      tab.url = url;
+      host._resolveProvider?.("m365")?.noteObservedAppUrl?.(url);
+    }
+    if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
     if (!mainFrame || errorCode === -3) return;
