@@ -1,6 +1,6 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "6.10.5",
+  "version": "6.10.6",
   "private": true,
   "description": "A focused local Responses API bridge that runs Codex and OpenAI-compatible clients through Microsoft 365 Copilot.",
   "repository": {
