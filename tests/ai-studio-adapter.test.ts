@@ -728,6 +728,89 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     expect(events.indexOf("hover:runBtn")).toBeLessThan(events.indexOf("click:runBtn"));
   });
 
+  test("AiStudioBrowserWorker.insertPrompt rơi xuống DOM setter khi composer.fill timeout/lỗi", async () => {
+    const worker = new AiStudioBrowserWorker();
+    let domFallbackValue = "";
+
+    const fakePage = {
+      waitForTimeout: async () => {},
+      locator: () => {
+        const loc = {
+          page: () => fakePage,
+          first: () => loc,
+          waitFor: async () => {},
+          scrollIntoViewIfNeeded: async () => {},
+          hover: async () => {},
+          click: async () => {},
+          fill: async () => {
+            throw new Error("fill: Timeout 4000ms exceeded");
+          },
+          inputValue: async () => domFallbackValue,
+        };
+        return loc;
+      },
+      evaluate: async (_fn: unknown, arg?: { value?: string }) => {
+        if (typeof arg?.value === "string") {
+          domFallbackValue = arg.value;
+        }
+        return undefined;
+      },
+    } as never;
+
+    const helper = worker as unknown as {
+      insertPrompt: (p: unknown, text: string, o: Record<string, unknown>) => Promise<void>;
+    };
+    const bigPrompt = "x".repeat(12_000);
+    await helper.insertPrompt(fakePage, bigPrompt, {});
+    expect(domFallbackValue).toBe(bigPrompt);
+  });
+
+  test("AiStudioBrowserWorker.insertPrompt tự bấm Dismiss card Enable URL Context trước khi điền prompt", async () => {
+    const worker = new AiStudioBrowserWorker();
+    const events: string[] = [];
+    let nudgeVisible = true;
+    let filledValue = "";
+
+    const fakePage = {
+      waitForTimeout: async () => {},
+      locator: (sel: string) => {
+        const isDismiss = sel.includes("urlcontext-nudge");
+        const loc = {
+          page: () => fakePage,
+          first: () => loc,
+          waitFor: async () => {},
+          isVisible: async () => (isDismiss ? nudgeVisible : true),
+          scrollIntoViewIfNeeded: async () => {},
+          hover: async () => {
+            events.push(isDismiss ? "hover:nudge" : "hover:composer");
+          },
+          click: async () => {
+            events.push(isDismiss ? "click:dismiss_nudge" : "click:composer");
+            if (isDismiss) nudgeVisible = false;
+          },
+          fill: async (val: string) => {
+            events.push(`fill:composer:${val.length}`);
+            filledValue = val;
+          },
+          inputValue: async () => filledValue,
+        };
+        return loc;
+      },
+    } as never;
+
+    const helper = worker as unknown as {
+      insertPrompt: (p: unknown, text: string, o: Record<string, unknown>) => Promise<void>;
+    };
+    await helper.insertPrompt(fakePage, "xin chao", {});
+
+    expect(nudgeVisible).toBe(false);
+    expect(filledValue).toBe("xin chao");
+    expect(events.indexOf("click:dismiss_nudge")).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf("click:dismiss_nudge")).toBeLessThan(
+      events.indexOf("fill:composer:8"),
+    );
+  });
+
   test("runEphemeralSurfaceTask hỗ trợ retainOnCompleted & omitConnectorIdentity để giữ tab speech khi thành công và đóng khi lỗi", async () => {
     const adapter = new AiStudioAdapter();
     const engine = (adapter as any).engine;

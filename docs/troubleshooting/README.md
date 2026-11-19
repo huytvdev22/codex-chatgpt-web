@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **082** | Lặp 2 dòng `Thời gian:` qua nửa đêm và treo `composer.fill: Timeout 30000ms exceeded` ở AI Studio | `web`, `ai-studio` | ✅ Đã Confirm | [082-duplicate-env-timestamp-and-composer-fill-timeout.md](./082-duplicate-env-timestamp-and-composer-fill-timeout.md) |
 | **081** | Google AI Studio Turn 1 tắt tab khi chưa kịp có `/prompts/{id}` khiến Turn 2 mở cuộc trò chuyện mới | `ai-studio`, `web`, `launcher` | ✅ Đã Confirm | [081-ai-studio-turn1-closes-tab-without-prompt-id.md](./081-ai-studio-turn1-closes-tab-without-prompt-id.md) |
 | **080** | Định tuyến lại request sinh tiêu đề thread của Codex sang đúng provider đang dùng | `server`, `ai-studio`, `m365-copilot` | ✅ Đã Confirm | [080-codex-thread-title-reroute-active-provider.md](./080-codex-thread-title-reroute-active-provider.md) |
 | **079** | Chuyển hẳn Google AI Studio sang Playwright CDP và gỡ bỏ hoàn toàn `electron-control` | `ai-studio`, `speech`, `web`, `launcher`, `electron` | ✅ Đã Confirm | [079-consolidate-ai-studio-playwright-remove-electron-control.md](./079-consolidate-ai-studio-playwright-remove-electron-control.md) |

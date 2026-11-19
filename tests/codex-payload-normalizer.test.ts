@@ -416,4 +416,57 @@ describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
     const normalized = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWire));
     expect(normalized.collaborationMode).toBe("default");
   });
+
+  test("parseEnvironmentContext bao gồm cả giờ:phút:giây theo timezone", () => {
+    const rawWire: CodexRawRequestWire = {
+      model: "m365-copilot/gpt-5.6",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-19</current_date>\n  <timezone>Asia/Ho_Chi_Minh</timezone>\n</environment_context>",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "Kiểm tra thời gian",
+        },
+      ],
+    };
+
+    const normalized = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWire));
+    expect(normalized.environmentContext).toMatch(
+      /^- Thời gian: 2026-11-19 \d{2}:\d{2}:\d{2} \(Asia\/Ho_Chi_Minh\)$/m,
+    );
+  });
+
+  test("chỉ giữ một environmentContext mới nhất khi input có nhiều block qua ngày", () => {
+    const rawWire: CodexRawRequestWire = {
+      model: "ai-studio/gemini-4-hydrogen",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-19</current_date>\n  <timezone>Asia/Ho_Chi_Minh</timezone>\n</environment_context>",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-20</current_date>\n  <timezone>Asia/Ho_Chi_Minh</timezone>\n</environment_context>",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "Tiếp tục",
+        },
+      ],
+    };
+
+    const normalized = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWire));
+    const timeLines = (normalized.environmentContext || "")
+      .split("\n")
+      .filter(line => line.startsWith("- Thời gian:"));
+    expect(timeLines.length).toBe(1);
+    expect(timeLines[0]).toMatch(/^-\sThời gian:\s2026-11-20\s\d{2}:\d{2}:\d{2}\s\(Asia\/Ho_Chi_Minh\)$/);
+  });
 });

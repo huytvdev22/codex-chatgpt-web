@@ -57,6 +57,8 @@ const UPLOAD_MENU_ITEM_SELECTOR = "button.mat-mdc-menu-item.upload-file-menu-ite
 const OPEN_OPTIONS_BUTTON_SELECTOR = 'button[aria-label="Open options"]';
 const CODE_COPY_BUTTON_SELECTOR =
   'ms-code-block button[aria-label="Copy code to clipboard"]';
+const URL_CONTEXT_NUDGE_DISMISS_SELECTOR =
+  '.urlcontext-nudge button[mattooltip="Dismiss"], .urlcontext-nudge button:has-text("close")';
 const ANSWER_TURN_SELECTOR = `${AI_STUDIO_DOM_SELECTORS.modelTurnContainer}:not(:has(${AI_STUDIO_DOM_SELECTORS.thoughtPanel}))`;
 
 export function selectPreferredAiStudioResponse(
@@ -263,6 +265,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
     await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 15_000 });
+    await this.dismissObstructingNudges(page);
 
     const targetLevel = AiStudioModelProvider.getInstance().resolveThinkingLevel(
       options.modelSlug || "ai-studio/gemini-4-hydrogen",
@@ -311,6 +314,32 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     await page.keyboard.press("Escape").catch(() => {});
   }
 
+  /**
+   * Đóng các card/nudge nổi phía trên ô nhập liệu (như "Enable URL Context")
+   * để tránh chiếm chỗ và làm xê dịch layout trong lúc click/fill/submit.
+   */
+  private async dismissObstructingNudges(page: Page): Promise<void> {
+    try {
+      const dismissButton = page.locator(URL_CONTEXT_NUDGE_DISMISS_SELECTOR).first();
+      let dismissedAny = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (!(await dismissButton.isVisible().catch(() => false))) {
+          break;
+        }
+        await clickResilient(dismissButton, 1_500).catch(async () => {
+          await dismissButton.click({ force: true, timeout: 1_500 }).catch(() => {});
+        });
+        dismissedAny = true;
+        await page.waitForTimeout(150);
+      }
+      if (dismissedAny) {
+        await humanPause(page, 80, 160);
+      }
+    } catch {
+      // Bỏ qua nếu nudge không tồn tại hoặc đã tự biến mất
+    }
+  }
+
   protected override async captureResponseBaseline(
     page: Page,
   ): Promise<AiStudioResponseBaseline> {
@@ -322,6 +351,8 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     promptText: string,
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
+    await this.dismissObstructingNudges(page);
+
     if (options.images && options.images.length > 0) {
       await this.attachImages(page, options.images.slice(0, 3), options.signal).catch(
         (error) => {
@@ -339,13 +370,15 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     // Nhịp nghỉ tự nhiên sau khi focus trước khi điền prompt
     await humanPause(page, 280, 480);
 
-    await composer.fill(promptText);
+    const fillTimeoutMs = promptText.length > 8_000 ? 4_000 : 8_000;
+    await composer.fill(promptText, { force: true, timeout: fillTimeoutMs }).catch(() => {});
     const currentValue = await composer.inputValue().catch(() => "");
-    if (!currentValue) {
+    if (!currentValue || currentValue.length < Math.min(promptText.length, 32)) {
       await page.evaluate(
         ({ selector, value }) => {
           const el = document.querySelector<HTMLTextAreaElement>(selector);
           if (!el) return;
+          el.scrollIntoView({ block: "center" });
           el.focus();
           const setter = Object.getOwnPropertyDescriptor(
             HTMLTextAreaElement.prototype,
@@ -358,6 +391,11 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         },
         { selector: AI_STUDIO_DOM_SELECTORS.composer, value: promptText },
       );
+
+      const verifiedValue = await composer.inputValue().catch(() => "");
+      if (promptText.trim().length > 0 && verifiedValue.trim().length === 0) {
+        throw new Error("[ai-studio-worker] Không thể điền nội dung vào ô nhập liệu AI Studio.");
+      }
     }
 
     // Chờ Angular + BotGuard xử lý input event tự nhiên trước khi bấm Run
@@ -483,6 +521,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
             await composer.press("Meta+Enter").catch(() => {});
           });
         } else if (attempt === 1) {
+          await this.dismissObstructingNudges(page);
           await humanPause(page, 220, 380);
           await composer.press("Meta+Enter").catch(async () => {
             await runBtn.click({ force: true, timeout: 1_500 }).catch(() => {});

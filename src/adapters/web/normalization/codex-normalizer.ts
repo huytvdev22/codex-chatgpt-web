@@ -89,23 +89,90 @@ export class CodexPayloadNormalizer {
     return serialized ?? "";
   }
 
-  /**
-   * Định dạng thông tin môi trường làm việc gọn gàng, loại bỏ toàn bộ XML rác của macOS seatbelt sandbox.
-   */
-  private static parseEnvironmentContext(rawEnv: string): string {
+  private static formatEnvironmentTimestamp(dateText?: string, tz?: string): string {
+    if (dateText && /\d{2}:\d{2}/.test(dateText)) {
+      return tz ? `${dateText} (${tz})` : dateText;
+    }
+
+    const now = new Date();
+    const formatWithZone = (timeZone?: string): { dateStr: string; timeStr: string } => {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        ...(timeZone ? { timeZone } : {}),
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(now);
+
+      const get = (type: string) => parts.find(p => p.type === type)?.value || "00";
+      return {
+        dateStr: `${get("year")}-${get("month")}-${get("day")}`,
+        timeStr: `${get("hour")}:${get("minute")}:${get("second")}`,
+      };
+    };
+
+    let formatted: { dateStr: string; timeStr: string };
+    try {
+      formatted = formatWithZone(tz);
+    } catch {
+      formatted = formatWithZone(undefined);
+    }
+
+    const effectiveDate = dateText || formatted.dateStr;
+    const timestamp = `${effectiveDate} ${formatted.timeStr}`;
+    return tz ? `${timestamp} (${tz})` : timestamp;
+  }
+
+  private static extractEnvironmentFields(rawEnv: string): {
+    cwd?: string;
+    shell?: string;
+    date?: string;
+    tz?: string;
+    ws?: string;
+    rawFallback?: string;
+  } {
     const cwd = rawEnv.match(/<cwd>([\s\S]*?)<\/cwd>/i)?.[1]?.trim();
     const shell = rawEnv.match(/<shell>([\s\S]*?)<\/shell>/i)?.[1]?.trim();
     const date = rawEnv.match(/<current_date>([\s\S]*?)<\/current_date>/i)?.[1]?.trim();
     const tz = rawEnv.match(/<timezone>([\s\S]*?)<\/timezone>/i)?.[1]?.trim();
     const ws = rawEnv.match(/<workspace_roots>[\s\S]*?<root>([\s\S]*?)<\/root>/i)?.[1]?.trim();
 
+    if (!cwd && !shell && !date && !tz && !ws) {
+      const rawFallback = rawEnv.trim();
+      return rawFallback ? { rawFallback } : {};
+    }
+    return {
+      ...(cwd ? { cwd } : {}),
+      ...(shell ? { shell } : {}),
+      ...(date ? { date } : {}),
+      ...(tz ? { tz } : {}),
+      ...(ws ? { ws } : {}),
+    };
+  }
+
+  /**
+   * Định dạng thông tin môi trường làm việc gọn gàng, loại bỏ toàn bộ XML rác của macOS seatbelt sandbox.
+   */
+  private static formatEnvironmentFields(fields: {
+    cwd?: string;
+    shell?: string;
+    date?: string;
+    tz?: string;
+    ws?: string;
+    rawFallback?: string;
+  }): string | undefined {
+    const { cwd, shell, date, tz, ws, rawFallback } = fields;
     const parts: string[] = [];
     if (cwd) parts.push(`- Thư mục làm việc (cwd): ${cwd}`);
     if (shell) parts.push(`- Shell: ${shell}`);
-    if (date || tz) parts.push(`- Thời gian: ${date || ""} (${tz || ""})`.trim());
+    if (date || tz) parts.push(`- Thời gian: ${this.formatEnvironmentTimestamp(date, tz)}`);
     if (ws && ws !== cwd) parts.push(`- Workspace: ${ws}`);
 
-    return parts.length > 0 ? parts.join("\n") : rawEnv.trim();
+    if (parts.length > 0) return parts.join("\n");
+    return rawFallback || undefined;
   }
 
   /**
@@ -573,10 +640,17 @@ export class CodexPayloadNormalizer {
       }
     }
 
-    // Trích xuất developerInstructions, deferredNamespaces và environmentContext từ input
+    // Trích xuất developerInstructions, deferredNamespaces và environmentContext mới nhất từ input
     const developerInstructions: string[] = [];
     const deferredNamespaces: string[] = [];
-    let environmentContext: string | undefined;
+    let latestEnvFields: {
+      cwd?: string;
+      shell?: string;
+      date?: string;
+      tz?: string;
+      ws?: string;
+      rawFallback?: string;
+    } | null = null;
 
     // Xây dựng priorHistory: LOẠI BỎ hoàn toàn latest user item và các tin nhắn hệ thống nội bộ của Codex
     const priorHistory: NormalizedTurn[] = [];
@@ -604,10 +678,13 @@ export class CodexPayloadNormalizer {
         }
       }
 
-      // Trích xuất environmentContext nếu có trong bất kỳ message nào (kể cả user hay developer)
+      // Trích xuất environmentContext nếu có; ghi đè bằng giá trị mới nhất để tránh lặp qua nhiều lượt
       const envMatch = text.match(/<environment_context>([\s\S]*?)<\/environment_context>/i);
       if (envMatch) {
-        environmentContext = (environmentContext ? `${environmentContext}\n` : "") + this.parseEnvironmentContext(envMatch[1]);
+        latestEnvFields = {
+          ...(latestEnvFields ?? {}),
+          ...this.extractEnvironmentFields(envMatch[1]),
+        };
       }
 
       // Trích xuất chỉ dẫn AGENTS.md / Project Instructions từ bất kỳ message nào (kể cả user, developer hay preamble)
@@ -768,7 +845,7 @@ export class CodexPayloadNormalizer {
       turnId: rawPayload.getTurnId(),
       ...(systemInstructions && systemInstructions.length > 0 ? { systemInstructions } : {}),
       developerInstructions: developerInstructions.length > 0 ? developerInstructions : undefined,
-      environmentContext,
+      environmentContext: latestEnvFields ? this.formatEnvironmentFields(latestEnvFields) : undefined,
       priorHistory,
       latestUserInstruction,
       trailingToolResults,
