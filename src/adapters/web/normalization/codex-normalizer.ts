@@ -1,4 +1,6 @@
 
+import { compactionItemToText } from "../../../responses/compaction";
+import type { CodexParsedRequest, CodexTool } from "../../../types";
 import type {
   CodexRawPayload,
   CodexRawToolSpec,
@@ -14,12 +16,18 @@ import {
   type NormalizedExecutionPolicy,
   type NormalizedImageAttachment,
 } from "./canonical-types";
+import {
+  extractDeferredToolNamespaces,
+  sanitizeCodexBoilerplate,
+} from "./instruction-sanitizer";
 
 export interface CodexNormalizeOptions {
   /** Giới hạn tối đa số lượng ảnh giữ lại trong 1 lượt (mặc định 3). */
   maxImages?: number;
   /** Tiền tố định danh `ref` cho ảnh đính kèm (mặc định `"web-img"`). */
   imageRefPrefix?: string;
+  /** Kết quả đã parse từ `src/responses/parser.ts` để đồng nhất 100% tools/compaction/messages. */
+  parsed?: CodexParsedRequest;
 }
 
 export class CodexPayloadNormalizer {
@@ -46,10 +54,37 @@ export class CodexPayloadNormalizer {
 
   /**
    * Chuẩn hóa và chuyển đổi đầu ra của công cụ (output) thành chuỗi string an toàn.
+   * Xử lý riêng mảng content blocks (tránh stringify base64 input_image từ view_image vào text).
    */
   private static stringifyToolOutput(output: unknown): string {
-
     if (typeof output === "string") return output;
+    if (Array.isArray(output)) {
+      const parts: string[] = [];
+      for (const block of output) {
+        if (typeof block === "string") {
+          parts.push(block);
+          continue;
+        }
+        if (!block || typeof block !== "object") continue;
+        const rec = block as Record<string, unknown>;
+        if (
+          (rec.type === "input_text" || rec.type === "output_text" || rec.type === "text") &&
+          typeof rec.text === "string"
+        ) {
+          parts.push(rec.text);
+        } else if (rec.type === "refusal" && typeof rec.refusal === "string") {
+          parts.push(`[refusal: ${rec.refusal}]`);
+        } else if (rec.type === "encrypted_content") {
+          parts.push("[encrypted content omitted]");
+        } else if (rec.type === "input_image") {
+          const detail = typeof rec.detail === "string" ? ` (${rec.detail})` : "";
+          parts.push(`[image attached${detail}]`);
+        } else if (rec.type === "input_file") {
+          parts.push(`[file: ${String(rec.filename || rec.file_id || "?")}]`);
+        }
+      }
+      return parts.join("\n");
+    }
     const serialized = JSON.stringify(output ?? "");
     return serialized ?? "";
   }
@@ -88,6 +123,8 @@ export class CodexPayloadNormalizer {
       "collaboration_mode.instructions",
       "model.base_instructions",
       "agents_md.instructions",
+      "images.resize_notice",
+      "tools.deferred_namespaces",
     ];
 
     if (kinds.some(k => systemKinds.includes(k))) {
@@ -100,10 +137,12 @@ export class CodexPayloadNormalizer {
       trimmed.startsWith("<external_codex_apps_open_page>") ||
       trimmed.startsWith("<codex_apps_client_time_context>") ||
       trimmed.startsWith("<codex_apps_open_page_instructions>") ||
+      trimmed.startsWith("<image_resize_notice>") ||
       trimmed.startsWith("<recommended_plugins>") ||
       trimmed.startsWith("<skills_instructions>") ||
       trimmed.startsWith("<permissions") ||
       trimmed.startsWith("<collaboration_mode>") ||
+      trimmed.startsWith("<tools>") ||
       trimmed.startsWith("# AGENTS.md instructions") ||
       trimmed.includes("<INSTRUCTIONS>")
     ) {
@@ -118,66 +157,91 @@ export class CodexPayloadNormalizer {
    * chỉ giữ lại các chỉ thị thực sự của người dùng hoặc dự án (nếu có).
    */
   private static cleanDeveloperInstructions(text: string): string {
-    let cleaned = text
-      .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
-      .replace(/<codex_apps_client_time_context>[\s\S]*?<\/codex_apps_client_time_context>/gi, "")
-      .replace(/<external_codex_apps_open_page>[\s\S]*?<\/external_codex_apps_open_page>/gi, "")
-      .replace(/<codex_apps_open_page_instructions>[\s\S]*?<\/codex_apps_open_page_instructions>/gi, "")
-      .replace(/<recommended_plugins>[\s\S]*?<\/recommended_plugins>/gi, "")
-      .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
-      .replace(/<permissions\s+instructions>[\s\S]*?<\/permissions\s+instructions>/gi, "")
-      .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
-      .replace(/<sandbox_mode[\s\S]*?<\/sandbox_mode[^>]*>/gi, "")
-      .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
-      .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
-      .replace(/<apps_instructions>[\s\S]*?<\/apps_instructions>/gi, "")
-      .replace(/<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi, "")
-      .replace(/<tools>[\s\S]*?<\/tools>/gi, "")
-      .replace(/<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools|instructions)>/gi, "")
-      .replace(/`?\s*change it;\s*user requests or tool descriptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
-      .replace(/##\s*request_user_input availability[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
-      .replace(/In Default mode, strongly prefer making reasonable assumptions[\s\S]*?(?=\n# |\n<|$|\n\n)/gi, "")
-      .replace(/Known mode names are Default and Plan\.?/gi, "")
-      .replace(/(?:^|\n)\s*[-*]?\s*Use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-      .replace(/If `?request_user_input`? returns no answers[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-      .replace(/Never use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-      .replace(/If explicit user input is required for another reason[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-      .replace(/Never write a multiple choice question as a textual assistant message\.?/gi, "")
-      .replace(/(?:^|\n)[^\n]*`?request_user_input`?[^\n]*(?:\n|$)/gi, "\n")
-      .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
-      .trim();
+    return sanitizeCodexBoilerplate(text);
+  }
 
-    const isCodexBuiltInBoilerplate =
-      cleaned.includes("You are Codex") ||
-      cleaned.includes("# Rules for getting work done") ||
-      cleaned.includes("# Personality\nAs Codex") ||
-      cleaned.includes("Exercise caution when escaping text for execcommand calls");
+  private static convertParsedTools(parsedTools: CodexTool[]): NormalizedTool[] {
+    const tools: NormalizedTool[] = [];
+    const seen = new Set<string>();
 
-    if (isCodexBuiltInBoilerplate) {
-      cleaned = cleaned
-        .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Personality[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# When to ask the user for permission[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Autonomy and persistence[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Working with the user[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Rules for getting work done(?:\n(?:\s*[-*]|\s{2,}).*)*(?=\n# |\n\[|\n<|\n[^\s\-*]|$)/gi, "")
-        .replace(/# Rules for getting work done[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Using skills[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/# Plugins[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .replace(/Deferred tool namespaces:[\s\S]*?(?=\n# |\n\[|$)/i, "")
-        .trim();
+    for (const tool of parsedTools) {
+      if (!tool || !tool.name) continue;
+      const qualifiedName = tool.namespace ? `${tool.namespace}.${tool.name}` : tool.name;
+      if (seen.has(qualifiedName)) continue;
+      seen.add(qualifiedName);
+
+      const identity = {
+        ...(tool.namespace ? { namespace: tool.namespace } : {}),
+        name: tool.name,
+        qualifiedName,
+      };
+
+      if (tool.freeform) {
+        tools.push({
+          kind: "custom",
+          identity,
+          description: tool.description || "",
+          format: {
+            type: "grammar",
+            syntax: "lark",
+          },
+        });
+      } else {
+        tools.push({
+          kind: "function",
+          identity,
+          description: tool.description || "",
+          strict: tool.strict,
+          ...(tool.toolSearch ? { isToolSearch: true } : {}),
+          rawParameters: (tool.parameters as Record<string, unknown>) || {},
+        });
+      }
     }
 
-    return cleaned.trim();
+    return tools;
+  }
+
+  private static formatToolSearchOutput(item: {
+    status?: unknown;
+    tools?: unknown;
+  }): string {
+    const specs = Array.isArray(item.tools) ? (item.tools as CodexRawToolSpec[]) : [];
+    const wireNames: string[] = [];
+    for (const spec of specs) {
+      if (!spec || typeof spec !== "object") continue;
+      if (spec.type === "namespace" && Array.isArray(spec.tools)) {
+        const ns =
+          typeof spec.name === "string" && spec.name !== "functions" && spec.name.length > 0
+            ? spec.name
+            : undefined;
+        for (const inner of spec.tools) {
+          if (inner && typeof inner === "object" && typeof inner.name === "string") {
+            wireNames.push(ns ? `${ns}.${inner.name}` : inner.name);
+          }
+        }
+      } else if (typeof spec.name === "string" && spec.name.length > 0) {
+        wireNames.push(spec.name);
+      }
+    }
+
+    const failed =
+      typeof item.status === "string" &&
+      item.status !== "completed" &&
+      item.status !== "success";
+    if (failed && wireNames.length === 0) {
+      return `Tool search failed (status: ${item.status}).`;
+    }
+    if (wireNames.length > 0) {
+      return `Tool search loaded these tools — they are now available. Call by EXACT name (use tools.describe if you need inputSchema): ${wireNames.join(", ")}.`;
+    }
+    return "Tool search returned no tools.";
   }
 
   /**
-   * Chuẩn hóa toàn bộ danh sách công cụ từ root tools và additional_tools trong input.
-   * Bảo toàn namespace, qualifiedName, và lưu trữ rawParameters/format nguyên vẹn.
+   * Chuẩn hóa toàn bộ danh sách công cụ từ root tools, additional_tools và tool_search_output trong input.
+   * Bảo toàn namespace, qualifiedName, tool_search và lưu trữ rawParameters/format nguyên vẹn.
    */
   static extractTools(rawPayload: CodexRawPayload): NormalizedTool[] {
-
     const tools: NormalizedTool[] = [];
     const seen = new Set<string>();
     const DEFAULT_FUNCTION_NAMESPACE = "functions";
@@ -186,7 +250,6 @@ export class CodexPayloadNormalizer {
      * Chuẩn hóa định nghĩa công cụ thô (raw tool spec) từ Codex thành định dạng công cụ chuẩn (Canonical Tool).
      */
     const processSpec = (spec: CodexRawToolSpec, namespace?: string) => {
-
       if (!spec || typeof spec !== "object") return;
 
       if (spec.type === "namespace" && Array.isArray(spec.tools)) {
@@ -202,8 +265,40 @@ export class CodexPayloadNormalizer {
         return;
       }
 
+      if (spec.type === "tool_search") {
+        if (seen.has("tool_search")) return;
+        seen.add("tool_search");
+        tools.push({
+          kind: "function",
+          identity: { name: "tool_search", qualifiedName: "tool_search" },
+          description:
+            typeof spec.description === "string" && spec.description.trim().length > 0
+              ? spec.description
+              : "Search for additional/deferred tools (such as subagents or extra MCP tools) to load for the next turn.",
+          strict: false,
+          isToolSearch: true,
+          rawParameters:
+            spec.parameters && typeof spec.parameters === "object"
+              ? (spec.parameters as Record<string, unknown>)
+              : {
+                  type: "object",
+                  properties: {
+                    query: { type: "string", description: "Search query for tools to load." },
+                    limit: { type: "number", description: "Maximum number of tools to return." },
+                  },
+                  required: ["query"],
+                },
+        });
+        return;
+      }
+
       const name = spec.name;
       if (!name || typeof name !== "string") return;
+
+      // Đồng bộ với src/responses/parser.ts: non-default custom tools không expose thành function trực tiếp
+      if (spec.type === "custom" && namespace) {
+        return;
+      }
 
       const qualifiedName = namespace ? `${namespace}.${name}` : name;
       if (seen.has(qualifiedName)) return;
@@ -238,11 +333,15 @@ export class CodexPayloadNormalizer {
       }
     }
 
-    // 2. Quét từ additional_tools trong input
+    // 2. Quét từ additional_tools và tool_search_output trong input
     if (Array.isArray(rawPayload.input)) {
       for (const item of rawPayload.input) {
         if (item && item.type === "additional_tools" && Array.isArray(item.tools)) {
           for (const t of item.tools) {
+            processSpec(t);
+          }
+        } else if (item && item.type === "tool_search_output" && Array.isArray((item as any).tools)) {
+          for (const t of (item as any).tools) {
             processSpec(t);
           }
         }
@@ -256,13 +355,12 @@ export class CodexPayloadNormalizer {
    * Trích xuất nhóm kết quả công cụ ở cuối turn (Trailing Tool Results).
    * Thuật toán:
    * - Quét ngược từ cuối input lên đầu.
-   * - Thu thập các function_call_output hoặc custom_tool_call_output.
-   * - Bỏ qua các control item trong suốt (như compaction_trigger).
+   * - Thu thập các function_call_output, custom_tool_call_output hoặc tool_search_output.
+   * - Bỏ qua các control item trong suốt (như compaction_trigger, context_compaction).
    * - Dừng lại ngay khi gặp item thuộc về turn trước đó sau khi đã thu được ít nhất 1 output.
    * - Ghép nối call_id ngược về tool call tương ứng để xác định tên tool và kind.
    */
   static extractTrailingToolResults(rawPayload: CodexRawPayload): NormalizedToolResult[] {
-
     const input = rawPayload.input || [];
     const trailingResults: NormalizedToolResult[] = [];
 
@@ -274,6 +372,11 @@ export class CodexPayloadNormalizer {
         callMap.set(String(item.call_id), { name: String(item.name || ""), kind: "function" });
       } else if (item.type === "custom_tool_call" && item.call_id) {
         callMap.set(String(item.call_id), { name: String(item.name || ""), kind: "custom" });
+      } else if (item.type === "tool_search_call") {
+        const callId = String((item as any).call_id || (item as any).id || "");
+        if (callId) {
+          callMap.set(callId, { name: "tool_search", kind: "function" });
+        }
       }
     }
 
@@ -293,8 +396,19 @@ export class CodexPayloadNormalizer {
         continue;
       }
 
+      if (item.type === "tool_search_output") {
+        const callId = String((item as any).call_id || "");
+        trailingResults.unshift({
+          callId,
+          toolName: "tool_search",
+          kind: "function",
+          output: this.formatToolSearchOutput(item as { status?: unknown; tools?: unknown }),
+        });
+        continue;
+      }
+
       // Bỏ qua các control items trong suốt không làm đứt trailing group
-      if (item.type === "compaction_trigger") {
+      if (item.type === "compaction_trigger" || item.type === "context_compaction") {
         continue;
       }
 
@@ -304,7 +418,12 @@ export class CodexPayloadNormalizer {
       }
 
       // Nếu gặp message hoặc turn boundary trước khi tìm thấy bất kỳ tool output nào -> không có trailing tool results
-      if (item.type === "message" || item.type === "function_call" || item.type === "custom_tool_call") {
+      if (
+        item.type === "message" ||
+        item.type === "function_call" ||
+        item.type === "custom_tool_call" ||
+        item.type === "tool_search_call"
+      ) {
         break;
       }
     }
@@ -409,16 +528,25 @@ export class CodexPayloadNormalizer {
       ? rawPayload.input
       : (Array.isArray(rawContextMsgs) ? this.convertMessagesToInput(rawContextMsgs) : []);
 
-    const tools = this.extractTools(rawPayload);
-    // Nếu tools rỗng nhưng có context.tools, bổ sung từ context.tools
+    const parsedTools = options?.parsed?.context?.tools;
+    const tools =
+      Array.isArray(parsedTools) && parsedTools.length > 0
+        ? this.convertParsedTools(parsedTools)
+        : this.extractTools(rawPayload);
+    // Nếu tools rỗng nhưng có context.tools trên rawPayload, bổ sung từ context.tools
     const rawContextTools = (rawPayload as any).context?.tools || (rawPayload.extra as any)?.context?.tools;
     if (tools.length === 0 && Array.isArray(rawContextTools)) {
       for (const t of rawContextTools) {
         if (t && t.name) {
           tools.push({
-            kind: "function",
-            identity: { name: t.name, qualifiedName: t.name },
+            kind: t.freeform ? "custom" : "function",
+            identity: {
+              ...(t.namespace ? { namespace: t.namespace } : {}),
+              name: t.name,
+              qualifiedName: t.namespace ? `${t.namespace}.${t.name}` : t.name,
+            },
             description: t.description || "",
+            ...(t.toolSearch ? { isToolSearch: true } : {}),
             rawParameters: t.parameters || {},
           });
         }
@@ -445,8 +573,9 @@ export class CodexPayloadNormalizer {
       }
     }
 
-    // Trích xuất developerInstructions và environmentContext từ input
+    // Trích xuất developerInstructions, deferredNamespaces và environmentContext từ input
     const developerInstructions: string[] = [];
+    const deferredNamespaces: string[] = [];
     let environmentContext: string | undefined;
 
     // Xây dựng priorHistory: LOẠI BỎ hoàn toàn latest user item và các tin nhắn hệ thống nội bộ của Codex
@@ -463,6 +592,16 @@ export class CodexPayloadNormalizer {
       let text = "";
       if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "developer" || item.role === "assistant"))) {
         text = this.extractTextFromContent((item as any).content);
+      } else if (item.type === "agent_message") {
+        text = this.extractTextFromContent((item as any).content || "");
+      }
+
+      if (text) {
+        for (const nsEntry of extractDeferredToolNamespaces(text)) {
+          if (!deferredNamespaces.includes(nsEntry)) {
+            deferredNamespaces.push(nsEntry);
+          }
+        }
       }
 
       // Trích xuất environmentContext nếu có trong bất kỳ message nào (kể cả user hay developer)
@@ -507,6 +646,37 @@ export class CodexPayloadNormalizer {
         continue;
       }
 
+      if (item.type === "compaction_trigger") {
+        continue;
+      }
+
+      if (item.type === "compaction" || item.type === "compaction_summary" || item.type === "context_compaction") {
+        const encrypted = (item as any).encrypted_content;
+        if (item.type === "context_compaction" && typeof encrypted !== "string") {
+          continue;
+        }
+        const summaryText = compactionItemToText(typeof encrypted === "string" ? encrypted : undefined);
+        if (summaryText) {
+          priorHistory.push({
+            role: "user",
+            content: `[Tóm tắt ngữ cảnh trước đó]:\n${summaryText}`,
+          });
+        }
+        continue;
+      }
+
+      if (item.type === "agent_message") {
+        if (text.trim()) {
+          const author = typeof (item as any).author === "string" ? (item as any).author : "subagent";
+          const recipient = typeof (item as any).recipient === "string" ? ` -> ${(item as any).recipient}` : "";
+          priorHistory.push({
+            role: "user",
+            content: `[Tin nhắn từ agent ${author}${recipient}]:\n${text.trim()}`,
+          });
+        }
+        continue;
+      }
+
       if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "assistant"))) {
         if (text.trim()) {
           priorHistory.push({
@@ -531,11 +701,26 @@ export class CodexPayloadNormalizer {
           callId: String(item.call_id || ""),
           toolName: String(item.name || ""),
         });
+      } else if (item.type === "tool_search_call") {
+        const argsStr = JSON.stringify((item as any).arguments || {});
+        priorHistory.push({
+          role: "assistant",
+          content: `<tool_call>\n{"name": "tool_search", "arguments": ${argsStr}}\n</tool_call>`,
+          callId: String((item as any).call_id || (item as any).id || ""),
+          toolName: "tool_search",
+        });
       } else if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
         priorHistory.push({
           role: "tool",
           content: this.stringifyToolOutput(item.output),
           callId: String(item.call_id || ""),
+        });
+      } else if (item.type === "tool_search_output") {
+        priorHistory.push({
+          role: "tool",
+          content: this.formatToolSearchOutput(item as { status?: unknown; tools?: unknown }),
+          callId: String((item as any).call_id || ""),
+          toolName: "tool_search",
         });
       }
     }
@@ -574,11 +759,14 @@ export class CodexPayloadNormalizer {
 
     const images = this.extractImages(rawPayload, options);
 
+    const systemInstructions = options?.parsed?.context?.systemPrompt?.filter(Boolean);
+
     return {
       model: rawPayload.model || "",
       stream: rawPayload.stream ?? true,
       threadId: rawPayload.getThreadId(),
       turnId: rawPayload.getTurnId(),
+      ...(systemInstructions && systemInstructions.length > 0 ? { systemInstructions } : {}),
       developerInstructions: developerInstructions.length > 0 ? developerInstructions : undefined,
       environmentContext,
       priorHistory,
@@ -586,6 +774,7 @@ export class CodexPayloadNormalizer {
       trailingToolResults,
       tools,
       activeCodingTools,
+      ...(deferredNamespaces.length > 0 ? { deferredNamespaces } : {}),
       executionPolicy,
       collaborationMode: this.detectCollaborationMode(rawPayload),
       rawSnapshot: rawPayload.toJSON(),
@@ -652,8 +841,18 @@ export class CodexPayloadNormalizer {
       ? targetName.slice("functions.".length)
       : targetName;
 
-    // 1. Kiểm tra khớp chính xác qualifiedName trước
-    const exactMatch = tools.find(t => t.identity.qualifiedName === cleanTarget || t.identity.qualifiedName === targetName);
+    // 1. Kiểm tra khớp chính xác qualifiedName (hỗ trợ cả namespace.name và namespace__name)
+    const exactMatch = tools.find(t => {
+      const underscoreName = t.identity.namespace
+        ? `${t.identity.namespace}__${t.identity.name}`
+        : t.identity.name;
+      return (
+        t.identity.qualifiedName === cleanTarget ||
+        t.identity.qualifiedName === targetName ||
+        underscoreName === cleanTarget ||
+        underscoreName === targetName
+      );
+    });
     if (exactMatch) {
       return { tool: exactMatch };
     }
@@ -735,11 +934,14 @@ export class CodexPayloadNormalizer {
     const currentTurnItems = lastAssistantIdx >= 0 ? input.slice(lastAssistantIdx + 1) : input;
     for (const item of currentTurnItems) {
       if (!item) continue;
-      // Chỉ bóc tách ảnh từ tin nhắn của người dùng ở lượt hiện tại
-      const isUser = item.role === "user" || (item.type === "message" && (item as any).role === "user") || !item.role;
-      if (!isUser) continue;
+      // Bóc tách ảnh từ tin nhắn user hoặc tool output (như view_image) ở lượt hiện tại
+      const isToolOutput =
+        item.type === "function_call_output" || item.type === "custom_tool_call_output";
+      const isUser =
+        item.role === "user" || (item.type === "message" && (item as any).role === "user") || !item.role;
+      if (!isUser && !isToolOutput) continue;
 
-      const content = (item as any).content;
+      const content = isToolOutput ? (item as any).output : (item as any).content;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block && typeof block === "object") {

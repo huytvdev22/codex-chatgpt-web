@@ -110,6 +110,31 @@ export interface CodexRawCompactionTriggerItem {
   [key: string]: unknown;
 }
 
+export interface CodexRawToolSearchCallItem {
+  type: "tool_search_call";
+  id?: string;
+  call_id?: string;
+  arguments?: unknown;
+  [key: string]: unknown;
+}
+
+export interface CodexRawToolSearchOutputItem {
+  type: "tool_search_output";
+  id?: string;
+  call_id?: string;
+  status?: string;
+  tools?: CodexRawToolSpec[];
+  [key: string]: unknown;
+}
+
+export interface CodexRawAgentMessageItem {
+  type: "agent_message";
+  author?: string;
+  recipient?: string;
+  content?: string | CodexRawContentBlock[];
+  [key: string]: unknown;
+}
+
 export type CodexRawInputItem =
   | CodexRawMessageItem
   | CodexRawAdditionalToolsItem
@@ -117,6 +142,9 @@ export type CodexRawInputItem =
   | CodexRawFunctionCallOutputItem
   | CodexRawCustomToolCallItem
   | CodexRawCustomToolCallOutputItem
+  | CodexRawToolSearchCallItem
+  | CodexRawToolSearchOutputItem
+  | CodexRawAgentMessageItem
   | CodexRawCompactionTriggerItem
   | { type: string;[key: string]: unknown };
 

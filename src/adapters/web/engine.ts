@@ -157,6 +157,7 @@ export class WebTurnEngine {
       const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
       const normalized = CodexPayloadNormalizer.normalize(rawPayload, {
         maxImages: this.definition.attachments?.maxInputImages,
+        parsed,
       });
       const hasToolResults = normalized.trailingToolResults.length > 0;
       const structuredOutputFormat = isStructuredJsonOutputTurn(parsed, hasToolResults)

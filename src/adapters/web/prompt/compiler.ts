@@ -13,10 +13,8 @@ import {
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   formatUserInputAnswers,
 } from "./templates";
-import {
-  conversationScenarioBuilder,
-  type ConversationScenario,
-} from "./conversation-scenario-builder";
+import { conversationScenarioBuilder, type ConversationScenario } from "./conversation-scenario-builder";
+import { sanitizeCodexBoilerplate } from "../normalization/instruction-sanitizer";
 import { hasActualPriorAssistantReply } from "../../base";
 
 export const DEFAULT_MAX_WEB_PROMPT_CHARS = 95_000;
@@ -82,35 +80,11 @@ function curateToolDescription(
 }
 
 /**
- * Loại bỏ instruction nội bộ của Codex khỏi prompt gửi sang M365.
- * Chỉ giữ project/developer rules có ý nghĩa đối với quá trình thực thi.
+ * Loại bỏ instruction nội bộ của Codex khỏi prompt gửi sang web model.
+ * Dùng chung bộ sanitize chuẩn với CodexPayloadNormalizer.
  */
 export function sanitizeCodexInstructions(text: string): string {
-  return text
-    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "")
-    .replace(/<collaboration_mode>[\s\S]*?<\/collaboration_mode>/gi, "")
-    .replace(/<apps_instructions>[\s\S]*?<\/apps_instructions>/gi, "")
-    .replace(/<plugins_instructions>[\s\S]*?<\/plugins_instructions>/gi, "")
-    .replace(/<tools>[\s\S]*?<\/tools>/gi, "")
-    .replace(/<skills_instructions>[\s\S]*?<\/skills_instructions>/gi, "")
-    .replace(/<permissions[\s\S]*?<\/permissions[^>]*>/gi, "")
-    .replace(/<sandbox[\s\S]*?<\/sandbox[^>]*>/gi, "")
-    .replace(
-      /<\/?(?:collaboration_mode|apps_instructions|plugins_instructions|tools|skills_instructions|instructions)>/gi,
-      ""
-    )
-    .replace(/# Apps \(Connectors\)[\s\S]*?(?=\n# |\n\[|$)/gi, "")
-    .replace(/# Plugins[\s\S]*?(?=\n# |\n\[|$)/gi, "")
-    .replace(/Deferred tool namespaces:[\s\S]*?(?=\n# |\n\[|$)/gi, "")
-    .replace(/You are Codex[\s\S]*?(?=\n# |\n\[|$)/gi, "")
-    .replace(/(?:^|\n)\s*[-*]?\s*Use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-    .replace(/If `?request_user_input`? returns no answers[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-    .replace(/Never use the `?request_user_input`? tool[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-    .replace(/If explicit user input is required for another reason[\s\S]*?(?=\n# |\n\[|\n<|$|\n\n[A-ZÀ-Ỹ])/gi, "")
-    .replace(/Never write a multiple choice question as a textual assistant message\.?/gi, "")
-    .replace(/(?:^|\n)[^\n]*`?request_user_input`?[^\n]*(?:\n|$)/gi, "\n")
-    .replace(/¨C[a-zA-Z0-9_-]+C/g, "")
-    .trim();
+  return sanitizeCodexBoilerplate(text);
 }
 
 /**

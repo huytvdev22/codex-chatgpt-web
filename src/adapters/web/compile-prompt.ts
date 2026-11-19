@@ -28,7 +28,10 @@ export function compileWebPrompt(
 ): PromptCompileResult {
   const normalized = options.normalized ?? CodexPayloadNormalizer.normalize(
     CodexRawPayload.from(parsed._rawBody || parsed),
-    options.maxInputImages !== undefined ? { maxImages: options.maxInputImages } : undefined,
+    {
+      ...(options.maxInputImages !== undefined ? { maxImages: options.maxInputImages } : {}),
+      parsed,
+    },
   );
   const compiler = new WebPromptCompiler({
     assistantName: options.assistantName,
@@ -53,6 +56,7 @@ export function isPlanModeRequest(parsed?: CodexParsedRequest): boolean {
   }
   const normalized = CodexPayloadNormalizer.normalize(
     CodexRawPayload.from(parsed._rawBody || parsed),
+    { parsed },
   );
   return normalized.collaborationMode === "plan";
 }

@@ -22,4 +22,11 @@ export {
   type CodexRawInputItem,
 } from "./codex-raw-payload";
 
-export { CodexPayloadNormalizer } from "./codex-normalizer";
+export {
+  CodexPayloadNormalizer,
+  type CodexNormalizeOptions,
+} from "./codex-normalizer";
+export {
+  extractDeferredToolNamespaces,
+  sanitizeCodexBoilerplate,
+} from "./instruction-sanitizer";

@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { parseRequest } from "../src/responses/parser";
+import { encodeCompactionSummary } from "../src/responses/compaction";
 import { CodexRawPayload, type CodexRawRequestWire } from "../src/adapters/web/normalization/codex-raw-payload";
 import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
 
@@ -250,5 +252,136 @@ describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
     expect(activeNames3).toContain("run"); // web.run
     expect(norm3.activeCodingTools.some(t => t.identity.qualifiedName === "web.run")).toBe(true);
     expect(norm3.activeCodingTools.length).toBe(6);
+  });
+
+  test("Codex Desktop wire parity: bảo toàn tool_search không có name, deferredNamespaces, tool_search_output, view_image và lọc resize notice", () => {
+    const validPng =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFElEQVR42mNk+M9Qz0AEYBxVSF+FAP5FDvcfRYWgAAAAAElFTkSuQmCC";
+    const rawWire: CodexRawRequestWire = {
+      model: "m365-copilot/gpt-5.6",
+      input: [
+        {
+          type: "additional_tools",
+          role: "developer",
+          tools: [
+            {
+              type: "namespace",
+              name: "functions",
+              tools: [
+                { type: "function", name: "exec_command", description: "Run shell" },
+                { type: "custom", name: "apply_patch", description: "Apply patch" },
+                { type: "function", name: "view_image", description: "View image" },
+              ],
+            },
+            {
+              type: "namespace",
+              name: "mcp__python",
+              tools: [
+                { type: "custom", name: "run_script", description: "Should stay hidden per responses_lite contract" },
+              ],
+            },
+            {
+              type: "tool_search",
+              execution: "client",
+            },
+          ],
+        },
+        {
+          type: "message",
+          role: "developer",
+          content: [
+            {
+              type: "input_text",
+              text: "<tools>\nDeferred tool namespaces:\n- multi_agent_v1: Tools for spawning and managing sub-agents.\n</tools>",
+            },
+            {
+              type: "input_text",
+              text: "<image_resize_notice>\nImage 1 of 1 was resized.\n</image_resize_notice>",
+            },
+          ],
+          internal_chat_message_metadata_passthrough: {
+            content_item_kinds: ["tools.deferred_namespaces", "images.resize_notice"],
+          },
+        },
+        {
+          type: "compaction",
+          encrypted_content: encodeCompactionSummary("Người dùng đang refactor Web Adapter."),
+        },
+        {
+          type: "agent_message",
+          author: "worker_1",
+          recipient: "main",
+          content: "Đã kiểm tra xong DOM observer.",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "Mở khóa subagent và xem ảnh",
+          internal_chat_message_metadata_passthrough: { content_item_kinds: ["user.text"] },
+        },
+        {
+          type: "tool_search_call",
+          call_id: "call_ts_1",
+          arguments: { query: "multi_agent_v1" },
+        },
+        {
+          type: "tool_search_output",
+          call_id: "call_ts_1",
+          status: "completed",
+          tools: [
+            {
+              type: "namespace",
+              name: "multi_agent_v1",
+              tools: [
+                { type: "function", name: "spawn_agent", description: "Spawn sub-agent", parameters: { type: "object" } },
+              ],
+            },
+          ],
+        },
+        {
+          type: "function_call",
+          call_id: "call_img_1",
+          name: "view_image",
+          arguments: '{"path":"screenshot.png"}',
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_img_1",
+          output: [
+            { type: "input_text", text: "Loaded image" },
+            { type: "input_image", image_url: validPng, detail: "high" },
+          ],
+        },
+      ],
+    };
+
+    const parsed = parseRequest(rawWire);
+    const normalized = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWire), { parsed });
+
+    const names = normalized.activeCodingTools.map(t => t.identity.qualifiedName);
+    expect(names).toContain("tool_search");
+    expect(names).toContain("multi_agent_v1.spawn_agent");
+    expect(names).not.toContain("mcp__python.run_script");
+
+    expect(normalized.deferredNamespaces).toEqual([
+      "multi_agent_v1: Tools for spawning and managing sub-agents.",
+    ]);
+    expect(normalized.developerInstructions).toBeUndefined();
+    expect(normalized.priorHistory.some(h => h.content.includes("resize"))).toBe(false);
+    expect(normalized.priorHistory.some(h => h.content.includes("Người dùng đang refactor Web Adapter"))).toBe(true);
+    expect(normalized.priorHistory.some(h => h.content.includes("worker_1 -> main"))).toBe(true);
+
+    expect(normalized.trailingToolResults.length).toBe(1);
+    expect(normalized.trailingToolResults[0].toolName).toBe("view_image");
+    expect(normalized.trailingToolResults[0].output).toContain("[image attached (high)]");
+    expect(normalized.trailingToolResults[0].output).not.toContain("data:image/png;base64");
+    expect(normalized.images?.length).toBe(1);
+
+    // Fallback raw-only (không truyền parsed) cũng phải xử lý đồng nhất tool_search & tool_search_output
+    const rawOnlyNorm = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWire));
+    const rawOnlyNames = rawOnlyNorm.activeCodingTools.map(t => t.identity.qualifiedName);
+    expect(rawOnlyNames).toContain("tool_search");
+    expect(rawOnlyNames).toContain("multi_agent_v1.spawn_agent");
+    expect(rawOnlyNames).not.toContain("mcp__python.run_script");
   });
 });

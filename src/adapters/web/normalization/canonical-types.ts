@@ -19,6 +19,7 @@ export interface NormalizedFunctionTool {
   identity: NormalizedToolIdentity;
   description: string;
   strict?: boolean;
+  isToolSearch?: boolean;
   rawParameters: Record<string, unknown>;
 }
 
@@ -98,6 +99,7 @@ export interface NormalizedCodexRequest {
   trailingToolResults: NormalizedToolResult[];
   tools: NormalizedTool[];
   activeCodingTools: NormalizedTool[];
+  deferredNamespaces?: string[];
   executionPolicy: NormalizedExecutionPolicy;
   collaborationMode: "default" | "plan";
   rawSnapshot: CodexRawRequestWire;
