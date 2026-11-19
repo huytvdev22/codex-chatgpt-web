@@ -51,3 +51,11 @@ export {
   type CodexExecCommandArguments,
   type CommandApprovalDecision,
 } from "./approval-policy";
+
+export {
+  WebToolRegistry,
+  INTERNAL_TOOL_DESCRIBE_NAME,
+  type WebToolTier,
+  type McpToolFullSpec,
+  type ToolDescribeLookupResult,
+} from "./web-tool-registry";

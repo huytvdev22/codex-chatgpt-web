@@ -1,24 +1,6 @@
-const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
-  readfile: "read_file",
-  listdir: "list_dir",
-  searchfiles: "search_files",
-  grepcode: "grep_code",
-  gitstatus: "git_status",
-  gitdiff: "git_diff",
-  execcommand: "exec_command",
-  execute_command: "exec_command",
-  executecommand: "exec_command",
-  run_command: "exec_command",
-  runcommand: "exec_command",
-  run_cmd: "exec_command",
-  runcmd: "exec_command",
-  bash: "exec_command",
-  shell: "exec_command",
-  terminal: "exec_command",
-  applypatch: "apply_patch",
-  writefile: "write_file",
-  requestuserinput: "request_user_input",
-};
+import { WebToolRegistry } from "./web-tool-registry";
+
+const TOOL_NAME_ALIASES = WebToolRegistry.ALIASES;
 
 export interface NormalizedToolArguments {
   name: string;
@@ -26,10 +8,7 @@ export interface NormalizedToolArguments {
 }
 
 export function normalizeWebToolName(name: string): string {
-  const raw = name.trim();
-  const withoutNamespace = raw.startsWith("functions.") ? raw.slice("functions.".length) : raw;
-  const lower = withoutNamespace.toLowerCase();
-  return TOOL_NAME_ALIASES[lower] || TOOL_NAME_ALIASES[withoutNamespace] || withoutNamespace;
+  return WebToolRegistry.normalizeToolName(name);
 }
 
 function parseArguments(argumentsValue: Record<string, unknown> | string): Record<string, unknown> {

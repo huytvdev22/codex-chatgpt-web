@@ -1,5 +1,6 @@
 import type { CodexTool } from "../../../types";
 import { SafeCommandGuard } from "./safe-command-guard";
+import { WebToolRegistry } from "./web-tool-registry";
 
 export interface ToolValidationSuccess {
   ok: true;
@@ -13,11 +14,7 @@ export interface ToolValidationFailure {
 
 export type ToolValidationResult = ToolValidationSuccess | ToolValidationFailure;
 
-const BRIDGE_TOOLS = new Set([
-  "read_file", "list_dir", "search_files", "grep_code", "git_status", "git_diff",
-  "run_command", "exec_command", "write_file", "apply_patch", "write_stdin",
-  "view_image", "request_user_input", "create_goal", "update_goal", "get_goal",
-]);
+const BRIDGE_TOOLS = WebToolRegistry.BRIDGE_TOOLS;
 
 function requireString(args: Record<string, unknown>, key: string): ToolValidationResult {
   return typeof args[key] === "string" && (args[key] as string).length > 0
@@ -180,18 +177,13 @@ export function validateWebToolCall(
   args: Record<string, unknown>,
   clientTools: CodexTool[] = []
 ): ToolValidationResult {
-  const isAdvertised = clientTools.length === 0
-    ? BRIDGE_TOOLS.has(name)
-    : clientTools.some(
-        tool =>
-          tool.name === name ||
-          tool.name === `functions.${name}` ||
-          (name.startsWith("functions.") && tool.name === name.slice("functions.".length))
-      );
+  const isAdvertised = WebToolRegistry.isClientToolAdvertised(name, clientTools);
 
   if (!isAdvertised) {
     const availableTools = clientTools.length > 0
-      ? ` Các công cụ khả dụng: [${clientTools.map(t => t.name.replace(/^functions\./, "")).join(", ")}].`
+      ? ` Các công cụ khả dụng: [${clientTools
+          .map(t => (t.namespace ? `${t.namespace}.${t.name}` : t.name.replace(/^functions\./, "")))
+          .join(", ")}].`
       : "";
     return {
       ok: false,

@@ -5,6 +5,7 @@ import { normalizeWebToolArguments } from "./argument-normalizer";
 import { decodeWebContent } from "./content-decoder";
 import { validateWebToolCall } from "./tool-validator";
 import { buildCodexExecCommandArguments } from "./approval-policy";
+import { WebToolRegistry } from "./web-tool-registry";
 
 export { SafeCommandGuard } from "./safe-command-guard";
 export { normalizeFileContent, type NormalizeFileContentOptions } from "./content-decoder";
@@ -150,16 +151,20 @@ export class WebToolBridge {
       throw new Error(`[Web Tool Validation Error] ${validation.code}: ${validation.message}`);
     }
 
-    const hasExactTool = clientTools.some((t) => t.name === toolName || t.name === raw.name);
+    const matchedClientTool =
+      WebToolRegistry.findMatchingClientTool(toolName, clientTools) ||
+      WebToolRegistry.findMatchingClientTool(raw.name, clientTools);
 
     // Native-first forwarding: Web adapter chỉ chuẩn hóa và kiểm tra giao thức, còn Codex runtime
     // chịu trách nhiệm thực thi tool, xử lý hệ điều hành, sandbox, approval và UI lifecycle.
     // Không hạ cấp các semantic tools như read_file/list_dir thành shell command.
-    if (!hasExactTool) {
+    if (!matchedClientTool) {
       throw new Error(
         `[Web Tool Capability Error] Client does not advertise native ${toolName}; platform-specific shell fallback is disabled.`
       );
     }
+
+    const mappedWireName = WebToolRegistry.toCodexWireToolName(matchedClientTool);
 
     // Xử lý riêng biệt cho apply_patch (công cụ native của Codex để hiển thị diff +X -Y và Undo)
     if (toolName === "apply_patch" || toolName === "applypatch") {
@@ -188,9 +193,9 @@ export class WebToolBridge {
       parsedArgs = buildCodexExecCommandArguments(parsedArgs, cmd);
     }
 
-    console.log(`[WEB TOOL BRIDGE] Forwarded ${toolName} -> native ${toolName}`);
+    console.log(`[WEB TOOL BRIDGE] Forwarded ${toolName} -> native ${mappedWireName}`);
     return {
-      name: toolName,
+      name: mappedWireName,
       arguments: JSON.stringify(parsedArgs),
     };
   }
