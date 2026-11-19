@@ -569,7 +569,7 @@ code {
   gap: 7px;
   padding: 0 8px;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   font-size: var(--text-sm);
   user-select: none;
   -webkit-app-region: no-drag;
@@ -580,8 +580,34 @@ code {
   z-index: -1;
   inset: 0;
   border-radius: inherit;
-  background: var(--color-background-control-hover);
+  background: var(--color-background-control);
   content: "";
+}
+
+.browser-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.browser-tab:hover::before {
+  background: var(--color-background-control-hover);
+}
+
+.browser-tab[aria-selected="true"] {
+  color: var(--color-text-primary);
+}
+
+.browser-tab[aria-selected="true"]::before {
+  border: 1px solid var(--color-border-heavy);
+  border-bottom: 0;
+  background: var(--color-background-elevated);
+}
+
+.browser-tab[aria-selected="true"]::after {
+  position: absolute;
+  inset: auto 0 0;
+  border-block-end: 2px solid var(--blue-300);
+  content: "";
+  pointer-events: none;
 }
 
 .browser-tab > .brand-mark {
@@ -589,6 +615,10 @@ code {
   height: 15px;
   flex: none;
   color: var(--color-icon-tertiary);
+}
+
+.browser-tab[aria-selected="true"] > .brand-mark {
+  color: var(--color-icon-primary);
 }
 
 .browser-tab > span {
