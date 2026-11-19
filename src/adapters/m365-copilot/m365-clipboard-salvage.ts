@@ -17,7 +17,7 @@ export class M365ClipboardSalvage {
   ): Promise<{ text: string; source: string } | null> {
     return await page
       .evaluate(() => {
-        const findTargetMsg = (): HTMLElement => {
+        const findTargetMsg = (): HTMLElement | null => {
           const candidates = Array.from(
             document.querySelectorAll<HTMLElement>(
               ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']",
@@ -37,14 +37,21 @@ export class M365ClipboardSalvage {
               !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)),
           );
           const freshList = aiList.filter(
-            (m) => !m.hasAttribute("data-codex-turn-baseline"),
+            (m) =>
+              !m.hasAttribute("data-codex-turn-baseline") &&
+              !m.closest("[data-codex-turn-baseline]"),
           );
-          return (
-            (freshList.length > 0
-              ? freshList[freshList.length - 1]
-              : aiList[aiList.length - 1]) || document.body
-          );
+          if (freshList.length > 0) {
+            return freshList[freshList.length - 1];
+          }
+          if (document.querySelector("[data-codex-turn-baseline]")) {
+            return null;
+          }
+          return aiList[aiList.length - 1] || null;
         };
+
+        const targetMsg = findTargetMsg();
+        if (!targetMsg) return null;
 
         const isRichCodePayload = (val: unknown): val is string =>
           typeof val === "string" &&
@@ -55,7 +62,6 @@ export class M365ClipboardSalvage {
 
         // 1. Tầng A: Đọc trực tiếp từ React Fiber Props của tin nhắn mới nhất
         try {
-          const targetMsg = findTargetMsg();
           const nodes = [
             targetMsg,
             ...Array.from(targetMsg.querySelectorAll<HTMLElement>("*")),
@@ -94,19 +100,29 @@ export class M365ClipboardSalvage {
           }
         } catch {}
 
-        // 2. Tầng B: Đọc từ Monaco Editor Global Model
+        // 2. Tầng B: Đọc từ Monaco Editor gắn trực tiếp bên trong tin nhắn mới nhất
         try {
           const win = window as unknown as {
-            monaco?: { editor?: { getModels?: () => Array<{ getValue: () => string }> } };
+            monaco?: {
+              editor?: {
+                getEditors?: () => Array<{
+                  getDomNode?: () => Node | null;
+                  getModel?: () => { getValue?: () => string } | null;
+                }>;
+              };
+            };
           };
-          const models = win.monaco?.editor?.getModels?.();
-          if (Array.isArray(models)) {
-            for (let i = models.length - 1; i >= 0; i--) {
-              const val = models[i]?.getValue?.();
+          const editors = win.monaco?.editor?.getEditors?.();
+          if (Array.isArray(editors)) {
+            for (let i = editors.length - 1; i >= 0; i--) {
+              const editor = editors[i];
+              const domNode = editor?.getDomNode?.();
+              if (!domNode || !targetMsg.contains(domNode)) continue;
+              const val = editor?.getModel?.()?.getValue?.();
               if (isRichCodePayload(val)) {
                 return {
                   text: val.trim(),
-                  source: `Monaco Editor Model [${i}]`,
+                  source: `Monaco Editor [${i}]`,
                 };
               }
             }
@@ -156,12 +172,25 @@ export class M365ClipboardSalvage {
             !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)),
         );
         const freshList = aiList.filter(
-          (m) => !m.hasAttribute("data-codex-turn-baseline"),
+          (m) =>
+            !m.hasAttribute("data-codex-turn-baseline") &&
+            !m.closest("[data-codex-turn-baseline]"),
         );
         const targetMsg =
-          (freshList.length > 0
+          freshList.length > 0
             ? freshList[freshList.length - 1]
-            : aiList[aiList.length - 1]) || document.body;
+            : document.querySelector("[data-codex-turn-baseline]")
+              ? null
+              : aiList[aiList.length - 1] || null;
+
+        if (!targetMsg) {
+          return {
+            hasTargetMsg: false,
+            hasCodeCopyBtn: false,
+            hasPreviewToggle: false,
+            isCurrentlyInCodeView: false,
+          };
+        }
 
         const codeBlocks = Array.from(
           targetMsg.querySelectorAll<HTMLElement>(
@@ -186,11 +215,20 @@ export class M365ClipboardSalvage {
           Boolean(codeCopyBtn) || toggleAria.includes("preview");
 
         return {
+          hasTargetMsg: true,
           hasCodeCopyBtn: Boolean(codeCopyBtn),
           hasPreviewToggle: Boolean(previewToggleBtn),
           isCurrentlyInCodeView,
         };
       });
+
+      if (
+        !blockState ||
+        blockState.hasTargetMsg === false ||
+        (!blockState.hasCodeCopyBtn && !blockState.hasPreviewToggle)
+      ) {
+        return null;
+      }
 
       // Chuyển sang Code View nếu đang ở Preview để mount Monaco Model & nút Copy Code
       if (!(blockState.isCurrentlyInCodeView && blockState.hasCodeCopyBtn)) {
@@ -214,22 +252,21 @@ export class M365ClipboardSalvage {
               !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)),
           );
           const freshList = aiList.filter(
-            (m) => !m.hasAttribute("data-codex-turn-baseline"),
+            (m) =>
+              !m.hasAttribute("data-codex-turn-baseline") &&
+              !m.closest("[data-codex-turn-baseline]"),
           );
           const targetMsg =
-            (freshList.length > 0
+            freshList.length > 0
               ? freshList[freshList.length - 1]
-              : aiList[aiList.length - 1]) || document.body;
+              : document.querySelector("[data-codex-turn-baseline]")
+                ? null
+                : aiList[aiList.length - 1] || null;
+          if (!targetMsg) return false;
 
-          const toggleBtn =
-            targetMsg.querySelector<HTMLButtonElement>(
-              "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code'], button[aria-label*='Code' i]",
-            ) ||
-            Array.from(
-              document.querySelectorAll<HTMLButtonElement>(
-                "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code'], button[aria-label*='Code' i]",
-              ),
-            ).pop();
+          const toggleBtn = targetMsg.querySelector<HTMLButtonElement>(
+            "button#preview-toggle-button, button[data-automation-id='codePreviewToggle'], button[aria-label='Code'], button[aria-label*='Code' i]",
+          );
 
           if (toggleBtn) {
             toggleBtn.scrollIntoView({ block: "center", inline: "center" });
@@ -255,7 +292,7 @@ export class M365ClipboardSalvage {
         if (!domToggleClicked && blockState.hasPreviewToggle) {
           const toggleLocator = page
             .locator(
-              ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']",
+              ".fai-CopilotMessage:not([data-codex-turn-baseline]), [data-content='ai-message']:not([data-codex-turn-baseline]), .fui-ChatMessage:not([data-codex-turn-baseline]), [role='article']:not([data-codex-turn-baseline])",
             )
             .last()
             .locator(
@@ -295,12 +332,17 @@ export class M365ClipboardSalvage {
                   !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)),
               );
               const freshList = aiList.filter(
-                (m) => !m.hasAttribute("data-codex-turn-baseline"),
+                (m) =>
+                  !m.hasAttribute("data-codex-turn-baseline") &&
+                  !m.closest("[data-codex-turn-baseline]"),
               );
               const targetMsg =
-                (freshList.length > 0
+                freshList.length > 0
                   ? freshList[freshList.length - 1]
-                  : aiList[aiList.length - 1]) || document.body;
+                  : document.querySelector("[data-codex-turn-baseline]")
+                    ? null
+                    : aiList[aiList.length - 1] || null;
+              if (!targetMsg) return false;
 
               const copyBtn = targetMsg.querySelector<HTMLButtonElement>(
                 "button#copy-button, button[aria-label='Copy code']",
@@ -396,22 +438,21 @@ export class M365ClipboardSalvage {
               !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)),
           );
           const freshList = aiList.filter(
-            (m) => !m.hasAttribute("data-codex-turn-baseline"),
+            (m) =>
+              !m.hasAttribute("data-codex-turn-baseline") &&
+              !m.closest("[data-codex-turn-baseline]"),
           );
           const targetMsg =
-            (freshList.length > 0
+            freshList.length > 0
               ? freshList[freshList.length - 1]
-              : aiList[aiList.length - 1]) || document.body;
+              : document.querySelector("[data-codex-turn-baseline]")
+                ? null
+                : aiList[aiList.length - 1] || null;
+          if (!targetMsg) return false;
 
-          const codeCopyBtn =
-            targetMsg.querySelector<HTMLButtonElement>(
-              "button#copy-button, button[aria-label='Copy code']",
-            ) ||
-            Array.from(
-              document.querySelectorAll<HTMLButtonElement>(
-                "button#copy-button, button[aria-label='Copy code']",
-              ),
-            ).pop();
+          const codeCopyBtn = targetMsg.querySelector<HTMLButtonElement>(
+            "button#copy-button, button[aria-label='Copy code']",
+          );
 
           if (codeCopyBtn) {
             codeCopyBtn.scrollIntoView({ block: "center", inline: "center" });
@@ -435,11 +476,11 @@ export class M365ClipboardSalvage {
         })
         .catch(() => false);
 
-      if (!domCopyClicked) {
+      if (!domCopyClicked && blockState.hasCodeCopyBtn) {
         try {
           const lastCopyLocator = page
             .locator(
-              ".fai-CopilotMessage, [data-content='ai-message'], .fui-ChatMessage, [role='article']",
+              ".fai-CopilotMessage:not([data-codex-turn-baseline]), [data-content='ai-message']:not([data-codex-turn-baseline]), .fui-ChatMessage:not([data-codex-turn-baseline]), [role='article']:not([data-codex-turn-baseline])",
             )
             .last()
             .locator("button#copy-button, button[aria-label='Copy code']")
@@ -523,12 +564,17 @@ export class M365ClipboardSalvage {
                 !all.some((other, oIdx) => oIdx !== idx && other.contains(msg)),
             );
             const freshList = aiList.filter(
-              (m) => !m.hasAttribute("data-codex-turn-baseline"),
+              (m) =>
+                !m.hasAttribute("data-codex-turn-baseline") &&
+                !m.closest("[data-codex-turn-baseline]"),
             );
             const targetMsg =
-              (freshList.length > 0
+              freshList.length > 0
                 ? freshList[freshList.length - 1]
-                : aiList[aiList.length - 1]) || document.body;
+                : document.querySelector("[data-codex-turn-baseline]")
+                  ? null
+                  : aiList[aiList.length - 1] || null;
+            if (!targetMsg) return null;
 
             const lineEls = Array.from(
               targetMsg.querySelectorAll<HTMLElement>("[data-line-index]"),

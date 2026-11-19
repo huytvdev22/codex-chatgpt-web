@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **077** | Final answer M365 bị lộ `</webResponse>` và dính nội dung file từ `apply_patch` của lượt trước | `m365-copilot`, `web` | ⏳ Chờ User Test & Confirm | [077-m365-final-answer-leaks-previous-turn-code-lines.md](./077-m365-final-answer-leaks-previous-turn-code-lines.md) |
 | **076** | M365 Copilot bị `turn aborted` / `ERR_ABORTED (-3)` khi ẩn cửa sổ trên Windows & Refactor hiệu năng | `m365-copilot`, `ai-studio-pw`, `web`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [076-windows-hidden-abort-err-aborted-and-perf-refactor.md](./076-windows-hidden-abort-err-aborted-and-perf-refactor.md) |
 | **075** | M365 Copilot báo hết hạn đăng nhập khi khởi động lại Launcher và tab tự refresh không chờ SSO | `m365-copilot`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [075-m365-silent-sso-auth-lost-on-restart.md](./075-m365-silent-sso-auth-lost-on-restart.md) |
 | **074** | Gỡ bỏ `Bigger Context` và `New browser chat for each turn` khỏi giao diện Settings | `launcher`, `ui` | ⏳ Chờ User Test & Confirm | [074-remove-settings-bigger-context-and-fresh-chat-ui.md](./074-remove-settings-bigger-context-and-fresh-chat-ui.md) |

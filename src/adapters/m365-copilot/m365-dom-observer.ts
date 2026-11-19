@@ -272,12 +272,10 @@ export class M365DomObserver {
           (lastMsg.hasAttribute("data-codex-turn-baseline") ||
             lastMsg.closest("[data-codex-turn-baseline]")),
       );
-      const isContentUnchanged = Boolean(
-        (!before.lastText || currentLastText === before.lastText) &&
-          (!before.lastHtml || currentLastHtml === before.lastHtml),
-      );
+      // Tin nhắn đã được đánh dấu baseline ở lượt trước tuyệt đối luôn là tin nhắn cũ;
+      // không mở khóa chỉ vì innerHTML/textContent thay đổi do virtual scroll hay Code View.
       const isLastMsgOld =
-        (baselineCount > 0 && isMarkedBaseline && isContentUnchanged) ||
+        (baselineCount > 0 && isMarkedBaseline) ||
         isCancellationMessage;
 
       if (isLastMsgOld) {
@@ -325,12 +323,36 @@ export class M365DomObserver {
       );
 
       const win = window as any;
-      if (!win.__m365_code_lines_cache_by_block) {
-        win.__m365_code_lines_cache_by_block = new Map<
-          number,
+      if (!(win.__m365_code_lines_cache_by_element instanceof WeakMap)) {
+        win.__m365_code_lines_cache_by_element = new WeakMap<
+          HTMLElement,
           Map<number, string>
         >();
       }
+      const lineCacheByElement = win.__m365_code_lines_cache_by_element as WeakMap<
+        HTMLElement,
+        Map<number, string>
+      >;
+      const collectBlockLines = (block: HTMLElement): Map<number, string> => {
+        let blockCache = lineCacheByElement.get(block);
+        if (!blockCache) {
+          blockCache = new Map<number, string>();
+          lineCacheByElement.set(block, blockCache);
+        }
+        block.querySelectorAll("[data-line-index]").forEach((el) => {
+          const idxAttr = el.getAttribute("data-line-index");
+          if (idxAttr !== null) {
+            const idx = parseInt(idxAttr, 10);
+            if (!isNaN(idx)) {
+              blockCache!.set(
+                idx,
+                (el.textContent || "").replace(/\u00a0/g, " "),
+              );
+            }
+          }
+        });
+        return blockCache;
+      };
 
       const actionsEl = document.querySelector(".fai-BebopLiteChatInput__actions");
       const hasSubmitBtn = Boolean(
@@ -340,25 +362,8 @@ export class M365DomObserver {
 
       if (lightweightMode && isGenerating) {
         let codeLineCacheSize = 0;
-        liveCodeBlocks.forEach((block, blockIdx) => {
-          let blockCache = win.__m365_code_lines_cache_by_block.get(blockIdx);
-          if (!blockCache) {
-            blockCache = new Map<number, string>();
-            win.__m365_code_lines_cache_by_block.set(blockIdx, blockCache);
-          }
-          block.querySelectorAll("[data-line-index]").forEach((el) => {
-            const idxAttr = el.getAttribute("data-line-index");
-            if (idxAttr !== null) {
-              const idx = parseInt(idxAttr, 10);
-              if (!isNaN(idx)) {
-                blockCache.set(
-                  idx,
-                  (el.textContent || "").replace(/\u00a0/g, " "),
-                );
-              }
-            }
-          });
-          codeLineCacheSize += blockCache.size;
+        liveCodeBlocks.forEach((block) => {
+          codeLineCacheSize += collectBlockLines(block).size;
         });
 
         const lightweightTextLength =
@@ -379,45 +384,38 @@ export class M365DomObserver {
         };
       }
 
-      let monacoModelsText: string[] = [];
-      try {
-        const models = win.monaco?.editor?.getModels?.();
-        if (Array.isArray(models) && models.length > 0) {
-          monacoModelsText = models
-            .map((m: any) => (typeof m.getValue === "function" ? m.getValue() : ""))
-            .filter(Boolean);
-        }
-      } catch {}
+      const getScopedMonacoText = (block: HTMLElement): string => {
+        try {
+          const editors = win.monaco?.editor?.getEditors?.();
+          if (Array.isArray(editors)) {
+            for (const editor of editors) {
+              const domNode =
+                typeof editor?.getDomNode === "function"
+                  ? editor.getDomNode()
+                  : null;
+              if (domNode && block.contains(domNode)) {
+                const val = editor.getModel?.()?.getValue?.();
+                if (typeof val === "string" && val.length > 0) {
+                  return val;
+                }
+              }
+            }
+          }
+        } catch {}
+        return "";
+      };
 
-      const codeData = liveCodeBlocks.map((block, blockIdx) => {
+      const codeData = liveCodeBlocks.map((block) => {
         const langEl = block.querySelector(
           "[data-testid='one-copilot-code-identity'] span, [class*='code-identity' i] span",
         );
         let lang = langEl?.textContent?.trim().toLowerCase() || "";
         if (lang === "plain text" || lang === "text") lang = "plain";
 
-        let blockCache = win.__m365_code_lines_cache_by_block.get(blockIdx);
-        if (!blockCache) {
-          blockCache = new Map<number, string>();
-          win.__m365_code_lines_cache_by_block.set(blockIdx, blockCache);
-        }
-
         const lineEls = Array.from(block.querySelectorAll("[data-line-index]"));
         let codeText = "";
         if (lineEls.length > 0) {
-          lineEls.forEach(el => {
-            const idxAttr = el.getAttribute("data-line-index");
-            if (idxAttr !== null) {
-              const idx = parseInt(idxAttr, 10);
-              if (!isNaN(idx)) {
-                blockCache.set(
-                  idx,
-                  (el.textContent || "").replace(/\u00a0/g, " "),
-                );
-              }
-            }
-          });
-
+          const blockCache = collectBlockLines(block);
           const keys = (Array.from(blockCache.keys()) as number[]).sort(
             (a, b) => a - b,
           );
@@ -446,11 +444,9 @@ export class M365DomObserver {
           ).replace(/\u00a0/g, " ");
         }
 
-        if (
-          monacoModelsText[blockIdx] &&
-          monacoModelsText[blockIdx].length >= codeText.length
-        ) {
-          codeText = monacoModelsText[blockIdx];
+        const scopedMonacoText = getScopedMonacoText(block);
+        if (scopedMonacoText && scopedMonacoText.length >= codeText.length) {
+          codeText = scopedMonacoText;
         }
 
         codeText = codeText.replace(/^\n+|\n+$/g, "");

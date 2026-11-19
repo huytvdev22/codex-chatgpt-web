@@ -348,12 +348,14 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       needsEnvelopeFix || hasUnclosedMarkers || responseState.fastPathActive;
     const hasCodeBlockOnPage = alreadyNeedsSalvage
       ? false
-      : (await page
-          .locator(
-            "button#copy-button, button#preview-toggle-button, button[aria-label='Copy code'], button[aria-label='Code']",
-          )
-          .count()
-          .catch(() => 0)) > 0;
+      : typeof responseState.lastStatus?.hasCodeBlocks === "boolean"
+        ? responseState.lastStatus.hasCodeBlocks
+        : (await page
+            .locator(
+              ".fai-CopilotMessage:not([data-codex-turn-baseline]) button#copy-button, .fai-CopilotMessage:not([data-codex-turn-baseline]) button#preview-toggle-button, .fai-CopilotMessage:not([data-codex-turn-baseline]) button[aria-label='Copy code'], .fai-CopilotMessage:not([data-codex-turn-baseline]) button[aria-label='Code']",
+            )
+            .count()
+            .catch(() => 0)) > 0;
 
     console.log(
       `[m365-worker] [salvage-eval] Đánh giá điều kiện cứu hộ: needsEnvelopeFix=${needsEnvelopeFix}, hasUnclosedMarkers=${hasUnclosedMarkers}, fastPathActive=${responseState.fastPathActive}, hasCodeBlockOnPage=${hasCodeBlockOnPage}, textLen=${fullMarkdown.length}`,
@@ -853,6 +855,7 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
       const target = editor as HTMLElement;
       delete (window as any).__m365_code_lines_cache;
       delete (window as any).__m365_code_lines_cache_by_block;
+      delete (window as any).__m365_code_lines_cache_by_element;
       target.focus();
 
       const selection = window.getSelection();
