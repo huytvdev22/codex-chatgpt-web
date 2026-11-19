@@ -124,3 +124,21 @@ codex-chatgpt-web/
 ├── tests/                            # Unit & integration tests cho runtime
 └── docs/                             # Tài liệu kiến trúc, bảo mật & troubleshooting
 ```
+
+## Chẩn đoán & Turn Trace
+
+`TurnTraceRecorder` (`src/adapters/web/execution/turn-trace-recorder.ts`) cho phép ghi toàn bộ `rawCodexRequest`, `normalizedSummary`, `cookedPromptsByAttempt` và `rawWebResponse` của từng lượt chạy thành file JSON riêng (`1 file / turn`) để phục vụ đối chiếu và debug prompt/protocol.
+
+- **Mặc định:** **Tắt (`off`)** để tránh lưu dữ liệu hội thoại/source code ra đĩa khi dùng bình thường.
+- **Cách bật chủ đích:** đặt biến môi trường `CODEX_WEB_TURN_TRACE=1` (chấp nhận `1`, `true`, `on`):
+
+```sh
+# Bật qua Electron Launcher
+CODEX_WEB_TURN_TRACE=1 npm run launcher:start
+
+# Hoặc chạy CLI server thuần
+CODEX_WEB_TURN_TRACE=1 bun run start
+```
+
+- **Thư mục lưu trace:** mặc định ghi tại `~/.codex-m365-copilot/diagnostics/turn-traces/<sessionKey>/`. Có thể đổi đường dẫn gốc bằng biến `CODEX_WEB_TURN_TRACE_DIR`.
+- **Lưu ý dữ liệu:** chỉ dữ liệu base64 ảnh (`data:image/...`) và `file_data` / `dataUrl` dài quá ngưỡng được rút gọn; phần prompt/code text vẫn giữ nguyên văn nên hãy xóa thư mục trace sau khi debug xong.

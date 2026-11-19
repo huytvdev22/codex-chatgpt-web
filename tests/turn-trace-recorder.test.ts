@@ -27,14 +27,25 @@ afterEach(() => {
 });
 
 describe("TurnTraceRecorder", () => {
-  test("mặc định tự tắt trong môi trường unit test runner để không làm bẩn thư mục diagnostics", () => {
+  test("mặc định tắt khi không cấu hình và chỉ bật khi đặt CODEX_WEB_TURN_TRACE", () => {
     const originalEnv = process.env.CODEX_WEB_TURN_TRACE;
     delete process.env.CODEX_WEB_TURN_TRACE;
     try {
       const recorder = new TurnTraceRecorder();
       expect(recorder.isEnabled()).toBe(false);
+
+      process.env.CODEX_WEB_TURN_TRACE = "1";
+      expect(recorder.isEnabled()).toBe(true);
+
+      process.env.CODEX_WEB_TURN_TRACE = "true";
+      expect(recorder.isEnabled()).toBe(true);
+
+      process.env.CODEX_WEB_TURN_TRACE = "0";
+      expect(recorder.isEnabled()).toBe(false);
     } finally {
-      if (originalEnv !== undefined) {
+      if (originalEnv === undefined) {
+        delete process.env.CODEX_WEB_TURN_TRACE;
+      } else {
         process.env.CODEX_WEB_TURN_TRACE = originalEnv;
       }
     }

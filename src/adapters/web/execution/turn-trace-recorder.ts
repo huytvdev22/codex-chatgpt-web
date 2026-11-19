@@ -97,17 +97,6 @@ export interface BeginTurnTraceInput {
 
 const DEFAULT_BASE64_OMIT_THRESHOLD = 512;
 
-function isTestRunnerEnvironment(): boolean {
-  if (process.env.NODE_ENV === "test" || process.env.BUN_ENV === "test") {
-    return true;
-  }
-  const bunMain = typeof Bun !== "undefined" ? String(Bun.main || "") : "";
-  if (/\.(test|spec)\.(ts|tsx|js|jsx|cjs|mjs)$/i.test(bunMain)) {
-    return true;
-  }
-  return process.argv.some(arg => /\.(test|spec)\.(ts|tsx|js|jsx|cjs|mjs)$/i.test(arg));
-}
-
 function sanitizePathSegment(value: string, fallback: string): string {
   const cleaned = value
     .trim()
@@ -250,15 +239,7 @@ export class TurnTraceRecorder {
     }
 
     const envFlag = process.env.CODEX_WEB_TURN_TRACE?.trim().toLowerCase();
-    if (envFlag === "0" || envFlag === "false" || envFlag === "off") {
-      return false;
-    }
-    if (envFlag === "1" || envFlag === "true" || envFlag === "on") {
-      return true;
-    }
-
-    // Tự động tắt trong unit test runner, bật mặc định trên nhánh chẩn đoán khi chạy app thực tế.
-    return !isTestRunnerEnvironment();
+    return envFlag === "1" || envFlag === "true" || envFlag === "on";
   }
 
   resolveOutputDir(): string {
