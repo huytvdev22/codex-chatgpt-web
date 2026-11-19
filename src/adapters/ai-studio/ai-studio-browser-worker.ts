@@ -201,10 +201,17 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       return;
     }
 
-    if (options.launcherReused && currentConversationId) {
-      throw new Error(
-        "Launcher reused an unbound AI Studio surface that already contains a conversation",
-      );
+    if (options.launcherReused && (currentConversationId || options.isNewConversation === false)) {
+      if (currentConversationId) {
+        this.retainedConversationIds.set(page, currentConversationId);
+      }
+      const onAiStudioChatPage =
+        Boolean(currentConversationId) ||
+        initialUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
+      if (onAiStudioChatPage) {
+        await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 });
+        return;
+      }
     }
 
     const modelName = this.extractTargetModelSlug(options.modelSlug);
@@ -719,7 +726,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     const conversationId =
       parseAiStudioConversationId(currentUrl) ||
-      (await waitForAiStudioConversationId(page, 6_000));
+      (await waitForAiStudioConversationId(page, 3_000));
 
     const resolved =
       conversationId ||
@@ -727,7 +734,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       options.existingConversationId;
     if (!resolved) {
       console.warn(
-        "[ai-studio-worker] AI Studio did not expose /prompts/{id} URL; keeping generated output.",
+        "[ai-studio-worker] AI Studio did not expose /prompts/{id} URL yet; keeping launcher tab retained in-session.",
       );
     }
     return resolved;

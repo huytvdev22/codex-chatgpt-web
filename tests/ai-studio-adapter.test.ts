@@ -509,7 +509,7 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     });
   });
 
-  test("AiStudioAdapter resolveEndTurnBinding không retain tab nếu không có conversationId sau khi hoàn tất", () => {
+  test("AiStudioAdapter resolveEndTurnBinding giữ tab sống khi hoàn tất dù chưa có conversationId, chỉ đóng tab ephemeral/lỗi", () => {
     const adapter = new AiStudioAdapter();
     const resolveEndTurnBinding = (
       adapter as unknown as {
@@ -518,6 +518,7 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
             resolveEndTurnBinding?: (ctx: {
               finalStatus: "completed" | "failed" | "aborted";
               activeConversationId?: string;
+              parsed?: CodexParsedRequest;
               hasPriorAssistantReply?: boolean;
               hasToolResults?: boolean;
             }) => { connectorBound: boolean; conversationId?: string; retain?: boolean };
@@ -531,6 +532,40 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
       resolveEndTurnBinding!({
         finalStatus: "completed",
         activeConversationId: undefined,
+        hasPriorAssistantReply: false,
+        hasToolResults: false,
+      }),
+    ).toEqual({
+      connectorBound: false,
+      retain: true,
+    });
+
+    expect(
+      resolveEndTurnBinding!({
+        finalStatus: "failed",
+        activeConversationId: undefined,
+        hasPriorAssistantReply: false,
+        hasToolResults: false,
+      }),
+    ).toEqual({
+      connectorBound: false,
+      retain: false,
+    });
+
+    expect(
+      resolveEndTurnBinding!({
+        finalStatus: "completed",
+        activeConversationId: undefined,
+        parsed: makeParsedRequest({
+          options: {
+            outputFormat: {
+              type: "json_schema",
+              name: "codex_output_schema",
+              strict: true,
+              schema: { type: "object" },
+            },
+          },
+        }),
         hasPriorAssistantReply: false,
         hasToolResults: false,
       }),
@@ -551,6 +586,49 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
       conversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
       retain: true,
     });
+  });
+
+  test("AiStudioBrowserWorker.navigate giữ nguyên hội thoại trên tab tái sử dụng ở /prompts/new_chat hoặc vừa đổi sang /prompts/{id}", async () => {
+    const worker = new AiStudioBrowserWorker();
+    let gotoCount = 0;
+
+    const fakePageOnNewChat = {
+      url: () => "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+      goto: async () => {
+        gotoCount += 1;
+      },
+      waitForSelector: async () => {},
+      evaluate: async () => false,
+    } as never;
+
+    const nav = worker as unknown as {
+      navigate: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      retainedConversationIds: WeakMap<object, string>;
+    };
+
+    await nav.navigate(fakePageOnNewChat, {
+      launcherReused: true,
+      isNewConversation: false,
+      modelSlug: "ai-studio/gemini-4-hydrogen",
+    });
+    expect(gotoCount).toBe(0);
+
+    const sampleId = "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
+    const fakePageSavedLater = {
+      url: () => `https://aistudio.google.com/prompts/${sampleId}`,
+      goto: async () => {
+        gotoCount += 1;
+      },
+      waitForSelector: async () => {},
+    } as never;
+
+    await nav.navigate(fakePageSavedLater, {
+      launcherReused: true,
+      isNewConversation: false,
+      modelSlug: "ai-studio/gemini-4-hydrogen",
+    });
+    expect(gotoCount).toBe(0);
+    expect(nav.retainedConversationIds.get(fakePageSavedLater)).toBe(sampleId);
   });
 
   test("AiStudioBrowserWorker chờ BotGuard lại sau page.goto (kể cả khi launcherReused) và hover trước khi fill/click Run", async () => {

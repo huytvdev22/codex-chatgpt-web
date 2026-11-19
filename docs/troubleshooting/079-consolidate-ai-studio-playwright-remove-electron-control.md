@@ -1,6 +1,6 @@
 # 079: Chuyển hẳn Google AI Studio sang Playwright CDP và gỡ bỏ hoàn toàn `electron-control`
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm  
 > **Providers:** `ai-studio`, `speech`, `web`, `launcher`, `electron`  
 > **Keywords:** `ai-studio`, `ai-studio-pw`, `playwright-cdp`, `electron-control`, `ElectronSurfaceClient`, `SurfaceActionExecutor`, `/v1/surface/action`
 

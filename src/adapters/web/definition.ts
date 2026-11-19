@@ -108,7 +108,7 @@ export interface WebBrowserDriver {
   descriptorPath?: string;
   descriptorSubdirs?: string[];
   launcherProviderId: WebLauncherProviderId;
-  connectorIdentity: string;
+  connectorIdentity?: string;
   resolveSurfaceId?: (
     descriptor: LauncherBrowserHostDescriptor,
     leaseSurfaceId?: string,

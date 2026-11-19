@@ -135,12 +135,12 @@ export class AiStudioAdapter extends WebProviderAdapter {
           hasToolResults,
         }) => {
           if (
+            finalStatus !== "completed" ||
             isEphemeralStructuredTurn(
               parsed,
               hasPriorAssistantReply,
               hasToolResults,
-            ) ||
-            !activeConversationId
+            )
           ) {
             return {
               connectorBound: false,
@@ -148,8 +148,8 @@ export class AiStudioAdapter extends WebProviderAdapter {
             };
           }
           return {
-            connectorBound: finalStatus === "completed",
-            conversationId: activeConversationId,
+            connectorBound: Boolean(activeConversationId),
+            ...(activeConversationId ? { conversationId: activeConversationId } : {}),
             retain: true,
           };
         },
@@ -159,7 +159,6 @@ export class AiStudioAdapter extends WebProviderAdapter {
       },
       browser: {
         launcherProviderId: "ai-studio",
-        connectorIdentity: "ai-studio",
         resolveSurfaceId: (descriptor, leaseSurfaceId) =>
           leaseSurfaceId || descriptor.providerSurfaceIds?.["ai-studio"] || descriptor.surfaceId,
         resolveInitialUrl: ({ modelId, existingConversationId }) => {
