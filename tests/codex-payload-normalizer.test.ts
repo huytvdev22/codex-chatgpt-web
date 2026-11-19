@@ -384,4 +384,36 @@ describe("CodexPayloadNormalizer Tests (Giai đoạn 2)", () => {
     expect(rawOnlyNames).toContain("multi_agent_v1.spawn_agent");
     expect(rawOnlyNames).not.toContain("mcp__python.run_script");
   });
+
+  test("detectCollaborationMode không nhận nhầm Plan Mode từ function_call_output hoặc user/assistant text", () => {
+    const rawWire: CodexRawRequestWire = {
+      model: "m365-copilot/gpt-5.6",
+      input: [
+        {
+          type: "message",
+          role: "developer",
+          content: "<collaboration_mode># Collaboration Mode: Default\n\nYou are now in Default mode.</collaboration_mode>",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "Kiểm tra file có dòng <collaboration_mode># Plan Mode (Conversational) không",
+        },
+        {
+          type: "function_call",
+          call_id: "call_read_normalizer",
+          name: "exec_command",
+          arguments: '{"cmd":"sed -n 780,820p src/adapters/web/normalization/codex-normalizer.ts"}',
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_read_normalizer",
+          output: "* - Nếu chứa: <collaboration_mode># Plan Mode (Conversational) -> \"plan\"\nconst raw = '\"mode\":\"plan\"';",
+        },
+      ],
+    };
+
+    const normalized = CodexPayloadNormalizer.normalize(CodexRawPayload.from(rawWire));
+    expect(normalized.collaborationMode).toBe("default");
+  });
 });

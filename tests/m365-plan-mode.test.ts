@@ -9,9 +9,18 @@ import {
   TOOL_REMINDER_PROMPT,
   SHORT_OUTPUT_FORMAT_ANCHOR,
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
+  TurnTraceRecorder,
+  WebPromptSessionStore,
+  WebTurnEngine,
+  type WebProviderDefinition,
 } from "../src/adapters/web";
-import { WebOutputTranslator } from "../src/adapters/web/protocol";
-import type { CodexParsedRequest } from "../src/types";
+import {
+  WebOutputTranslator,
+  hasStandaloneProposedPlanTag,
+  stripStandaloneProposedPlanTags,
+} from "../src/adapters/web/protocol";
+import { parseRequest } from "../src/responses/parser";
+import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 function compileM365PromptViaWebCompiler(
   parsed: CodexParsedRequest,
@@ -287,5 +296,183 @@ node math.test.js
     expect(prompt).toContain("Luôn dùng <custom_tool_call name=\"apply_patch\">".slice(-20));
     expect(prompt).toContain("<custom_tool_call name=\"apply_patch\">");
     expect(prompt).toContain(SHORT_OUTPUT_FORMAT_ANCHOR);
+  });
+
+  test("stripStandaloneProposedPlanTags lột thẻ ngoài code block nhưng bảo toàn snippet code", () => {
+    const mixed = [
+      "<proposed_plan>",
+      "Nội dung review sạch.",
+      "",
+      "Trong file dùng thẻ `<proposed_plan>` và mẫu:",
+      "````markdown",
+      "```xml",
+      "<proposed_plan>",
+      "## Example",
+      "</proposed_plan>",
+      "```",
+      "````",
+      "</proposed_plan>",
+    ].join("\n");
+
+    expect(hasStandaloneProposedPlanTag(mixed)).toBe(true);
+    const cleaned = stripStandaloneProposedPlanTags(mixed);
+    expect(cleaned.startsWith("Nội dung review sạch.")).toBe(true);
+    expect(cleaned).toContain("`<proposed_plan>`");
+    expect(cleaned).toContain("```xml\n<proposed_plan>\n## Example\n</proposed_plan>\n```");
+    expect(cleaned.endsWith("````")).toBe(true);
+    expect(hasStandaloneProposedPlanTag(cleaned)).toBe(false);
+  });
+
+  test("WebTurnEngine tự lột <proposed_plan> ngoài code block ở Default Mode và giữ nguyên trong Plan Mode", async () => {
+    let seenCalls = 0;
+    const buildEngine = () => {
+      const def: WebProviderDefinition = {
+        id: "test-plan-guard",
+        assistantName: "M365",
+        logPrefix: "test-plan-guard",
+        policies: { manageLauncherLeaseInEngine: false, maxFormatRetries: 1 },
+        conversation: { resolveConversationKey: () => `conv_${seenCalls}` },
+        browser: {
+          launcherProviderId: "m365",
+          connectorIdentity: "test-plan-guard",
+          executeTurn: async () => {
+            seenCalls += 1;
+            return {
+              rawResponse: [
+                "````markdown",
+                "<webResponse>",
+                "<proposed_plan>",
+                "## Kết quả review",
+                "Code sạch, sẵn sàng merge.",
+                "</proposed_plan>",
+                "</webResponse>",
+                "````",
+              ].join("\n"),
+              conversationId: "conv-web-1",
+            };
+          },
+        },
+      };
+      return new WebTurnEngine(def, undefined, undefined, new TurnTraceRecorder({ enabled: false }), new WebPromptSessionStore());
+    };
+
+    // 1. Default Mode -> lột thẻ <proposed_plan>, chỉ chạy 1 lần
+    seenCalls = 0;
+    const defaultParsed = parseRequest({
+      model: "m365-copilot/gpt-5.6",
+      metadata: { thread_id: "th_default_guard", turn_id: "t1" },
+      input: [
+        { type: "message", role: "developer", content: "<collaboration_mode># Collaboration Mode: Default</collaboration_mode>" },
+        { type: "message", role: "user", content: "review code giúp tôi" },
+      ],
+    });
+    const defaultEvents: AdapterEvent[] = [];
+    await buildEngine().runTurn(
+      defaultParsed,
+      { headers: new Headers(), abortSignal: new AbortController().signal },
+      e => defaultEvents.push(e),
+    );
+    expect(seenCalls).toBe(1);
+    const defaultText = defaultEvents
+      .filter((e): e is Extract<AdapterEvent, { type: "text_delta" }> => e.type === "text_delta")
+      .map(e => e.text)
+      .join("");
+    expect(defaultText).toBe("## Kết quả review\nCode sạch, sẵn sàng merge.");
+
+    // 2. Plan Mode -> giữ nguyên cặp thẻ <proposed_plan>
+    seenCalls = 0;
+    const planParsed = parseRequest({
+      model: "m365-copilot/gpt-5.6",
+      metadata: { thread_id: "th_plan_guard", turn_id: "t2" },
+      input: [
+        { type: "message", role: "developer", content: "<collaboration_mode># Plan Mode (Conversational)</collaboration_mode>" },
+        { type: "message", role: "user", content: "lên kế hoạch giúp tôi" },
+      ],
+    });
+    const planEvents: AdapterEvent[] = [];
+    await buildEngine().runTurn(
+      planParsed,
+      { headers: new Headers(), abortSignal: new AbortController().signal },
+      e => planEvents.push(e),
+    );
+    expect(seenCalls).toBe(1);
+    const planText = planEvents
+      .filter((e): e is Extract<AdapterEvent, { type: "text_delta" }> => e.type === "text_delta")
+      .map(e => e.text)
+      .join("");
+    expect(planText).toContain("<proposed_plan>");
+  });
+
+  test("WebTurnEngine từ chối và retry khi AI xuất lại <proposed_plan> lúc đã duyệt kế hoạch (isImplementingPlan)", async () => {
+    const promptsSent: string[] = [];
+    let attemptIdx = 0;
+    const def: WebProviderDefinition = {
+      id: "test-impl-guard",
+      assistantName: "M365",
+      logPrefix: "test-impl-guard",
+      policies: { manageLauncherLeaseInEngine: false, maxFormatRetries: 1 },
+      conversation: { resolveConversationKey: () => "th_impl_guard" },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "test-impl-guard",
+        executeTurn: async ({ prompt }) => {
+          promptsSent.push(prompt);
+          attemptIdx += 1;
+          if (attemptIdx === 1) {
+            return {
+              rawResponse: [
+                "````markdown",
+                "<webResponse>",
+                "<proposed_plan>",
+                "## Kế hoạch lại",
+                "</proposed_plan>",
+                "</webResponse>",
+                "````",
+              ].join("\n"),
+              conversationId: "conv-impl-1",
+            };
+          }
+          return {
+            rawResponse: [
+              "````markdown",
+              "<webResponse>",
+              '<tool_call>{"name":"exec_command","arguments":{"cmd":"git status"}}</tool_call>',
+              "</webResponse>",
+              "````",
+            ].join("\n"),
+            conversationId: "conv-impl-1",
+          };
+        },
+      },
+    };
+
+    const parsed = parseRequest({
+      model: "m365-copilot/gpt-5.6",
+      metadata: { thread_id: "th_impl_guard", turn_id: "t3" },
+      tools: [
+        {
+          type: "function",
+          name: "exec_command",
+          description: "Run shell",
+          parameters: { type: "object", properties: { cmd: { type: "string" } }, required: ["cmd"] },
+        },
+      ],
+      input: [
+        { type: "message", role: "developer", content: "<collaboration_mode># Collaboration Mode: Default</collaboration_mode>" },
+        { type: "message", role: "user", content: "PLEASE IMPLEMENT THIS PLAN:\n1. Kiểm tra git status" },
+      ],
+    });
+
+    const events: AdapterEvent[] = [];
+    const engine = new WebTurnEngine(def, undefined, undefined, new TurnTraceRecorder({ enabled: false }), new WebPromptSessionStore());
+    await engine.runTurn(
+      parsed,
+      { headers: new Headers(), abortSignal: new AbortController().signal },
+      e => events.push(e),
+    );
+
+    expect(attemptIdx).toBe(2);
+    expect(promptsSent[1]).toContain("UNEXPECTED_PROPOSED_PLAN");
+    expect(events.some(e => e.type === "tool_call_start" && e.name === "exec_command")).toBe(true);
   });
 });

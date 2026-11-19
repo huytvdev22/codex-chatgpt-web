@@ -340,6 +340,19 @@ Hãy đổi sang công cụ semantic phù hợp nếu công cụ đó có trong 
 \`\`\`\``;
   }
 
+  if (options.code === "UNEXPECTED_PROPOSED_PLAN") {
+    return `Kế hoạch đã được duyệt và tụi mình đang triển khai ở chế độ Default Mode (không phải Plan Mode):
+- Điểm bị vấp: [${options.code}] ${options.message}
+
+Tuyệt đối không xuất lại cặp thẻ \`<proposed_plan>...</proposed_plan>\` nữa. Hãy gọi thẳng \`<custom_tool_call name="apply_patch">\` / \`<tool_call>\` để thực hiện bước tiếp theo, hoặc viết câu trả lời Markdown cuối cùng (không kèm \`<proposed_plan>\`) trong khung sau:
+
+\`\`\`\`markdown
+<webResponse>
+... chỉ đặt các khối <tool_call> / <custom_tool_call name="apply_patch"> hoàn chỉnh, HOẶC nội dung câu trả lời Markdown cuối cùng ...
+</webResponse>
+\`\`\`\``;
+  }
+
   return `Bạn ơi, tin nhắn vừa rồi bạn gửi hơi lệch quy ước định dạng một chút nên script cầu nối trên máy mình chưa bóc tách để chạy lệnh được (chưa có công cụ nào được chạy ở lượt vừa rồi cả).
 - Điểm bị vấp: [${options.code}] ${options.message}
 

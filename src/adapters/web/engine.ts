@@ -12,12 +12,15 @@ import { compileWebPrompt } from "./compile-prompt";
 import { CodexPayloadNormalizer, CodexRawPayload } from "./normalization";
 import {
   buildFormatRetryPrompt,
+  isImplementingPlanRequest,
   isStructuredJsonOutputTurn,
   mcpToolCatalogRenderer,
   SHORT_OUTPUT_FORMAT_ANCHOR,
 } from "./prompt";
 import {
+  hasStandaloneProposedPlanTag,
   parseStrictWebResponse,
+  stripStandaloneProposedPlanTags,
   type StrictWebResponseResult,
   type StrictWebToolCall,
 } from "./protocol/strict-response-parser";
@@ -251,6 +254,11 @@ export class WebTurnEngine {
       const initialPrompt = this.definition.compilePrompt
         ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
         : compileResult!.finalPrompt;
+      const isImplementingPlan =
+        compileResult?.isImplementingPlan ?? isImplementingPlanRequest(parsed);
+      const isPlanMode =
+        compileResult?.isPlanMode ??
+        (!isImplementingPlan && normalized.collaborationMode === "plan");
 
       const traceSession = this.traceRecorder.beginTurn({
         providerId: this.definition.id,
@@ -438,7 +446,7 @@ export class WebTurnEngine {
                   }
                 }
 
-                const validatedResult = validateWebProtocolResponse(
+                let validatedResult = validateWebProtocolResponse(
                   parsedProtocol,
                   parsed.context.tools || [],
                   this.definition.response?.classifyValidationFailure
@@ -448,6 +456,34 @@ export class WebTurnEngine {
                       }
                     : undefined,
                 );
+                if (
+                  validatedResult.kind === "final_answer" &&
+                  !isPlanMode &&
+                  hasStandaloneProposedPlanTag(validatedResult.content)
+                ) {
+                  if (isImplementingPlan) {
+                    validatedResult = {
+                      kind: "protocol_error",
+                      code: "UNEXPECTED_PROPOSED_PLAN",
+                      message:
+                        'Kế hoạch đã được duyệt. Không xuất lại thẻ <proposed_plan>; hãy gọi <custom_tool_call name="apply_patch"> hoặc <tool_call> để triển khai.',
+                      rawResponse: validatedResult.rawResponse,
+                    };
+                  } else {
+                    const cleanedContent = stripStandaloneProposedPlanTags(
+                      validatedResult.content,
+                    );
+                    validatedResult = cleanedContent
+                      ? { ...validatedResult, content: cleanedContent }
+                      : {
+                          kind: "protocol_error",
+                          code: "EMPTY_RESPONSE",
+                          message:
+                            "Phản hồi không còn nội dung hợp lệ sau khi loại bỏ thẻ <proposed_plan> ở Default Mode.",
+                          rawResponse: validatedResult.rawResponse,
+                        };
+                  }
+                }
                 if (validatedResult.kind !== "protocol_error") {
                   lastFailedToolName = undefined;
                   lastProtocolError = undefined;

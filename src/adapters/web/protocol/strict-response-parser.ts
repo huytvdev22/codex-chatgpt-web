@@ -16,7 +16,8 @@ export type WebProtocolErrorCode =
   | "INVALID_PATCH_GRAMMAR"
   | "INVALID_JSON_SCHEMA_OUTPUT"
   | "DISALLOWED_COMMAND"
-  | "UNKNOWN_TOOL";
+  | "UNKNOWN_TOOL"
+  | "UNEXPECTED_PROPOSED_PLAN";
 
 export interface StrictWebToolCall {
   id?: string;
@@ -184,6 +185,125 @@ export function stripMarkdownCode(text: string): string {
   // 2. Loại bỏ inline code
   clean = clean.replace(/`[^`\r\n]*`/g, "");
   return clean;
+}
+
+const STANDALONE_PROPOSED_PLAN_TAG_REGEX = /<\/?\s*proposed[\\_]*plan\s*>/gi;
+
+function mapNonCodeInLine(
+  line: string,
+  options: { dropCode: boolean; mapPlain: (plain: string) => string },
+): string {
+  let out = "";
+  let cursor = 0;
+
+  while (cursor < line.length) {
+    const tickStart = line.indexOf("`", cursor);
+    if (tickStart < 0) {
+      out += options.mapPlain(line.slice(cursor));
+      break;
+    }
+
+    out += options.mapPlain(line.slice(cursor, tickStart));
+
+    let fenceLen = 1;
+    while (tickStart + fenceLen < line.length && line[tickStart + fenceLen] === "`") {
+      fenceLen += 1;
+    }
+    const closingFence = "`".repeat(fenceLen);
+    let searchFrom = tickStart + fenceLen;
+    let closeStart = -1;
+    while (searchFrom < line.length) {
+      const candidate = line.indexOf(closingFence, searchFrom);
+      if (candidate < 0) break;
+      const before = candidate > 0 ? line[candidate - 1] : "";
+      const after = candidate + fenceLen < line.length ? line[candidate + fenceLen] : "";
+      if (before !== "`" && after !== "`") {
+        closeStart = candidate;
+        break;
+      }
+      searchFrom = candidate + 1;
+    }
+
+    if (closeStart < 0) {
+      out += options.mapPlain(line.slice(tickStart));
+      break;
+    }
+
+    if (!options.dropCode) {
+      out += line.slice(tickStart, closeStart + fenceLen);
+    }
+    cursor = closeStart + fenceLen;
+  }
+
+  return out;
+}
+
+function transformOutsideMarkdownCode(
+  content: string,
+  options: { dropCode: boolean; dropEmptyTransformedLines: boolean; mapPlain: (plain: string) => string },
+): string {
+  const lines = content.split(/\r?\n/);
+  const resultLines: string[] = [];
+  let activeFence: { char: "`" | "~"; length: number } | null = null;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (!activeFence) {
+      if (fenceMatch) {
+        const marker = fenceMatch[1];
+        const char = marker[0] as "`" | "~";
+        const info = fenceMatch[2] || "";
+        if (char !== "`" || !info.includes("`")) {
+          activeFence = { char, length: marker.length };
+          if (!options.dropCode) resultLines.push(line);
+          continue;
+        }
+      }
+    } else {
+      const closeMatch = line.match(/^\s*(`{3,}|~{3,})\s*$/);
+      if (closeMatch && closeMatch[1][0] === activeFence.char && closeMatch[1].length >= activeFence.length) {
+        activeFence = null;
+      }
+      if (!options.dropCode) resultLines.push(line);
+      continue;
+    }
+
+    const transformed = mapNonCodeInLine(line, options);
+    if (options.dropEmptyTransformedLines && transformed !== line && transformed.trim().length === 0) {
+      continue;
+    }
+    resultLines.push(transformed);
+  }
+
+  return resultLines.join("\n");
+}
+
+/**
+ * Kiểm tra xem phản hồi có chứa thẻ `<proposed_plan>` / `</proposed_plan>`
+ * nằm ngoài Markdown code block hoặc inline code hay không.
+ */
+export function hasStandaloneProposedPlanTag(content: string): boolean {
+  if (!content) return false;
+  const plainOnly = transformOutsideMarkdownCode(content, {
+    dropCode: true,
+    dropEmptyTransformedLines: false,
+    mapPlain: plain => plain,
+  });
+  return /<\/?\s*proposed[\\_]*plan\s*>/i.test(plainOnly);
+}
+
+/**
+ * Gỡ bỏ các thẻ `<proposed_plan>` / `</proposed_plan>` nằm ngoài code fence và inline code
+ * khi hệ thống đang ở Default Mode để không làm lộ control tag thô ra UI Codex.
+ */
+export function stripStandaloneProposedPlanTags(content: string): string {
+  if (!content) return "";
+  const stripped = transformOutsideMarkdownCode(content, {
+    dropCode: false,
+    dropEmptyTransformedLines: true,
+    mapPlain: plain => plain.replace(STANDALONE_PROPOSED_PLAN_TAG_REGEX, ""),
+  });
+  return stripped.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**

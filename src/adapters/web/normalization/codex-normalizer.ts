@@ -776,46 +776,110 @@ export class CodexPayloadNormalizer {
       activeCodingTools,
       ...(deferredNamespaces.length > 0 ? { deferredNamespaces } : {}),
       executionPolicy,
-      collaborationMode: this.detectCollaborationMode(rawPayload),
+      collaborationMode: this.detectCollaborationMode(rawPayload, input),
       rawSnapshot: rawPayload.toJSON(),
       images: images.length > 0 ? images : undefined,
     };
   }
 
+  private static extractCollaborationModeFromControlText(text: string): "default" | "plan" | null {
+    if (!text) return null;
+
+    const tagRegex = /<collaboration_mode>([\s\S]*?)(?:<\/collaboration_mode>|$)/gi;
+    const planRegex = /(?:#\s*Plan Mode|"mode"\s*:\s*"plan"|mode\s*=\s*"plan")/gi;
+    const defaultRegex = /(?:#\s*Collaboration Mode:\s*Default|"mode"\s*:\s*"default"|mode\s*=\s*"default")/gi;
+
+    let detected: "default" | "plan" | null = null;
+    let tagMatch: RegExpExecArray | null;
+    while ((tagMatch = tagRegex.exec(text)) !== null) {
+      const body = tagMatch[1] || "";
+
+      planRegex.lastIndex = 0;
+      let lastPlanIdx = -1;
+      let match: RegExpExecArray | null;
+      while ((match = planRegex.exec(body)) !== null) {
+        lastPlanIdx = match.index;
+      }
+
+      defaultRegex.lastIndex = 0;
+      let lastDefaultIdx = -1;
+      while ((match = defaultRegex.exec(body)) !== null) {
+        lastDefaultIdx = match.index;
+      }
+
+      if (lastPlanIdx !== -1 || lastDefaultIdx !== -1) {
+        detected = lastPlanIdx > lastDefaultIdx ? "plan" : "default";
+      }
+    }
+
+    return detected;
+  }
+
+  private static isCollaborationControlItem(item: CodexRawInputItem): boolean {
+    const role = typeof (item as any).role === "string" ? (item as any).role : undefined;
+    if (role === "developer" || role === "system") {
+      return true;
+    }
+
+    const meta = (item as any).internal_chat_message_metadata_passthrough;
+    const kinds = Array.isArray(meta?.content_item_kinds) ? meta.content_item_kinds : [];
+    return kinds.includes("collaboration_mode.instructions");
+  }
+
   /**
-   * Phát hiện Collaboration Mode trực tiếp từ raw request của Codex:
-   * - Nếu chứa: <collaboration_mode># Plan Mode (Conversational) -> "plan"
-   * - Nếu không bật: <collaboration_mode># Collaboration Mode: Default -> "default"
-   * (So sánh vị trí xuất hiện cuối cùng trong request để phản ánh trạng thái mới nhất).
+   * Phát hiện Collaboration Mode chỉ từ control-plane đáng tin cậy của Codex:
+   * 1. Các message control (`role: "developer" | "system"` hoặc metadata `collaboration_mode.instructions`)
+   *    chứa block `<collaboration_mode>...</collaboration_mode>` (lấy trạng thái xuất hiện cuối cùng).
+   * 2. Hoặc trường cấu trúc `collaboration_mode` trên payload gốc.
+   * Tuyệt đối bỏ qua `function_call_output`, `user`, `assistant` để tránh đọc nhầm code/log thành chuyển mode.
    */
-  static detectCollaborationMode(rawPayload: CodexRawPayload): "default" | "plan" {
+  static detectCollaborationMode(
+    rawPayload: CodexRawPayload,
+    inputOverride?: CodexRawInputItem[],
+  ): "default" | "plan" {
+    const rawAny = rawPayload as any;
+    const rawContextMsgs = rawAny.context?.messages || (rawPayload.extra as any)?.context?.messages;
+    const resolvedInput: CodexRawInputItem[] = Array.isArray(inputOverride)
+      ? inputOverride
+      : (rawPayload.input && rawPayload.input.length > 0)
+        ? rawPayload.input
+        : (Array.isArray(rawContextMsgs) ? this.convertMessagesToInput(rawContextMsgs) : []);
 
-    const rawString = typeof (rawPayload as any).toJSON === "function"
-      ? JSON.stringify((rawPayload as any).toJSON())
-      : JSON.stringify(rawPayload);
-
-    // Marker bật Plan Mode:
-    // - <collaboration_mode># Plan Mode (Conversational) từ Codex thực tế
-    // - hoặc các biến thể <collaboration_mode># Plan Mode, "mode":"plan"
-    const planRegex = /(?:<collaboration_mode>#\s*Plan Mode|"mode"\s*:\s*"plan")/gi;
-    // Marker Default Mode (không bật Plan):
-    // - <collaboration_mode># Collaboration Mode: Default
-    // - hoặc "mode":"default"
-    const defaultRegex = /(?:<collaboration_mode>#\s*Collaboration Mode:\s*Default|"mode"\s*:\s*"default")/gi;
-
-    let lastPlanIdx = -1;
-    let match: RegExpExecArray | null;
-    while ((match = planRegex.exec(rawString)) !== null) {
-      lastPlanIdx = match.index;
+    let latestControlMode: "default" | "plan" | null = null;
+    for (const item of resolvedInput) {
+      if (!item || !this.isCollaborationControlItem(item)) continue;
+      const text = this.extractTextFromContent((item as any).content);
+      const itemMode = this.extractCollaborationModeFromControlText(text);
+      if (itemMode !== null) {
+        latestControlMode = itemMode;
+      }
     }
 
-    let lastDefaultIdx = -1;
-    while ((match = defaultRegex.exec(rawString)) !== null) {
-      lastDefaultIdx = match.index;
+    if (latestControlMode === null && typeof rawAny.instructions === "string") {
+      latestControlMode = this.extractCollaborationModeFromControlText(rawAny.instructions);
+    }
+    if (latestControlMode === null && typeof (rawPayload.extra as any)?.instructions === "string") {
+      latestControlMode = this.extractCollaborationModeFromControlText((rawPayload.extra as any).instructions);
     }
 
-    if (lastPlanIdx !== -1 && lastPlanIdx > lastDefaultIdx) {
-      return "plan";
+    if (latestControlMode !== null) {
+      return latestControlMode;
+    }
+
+    const structuredMode =
+      rawAny.collaboration_mode ??
+      (rawPayload.extra as any)?.collaboration_mode ??
+      rawAny._rawBody?.collaboration_mode;
+
+    if (typeof structuredMode === "string") {
+      if (structuredMode.trim().toLowerCase() === "plan") return "plan";
+      if (structuredMode.trim().toLowerCase() === "default") return "default";
+    } else if (structuredMode && typeof structuredMode === "object") {
+      const modeValue = typeof (structuredMode as any).mode === "string"
+        ? (structuredMode as any).mode.trim().toLowerCase()
+        : "";
+      if (modeValue === "plan") return "plan";
+      if (modeValue === "default") return "default";
     }
 
     return "default";
