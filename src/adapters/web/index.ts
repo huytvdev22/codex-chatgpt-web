@@ -11,6 +11,5 @@ export * from "./engine";
 export * from "./web-provider-adapter";
 export * from "./turn-identity";
 export * from "./launcher-runtime";
-export * from "./electron-surface-client";
 export * from "./compile-prompt";
 export * from "./local-browser-runtime";

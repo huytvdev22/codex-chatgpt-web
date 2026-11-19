@@ -60,7 +60,6 @@ export interface StartLauncherBrowserTurnOptions {
   activity: LauncherStartActivity;
   signal?: AbortSignal;
   connectionTimeoutMs?: number;
-  skipCdpConnection?: boolean;
   resolveSurfaceId?: (
     descriptor: LauncherBrowserHostDescriptor,
     leaseSurfaceId: string | undefined,
@@ -69,8 +68,7 @@ export interface StartLauncherBrowserTurnOptions {
 }
 
 export interface LauncherBrowserTurnSession {
-  connection: LauncherBrowserConnection | null;
-  descriptor?: LauncherBrowserHostDescriptor;
+  connection: LauncherBrowserConnection;
   surfaceId: string | undefined;
   conversationId: string | undefined;
   reused: boolean;
@@ -78,8 +76,7 @@ export interface LauncherBrowserTurnSession {
 }
 
 /**
- * Registers a Web adapter turn and connects Playwright (unless `skipCdpConnection`
- * is set for `electron-control` providers) to the leased Launcher surface.
+ * Registers a Web adapter turn and connects Playwright to the leased Launcher surface.
  */
 export async function startLauncherBrowserTurn(
   options: StartLauncherBrowserTurnOptions,
@@ -104,18 +101,15 @@ export async function startLauncherBrowserTurn(
     const surfaceId = options.resolveSurfaceId
       ? options.resolveSurfaceId(descriptor, lease.surfaceId)
       : lease.surfaceId || descriptor.surfaceId;
-    const connection = options.skipCdpConnection
-      ? null
-      : await connectBrowserHost(
-          options.descriptorPath,
-          options.connectionTimeoutMs ?? 20_000,
-          surfaceId,
-          options.signal,
-        );
+    const connection = await connectBrowserHost(
+      options.descriptorPath,
+      options.connectionTimeoutMs ?? 20_000,
+      surfaceId,
+      options.signal,
+    );
 
     return {
       connection,
-      descriptor,
       surfaceId,
       conversationId: lease.conversationId,
       reused: lease.reused === true,

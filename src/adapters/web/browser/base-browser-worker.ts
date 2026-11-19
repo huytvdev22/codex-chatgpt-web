@@ -64,7 +64,6 @@ export abstract class BaseWebBrowserWorker<
   TResult extends BaseBrowserTurnResult,
   TBaseline,
   TObservation extends BrowserObservation = BrowserObservation,
-  TSurface = Page,
 > {
   protected readonly defaultHardTimeoutMs = 15 * 60_000;
   protected readonly defaultIdleTimeoutMs = 2 * 60_000;
@@ -78,7 +77,7 @@ export abstract class BaseWebBrowserWorker<
   protected abstract readonly logPrefix: string;
 
   public async executeTurn(
-    page: TSurface,
+    page: Page,
     options: TOptions,
   ): Promise<TResult> {
     this.throwIfAborted(options.signal, "before start");
@@ -127,18 +126,18 @@ export abstract class BaseWebBrowserWorker<
   }
 
   protected async initializeTurnState(
-    _page: TSurface,
+    _page: Page,
     _options: TOptions,
   ): Promise<void> {}
 
   protected async cleanupTurnState(
-    _page: TSurface,
+    _page: Page,
     _options: TOptions,
   ): Promise<void> {}
 
   protected async handleExecutionError(
     _error: unknown,
-    _page: TSurface,
+    _page: Page,
     _options: TOptions,
   ): Promise<void> {}
 
@@ -175,7 +174,7 @@ export abstract class BaseWebBrowserWorker<
   }
 
   protected async beforeObserveResponse(
-    _page: TSurface,
+    _page: Page,
     _baseline: TBaseline,
     _options: TOptions,
   ): Promise<void> {}
@@ -204,75 +203,55 @@ export abstract class BaseWebBrowserWorker<
   }
 
   protected abstract navigate(
-    page: TSurface,
+    page: Page,
     options: TOptions,
   ): Promise<void>;
 
   protected async prepareProvider(
-    _page: TSurface,
+    _page: Page,
     _options: TOptions,
   ): Promise<void> {}
 
   protected abstract captureResponseBaseline(
-    page: TSurface,
+    page: Page,
     options: TOptions,
   ): Promise<TBaseline>;
 
   protected abstract insertPrompt(
-    page: TSurface,
+    page: Page,
     prompt: string,
     options: TOptions,
   ): Promise<void>;
 
   protected abstract submitPrompt(
-    page: TSurface,
+    page: Page,
     options: TOptions,
   ): Promise<void>;
 
   protected abstract observeResponse(
-    page: TSurface,
+    page: Page,
     baseline: TBaseline,
     options: TOptions,
   ): Promise<TObservation>;
 
   protected abstract extractCompletedResponse(
-    page: TSurface,
+    page: Page,
     context: BrowserCompletionContext<TBaseline, TObservation>,
     options: TOptions,
   ): Promise<string>;
 
   protected abstract resolveConversationId(
-    page: TSurface,
+    page: Page,
     options: TOptions,
   ): Promise<string | undefined>;
 
-  protected abstract stopGeneration(page: TSurface): Promise<boolean>;
+  protected abstract stopGeneration(page: Page): Promise<boolean>;
 
   protected createResult(
     result: BaseBrowserTurnResult,
     _options?: TOptions,
   ): TResult {
     return result as TResult;
-  }
-
-  protected async sleepSurface(
-    surface: TSurface,
-    ms: number,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const candidate = surface as unknown as {
-      waitForTimeout?: (timeoutMs: number) => Promise<void>;
-      sleep?: (timeoutMs: number, abortSignal?: AbortSignal) => Promise<void>;
-    };
-    if (typeof candidate?.waitForTimeout === "function") {
-      await candidate.waitForTimeout(ms);
-      return;
-    }
-    if (typeof candidate?.sleep === "function") {
-      await candidate.sleep(ms, signal);
-      return;
-    }
-    await new Promise<void>(resolve => setTimeout(resolve, ms));
   }
 
   /**
@@ -283,7 +262,7 @@ export abstract class BaseWebBrowserWorker<
    * thời nhưng dùng chung heartbeat, abort, hard deadline và idle deadline.
    */
   protected async waitForCompletion(
-    page: TSurface,
+    page: Page,
     baseline: TBaseline,
     options: TOptions,
   ): Promise<TObservation> {
@@ -338,7 +317,7 @@ export abstract class BaseWebBrowserWorker<
         isFirstObservation &&
         this.shouldDelayFirstObservation(options)
       ) {
-        await this.sleepSurface(page, pollingIntervalMs, options.signal);
+        await page.waitForTimeout(pollingIntervalMs);
       }
       isFirstObservation = false;
 
@@ -396,7 +375,7 @@ export abstract class BaseWebBrowserWorker<
         pollingIntervalMs,
         options,
       );
-      await this.sleepSurface(page, nextPollDelayMs, options.signal);
+      await page.waitForTimeout(nextPollDelayMs);
     }
   }
 

@@ -46,7 +46,6 @@ test("returns only registered adapter models locally without native fallback", a
     "m365-copilot/gpt-5.6",
     "m365-copilot",
     "ai-studio/gemini-4-hydrogen",
-    "ai-studio-pw/gemini-4-hydrogen",
   ]);
   expect(slugs.some(slug => slug === "gpt-5.6-sol" || slug === "gpt-5.5")).toBe(false);
   expect(slugs.some(slug => slug === "chatgpt-web" || slug.startsWith("chatgpt-web/"))).toBe(false);

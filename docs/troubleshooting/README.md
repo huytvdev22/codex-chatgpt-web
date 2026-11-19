@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **079** | Chuyển hẳn Google AI Studio sang Playwright CDP và gỡ bỏ hoàn toàn `electron-control` | `ai-studio`, `speech`, `web`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [079-consolidate-ai-studio-playwright-remove-electron-control.md](./079-consolidate-ai-studio-playwright-remove-electron-control.md) |
 | **078** | Bật nhầm Plan Mode từ `function_call_output` và lộ thẻ `<proposed_plan>` ở Default Mode | `web`, `m365-copilot` | ✅ Đã Confirm | [078-default-mode-false-plan-mode-and-proposed-plan-leak.md](./078-default-mode-false-plan-mode-and-proposed-plan-leak.md) |
 | **077** | Final answer M365 bị lộ `</webResponse>` và dính nội dung file từ `apply_patch` của lượt trước | `m365-copilot`, `web` | ✅ Đã Confirm | [077-m365-final-answer-leaks-previous-turn-code-lines.md](./077-m365-final-answer-leaks-previous-turn-code-lines.md) |
 | **076** | M365 Copilot bị `turn aborted` / `ERR_ABORTED (-3)` khi ẩn cửa sổ trên Windows & Refactor hiệu năng | `m365-copilot`, `ai-studio-pw`, `web`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [076-windows-hidden-abort-err-aborted-and-perf-refactor.md](./076-windows-hidden-abort-err-aborted-and-perf-refactor.md) |

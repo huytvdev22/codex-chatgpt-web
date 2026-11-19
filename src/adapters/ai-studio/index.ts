@@ -17,9 +17,16 @@ import {
   buildAiStudioSpeechUrl,
 } from "./ai-studio-speech-worker";
 import { aiStudioConversationKey } from "./conversation-key";
+import {
+  AI_STUDIO_DEFAULT_MODEL_SLUG,
+  buildAiStudioConversationUrl,
+  buildAiStudioNewChatUrl,
+} from "./conversation-url";
 
 export {
   AiStudioBrowserWorker,
+  isAiStudioGenerationRequest,
+  selectPreferredAiStudioResponse,
   type AiStudioBrowserRunOptions,
   type AiStudioTurnResult,
 } from "./ai-studio-browser-worker";
@@ -62,13 +69,14 @@ function isEphemeralStructuredTurn(
     hasActualPriorAssistantReply(parsed.context?.messages);
   const trailingTools =
     hasToolResults ??
-    parsed.context?.messages?.some(message => message.role === "toolResult") ??
+    parsed.context?.messages?.some((message) => message.role === "toolResult") ??
     false;
   return isStructuredJsonOutputTurn(parsed, trailingTools) && !priorAssistant;
 }
 
 /**
- * Adapter Google AI Studio Web (`aistudio.google.com`) điều phối qua `WebTurnEngine`.
+ * Adapter Google AI Studio Web (`aistudio.google.com`) điều phối qua `WebTurnEngine`
+ * và thực thi trực tiếp qua Playwright CDP trên tab Launcher.
  */
 export class AiStudioAdapter extends WebProviderAdapter {
   override readonly name = "ai-studio";
@@ -83,7 +91,6 @@ export class AiStudioAdapter extends WebProviderAdapter {
       logPrefix: "ai-studio-adapter",
       abortMessage: "AI Studio turn aborted before start",
       policies: {
-        browserTransport: "electron-control",
         launcherFailureMode: "fail-closed",
         enableEarlyExitOnFinalAnswer: true,
         enableToolLoopGuard: true,
@@ -132,14 +139,9 @@ export class AiStudioAdapter extends WebProviderAdapter {
               parsed,
               hasPriorAssistantReply,
               hasToolResults,
-            )
+            ) ||
+            !activeConversationId
           ) {
-            return {
-              connectorBound: false,
-              retain: false,
-            };
-          }
-          if (!activeConversationId) {
             return {
               connectorBound: false,
               retain: false,
@@ -160,8 +162,17 @@ export class AiStudioAdapter extends WebProviderAdapter {
         connectorIdentity: "ai-studio",
         resolveSurfaceId: (descriptor, leaseSurfaceId) =>
           leaseSurfaceId || descriptor.providerSurfaceIds?.["ai-studio"] || descriptor.surfaceId,
+        resolveInitialUrl: ({ modelId, existingConversationId }) => {
+          if (existingConversationId) {
+            return buildAiStudioConversationUrl(existingConversationId);
+          }
+          const cleanModel =
+            modelId.replace(/^ai-studio\//i, "").trim() ||
+            AI_STUDIO_DEFAULT_MODEL_SLUG;
+          return buildAiStudioNewChatUrl(cleanModel);
+        },
         executeTurn: async ({
-          electronClient,
+          page,
           prompt,
           attempt,
           parsed,
@@ -174,12 +185,12 @@ export class AiStudioAdapter extends WebProviderAdapter {
           attachments,
           heartbeat,
         }) => {
-          if (!electronClient) {
+          if (!page) {
             throw new Error(
-              "[ai-studio-adapter] Không có kênh điều khiển Electron surface khả dụng để thực thi lượt.",
+              "[ai-studio-adapter] Không có Playwright Page kết nối CDP tới Launcher.",
             );
           }
-          return worker.executeTurn(electronClient, {
+          return worker.executeTurn(page, {
             prompt,
             onChunk: () => {},
             signal: incoming.abortSignal,
@@ -228,13 +239,13 @@ export class AiStudioAdapter extends WebProviderAdapter {
       AI_STUDIO_DEFAULT_TTS_MODEL;
     return await this.engine.runEphemeralSurfaceTask(
       incoming,
-      async ({ electronClient, launcherReused, signal, heartbeat }) => {
-        if (!electronClient) {
+      async ({ page, launcherReused, signal, heartbeat }) => {
+        if (!page) {
           throw new Error(
-            "[ai-studio-adapter] Không có kênh điều khiển Electron surface khả dụng cho Generate Speech.",
+            "[ai-studio-adapter] Không có Playwright Page kết nối CDP cho Generate Speech.",
           );
         }
-        return await this.speechWorker.executeSpeech(electronClient, {
+        return await this.speechWorker.executeSpeech(page, {
           modelId: cleanModel,
           text: request.text,
           temperature: request.temperature,
@@ -260,4 +271,3 @@ export class AiStudioAdapter extends WebProviderAdapter {
 export function createAiStudioAdapter(): ProviderAdapter {
   return new AiStudioAdapter();
 }
-

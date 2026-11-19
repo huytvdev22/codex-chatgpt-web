@@ -4,23 +4,44 @@ import { WebProviderAdapter } from "../src/adapters/web/web-provider-adapter";
 import {
   AI_STUDIO_NEW_CHAT_URL,
   AiStudioAdapter,
+  AiStudioBrowserWorker,
   AiStudioModelProvider,
   aiStudioConversationKey,
   buildAiStudioConversationUrl,
   buildAiStudioNewChatUrl,
+  buildAiStudioSpeechUrl,
+  isAiStudioGenerationRequest,
   normalizeAiStudioConversationId,
   parseAiStudioConversationId,
+  selectPreferredAiStudioResponse,
 } from "../src/adapters/ai-studio";
-import { AI_STUDIO_DOM_SELECTORS, AiStudioDomObserver } from "../src/adapters/ai-studio/ai-studio-dom-observer";
+import {
+  AI_STUDIO_DOM_SELECTORS,
+  AiStudioDomObserver,
+} from "../src/adapters/ai-studio/ai-studio-dom-observer";
 import {
   normalizeCopiedAiStudioCodeSnippet,
   resolveClipboardMenuItemIndex,
 } from "../src/adapters/ai-studio/ai-studio-clipboard-salvage";
-import { selectPreferredAiStudioResponse } from "../src/adapters/ai-studio/ai-studio-browser-worker";
 import { parseStrictWebResponse } from "../src/adapters/web/protocol/strict-response-parser";
-import { resolveAiStudioThinkingLevel } from "../src/adapters/ai-studio/capability-picker";
 import { ModelRegistry } from "../src/models/model-registry";
 import type { CodexParsedRequest } from "../src/types";
+
+class TestAiStudioWorker extends AiStudioBrowserWorker {
+  public checkShouldEnforceIdleTimeout(
+    observation: Parameters<AiStudioBrowserWorker["shouldEnforceIdleTimeout"]>[0],
+  ): boolean {
+    return this.shouldEnforceIdleTimeout(observation);
+  }
+
+  public getPollDelay(
+    observation: Parameters<AiStudioBrowserWorker["resolveNextPollDelayMs"]>[0],
+    defaultDelayMs: number,
+    options: Parameters<AiStudioBrowserWorker["resolveNextPollDelayMs"]>[2],
+  ): number {
+    return this.resolveNextPollDelayMs(observation, defaultDelayMs, options);
+  }
+}
 
 function makeParsedRequest(overrides: Partial<CodexParsedRequest> = {}): CodexParsedRequest {
   return {
@@ -37,37 +58,57 @@ function makeParsedRequest(overrides: Partial<CodexParsedRequest> = {}): CodexPa
   };
 }
 
-describe("Google AI Studio Web Adapter", () => {
+describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
   test("ModelRegistry & AdapterRegistry đăng ký duy nhất model ai-studio/gemini-4-hydrogen", () => {
     const modelProvider = AiStudioModelProvider.getInstance();
     expect(modelProvider.id).toBe("ai-studio");
-    expect(modelProvider.routes.map(route => route.slug)).toEqual(["ai-studio/gemini-4-hydrogen"]);
+    expect(modelProvider.routes.map((route) => route.slug)).toEqual([
+      "ai-studio/gemini-4-hydrogen",
+    ]);
     expect(modelProvider.matchModelSlug("ai-studio/gemini-4-hydrogen")).toBe(true);
+    expect(modelProvider.matchModelSlug("ai-studio-pw/gemini-4-hydrogen")).toBe(false);
     expect(modelProvider.matchModelSlug("ai-studio/gemini-4-carbon")).toBe(false);
 
-    expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-hydrogen")?.id).toBe("ai-studio");
+    expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-hydrogen")?.id).toBe(
+      "ai-studio",
+    );
+    expect(ModelRegistry.getInstance().findProvider("ai-studio-pw/gemini-4-hydrogen")).toBeUndefined();
     expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-carbon")).toBeUndefined();
 
-    expect(resolveAiStudioThinkingLevel("ai-studio/gemini-4-hydrogen", "low")).toBe("Low");
-    expect(resolveAiStudioThinkingLevel("ai-studio/gemini-4-hydrogen", "medium")).toBe("Medium");
-    expect(resolveAiStudioThinkingLevel("ai-studio/gemini-4-hydrogen", "high")).toBe("High");
+    expect(modelProvider.resolveThinkingLevel("ai-studio/gemini-4-hydrogen", "low")).toBe("Low");
+    expect(modelProvider.resolveThinkingLevel("ai-studio/gemini-4-hydrogen", "medium")).toBe("Medium");
+    expect(modelProvider.resolveThinkingLevel("ai-studio/gemini-4-hydrogen", "high")).toBe("High");
 
     const adapter = AdapterRegistry.getInstance().createAdapter("ai-studio");
     expect(adapter).toBeInstanceOf(AiStudioAdapter);
     expect(adapter).toBeInstanceOf(WebProviderAdapter);
     expect(adapter.name).toBe("ai-studio");
+    expect(AdapterRegistry.getInstance().has("ai-studio-pw")).toBe(false);
   });
 
   test("parse/normalize AI Studio conversation URL bảo toàn chữ hoa/thường và từ chối new_chat", () => {
     const sampleId = "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
-    expect(AI_STUDIO_NEW_CHAT_URL).toBe("https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen");
+    expect(AI_STUDIO_NEW_CHAT_URL).toBe(
+      "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+    );
     expect(buildAiStudioNewChatUrl("gemini-4-hydrogen")).toBe(AI_STUDIO_NEW_CHAT_URL);
     expect(normalizeAiStudioConversationId(sampleId)).toBe(sampleId);
     expect(normalizeAiStudioConversationId("new_chat")).toBeUndefined();
-    expect(parseAiStudioConversationId(`https://aistudio.google.com/prompts/${sampleId}`)).toBe(sampleId);
-    expect(parseAiStudioConversationId("https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen")).toBeUndefined();
-    expect(parseAiStudioConversationId("https://evil.example.com/prompts/1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb")).toBeUndefined();
-    expect(buildAiStudioConversationUrl(sampleId)).toBe(`https://aistudio.google.com/prompts/${sampleId}`);
+    expect(parseAiStudioConversationId(`https://aistudio.google.com/prompts/${sampleId}`)).toBe(
+      sampleId,
+    );
+    expect(
+      parseAiStudioConversationId("https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen"),
+    ).toBeUndefined();
+    expect(
+      parseAiStudioConversationId("https://evil.example.com/prompts/1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb"),
+    ).toBeUndefined();
+    expect(buildAiStudioConversationUrl(sampleId)).toBe(
+      `https://aistudio.google.com/prompts/${sampleId}`,
+    );
+    expect(buildAiStudioSpeechUrl("ai-studio/gemini-2.5-flash-preview-tts")).toBe(
+      "https://aistudio.google.com/generate-speech?model=gemini-2.5-flash-preview-tts",
+    );
   });
 
   test("aiStudioConversationKey tạo SHA-256 ổn định và không lộ threadId gốc", () => {
@@ -89,6 +130,7 @@ describe("Google AI Studio Web Adapter", () => {
       hasNewAnswerTurn: false,
       hasTurnFooter: false,
       thoughtsCount: 1,
+      thoughtTextLength: 120,
       rawHtml: "",
       rawText: "",
       hasContent: false,
@@ -103,6 +145,7 @@ describe("Google AI Studio Web Adapter", () => {
       hasNewAnswerTurn: true,
       hasTurnFooter: true,
       thoughtsCount: 1,
+      thoughtTextLength: 120,
       rawHtml: "<p>78</p>",
       rawText: "78",
       hasContent: true,
@@ -116,6 +159,7 @@ describe("Google AI Studio Web Adapter", () => {
       hasNewAnswerTurn: true,
       hasTurnFooter: true,
       thoughtsCount: 1,
+      thoughtTextLength: 120,
       rawHtml: "<p>78</p>",
       rawText: "78",
       hasContent: true,
@@ -124,17 +168,81 @@ describe("Google AI Studio Web Adapter", () => {
     expect(completedAnswer.isCompleted).toBe(true);
     expect(completedAnswer.text).toBe("78");
 
-    expect(() => observer.applyStatus(state, {
-      isGenerating: false,
-      responseReadyLive: false,
-      hasNewAnswerTurn: true,
-      hasTurnFooter: false,
-      thoughtsCount: 0,
-      rawHtml: "",
-      rawText: "Permission denied. Please check your account permissions and project settings.",
-      hasContent: true,
-      detectedWebError: "Permission denied. Please check your account permissions and project settings.",
-    })).toThrow("[AI Studio Web Error] Permission denied.");
+    expect(() =>
+      observer.applyStatus(state, {
+        isGenerating: false,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 0,
+        thoughtTextLength: 0,
+        rawHtml: "",
+        rawText: "Permission denied. Please check your account permissions and project settings.",
+        hasContent: true,
+        detectedWebError:
+          "Permission denied. Please check your account permissions and project settings.",
+      }),
+    ).toThrow("[AI Studio Web Error] Permission denied.");
+  });
+
+  test("AiStudioDomObserver cập nhật activityKey khi thoughtTextLength tăng và giữ generating khi networkInFlight=true", () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    const step1 = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: false,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        thoughtTextLength: 120,
+        rawHtml: "",
+        rawText: "",
+        hasContent: false,
+      },
+      true,
+    );
+
+    const step2 = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: false,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        thoughtTextLength: 480,
+        rawHtml: "",
+        rawText: "",
+        hasContent: false,
+      },
+      true,
+    );
+
+    expect(step1.isGenerating).toBe(true);
+    expect(step1.isCompleted).toBe(false);
+    expect(step1.networkInFlight).toBe(true);
+    expect(step2.activityKey).not.toBe(step1.activityKey);
+
+    const networkStillBusy = observer.applyStatus(
+      state,
+      {
+        isGenerating: false,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: true,
+        thoughtsCount: 1,
+        thoughtTextLength: 480,
+        rawHtml: "<p>Xin chào</p>",
+        rawText: "Xin chào",
+        hasContent: true,
+      },
+      true,
+    );
+    expect(networkStillBusy.isGenerating).toBe(true);
+    expect(networkStillBusy.isCompleted).toBe(false);
   });
 
   test("AiStudioDomObserver không hoàn tất sớm khi <webResponse> chưa đóng và bọc đúng single Markdown code block", () => {
@@ -149,6 +257,7 @@ describe("Google AI Studio Web Adapter", () => {
         hasNewAnswerTurn: true,
         hasTurnFooter: false,
         thoughtsCount: 1,
+        thoughtTextLength: 80,
         rawHtml: `<pre><code>&lt;webResponse&gt;\nChào bạn!</code></pre>`,
         rawText: unclosedRaw,
         singleMarkdownCodeBlockText: unclosedRaw,
@@ -164,6 +273,7 @@ describe("Google AI Studio Web Adapter", () => {
       hasNewAnswerTurn: true,
       hasTurnFooter: true,
       thoughtsCount: 1,
+      thoughtTextLength: 80,
       rawHtml: "<ms-code-block><pre><code>...</code></pre></ms-code-block>",
       rawText: completeCodeText,
       singleMarkdownCodeBlockText: completeCodeText,
@@ -177,6 +287,7 @@ describe("Google AI Studio Web Adapter", () => {
       hasNewAnswerTurn: true,
       hasTurnFooter: true,
       thoughtsCount: 1,
+      thoughtTextLength: 80,
       rawHtml: "<ms-code-block><pre><code>...</code></pre></ms-code-block>",
       rawText: completeCodeText,
       singleMarkdownCodeBlockText: completeCodeText,
@@ -190,7 +301,182 @@ describe("Google AI Studio Web Adapter", () => {
     });
   });
 
-  test("AiStudioClipboardSalvage khớp menu item kèm icon ligature và ưu tiên bản extraction đầy đủ", () => {
+  test("AiStudioDomObserver tái sử dụng cache khi rawHtml không đổi và Worker giãn nhịp poll khi generating", () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+    const sameHtml = "<p><strong>Hello</strong> world</p>";
+
+    const first = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 0,
+        thoughtTextLength: 0,
+        rawHtml: sameHtml,
+        rawText: "Hello world",
+        hasContent: true,
+      },
+      true,
+    );
+    state.lastObservedText = "CACHED_MARKDOWN";
+
+    const second = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 0,
+        thoughtTextLength: 0,
+        rawHtml: sameHtml,
+        rawText: "Hello world",
+        hasContent: true,
+      },
+      true,
+    );
+
+    expect(first.text).toBe("**Hello** world");
+    expect(second.text).toBe("CACHED_MARKDOWN");
+
+    const worker = new TestAiStudioWorker();
+    expect(
+      worker.getPollDelay(
+        {
+          text: "",
+          isGenerating: true,
+          isCompleted: false,
+          networkInFlight: true,
+          activityKey: "thinking:0",
+          timedOut: false,
+          status: {
+            isGenerating: true,
+            responseReadyLive: false,
+            hasNewAnswerTurn: false,
+            hasTurnFooter: false,
+            thoughtsCount: 0,
+            thoughtTextLength: 0,
+            rawHtml: "",
+            rawText: "",
+            hasContent: false,
+          },
+        },
+        250,
+        { prompt: "hi" },
+      ),
+    ).toBe(450);
+    expect(
+      worker.getPollDelay(
+        {
+          text: "done",
+          isGenerating: false,
+          isCompleted: true,
+          networkInFlight: false,
+          activityKey: "idle",
+          timedOut: false,
+          status: {
+            isGenerating: false,
+            responseReadyLive: true,
+            hasNewAnswerTurn: true,
+            hasTurnFooter: true,
+            thoughtsCount: 0,
+            thoughtTextLength: 0,
+            rawHtml: "<p>done</p>",
+            rawText: "done",
+            hasContent: true,
+          },
+        },
+        250,
+        { prompt: "hi" },
+      ),
+    ).toBe(250);
+  });
+
+  test("shouldEnforceIdleTimeout miễn trừ khi networkInFlight hoặc isGenerating đang bật", () => {
+    const worker = new TestAiStudioWorker();
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    const busyByNetwork = observer.applyStatus(
+      state,
+      {
+        isGenerating: false,
+        responseReadyLive: false,
+        hasNewAnswerTurn: false,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        thoughtTextLength: 50,
+        rawHtml: "",
+        rawText: "",
+        hasContent: false,
+      },
+      true,
+    );
+    expect(worker.checkShouldEnforceIdleTimeout(busyByNetwork)).toBe(false);
+
+    const busyByDom = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: false,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        thoughtTextLength: 50,
+        rawHtml: "",
+        rawText: "",
+        hasContent: false,
+      },
+      false,
+    );
+    expect(worker.checkShouldEnforceIdleTimeout(busyByDom)).toBe(false);
+
+    const trulyIdle = observer.applyStatus(
+      state,
+      {
+        isGenerating: false,
+        responseReadyLive: false,
+        hasNewAnswerTurn: false,
+        hasTurnFooter: false,
+        thoughtsCount: 0,
+        thoughtTextLength: 0,
+        rawHtml: "",
+        rawText: "",
+        hasContent: false,
+      },
+      false,
+    );
+    expect(worker.checkShouldEnforceIdleTimeout(trulyIdle)).toBe(true);
+  });
+
+  test("isAiStudioGenerationRequest chỉ nhận diện POST GenerateContent/StreamGenerate, bỏ qua CountTokens và RPC phụ trợ", () => {
+    expect(
+      isAiStudioGenerationRequest(
+        "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
+        "POST",
+      ),
+    ).toBe(true);
+    expect(
+      isAiStudioGenerationRequest(
+        "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/CountTokens",
+        "POST",
+      ),
+    ).toBe(false);
+    expect(
+      isAiStudioGenerationRequest(
+        "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateTitle",
+        "POST",
+      ),
+    ).toBe(false);
+    expect(
+      isAiStudioGenerationRequest("https://aistudio.google.com/prompts/new_chat", "GET"),
+    ).toBe(false);
+  });
+
+  test("Clipboard helpers khớp menu item kèm icon ligature và ưu tiên bản extraction đầy đủ", () => {
     expect(AI_STUDIO_DOM_SELECTORS.runOrStopButton).toBe(
       "button[ms-button].ctrl-enter-submits.ms-button-primary",
     );
@@ -267,106 +553,108 @@ describe("Google AI Studio Web Adapter", () => {
     });
   });
 
-  test("AiStudioAdapter dùng browserTransport='electron-control' và AiStudioBrowserWorker thực thi turn qua ElectronSurfaceClient", async () => {
-    const { ElectronSurfaceClient } = await import("../src/adapters/web/electron-surface-client");
-    const { AiStudioBrowserWorker } = await import("../src/adapters/ai-studio");
-
-    const adapter = new AiStudioAdapter();
-    const policies = (
-      adapter as unknown as { definition: { policies?: { browserTransport?: string } } }
-    ).definition.policies;
-    expect(policies?.browserTransport).toBe("electron-control");
-
-    const actions: string[] = [];
-    let currentUrl = "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen";
-    let submitted = false;
-
-    const client = new ElectronSurfaceClient({
-      controlEndpoint: "http://127.0.0.1:9223",
-      controlToken: "test-token",
-      traceId: "trace-aistudio-turn",
-      helperPid: process.pid,
-      fetchFn: (async (_url, init) => {
-        const body = JSON.parse(String(init?.body || "{}")) as {
-          action: string;
-          args: Record<string, unknown>;
-        };
-        actions.push(body.action);
-        let result: unknown = {};
-        if (body.action === "getUrl") {
-          result = { url: currentUrl };
-        } else if (body.action === "aiStudioCheckCleanNewChat") {
-          result = { clean: true };
-        } else if (body.action === "aiStudioSelectThinkingLevel") {
-          result = { changed: false };
-        } else if (body.action === "aiStudioCheckComposerIdle") {
-          result = { idle: true };
-        } else if (body.action === "aiStudioCaptureBaseline") {
-          result = { modelContainerCount: 0, answerCount: 0, thoughtsCount: 0, lastAnswerText: "" };
-        } else if (body.action === "aiStudioCheckSubmitStatus") {
-          result = submitted
-            ? { isStop: true, isRunningLive: true, isDisabled: false, editorLength: 0 }
-            : { isStop: false, isRunningLive: false, isDisabled: false, editorLength: 10 };
-        } else if (body.action === "clickSelector") {
-          submitted = true;
-          currentUrl = "https://aistudio.google.com/prompts/1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
-          result = { clicked: true };
-        } else if (body.action === "aiStudioCaptureStatus") {
-          result = {
-            isGenerating: false,
-            responseReadyLive: true,
-            hasNewAnswerTurn: true,
-            hasTurnFooter: true,
-            thoughtsCount: 0,
-            rawHtml: "<p>OK</p>",
-            rawText: "OK",
-            singleMarkdownCodeBlockText: null,
-            hasContent: true,
-          };
-        } else if (body.action === "aiStudioCopyMarkdown") {
-          result = { text: "````markdown\n<webResponse>\nXin chào Electron\n</webResponse>\n````" };
-        }
-        return new Response(JSON.stringify({ ok: true, result }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }) as typeof fetch,
-    });
-
+  test("AiStudioBrowserWorker chờ BotGuard lại sau page.goto (kể cả khi launcherReused) và hover trước khi fill/click Run", async () => {
     const worker = new AiStudioBrowserWorker();
-    const res = await worker.executeTurn(client, {
-      prompt: "Chào",
-      modelSlug: "ai-studio/gemini-4-hydrogen",
-      pollingIntervalMs: 1,
-    });
+    const events: string[] = [];
+    let currentUrl = "https://aistudio.google.com/prompts/new_chat?model=gemini-2.5-flash";
+    let isComposerFilled = false;
+    let runClicked = false;
 
-    expect(actions).toContain("aiStudioCheckCleanNewChat");
-    expect(actions).toContain("aiStudioWaitForBotGuardReady");
-    expect(actions).toContain("aiStudioCaptureBaseline");
-    expect(actions).toContain("fillTextarea");
-    expect(actions).toContain("aiStudioCaptureStatus");
-    expect(actions).toContain("aiStudioCopyMarkdown");
-    expect(res).toEqual({
-      rawResponse: "````markdown\n<webResponse>\nXin chào Electron\n</webResponse>\n````",
-      conversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
-    });
+    const fakePage = {
+      url: () => currentUrl,
+      goto: async (url: string) => {
+        currentUrl = url;
+        events.push(`goto:${url}`);
+      },
+      waitForSelector: async () => {},
+      waitForTimeout: async (ms: number) => {
+        events.push(`wait:${ms}`);
+      },
+      keyboard: { press: async () => {} },
+      on: () => {},
+      off: () => {},
+      locator: (sel: string) => {
+        const makeLoc = (name: string) => ({
+          page: () => fakePage,
+          first: () => makeLoc(name),
+          waitFor: async () => {},
+          isVisible: async () => name === "composer",
+          scrollIntoViewIfNeeded: async () => {
+            events.push(`scroll:${name}`);
+          },
+          hover: async () => {
+            events.push(`hover:${name}`);
+          },
+          click: async () => {
+            events.push(`click:${name}`);
+            if (name === "runBtn") runClicked = true;
+          },
+          fill: async (val: string) => {
+            events.push(`fill:${name}:${val.length}`);
+            if (name === "composer") isComposerFilled = true;
+          },
+          inputValue: async () => (isComposerFilled ? "hello" : ""),
+          innerText: async () => "",
+          count: async () => 0,
+          press: async () => {},
+        });
+        if (sel.includes("Enter a prompt")) return makeLoc("composer");
+        if (sel.includes("Thinking Level")) return makeLoc("thinking");
+        return makeLoc("runBtn");
+      },
+      evaluate: async (_fn: unknown, arg?: Record<string, unknown>) => {
+        if (arg && "expectedModel" in arg) return false;
+        if (arg && "btnSelector" in arg) {
+          return {
+            isStop: runClicked,
+            isRunningLive: false,
+            isDisabled: false,
+            hasPrimaryBtn: true,
+            editorLength: isComposerFilled ? 5 : 0,
+          };
+        }
+        if (arg === undefined) {
+          events.push("botguard_probe");
+          return { waaReady: true, pageAgeMs: 2_500 };
+        }
+        return false;
+      },
+    } as never;
 
-    // Lượt tái sử dụng tab (launcherReused=true) bỏ qua aiStudioWaitForBotGuardReady để không chờ thừa
-    actions.length = 0;
-    submitted = false;
-    await worker.executeTurn(client, {
-      prompt: "Lượt 2",
-      existingConversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
+    const runHelper = worker as unknown as {
+      navigate: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      prepareProvider: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      insertPrompt: (p: unknown, t: string, o: Record<string, unknown>) => Promise<void>;
+      submitPrompt: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      botGuardSettledPages: WeakSet<object>;
+    };
+
+    // Giả lập page đã settle trước đó ở cuộc chat cũ và đang được launcherReused
+    runHelper.botGuardSettledPages.add(fakePage);
+    await runHelper.navigate(fakePage, {
       launcherReused: true,
-      pollingIntervalMs: 1,
+      modelSlug: "ai-studio/gemini-4-hydrogen",
     });
-    expect(actions).not.toContain("aiStudioWaitForBotGuardReady");
+    await runHelper.prepareProvider(fakePage, {
+      launcherReused: true,
+      modelSlug: "ai-studio/gemini-4-hydrogen",
+    });
+    await runHelper.insertPrompt(fakePage, "hello", {});
+    await runHelper.submitPrompt(fakePage, {});
+
+    expect(
+      events.some((e) => e.startsWith("goto:https://aistudio.google.com/prompts/new_chat")),
+    ).toBe(true);
+    expect(events).toContain("botguard_probe");
+    expect(events.indexOf("hover:composer")).toBeLessThan(events.indexOf("fill:composer:5"));
+    expect(events.indexOf("hover:runBtn")).toBeLessThan(events.indexOf("click:runBtn"));
   });
 
   test("runEphemeralSurfaceTask hỗ trợ retainOnCompleted & omitConnectorIdentity để giữ tab speech khi thành công và đóng khi lỗi", async () => {
     const adapter = new AiStudioAdapter();
     const engine = (adapter as any).engine;
     const lifecycleCalls: Array<{ phase: string; body: Record<string, unknown> }> = [];
+    const fakePage = { url: () => "https://aistudio.google.com/generate-speech" } as never;
 
     engine.lifecycleOps = {
       resolveDescriptorPath: () => "/tmp/fake-launcher.json",
@@ -375,11 +663,11 @@ describe("Google AI Studio Web Adapter", () => {
         return {
           surfaceId: "speech-surface-1",
           conversationId: undefined,
-          reused: lifecycleCalls.filter(c => c.phase === "start").length > 1,
-          descriptor: {
-            control: { endpoint: "http://127.0.0.1:9999", token: "tok" },
+          reused: lifecycleCalls.filter((c) => c.phase === "start").length > 1,
+          connection: {
+            browser: { close: async () => {} },
+            page: fakePage,
           },
-          connection: null,
         };
       },
       endTurn: async ({ activity }: { activity: Record<string, unknown> }) => {

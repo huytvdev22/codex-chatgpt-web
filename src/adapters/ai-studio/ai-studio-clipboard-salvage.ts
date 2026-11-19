@@ -1,6 +1,3 @@
-import type { ElectronSurfaceClient } from "../web/electron-surface-client";
-import { AI_STUDIO_DOM_SELECTORS } from "./ai-studio-dom-observer";
-
 /**
  * Tìm vị trí menu item `Copy as markdown` (ưu tiên) hoặc `Copy as text`
  * sau khi loại bỏ chữ icon ligature của Angular Material (`<mat-icon>`).
@@ -33,29 +30,3 @@ export function normalizeCopiedAiStudioCodeSnippet(raw: string): string {
   }
   return trimmed;
 }
-
-/**
- * Cứu hộ phản hồi Markdown nguyên bản của Google AI Studio thông qua action
- * `Open options -> Copy as markdown` trên Electron surface.
- */
-export class AiStudioClipboardSalvage {
-  public async tryExtractMarkdown(
-    client: ElectronSurfaceClient,
-    baselineAnswerCount: number,
-  ): Promise<string | null> {
-    try {
-      const result = await client.call<{ text?: string | null }>(
-        "aiStudioCopyMarkdown",
-        {
-          baselineAnswerCount,
-          modelTurnContainer: AI_STUDIO_DOM_SELECTORS.modelTurnContainer,
-          thoughtPanel: AI_STUDIO_DOM_SELECTORS.thoughtPanel,
-        },
-      );
-      return result?.text?.trim() || null;
-    } catch {
-      return null;
-    }
-  }
-}
-

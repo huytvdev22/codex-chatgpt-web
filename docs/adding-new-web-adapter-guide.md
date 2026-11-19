@@ -119,9 +119,6 @@ Một provider được mô tả trọn vẹn qua 5 nhóm driver trong `src/adap
 
 Mỗi provider chọn tổ hợp chính sách phù hợp trong `src/adapters/web/definition.ts` thay vì viết câu lệnh điều kiện:
 
-- **`browserTransport`**:
-  - `"playwright-cdp"` (mặc định): Điều khiển surface bằng Playwright `Page` qua CDP.
-  - `"electron-control"`: Bỏ qua `connectBrowserHost()` CDP; điều khiển `WebContentsView` trực tiếp qua endpoint nội bộ `POST /v1/surface/action` (`ElectronSurfaceClient` + `SurfaceActionExecutor`) bằng `executeJavaScript(..., true)` và `sendInputEvent` nhằm tránh dấu vết CDP đối với các trang có anti-bot/BotGuard như Google AI Studio.
 - **`launcherFailureMode`**:
   - `"fail-closed"` (mặc định): Bắt buộc chạy trên trình duyệt của Launcher; báo lỗi ngay nếu mất kết nối CDP.
   - `"fallback-local"`: Cho phép rơi về `LocalBrowserRuntime` khi Launcher không chạy.

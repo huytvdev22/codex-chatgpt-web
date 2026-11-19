@@ -1,10 +1,8 @@
 const { createServer } = require("node:http");
 const { randomBytes, timingSafeEqual } = require("node:crypto");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
-const { SurfaceActionExecutor } = require("./surface-action-executor.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
-const SURFACE_ACTION_MAX_BODY_BYTES = 10 * 1024 * 1024;
 const DEFAULT_CONVERSATION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_CONVERSATION_SLUG_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
 
@@ -40,12 +38,11 @@ function writeJson(response, status, body) {
 }
 
 class BrowserControlServer {
-  constructor({ logger, getBrowserHost, getPreferences, providerRegistry = null, surfaceActionExecutor = null }) {
+  constructor({ logger, getBrowserHost, getPreferences, providerRegistry = null }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
     this.providerRegistry = providerRegistry;
-    this.surfaceActionExecutor = surfaceActionExecutor || new SurfaceActionExecutor();
     this.token = randomBytes(32).toString("base64url");
     this.port = 0;
     this.server = createServer((request, response) => {
@@ -122,13 +119,12 @@ class BrowserControlServer {
       || request.url === "/v1/turn/end";
     const isTurnRelease = request.url === "/v1/turn/release";
     const isSessionInspect = request.url === "/v1/session/inspect";
-    const isSurfaceAction = request.url === "/v1/surface/action";
-    if (request.method !== "POST" || (!isTurn && !isTurnRelease && !isSessionInspect && !isSurfaceAction)) {
+    if (request.method !== "POST" || (!isTurn && !isTurnRelease && !isSessionInspect)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
     try {
-      const body = await readJson(request, isSurfaceAction ? SURFACE_ACTION_MAX_BODY_BYTES : MAX_BODY_BYTES);
+      const body = await readJson(request);
       const preferences = this.getPreferences();
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");
@@ -151,16 +147,6 @@ class BrowserControlServer {
       }
       if (!Number.isInteger(body.helperPid) || body.helperPid < 1) {
         throw new Error("browser helper pid is invalid");
-      }
-      if (isSurfaceAction) {
-        if (typeof body.action !== "string" || !body.action.trim()) {
-          throw new Error("surface action is invalid");
-        }
-        const result = typeof host.executeSurfaceAction === "function"
-          ? await host.executeSurfaceAction(body)
-          : await this.surfaceActionExecutor.execute(host, body);
-        writeJson(response, 200, { ok: true, result });
-        return;
       }
       if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
         throw new Error("conversationKey is invalid");

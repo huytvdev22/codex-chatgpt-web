@@ -1,3 +1,4 @@
+import type { Locator, Page, Request } from "playwright-core";
 import {
   BaseWebBrowserWorker,
   BrowserHardTimeoutError,
@@ -5,10 +6,23 @@ import {
   type BaseBrowserRunOptions,
   type BrowserCompletionContext,
 } from "../web/browser";
-import type { ElectronSurfaceClient } from "../web/electron-surface-client";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
-import { aiStudioImageFilePayloads, attachAiStudioFiles } from "./attachments";
-import { ensureAiStudioThinkingLevel, resolveAiStudioThinkingLevel } from "./capability-picker";
+import {
+  normalizeCopiedAiStudioCodeSnippet,
+  resolveClipboardMenuItemIndex,
+} from "./ai-studio-clipboard-salvage";
+import {
+  AI_STUDIO_DOM_SELECTORS,
+  AiStudioDomObserver,
+  type AiStudioResponseBaseline,
+  type AiStudioResponseObservation,
+  type AiStudioResponseRuntimeState,
+} from "./ai-studio-dom-observer";
+import {
+  clickResilient,
+  humanPause,
+  waitForBotGuardReady,
+} from "./ai-studio-human-timing";
 import {
   AI_STUDIO_DEFAULT_MODEL_SLUG,
   AI_STUDIO_ORIGIN,
@@ -17,14 +31,7 @@ import {
   parseAiStudioConversationId,
   waitForAiStudioConversationId,
 } from "./conversation-url";
-import { AiStudioClipboardSalvage } from "./ai-studio-clipboard-salvage";
-import {
-  AI_STUDIO_DOM_SELECTORS,
-  AiStudioDomObserver,
-  type AiStudioResponseBaseline,
-  type AiStudioResponseObservation,
-  type AiStudioResponseRuntimeState,
-} from "./ai-studio-dom-observer";
+import { AiStudioModelProvider } from "./model-provider";
 
 export interface AiStudioBrowserRunOptions extends BaseBrowserRunOptions {
   conversationKey?: string;
@@ -39,6 +46,18 @@ export interface AiStudioTurnResult {
   rawResponse: string;
   conversationId?: string;
 }
+
+const THINKING_LEVEL_SELECT =
+  'mat-select[role="combobox"][aria-label="Thinking Level"], #mat-select-0[aria-label="Thinking Level"]';
+const SELECT_OPTION_SELECTOR =
+  '.mat-mdc-select-panel [role="option"], [role="listbox"] [role="option"]';
+const INSERT_BUTTON_SELECTOR =
+  'button[aria-label="Insert images, videos, audio, or files"]';
+const UPLOAD_MENU_ITEM_SELECTOR = "button.mat-mdc-menu-item.upload-file-menu-item";
+const OPEN_OPTIONS_BUTTON_SELECTOR = 'button[aria-label="Open options"]';
+const CODE_COPY_BUTTON_SELECTOR =
+  'ms-code-block button[aria-label="Copy code to clipboard"]';
+const ANSWER_TURN_SELECTOR = `${AI_STUDIO_DOM_SELECTORS.modelTurnContainer}:not(:has(${AI_STUDIO_DOM_SELECTORS.thoughtPanel}))`;
 
 export function selectPreferredAiStudioResponse(
   copiedMarkdown: string | null,
@@ -62,48 +81,99 @@ export function selectPreferredAiStudioResponse(
   return { rawResponse: cleanCopied, source: "clipboard" };
 }
 
+export function isAiStudioGenerationRequest(url: string, method: string): boolean {
+  if (method.toUpperCase() !== "POST") return false;
+  return /GenerateContent|StreamGenerate/i.test(url);
+}
+
+interface NetworkTracker {
+  inFlight: Set<Request>;
+  seenGenerationRequest: boolean;
+  cleanup: () => void;
+}
+
 /**
- * Thực thi lượt hội thoại với Google AI Studio (`aistudio.google.com`) thông qua
- * Template Method trên `BaseWebBrowserWorker`.
+ * Playwright CDP Worker cho Google AI Studio (`aistudio.google.com`):
+ * - Gắn trực tiếp vào tab Launcher qua CDP (không mở Chrome ngoài).
+ * - Theo dõi HTTP `GenerateContent` in-flight qua `page.on('request')` để miễn trừ
+ *   idle timeout trong pha Thinking kéo dài nhiều phút.
+ * - Giữ nhịp thao tác tự nhiên (BotGuard settle, delay trước khi fill và submit).
  */
 export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   AiStudioBrowserRunOptions,
   AiStudioTurnResult,
   AiStudioResponseBaseline,
-  AiStudioResponseObservation,
-  ElectronSurfaceClient
+  AiStudioResponseObservation
 > {
   protected readonly logPrefix = "ai-studio-worker";
   protected readonly defaultHardTimeoutMs = 20 * 60_000;
-  protected readonly defaultIdleTimeoutMs = 45_000;
+  protected readonly defaultIdleTimeoutMs = 180_000;
   protected readonly defaultPollingIntervalMs = 250;
   protected readonly defaultHeartbeatIntervalMs = 10_000;
 
   private readonly domObserver = new AiStudioDomObserver();
-  private readonly clipboardSalvage = new AiStudioClipboardSalvage();
-  private readonly runtimeStates = new WeakMap<ElectronSurfaceClient, AiStudioResponseRuntimeState>();
-  private readonly retainedConversationIds = new WeakMap<ElectronSurfaceClient, string>();
-  private readonly botGuardSettledClients = new WeakSet<ElectronSurfaceClient>();
+  private readonly runtimeStates = new WeakMap<Page, AiStudioResponseRuntimeState>();
+  private readonly retainedConversationIds = new WeakMap<Page, string>();
+  private readonly botGuardSettledPages = new WeakSet<Page>();
+  private readonly networkTrackers = new WeakMap<Page, NetworkTracker>();
 
   protected override async initializeTurnState(
-    client: ElectronSurfaceClient,
+    page: Page,
     _options: AiStudioBrowserRunOptions,
   ): Promise<void> {
-    this.runtimeStates.set(client, this.domObserver.createRuntimeState());
+    this.runtimeStates.set(page, this.domObserver.createRuntimeState());
+    this.attachNetworkTracker(page);
   }
 
   protected override async cleanupTurnState(
-    client: ElectronSurfaceClient,
+    page: Page,
     _options: AiStudioBrowserRunOptions,
   ): Promise<void> {
-    this.runtimeStates.delete(client);
+    this.networkTrackers.get(page)?.cleanup();
+    this.networkTrackers.delete(page);
+    this.runtimeStates.delete(page);
+  }
+
+  private attachNetworkTracker(page: Page): void {
+    this.networkTrackers.get(page)?.cleanup();
+    const inFlight = new Set<Request>();
+    const tracker: NetworkTracker = {
+      inFlight,
+      seenGenerationRequest: false,
+      cleanup: () => {},
+    };
+
+    const onRequest = (req: Request) => {
+      if (!isAiStudioGenerationRequest(req.url(), req.method())) return;
+      inFlight.add(req);
+      tracker.seenGenerationRequest = true;
+    };
+    const onDone = (req: Request) => {
+      inFlight.delete(req);
+    };
+
+    page.on("request", onRequest);
+    page.on("requestfinished", onDone);
+    page.on("requestfailed", onDone);
+    tracker.cleanup = () => {
+      page.off("request", onRequest);
+      page.off("requestfinished", onDone);
+      page.off("requestfailed", onDone);
+      inFlight.clear();
+    };
+    this.networkTrackers.set(page, tracker);
+  }
+
+  private hasInFlightGeneration(page: Page): boolean {
+    const tracker = this.networkTrackers.get(page);
+    return Boolean(tracker && tracker.inFlight.size > 0);
   }
 
   protected override async navigate(
-    client: ElectronSurfaceClient,
+    page: Page,
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
-    const initialUrl = await client.getUrl(options.signal);
+    const initialUrl = page.url();
     const currentConversationId = parseAiStudioConversationId(initialUrl);
 
     if (options.existingConversationId) {
@@ -116,23 +186,18 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       }
 
       if (currentConversationId !== options.existingConversationId) {
-        await client.navigate(buildAiStudioConversationUrl(options.existingConversationId), {
-          timeoutMs: 25_000,
-          signal: options.signal,
+        this.botGuardSettledPages.delete(page);
+        await page.goto(buildAiStudioConversationUrl(options.existingConversationId), {
+          waitUntil: "domcontentloaded",
+          timeout: 25_000,
         });
       }
 
-      await client.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, {
-        timeoutMs: 20_000,
-        signal: options.signal,
-      });
-      await client
-        .waitForSelector(".chat-session-content ms-chat-turn", {
-          timeoutMs: 15_000,
-          signal: options.signal,
-        })
+      await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 });
+      await page
+        .waitForSelector(".chat-session-content ms-chat-turn", { timeout: 15_000 })
         .catch(() => {});
-      this.retainedConversationIds.set(client, options.existingConversationId);
+      this.retainedConversationIds.set(page, options.existingConversationId);
       return;
     }
 
@@ -146,157 +211,293 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const targetNewChatUrl = buildAiStudioNewChatUrl(modelName);
     const isOnNewChatUrl = initialUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
     if (isOnNewChatUrl) {
-      // Đợi composer hiện trước khi kiểm tra trạng thái trang mới để tránh reload thừa.
-      await client
-        .waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, {
-          timeoutMs: 20_000,
-          signal: options.signal,
-        })
+      await page
+        .waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 })
         .catch(() => {});
     }
+
     const isCleanBlankNewChat = isOnNewChatUrl
-      ? await client
-          .call<{ clean: boolean }>(
-            "aiStudioCheckCleanNewChat",
-            { targetModel: modelName },
-            { signal: options.signal },
+      ? await page
+          .evaluate(
+            ({ expectedModel }) => {
+              const turns = document.querySelectorAll(".chat-session-content ms-chat-turn");
+              if (turns.length > 0) return false;
+              const composer = document.querySelector(
+                'textarea[aria-label="Enter a prompt"]',
+              ) as HTMLTextAreaElement | null;
+              if (!composer) return false;
+              try {
+                const current = new URL(location.href);
+                const modelParam = current.searchParams.get("model");
+                if (expectedModel && modelParam && modelParam !== expectedModel) {
+                  return false;
+                }
+              } catch {}
+              return true;
+            },
+            { expectedModel: modelName },
           )
-          .then(res => res.clean)
           .catch(() => false)
       : false;
 
     if (!isCleanBlankNewChat || currentConversationId) {
-      await client.navigate(targetNewChatUrl, {
-        timeoutMs: 25_000,
-        signal: options.signal,
+      this.botGuardSettledPages.delete(page);
+      await page.goto(targetNewChatUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 25_000,
       });
     }
 
-    await client.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, {
-      timeoutMs: 20_000,
-      signal: options.signal,
-    });
+    await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 });
   }
 
   protected override async prepareProvider(
-    client: ElectronSurfaceClient,
+    page: Page,
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
-    await client.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, {
-      timeoutMs: 15_000,
-      signal: options.signal,
-    });
+    await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 15_000 });
 
-    const targetLevel = resolveAiStudioThinkingLevel(
+    const targetLevel = AiStudioModelProvider.getInstance().resolveThinkingLevel(
       options.modelSlug || "ai-studio/gemini-4-hydrogen",
       options.reasoning,
     );
-    await ensureAiStudioThinkingLevel(client, targetLevel).catch(error => {
+    await this.ensureThinkingLevel(page, targetLevel).catch((error) => {
       console.warn(
         `[ai-studio-worker] Không thể chọn Thinking Level '${targetLevel}':`,
         error,
       );
     });
 
-    await this.waitForComposerIdle(client, options.signal);
+    await this.waitForComposerIdle(page);
 
-    if (!options.launcherReused && !this.botGuardSettledClients.has(client)) {
-      this.botGuardSettledClients.add(client);
-      await client
-        .call(
-          "aiStudioWaitForBotGuardReady",
-          { minPageAgeMs: 1_200, maxWaitMs: 1_500 },
-          { signal: options.signal },
-        )
-        .catch(() => {});
+    if (!this.botGuardSettledPages.has(page)) {
+      this.botGuardSettledPages.add(page);
+      await waitForBotGuardReady(page, 2_000, 2_800).catch(() => {});
     }
+    await humanPause(page, 280, 480);
+  }
+
+  private async ensureThinkingLevel(page: Page, targetLevel: string): Promise<void> {
+    const select = page.locator(THINKING_LEVEL_SELECT).first();
+    if (!(await select.isVisible().catch(() => false))) return;
+
+    const currentText = ((await select.innerText().catch(() => "")) || "").trim().toLowerCase();
+    const firstLine = currentText.split(/\r?\n/)[0]?.trim() || "";
+    if (currentText === targetLevel.toLowerCase() || firstLine === targetLevel.toLowerCase()) {
+      return;
+    }
+
+    await clickResilient(select, 3_000);
+    await humanPause(page, 220, 380);
+    const options = page.locator(SELECT_OPTION_SELECTOR);
+    await options.first().waitFor({ state: "visible", timeout: 3_000 });
+    const count = await options.count();
+    for (let i = 0; i < count; i += 1) {
+      const opt = options.nth(i);
+      const label = ((await opt.innerText().catch(() => "")) || "").trim();
+      if (label.toLowerCase() === targetLevel.toLowerCase()) {
+        await clickResilient(opt, 2_000);
+        await humanPause(page, 260, 440);
+        return;
+      }
+    }
+    await page.keyboard.press("Escape").catch(() => {});
   }
 
   protected override async captureResponseBaseline(
-    client: ElectronSurfaceClient,
+    page: Page,
   ): Promise<AiStudioResponseBaseline> {
-    return await this.domObserver.captureBaseline(client);
+    return await this.domObserver.captureBaseline(page);
   }
 
   protected override async insertPrompt(
-    client: ElectronSurfaceClient,
+    page: Page,
     promptText: string,
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
     if (options.images && options.images.length > 0) {
-      const payloads = aiStudioImageFilePayloads(options.images);
-      await attachAiStudioFiles(client, payloads, { signal: options.signal }).catch(error => {
-        console.warn("[ai-studio-worker] Lỗi khi đính kèm ảnh vào AI Studio:", error);
-      });
+      await this.attachImages(page, options.images.slice(0, 3), options.signal).catch(
+        (error) => {
+          console.warn("[ai-studio-worker] Lỗi khi đính kèm ảnh:", error);
+        },
+      );
     }
 
-    await client.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, {
-      timeoutMs: 10_000,
-      signal: options.signal,
-    });
-    await client.fillTextarea(AI_STUDIO_DOM_SELECTORS.composer, promptText, {
-      signal: options.signal,
-    });
-    await client.sleep(250, options.signal);
+    const composer = page.locator(AI_STUDIO_DOM_SELECTORS.composer).first();
+    await composer.waitFor({ state: "visible", timeout: 10_000 });
+    await composer.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
+    await composer.hover({ timeout: 1_000 }).catch(() => {});
+    await humanPause(page, 180, 340);
+    await composer.click({ timeout: 2_500 }).catch(() => {});
+    // Nhịp nghỉ tự nhiên sau khi focus trước khi điền prompt
+    await humanPause(page, 280, 480);
+
+    await composer.fill(promptText);
+    const currentValue = await composer.inputValue().catch(() => "");
+    if (!currentValue) {
+      await page.evaluate(
+        ({ selector, value }) => {
+          const el = document.querySelector<HTMLTextAreaElement>(selector);
+          if (!el) return;
+          el.focus();
+          const setter = Object.getOwnPropertyDescriptor(
+            HTMLTextAreaElement.prototype,
+            "value",
+          )?.set;
+          if (setter) setter.call(el, value);
+          else el.value = value;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+        { selector: AI_STUDIO_DOM_SELECTORS.composer, value: promptText },
+      );
+    }
+
+    // Chờ Angular + BotGuard xử lý input event tự nhiên trước khi bấm Run
+    await humanPause(page, 550, 950);
+  }
+
+  private async attachImages(
+    page: Page,
+    images: NormalizedImageAttachment[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) return;
+    const insertBtn = page.locator(INSERT_BUTTON_SELECTOR).first();
+    await insertBtn.waitFor({ state: "visible", timeout: 8_000 });
+    await clickResilient(insertBtn, 3_000);
+    await humanPause(page, 180, 320);
+
+    const uploadItem = page.locator(UPLOAD_MENU_ITEM_SELECTOR).first();
+    await uploadItem.waitFor({ state: "visible", timeout: 4_000 });
+
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent("filechooser", { timeout: 8_000 }),
+      clickResilient(uploadItem, 3_000),
+    ]);
+
+    await fileChooser.setFiles(
+      images.map((img) => ({
+        name: img.name,
+        mimeType: img.mimeType,
+        buffer: img.buffer,
+      })),
+    );
+    await humanPause(page, 420, 720);
   }
 
   protected override async submitPrompt(
-    client: ElectronSurfaceClient,
+    page: Page,
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
+    const runBtn = page.locator(AI_STUDIO_DOM_SELECTORS.runOrStopButton).first();
+    const composer = page.locator(AI_STUDIO_DOM_SELECTORS.composer).first();
+
+    const tracker = this.networkTrackers.get(page);
+    if (tracker) {
+      // Xóa mọi tín hiệu RPC trước khi bấm nút Run để tránh bỏ qua bước submit
+      tracker.seenGenerationRequest = false;
+    }
+
     let submitted = false;
+    let clickedAtLeastOnce = false;
     let emptyEditorWaitCycles = 0;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       if (options.signal?.aborted) {
         throw new DOMException("AI Studio turn aborted during submit", "AbortError");
       }
 
-      const status = await client.call<{
-        isStop: boolean;
-        isRunningLive: boolean;
-        isDisabled: boolean;
-        editorLength: number;
-      }>(
-        "aiStudioCheckSubmitStatus",
+      const status = await page.evaluate(
+        ({ btnSelector, liveSelector, composerSelector }) => {
+          const btns = [
+            ...Array.from(document.querySelectorAll<HTMLButtonElement>(btnSelector)),
+            ...Array.from(
+              document.querySelectorAll<HTMLButtonElement>(
+                'button[aria-label*="Stop" i], button[aria-label*="Cancel generation" i]',
+              ),
+            ),
+          ];
+          const isStop = btns.some((btn) => {
+            const rect = btn.getBoundingClientRect();
+            if (rect.width <= 0 && rect.height <= 0) return false;
+            const txt = (btn.innerText || btn.getAttribute("aria-label") || "")
+              .trim()
+              .toLowerCase();
+            return txt.includes("stop") || txt.includes("cancel");
+          });
+          const primaryBtn = document.querySelector<HTMLButtonElement>(btnSelector);
+          const isDisabled = Boolean(
+            primaryBtn?.disabled || primaryBtn?.getAttribute("aria-disabled") === "true",
+          );
+          const liveText = Array.from(document.querySelectorAll<HTMLElement>(liveSelector))
+            .map((el) => (el.innerText || "").trim())
+            .join(" ");
+          const editor = document.querySelector<HTMLTextAreaElement>(composerSelector);
+          return {
+            isStop,
+            isRunningLive: /running/i.test(liveText),
+            isDisabled,
+            hasPrimaryBtn: Boolean(primaryBtn),
+            editorLength: (editor?.value || "").trim().length,
+          };
+        },
         {
           btnSelector: AI_STUDIO_DOM_SELECTORS.runOrStopButton,
           liveSelector: AI_STUDIO_DOM_SELECTORS.liveStatus,
           composerSelector: AI_STUDIO_DOM_SELECTORS.composer,
         },
-        { signal: options.signal },
       );
 
-      if (status.isStop || status.isRunningLive) {
+      if (
+        status.isStop ||
+        status.isRunningLive ||
+        (clickedAtLeastOnce &&
+          (this.hasInFlightGeneration(page) || Boolean(tracker?.seenGenerationRequest)))
+      ) {
         submitted = true;
         break;
       }
 
-      if (status.editorLength === 0) {
+      if (clickedAtLeastOnce && status.editorLength === 0) {
         emptyEditorWaitCycles += 1;
-        if (emptyEditorWaitCycles >= 3) {
+        if (emptyEditorWaitCycles >= 4) {
           submitted = true;
           break;
         }
-        await client.sleep(250, options.signal);
+        await page.waitForTimeout(250);
         continue;
       }
 
-      if (!status.isDisabled) {
-        await client
-          .clickSelector(AI_STUDIO_DOM_SELECTORS.runOrStopButton, {
-            trusted: attempt < 2,
-            signal: options.signal,
-          })
-          .catch(async () => {
-            await client.pressKey("Meta+Enter", options.signal).catch(() => {});
+      if (status.hasPrimaryBtn && !status.isDisabled) {
+        if (attempt === 0) {
+          await humanPause(page, 320, 580);
+          await clickResilient(runBtn, 2_500).catch(async () => {
+            await composer.press("Meta+Enter").catch(() => {});
           });
+        } else if (attempt === 1) {
+          await humanPause(page, 220, 380);
+          await composer.press("Meta+Enter").catch(async () => {
+            await runBtn.click({ force: true, timeout: 1_500 }).catch(() => {});
+          });
+        } else {
+          await runBtn.click({ force: true, timeout: 1_500 }).catch(async () => {
+            await page.evaluate((sel) => {
+              const btn = document.querySelector<HTMLElement>(sel);
+              btn?.click();
+            }, AI_STUDIO_DOM_SELECTORS.runOrStopButton);
+          });
+        }
+        clickedAtLeastOnce = true;
       }
 
-      await client.sleep(250, options.signal);
+      await humanPause(page, 260, 420);
     }
 
     if (!submitted) {
-      throw new Error("[ai-studio-worker] Không thể xác nhận prompt đã được gửi trên AI Studio.");
+      throw new Error(
+        "[ai-studio-worker] Không thể xác nhận prompt đã được gửi trên AI Studio.",
+      );
     }
   }
 
@@ -308,8 +509,21 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     return false;
   }
 
-  protected override shouldEnforceIdleTimeout(observation: AiStudioResponseObservation): boolean {
-    return !observation.isGenerating;
+  protected override resolveNextPollDelayMs(
+    observation: AiStudioResponseObservation,
+    defaultDelayMs: number,
+    options: AiStudioBrowserRunOptions,
+  ): number {
+    if (options.pollingIntervalMs === undefined && observation.isGenerating) {
+      return Math.max(defaultDelayMs, 450);
+    }
+    return defaultDelayMs;
+  }
+
+  protected override shouldEnforceIdleTimeout(
+    observation: AiStudioResponseObservation,
+  ): boolean {
+    return !observation.isGenerating && !observation.networkInFlight;
   }
 
   protected override onWaitTimeout(
@@ -323,48 +537,57 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   }
 
   protected override async beforeObserveResponse(
-    client: ElectronSurfaceClient,
+    page: Page,
     baseline: AiStudioResponseBaseline,
   ): Promise<void> {
-    const state = this.getRuntimeState(client);
+    const state = this.getRuntimeState(page);
     state.attempts += 1;
-    state.pendingStatus = await this.domObserver.captureStatus(client, baseline);
+    state.pendingStatus = await this.domObserver.captureStatus(page, baseline);
   }
 
   protected override async observeResponse(
-    client: ElectronSurfaceClient,
+    page: Page,
   ): Promise<AiStudioResponseObservation> {
-    const state = this.getRuntimeState(client);
+    const state = this.getRuntimeState(page);
     const pending = state.pendingStatus;
     if (!pending) {
       throw new Error("AI Studio observeResponse missing captured status");
     }
     state.pendingStatus = null;
-    return this.domObserver.applyStatus(state, pending);
+    return this.domObserver.applyStatus(
+      state,
+      pending,
+      this.hasInFlightGeneration(page),
+    );
   }
 
   protected override async extractCompletedResponse(
-    client: ElectronSurfaceClient,
-    context: BrowserCompletionContext<AiStudioResponseBaseline, AiStudioResponseObservation>,
+    page: Page,
+    context: BrowserCompletionContext<
+      AiStudioResponseBaseline,
+      AiStudioResponseObservation
+    >,
     options: AiStudioBrowserRunOptions,
   ): Promise<string> {
-    const copiedMarkdown = await this.clipboardSalvage.tryExtractMarkdown(
-      client,
+    const copiedMarkdown = await this.tryExtractMarkdownViaClipboard(
+      page,
       context.baseline.answerCount,
     );
     const domMarkdown = context.observation.text.trim();
-    const { rawResponse, source } = selectPreferredAiStudioResponse(copiedMarkdown, domMarkdown);
+    const { rawResponse, source } = selectPreferredAiStudioResponse(
+      copiedMarkdown,
+      domMarkdown,
+    );
 
-    const state = this.runtimeStates.get(client);
-    const hasOpen = rawResponse.includes("<webResponse>");
-    const hasClose = rawResponse.includes("</webResponse>");
-    const hasFence = /^`{4}markdown\b/i.test(rawResponse);
+    const state = this.runtimeStates.get(page);
     console.log(
-      `[ai-studio-worker] [extract] source=${source} len=${rawResponse.length} copiedLen=${copiedMarkdown?.length ?? 0} domLen=${domMarkdown.length} open=${hasOpen} close=${hasClose} fence=${hasFence} footer=${context.observation.status.hasTurnFooter} readyLive=${context.observation.status.responseReadyLive} attempts=${state?.attempts ?? 0}`,
+      `[ai-studio-worker] [extract] source=${source} len=${rawResponse.length} copiedLen=${copiedMarkdown?.length ?? 0} domLen=${domMarkdown.length} attempts=${state?.attempts ?? 0}`,
     );
 
     if (!rawResponse) {
-      throw new Error("[AI Studio] Không nhận được nội dung phản hồi từ Gemini 4 Hydrogen.");
+      throw new Error(
+        "[AI Studio] Không nhận được nội dung phản hồi từ Gemini 4 Hydrogen.",
+      );
     }
 
     if (options.signal?.aborted) {
@@ -374,76 +597,205 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     return rawResponse;
   }
 
+  private async tryExtractMarkdownViaClipboard(
+    page: Page,
+    baselineAnswerCount: number,
+  ): Promise<string | null> {
+    try {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+      await page.evaluate(() => {
+        const win = window as unknown as Record<string, unknown>;
+        win.__aistudio_last_copied_markdown = null;
+        if (!win.__aistudio_clipboard_hooked) {
+          win.__aistudio_clipboard_hooked = true;
+          if (navigator.clipboard) {
+            const origWriteText = navigator.clipboard.writeText?.bind(navigator.clipboard);
+            navigator.clipboard.writeText = async (text: string) => {
+              win.__aistudio_last_copied_markdown = text;
+              if (origWriteText) {
+                await origWriteText(text).catch(() => {});
+              }
+            };
+          }
+          document.addEventListener(
+            "copy",
+            (event: ClipboardEvent) => {
+              const clipText = event.clipboardData?.getData("text/plain");
+              if (clipText) win.__aistudio_last_copied_markdown = clipText;
+            },
+            { capture: true },
+          );
+        }
+      });
+
+      const answerTurns = page.locator(ANSWER_TURN_SELECTOR);
+      const count = await answerTurns.count();
+      if (count <= baselineAnswerCount) return null;
+
+      const targetTurn = answerTurns.nth(count - 1);
+      await targetTurn.scrollIntoViewIfNeeded().catch(() => {});
+      await targetTurn.hover({ position: { x: 24, y: 24 }, timeout: 2_000 }).catch(() => {});
+
+      const openOptionsBtn = targetTurn.locator(OPEN_OPTIONS_BUTTON_SELECTOR).first();
+      if (await openOptionsBtn.isVisible().catch(() => false)) {
+        await openOptionsBtn.click({ timeout: 2_000 }).catch(() => {});
+        const menuItems = page.locator('[role="menuitem"], button.mat-mdc-menu-item');
+        await menuItems.first().waitFor({ state: "visible", timeout: 2_000 }).catch(() => {});
+        const labels: string[] = await menuItems
+          .evaluateAll((els) =>
+            els.map((el) => {
+              const clone = el.cloneNode(true) as HTMLElement;
+              for (const icon of clone.querySelectorAll("mat-icon, .mat-icon")) {
+                icon.remove();
+              }
+              return (clone.innerText || clone.textContent || "").trim();
+            }),
+          )
+          .catch(() => []);
+        const idx = resolveClipboardMenuItemIndex(labels);
+        if (idx >= 0) {
+          await menuItems.nth(idx).click({ timeout: 2_000 }).catch(() => {});
+          const copied = await this.readCapturedClipboard(page);
+          if (copied) return copied;
+        } else {
+          await page.keyboard.press("Escape").catch(() => {});
+        }
+      }
+
+      const codeBlocksCount = await targetTurn.locator("ms-code-block").count();
+      if (codeBlocksCount === 1) {
+        const copyBtn = targetTurn.locator(CODE_COPY_BUTTON_SELECTOR).first();
+        if (await copyBtn.isVisible().catch(() => false)) {
+          await copyBtn.click({ timeout: 2_000 }).catch(() => {});
+          const copied = await this.readCapturedClipboard(page);
+          if (copied) return normalizeCopiedAiStudioCodeSnippet(copied);
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readCapturedClipboard(page: Page): Promise<string | null> {
+    const deadline = Date.now() + 1_500;
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(100);
+      const copied = await page
+        .evaluate(async () => {
+          const win = window as unknown as Record<string, unknown>;
+          if (
+            typeof win.__aistudio_last_copied_markdown === "string" &&
+            win.__aistudio_last_copied_markdown.trim().length > 0
+          ) {
+            return win.__aistudio_last_copied_markdown.trim();
+          }
+          try {
+            if (navigator.clipboard?.readText) {
+              const sys = await navigator.clipboard.readText();
+              if (sys && sys.trim().length > 0) return sys.trim();
+            }
+          } catch {}
+          return null;
+        })
+        .catch(() => null);
+      if (copied) return copied;
+    }
+    return null;
+  }
+
   protected override async resolveConversationId(
-    client: ElectronSurfaceClient,
+    page: Page,
     options: AiStudioBrowserRunOptions,
   ): Promise<string | undefined> {
-    const currentUrl = await client.getUrl(options.signal).catch(() => "");
+    const currentUrl = page.url();
     if (options.retain === false) {
       return (
         parseAiStudioConversationId(currentUrl) ||
-        this.retainedConversationIds.get(client) ||
+        this.retainedConversationIds.get(page) ||
         options.existingConversationId
       );
     }
 
     const conversationId =
       parseAiStudioConversationId(currentUrl) ||
-      (await waitForAiStudioConversationId(client, 6_000)) ||
-      this.retainedConversationIds.get(client) ||
+      (await waitForAiStudioConversationId(page, 6_000));
+
+    const resolved =
+      conversationId ||
+      this.retainedConversationIds.get(page) ||
       options.existingConversationId;
-
-    if (!conversationId) {
-      // Khi GenerateTitle/CreatePrompt không trả về URL /prompts/{id}, giữ kết quả đã generate thay vì vứt bỏ turn.
+    if (!resolved) {
       console.warn(
-        "[ai-studio-worker] AI Studio did not expose a persistent /prompts/{id} URL after completing the turn; keeping generated output without retaining conversation.",
+        "[ai-studio-worker] AI Studio did not expose /prompts/{id} URL; keeping generated output.",
       );
-      return undefined;
     }
-
-    return conversationId;
+    return resolved;
   }
 
-  protected override async stopGeneration(client: ElectronSurfaceClient): Promise<boolean> {
-    return await client
-      .call<{ stopped: boolean }>("aiStudioStopGeneration", {
-        selector: AI_STUDIO_DOM_SELECTORS.runOrStopButton,
-      })
-      .then(res => res.stopped)
-      .catch(() => false);
+  protected override async stopGeneration(page: Page): Promise<boolean> {
+    const candidates: Locator[] = [
+      page.locator(AI_STUDIO_DOM_SELECTORS.runOrStopButton).first(),
+      page
+        .locator('button[aria-label*="Stop" i], button[aria-label*="Cancel generation" i]')
+        .first(),
+    ];
+    for (const btn of candidates) {
+      const label = (
+        (await btn.innerText().catch(() => "")) ||
+        (await btn.getAttribute("aria-label").catch(() => "")) ||
+        ""
+      ).toLowerCase();
+      if (!label.includes("stop") && !label.includes("cancel")) continue;
+      const stopped = await btn
+        .click({ timeout: 1_500 })
+        .then(() => true)
+        .catch(async () => {
+          return await btn
+            .click({ force: true, timeout: 1_000 })
+            .then(() => true)
+            .catch(async () => {
+              return await btn
+                .evaluate((el) => {
+                  (el as HTMLElement).click();
+                  return true;
+                })
+                .catch(() => false);
+            });
+        });
+      if (stopped) return true;
+    }
+    return false;
   }
 
-  private getRuntimeState(client: ElectronSurfaceClient): AiStudioResponseRuntimeState {
-    let state = this.runtimeStates.get(client);
+  private getRuntimeState(page: Page): AiStudioResponseRuntimeState {
+    let state = this.runtimeStates.get(page);
     if (!state) {
       state = this.domObserver.createRuntimeState();
-      this.runtimeStates.set(client, state);
+      this.runtimeStates.set(page, state);
     }
     return state;
   }
 
   private extractTargetModelSlug(modelId?: string): string {
     if (!modelId) return AI_STUDIO_DEFAULT_MODEL_SLUG;
-    const prefix = "ai-studio/";
-    return modelId.startsWith(prefix) ? modelId.slice(prefix.length) : modelId;
+    return modelId.replace(/^ai-studio\//i, "").trim() || AI_STUDIO_DEFAULT_MODEL_SLUG;
   }
 
-  private async waitForComposerIdle(
-    client: ElectronSurfaceClient,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  private async waitForComposerIdle(page: Page): Promise<void> {
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
-      const res = await client
-        .call<{ idle: boolean }>(
-          "aiStudioCheckComposerIdle",
-          { selector: AI_STUDIO_DOM_SELECTORS.runOrStopButton },
-          { signal },
-        )
-        .catch(() => ({ idle: true }));
-      if (res.idle) return;
-      await client.sleep(250, signal);
+      const btnText = (
+        (await page
+          .locator(AI_STUDIO_DOM_SELECTORS.runOrStopButton)
+          .first()
+          .innerText()
+          .catch(() => "")) || ""
+      )
+        .trim()
+        .toLowerCase();
+      if (!btnText.includes("stop") && !btnText.includes("cancel")) return;
+      await page.waitForTimeout(250);
     }
   }
 }
-

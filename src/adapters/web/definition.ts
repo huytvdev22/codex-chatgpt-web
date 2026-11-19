@@ -8,7 +8,6 @@ import type {
 } from "./normalization/canonical-types";
 import type { WebProtocolErrorCode } from "./protocol/strict-response-parser";
 import type { ToolValidationFailure } from "./tools/tool-validator";
-import type { ElectronSurfaceClient } from "./electron-surface-client";
 
 /** Mã định danh của Web provider đăng ký trong Launcher BrowserHost (`BrowserProviderRegistry`). */
 export type WebLauncherProviderId = string;
@@ -80,8 +79,7 @@ export interface WebAttachmentDriver {
 }
 
 export interface WebBrowserTurnExecutionInput {
-  page: Page | null;
-  electronClient?: ElectronSurfaceClient;
+  page: Page;
   prompt: string;
   attempt: number;
   parsed: CodexParsedRequest;
@@ -142,14 +140,6 @@ export interface WebResponseDriver {
 }
 
 export interface WebProviderPolicies {
-  /**
-   * Phương thức điều khiển trình duyệt cho provider:
-   * - "playwright-cdp": kết nối Playwright qua CDP tới Launcher hoặc Chrome local (mặc định).
-   * - "electron-control": điều khiển trực tiếp qua control channel nội bộ của Electron Launcher,
-   *   không gắn Playwright CDP để tránh kích hoạt anti-bot (ví dụ BotGuard/WAA của Google AI Studio).
-   */
-  browserTransport?: "playwright-cdp" | "electron-control";
-
   /**
    * Hành vi khi có descriptorPath nhưng kết nối Launcher CDP thất bại:
    * - "fail-closed": ném lỗi ngay (mặc định cho ChatGPT, M365).
