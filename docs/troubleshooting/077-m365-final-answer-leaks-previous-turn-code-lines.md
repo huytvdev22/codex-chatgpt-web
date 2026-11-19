@@ -1,6 +1,6 @@
 # Lỗi 077: Final answer M365 bị dính phần nội dung file từ `apply_patch` của lượt trước
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm
+> **Trạng thái:** ✅ Đã Confirm
 > **Providers:** `m365-copilot`, `web`
 > **Keywords:** `data-codex-turn-baseline`, `__m365_code_lines_cache_by_element`, `isLastMsgOld`, `M365DomObserver`, `M365ClipboardSalvage`, `monaco`
 

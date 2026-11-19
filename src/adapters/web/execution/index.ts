@@ -19,4 +19,13 @@ export {
   WebTurnLoopGuard,
   type WebTurnLoopGuardInput,
 } from "./web-turn-loop-guard";
+export {
+  TurnTraceRecorder,
+  TurnTraceSession,
+  redactLargeTracePayloads,
+  type BeginTurnTraceInput,
+  type TurnTraceAttemptRecord,
+  type TurnTraceRecord,
+  type TurnTraceRecorderOptions,
+} from "./turn-trace-recorder";
 

@@ -22,6 +22,7 @@ import { emitWebProtocolResponse } from "./protocol/emit-response";
 import {
   conversationGuard,
   isAssistantFinalAnswer,
+  TurnTraceRecorder,
   WebTurnLoopGuard,
 } from "./execution";
 import {
@@ -47,12 +48,16 @@ import {
  */
 export class WebTurnEngine {
   private readonly loopGuard = new WebTurnLoopGuard();
+  private readonly traceRecorder: TurnTraceRecorder;
 
   constructor(
     private readonly definition: WebProviderDefinition,
     private readonly localBrowser?: LocalBrowserRuntime,
     private readonly lifecycleOps?: Partial<WebRuntimeLifecycleOps>,
-  ) {}
+    traceRecorder?: TurnTraceRecorder,
+  ) {
+    this.traceRecorder = traceRecorder ?? new TurnTraceRecorder();
+  }
 
   async runTurn(
     parsed: CodexParsedRequest,
@@ -168,15 +173,35 @@ export class WebTurnEngine {
           }).retain ?? true)
         : true;
 
-      const initialPrompt = this.definition.compilePrompt
-        ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
+      const compileResult = this.definition.compilePrompt
+        ? undefined
         : compileWebPrompt(parsed, {
             assistantName: this.definition.assistantName,
             isNewConversation,
             maxPromptChars: this.definition.policies?.maxPromptChars,
             maxInputImages: this.definition.attachments?.maxInputImages,
             normalized,
-          }).finalPrompt;
+          });
+      const initialPrompt = this.definition.compilePrompt
+        ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
+        : compileResult!.finalPrompt;
+
+      const traceSession = this.traceRecorder.beginTurn({
+        providerId: this.definition.id,
+        assistantName: this.definition.assistantName,
+        modelId: parsed.modelId,
+        threadId,
+        turnId: normalized.turnId,
+        turnTraceId,
+        conversationKey,
+        existingConversationId,
+        launcherReused: acquired.launcherReused,
+        isNewConversation,
+        usedCustomCompilePrompt: Boolean(this.definition.compilePrompt),
+        parsed,
+        normalized,
+        compileResult,
+      });
 
       const reasoningEffort = this.definition.capability?.resolveReasoningEffort
         ? this.definition.capability.resolveReasoningEffort(parsed)
@@ -185,6 +210,7 @@ export class WebTurnEngine {
       let finalStatus: WebTurnFinalStatus = "failed";
       let totalPromptChars = 0;
       let lastRaw = "";
+      let traceError: unknown;
 
       try {
         const configuredMaxRetries = this.definition.policies?.maxFormatRetries;
@@ -198,99 +224,123 @@ export class WebTurnEngine {
           providerName: this.definition.assistantName,
           outputFormat: structuredOutputFormat,
           abortSignal: turnRegistration.signal,
-          execute: async ({ attempt, prompt }) => {
+          execute: async ({ attempt, prompt, isRetry }) => {
             totalPromptChars += prompt.length;
-            const attachments = this.definition.attachments?.extractAttachments
-              ? this.definition.attachments.extractAttachments({
-                  parsed,
-                  attempt,
-                  normalized,
-                })
-              : attempt === 0
-                ? (normalized.images ?? [])
-                : [];
+            traceSession?.recordAttemptPrompt({ attempt, isRetry, prompt });
+            let rawWebResponseForTrace: string | undefined;
+            try {
+              const attachments = this.definition.attachments?.extractAttachments
+                ? this.definition.attachments.extractAttachments({
+                    parsed,
+                    attempt,
+                    normalized,
+                  })
+                : attempt === 0
+                  ? (normalized.images ?? [])
+                  : [];
 
-            const result = await this.definition.browser.executeTurn({
-              page: acquired.page,
-              electronClient: acquired.electronClient,
-              prompt,
-              attempt,
-              parsed,
-              incoming: turnIncoming,
-              reasoningEffort,
-              conversationKey,
-              existingConversationId: activeConversationId,
-              launcherReused: acquired.launcherReused,
-              isNewConversation: attempt === 0 ? isNewConversation : false,
-              retain: retainTurn,
-              attachments,
-              turnTraceId,
-              heartbeat: acquired.heartbeat,
-            });
+              const result = await this.definition.browser.executeTurn({
+                page: acquired.page,
+                electronClient: acquired.electronClient,
+                prompt,
+                attempt,
+                parsed,
+                incoming: turnIncoming,
+                reasoningEffort,
+                conversationKey,
+                existingConversationId: activeConversationId,
+                launcherReused: acquired.launcherReused,
+                isNewConversation: attempt === 0 ? isNewConversation : false,
+                retain: retainTurn,
+                attachments,
+                turnTraceId,
+                heartbeat: acquired.heartbeat,
+              });
+              rawWebResponseForTrace = result.rawResponse;
 
-            if (this.definition.conversation.onConversationUpdated) {
-              const updatedId =
-                this.definition.conversation.onConversationUpdated({
-                  threadId,
-                  conversationKey,
-                  conversationId: result.conversationId,
-                });
-              if (updatedId) {
-                activeConversationId = updatedId;
+              if (this.definition.conversation.onConversationUpdated) {
+                const updatedId =
+                  this.definition.conversation.onConversationUpdated({
+                    threadId,
+                    conversationKey,
+                    conversationId: result.conversationId,
+                  });
+                if (updatedId) {
+                  activeConversationId = updatedId;
+                }
+              } else if (result.conversationId) {
+                activeConversationId = result.conversationId;
               }
-            } else if (result.conversationId) {
-              activeConversationId = result.conversationId;
-            }
 
-            lastRaw = this.definition.response?.sanitizeRawResponse
-              ? this.definition.response.sanitizeRawResponse(result.rawResponse)
-              : result.rawResponse;
+              lastRaw = this.definition.response?.sanitizeRawResponse
+                ? this.definition.response.sanitizeRawResponse(result.rawResponse)
+                : result.rawResponse;
 
-            if (structuredOutputFormat) {
-              return parseAndValidateJsonSchemaResponse(
-                lastRaw,
-                structuredOutputFormat,
-              );
-            }
+              if (structuredOutputFormat) {
+                const jsonResult = parseAndValidateJsonSchemaResponse(
+                  lastRaw,
+                  structuredOutputFormat,
+                );
+                traceSession?.recordAttemptOutcome({
+                  rawWebResponse: rawWebResponseForTrace,
+                  sanitizedWebResponse: lastRaw,
+                  parsedProtocolResult: jsonResult,
+                });
+                return jsonResult;
+              }
 
-            let parsedProtocol: StrictWebResponseResult =
-              parseStrictWebResponse(lastRaw);
-
-            if (
-              parsedProtocol.kind === "protocol_error" &&
-              this.definition.response?.tolerantNaturalTextFallback
-            ) {
-              const isWrapperError =
-                parsedProtocol.code === "MISSING_TRANSPORT_FENCE" ||
-                parsedProtocol.code === "MISSING_RESPONSE_ENVELOPE";
-              const hasActionMarkers =
-                lastRaw.includes("<tool_call>") ||
-                lastRaw.includes("<custom_tool_call") ||
-                lastRaw.includes("*** Begin Patch");
+              let parsedProtocol: StrictWebResponseResult =
+                parseStrictWebResponse(lastRaw);
 
               if (
-                isWrapperError &&
-                !hasActionMarkers &&
-                lastRaw.trim().length > 0
+                parsedProtocol.kind === "protocol_error" &&
+                this.definition.response?.tolerantNaturalTextFallback
               ) {
-                parsedProtocol = {
-                  kind: "final_answer",
-                  content: lastRaw.replace(/<\/?webResponse>/gi, "").trim(),
-                  rawResponse: lastRaw,
-                };
-              }
-            }
+                const isWrapperError =
+                  parsedProtocol.code === "MISSING_TRANSPORT_FENCE" ||
+                  parsedProtocol.code === "MISSING_RESPONSE_ENVELOPE";
+                const hasActionMarkers =
+                  lastRaw.includes("<tool_call>") ||
+                  lastRaw.includes("<custom_tool_call") ||
+                  lastRaw.includes("*** Begin Patch");
 
-            return validateWebProtocolResponse(
-              parsedProtocol,
-              parsed.context.tools || [],
-              this.definition.response?.classifyValidationFailure
-                ? {
-                    classifyFailure:
-                      this.definition.response.classifyValidationFailure,
-                  }
-                : undefined,
-            );
+                if (
+                  isWrapperError &&
+                  !hasActionMarkers &&
+                  lastRaw.trim().length > 0
+                ) {
+                  parsedProtocol = {
+                    kind: "final_answer",
+                    content: lastRaw.replace(/<\/?webResponse>/gi, "").trim(),
+                    rawResponse: lastRaw,
+                  };
+                }
+              }
+
+              const validatedResult = validateWebProtocolResponse(
+                parsedProtocol,
+                parsed.context.tools || [],
+                this.definition.response?.classifyValidationFailure
+                  ? {
+                      classifyFailure:
+                        this.definition.response.classifyValidationFailure,
+                    }
+                  : undefined,
+              );
+              traceSession?.recordAttemptOutcome({
+                rawWebResponse: rawWebResponseForTrace,
+                sanitizedWebResponse: lastRaw,
+                parsedProtocolResult: validatedResult,
+              });
+              return validatedResult;
+            } catch (attemptError) {
+              traceSession?.recordAttemptOutcome({
+                rawWebResponse: rawWebResponseForTrace,
+                sanitizedWebResponse: lastRaw || undefined,
+                error: attemptError,
+              });
+              throw attemptError;
+            }
           },
           onProtocolError: result => {
             console.warn(
@@ -339,6 +389,7 @@ export class WebTurnEngine {
 
         finalStatus = "completed";
       } catch (error) {
+        traceError = error;
         if (this.definition.policies?.enableToolLoopGuard && conversationKey) {
           conversationGuard.delete(conversationKey);
         }
@@ -368,6 +419,7 @@ export class WebTurnEngine {
           throw error;
         }
       } finally {
+        traceSession?.finalize(finalStatus, activeConversationId, traceError);
         await releaseWebTurnSurface({
           definition: this.definition,
           acquired,

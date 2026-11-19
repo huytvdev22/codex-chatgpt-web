@@ -13,7 +13,10 @@ import {
   SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
   formatUserInputAnswers,
 } from "./templates";
-import { conversationScenarioBuilder } from "./conversation-scenario-builder";
+import {
+  conversationScenarioBuilder,
+  type ConversationScenario,
+} from "./conversation-scenario-builder";
 import { hasActualPriorAssistantReply } from "../../base";
 
 export const DEFAULT_MAX_WEB_PROMPT_CHARS = 95_000;
@@ -452,6 +455,7 @@ export interface PromptCompileResult {
   collaborationMode: "default" | "plan";
   isPlanMode: boolean;
   isImplementingPlan: boolean;
+  scenario: ConversationScenario;
 }
 
 /**
@@ -807,6 +811,7 @@ export class WebPromptCompiler {
       collaborationMode,
       isPlanMode,
       isImplementingPlan,
+      scenario: scenarioResult.scenario,
     };
   }
 }
