@@ -48,7 +48,7 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
       parsed: { ...baseParsed },
       isNewConversation: true,
     });
-    expect(res.finalPrompt).toContain("Chào Copilot, mình đang làm việc trên một dự án phần mềm ở máy cá nhân");
+    expect(res.finalPrompt).toContain("Chào Copilot");
     expect(res.finalPrompt).toContain("<webResponse>");
   });
 
@@ -126,11 +126,12 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
       isImplementingPlan: true,
     });
 
-    // Phải dùng template tiếp nối bước sau
-    expect(res.finalPrompt).toContain("Mình gửi bạn kết quả bước vừa rồi trong thẻ <tool_result> bên dưới nhé");
-    expect(res.finalPrompt).toContain("triển khai tiếp bước kế tiếp trong kế hoạch");
+    // Phải dùng template tiếp nối bước sau (siêu gọn, không lặp lại danh sách tool)
+    expect(res.finalPrompt).toContain(IMPLEMENT_PLAN_CONTINUATION_PROMPT);
+    expect(res.finalPrompt).toContain("kế tiếp của kế hoạch");
     // Không được lặp lại câu duyệt plan như người mất trí nhớ
     expect(res.finalPrompt).not.toContain("Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệt rồi nhé!");
+    expect(res.finalPrompt).not.toContain("[MCP TOOL CATALOG]");
   });
 
   test("5. Kịch bản TOOL_RESULT_CONTINUATION: Lượt nhận kết quả công cụ bình thường thành công", () => {
@@ -155,7 +156,9 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
       isNewConversation: false,
     });
 
-    expect(res.finalPrompt).toContain("Mình vừa chạy các lệnh bạn yêu cầu xong, gửi bạn kết quả trong thẻ <tool_result> bên dưới nhé");
+    expect(res.finalPrompt).toContain(TOOL_REMINDER_PROMPT);
+    expect(res.finalPrompt).toContain("<tool_result id=\"c_read\">");
+    expect(res.finalPrompt).not.toContain("[MCP TOOL CATALOG]");
   });
 
   test("6. Kịch bản TOOL_ERROR_FEEDBACK: Báo lỗi lệnh thân thiện như đồng nghiệp khi lệnh thất bại", () => {
@@ -180,8 +183,9 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
       isNewConversation: false,
     });
 
-    expect(res.finalPrompt).toContain("Bạn ơi, lệnh hoặc công cụ vừa rồi trên máy mình chạy bị báo lỗi");
-    expect(res.finalPrompt).toContain("sửa lại giúp mình nha!");
+    expect(res.finalPrompt).toContain(TOOL_ERROR_FEEDBACK_PROMPT);
+    expect(res.finalPrompt).toContain("Process exited with code 1");
+    expect(res.finalPrompt).not.toContain("[MCP TOOL CATALOG]");
   });
 
   test("7. Kịch bản PURE_CONVERSATION: Đàm thoại thông thường tiếp theo (không có tool result)", () => {
@@ -203,11 +207,12 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
       isNewConversation: false,
     });
 
-    // Tuyệt đối không có lời nhắc tool
+    // Tuyệt đối không có lời nhắc tool hoặc lặp lại tool catalog
     expect(res.finalPrompt).not.toContain("Mình vừa chạy các công cụ");
     expect(res.finalPrompt).not.toContain(TOOL_REMINDER_PROMPT);
+    expect(res.finalPrompt).not.toContain("[MCP TOOL CATALOG]");
     // Có anchor đàm thoại tự nhiên
-    expect(res.finalPrompt).toContain("Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <webResponse>");
+    expect(res.finalPrompt).toContain(PURE_CONVERSATION_ANCHOR);
     expect(res.finalPrompt).toContain("Giải thích giúp mình hàm calculateTotals hoạt động ra sao?");
   });
 

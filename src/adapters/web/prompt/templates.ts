@@ -16,22 +16,19 @@ import type { CodexJsonSchemaOutputFormat } from "../../../types";
 export function buildUnifiedToolProtocol(
   assistantName: string = "Copilot"
 ): string {
-  return `Chào ${assistantName}, mình đang làm việc trên một dự án phần mềm ở máy cá nhân và rất cần bạn đồng hành cùng mình.
-Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp vào ổ cứng hay terminal trên máy mình được. Để giải quyết việc này, mình đã viết một script cầu nối tự động nối giữa khung chat này với IDE của mình:
-- Mỗi khi bạn cần xem file, tìm kiếm mã nguồn, chạy lệnh kiểm tra hay sửa code, bạn chỉ cần viết yêu cầu theo đúng mẫu XML bên dưới.
-- Script của mình sẽ tự động đọc tin nhắn của bạn, thực thi lệnh trên máy mình và gửi kết quả trả về trong thẻ <tool_result> ở tin nhắn kế tiếp cho bạn.
-- Nhờ có script này rồi, bạn cứ chủ động gọi các công cụ bên dưới để khảo sát và làm việc nhé; bạn không cần bận tâm về việc chưa có quyền truy cập máy tính hay bảo mình phải copy-paste file thủ công đâu.
+  return `Chào ${assistantName}, mình đang làm việc trên dự án ở máy cá nhân và đã nối khung chat này với IDE qua script cầu nối:
+- Khi bạn cần đọc/sửa file hoặc chạy lệnh trên máy mình, hãy xuất đúng chuẩn XML bên dưới để script thực thi và trả kết quả trong thẻ \`<tool_result>\` ở lượt tiếp theo.
+- Không cần bảo mình copy-paste thủ công, và không dùng công cụ web search hay python nội bộ của ${assistantName}.
 
-Để script của mình bóc tách tự động không bị vấp lỗi cú pháp (Syntax Error), hai đứa mình thống nhất quy ước trình bày như sau nhé:
+Quy ước định dạng phản hồi (bắt buộc):
 
-1. Luôn bọc toàn bộ tin nhắn trong DUY NHẤT 1 khối code 4-backtick (\`\`\`\`markdown ... \`\`\`\`):
-   - Mọi phản hồi của bạn (dù là gọi công cụ hay câu trả lời cuối cùng) đều cần nằm gọn bên trong một khối \`\`\`\`markdown ở ngoài cùng.
-   - Bạn giúp mình không viết thêm bất kỳ lời chào, chữ nghĩa hay thẻ nào nằm ngoài khối 4-backtick này nha (cách này cũng giúp giao diện web không làm hỏng các thẻ <script>, <meta>, <html> trong code của tụi mình).
+1. Bọc toàn bộ tin nhắn trong DUY NHẤT 1 khối 4-backtick (\`\`\`\`markdown ... \`\`\`\`):
+   - Không viết bất kỳ chữ, lời chào hay thẻ nào nằm ngoài khối \`\`\`\`markdown ngoài cùng.
 
-2. Khi bạn muốn chạy công cụ hoặc sửa file (Action Turn):
-   - Bạn đặt các lệnh cần chạy vào trong một cặp thẻ <webResponse>...</webResponse> nằm trong khối 4-backtick.
-   - Vì bộ parser của mình ở chế độ gọi công cụ chỉ đọc thuần thẻ lệnh, bạn giúp mình xuất thẳng các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> bên trong <webResponse> nhé — đừng chèn lời dẫn (như "Để mình kiểm tra...", "Mình sẽ chạy lệnh...") hay thẻ <thought>/<thinking> vào lượt này nha. Mọi lời giải thích bạn cứ để dành tới lúc xong việc rồi nhắn cho mình ở lượt trả lời cuối cùng.
-   - Mẫu gọi function tool (bạn có thể gọi nhiều <tool_call> liên tiếp trong cùng một lượt nếu cần kiểm tra nhiều thứ cùng lúc):
+2. Khi gọi công cụ hoặc sửa file (Action Turn):
+   - Đặt các thẻ \`<tool_call>\` hoặc \`<custom_tool_call name="apply_patch">\` thẳng bên trong \`<webResponse>...</webResponse>\`.
+   - Không chèn lời dẫn ("Để mình kiểm tra...") hay thẻ \`<thought>\`/\`<thinking>\` ở lượt gọi tool. Có thể gọi nhiều \`<tool_call>\` song song nếu chỉ đọc/kiểm tra.
+   - Mẫu function tool:
      \`\`\`\`markdown
      <webResponse>
      <tool_call>
@@ -40,13 +37,10 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
      </webResponse>
      \`\`\`\`
 
-3. Khi bạn tạo mới hoặc chỉnh sửa file (Sử dụng apply_patch):
-   - Tụi mình thống nhất dùng <custom_tool_call name="apply_patch"> cho mọi thao tác tạo mới hoặc sửa file (thay vì dùng lệnh shell cat/echo/heredoc hay write_file).
-   - Để tránh lỗi lệch dòng (invalid hunk), mỗi lượt bạn chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT thôi nhé. Làm xong file này, script báo thành công rồi mình làm tiếp file sau.
-   - NGUYÊN TẮC GỘP HUNK: Khi các vị trí cần sửa nằm gần nhau trong cùng một hàm/block hoặc trong file thụt lề sâu (TSX/JSX), hãy gộp chung vào đúng 1 khối hunk @@ duy nhất bao bọc toàn bộ phạm vi thay đổi. TUYỆT ĐỐI KHÔNG chia nhỏ thành 4-5 hunk @@ lắt nhắt vì rất dễ gây lỗi lệch ngữ cảnh (context mismatch) khiến IDE từ chối bản vá (+0 -0).
-   - BẢO TOÀN THỤT LỀ & DÒNG NGỮ CẢNH: Các dòng ngữ cảnh (dòng giữ nguyên có 1 khoảng trắng đầu dòng) bắt buộc phải khớp chính xác 100% thụt lề (spaces/tabs) của file gốc; tuyệt đối không cắt cụt hoặc làm rụng ký tự đầu dòng (ví dụ không để mất chữ 's' thành 'ource:').
-   - CLEAN CODE TRONG JSX/TSX: Tránh viết logic cập nhật object phức tạp lồng sâu inline trong JSX. Hãy tách thành hàm helper riêng phía trên return rồi gọi trong event handler để giữ code phẳng và an toàn.
-   - Mẫu khi sửa một đoạn trong file code logic (.ts, .js, .py, .java...):
+3. Khi tạo mới hoặc chỉnh sửa file (chỉ dùng \`apply_patch\`, tuyệt đối không dùng shell cat/echo/heredoc hay \`write_file\`):
+   - Mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT.
+   - Gộp các thay đổi gần nhau vào 1 hunk \`@@\` duy nhất; dòng ngữ cảnh (có 1 khoảng trắng đầu dòng) phải khớp chính xác 100% thụt lề file gốc; file mới hoặc file giao diện dễ lệch thẻ (HTML/XML/SVG/JSX/Vue) ưu tiên dùng \`*** Add File:\` kèm dấu \`+\` ở mỗi dòng.
+   - Mẫu:
      \`\`\`\`markdown
      <webResponse>
      <custom_tool_call name="apply_patch">
@@ -60,26 +54,12 @@ Vì bạn đang chạy trên giao diện web nên không chạm trực tiếp v�
      </custom_tool_call>
      </webResponse>
      \`\`\`\`
-   - Mẫu khi tạo file mới hoàn toàn HOẶC khi sửa các file giao diện dễ lệch thẻ (HTML, XML, SVG, VUE, JSX) — luôn dùng *** Add File: và nhớ có dấu cộng (+) ở đầu mỗi dòng code:
-     \`\`\`\`markdown
-     <webResponse>
-     <custom_tool_call name="apply_patch">
-     *** Begin Patch
-     *** Add File: path/to/file.ext
-     +nội dung dòng 1
-     +nội dung dòng 2
-     *** End Patch
-     </custom_tool_call>
-     </webResponse>
-     \`\`\`\`
 
-4. Khi công việc đã hoàn tất và bạn muốn trả lời cho mình (Final Answer):
-   - Khi đã có đủ thông tin hoặc đã sửa xong hết code, bạn viết câu trả lời chi tiết bằng Markdown cho mình đọc bên trong <webResponse>...</webResponse> (nằm trong khối 4-backtick \`\`\`\`markdown), và nhớ không kèm theo thẻ <tool_call> nào trong lượt kết thúc này nhé.
-   - Khi nhắc tới file hoặc dòng code nào, bạn gắn link Markdown tương đối kiểu [index.html](index.html) hoặc [app.ts — dòng 25](src/app.ts#L25) để mình bấm vào nhảy thẳng tới chỗ đó trên IDE luôn nha.
+4. Khi hoàn tất và trả lời cho mình (Final Answer):
+   - Viết câu trả lời Markdown bên trong \`<webResponse>...</webResponse>\` (trong khối 4-backtick), không kèm thẻ tool.
+   - Nhắc tới file/dòng code thì gắn link tương đối kiểu [index.html](index.html) hoặc [app.ts — dòng 25](src/app.ts#L25).
 
-Một vài kinh nghiệm nhỏ để làm việc hiệu quả và mượt mà trên máy mình:
-- Khi đọc file và khảo sát dự án: Bạn hoàn toàn chủ động quyết định số lượng file, phạm vi dòng cần đọc cũng như phương pháp khảo sát (kể cả đọc toàn bộ file hoặc từng đoạn 150 dòng, và duyệt đệ quy khi cần) dựa trên khả năng tư duy và phân tích của bạn. Bạn nên lưu ý bỏ qua các thư mục sinh tự động quá nặng như node_modules, .git, dist, build để tối ưu tốc độ.
-- Chỉ dùng các công cụ có trong danh sách AVAILABLE TOOLS bên dưới thôi nhé.`;
+Khảo sát mã nguồn: bạn tự do chọn công cụ phù hợp, nhớ bỏ qua thư mục nặng như \`node_modules\`, \`.git\`, \`dist\`, \`build\`. Chỉ dùng các tool có trong \`[MCP TOOL CATALOG]\` bên dưới.`;
 }
 
 export const UNIFIED_TOOL_PROTOCOL = buildUnifiedToolProtocol("Copilot");
@@ -136,15 +116,11 @@ Bản kế hoạch bạn vừa lên rất chi tiết và hợp lý, mình duyệ
 4. Khi giải thích mã nguồn hoặc nhắc đến tệp tin nào, bạn nhớ dùng Markdown link tương đối: [tên_file](đường_dẫn_tương_đối) (Ví dụ: [index.html](index.html)) hoặc [tên_file — dòng N](đường_dẫn_tương_đối#LN) nha.`;
 
 /**
- * Lời nhắc thực thi công cụ trong quá trình trao đổi để tránh AI thoát vai
+ * Lời nhắc thực thi công cụ trong quá trình trao đổi để AI tập trung vào kết quả <tool_result>
  */
-export const TOOL_REMINDER_PROMPT = `Mình vừa chạy các lệnh bạn yêu cầu xong, gửi bạn kết quả trong thẻ <tool_result> bên dưới nhé.
-(Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là lệnh vừa rồi đã chạy thành công mỹ mãn rồi đó).
-
-Bạn xem kết quả rồi xử lý tiếp giúp mình nha:
-- Nếu cần chạy tiếp lệnh nào hay sửa tiếp file kế tiếp (nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé, gộp các thay đổi gần nhau vào 1 hunk @@ duy nhất), bạn cứ xuất thẳng thẻ lệnh <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> .
-- Nếu vừa sửa xong file mã nguồn TypeScript/JavaScript, bạn có thể chạy lệnh kiểm tra cú pháp (như tsc --noEmit hoặc npm test) để đảm bảo không phát sinh lỗi trước khi kết luận.
-- Nếu đã xong hết việc, bạn viết câu trả lời kết luận (kèm link file tương đối [tên_file](đường_dẫn)) cho mình đọc nha!`;
+export const TOOL_REMINDER_PROMPT = `Kết quả thực thi công cụ nằm trong thẻ \`<tool_result>\` bên dưới (mã thoát \`0\` hoặc output trống nghĩa là lệnh vừa chạy thành công).
+- Cần bước tiếp: xuất thẳng \`<tool_call>\` hoặc \`<custom_tool_call name="apply_patch">\` (mỗi lượt 1 file) trong \`<webResponse>\`.
+- Đã hoàn tất: trả lời Markdown (kèm link [tên_file](đường_dẫn)) trong \`<webResponse>\`.`;
 
 /**
  * Các lời nhắc kèm theo kết quả tool_result
@@ -176,20 +152,14 @@ Bạn quan sát trực tiếp hình ảnh đính kèm để phân tích giao di�
  */
 export function buildShortOutputFormatAnchor(): string {
   return `---
-Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:
-- Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
-- Nếu gọi công cụ: Đặt trọn trong <webResponse>...</webResponse>, chỉ chứa các khối <tool_call> hoặc <custom_tool_call name="apply_patch">, không chêm lời dẫn trước/sau thẻ lệnh.
-- Nếu trả lời kết luận cho mình: Viết nội dung Markdown Đặt trọn trong <webResponse>...</webResponse> (không chứa cú pháp gọi tool) trong khối 4-backtick.`;
+Format bắt buộc: bọc toàn bộ phản hồi trong 1 khối \`\`\`\`markdown ... \`\`\`\` duy nhất chứa \`<webResponse>...</webResponse>\` (chỉ đặt \`<tool_call>\` / \`<custom_tool_call name="apply_patch">\` nếu gọi tool, hoặc Markdown thuần nếu kết luận).`;
 }
 
 export const SHORT_OUTPUT_FORMAT_ANCHOR = buildShortOutputFormatAnchor();
 
 export function buildShortOutputFormatPlanAnchor(): string {
   return `---
-Nhắc nhẹ định dạng ở chế độ Lập Kế Hoạch (Plan Mode) nhé:
-- Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
-- Khi xuất bản kế hoạch: Bọc toàn bộ kế hoạch trong đúng một cặp <proposed_plan>...</proposed_plan> và Đặt trọn trong <webResponse>...</webResponse>,.
-- Khi khảo sát file: Đặt khối công cụ đọc trong đúng một cặp <webResponse>...</webResponse>. Đừng gọi lệnh sửa file trong Plan Mode nha.`;
+Format Plan Mode: bọc toàn bộ trong \`\`\`\`markdown ... \`\`\`\` chứa \`<webResponse>...</webResponse>\` (khảo sát thì đặt \`<tool_call>\`, chốt kế hoạch thì đặt \`<proposed_plan>...</proposed_plan>\`, chưa sửa file).`;
 }
 
 export const SHORT_OUTPUT_FORMAT_PLAN_ANCHOR = buildShortOutputFormatPlanAnchor();
@@ -197,12 +167,7 @@ export const SHORT_OUTPUT_FORMAT_PLAN_ANCHOR = buildShortOutputFormatPlanAnchor(
 /**
  * Lời nhắc khi đang tiếp tục các bước kế tiếp của một kế hoạch đã được duyệt (Turn 4+)
  */
-export const IMPLEMENT_PLAN_CONTINUATION_PROMPT = `Mình gửi bạn kết quả bước vừa rồi trong thẻ <tool_result> bên dưới nhé.
-(Lưu ý nhỏ: Nếu bạn thấy mã thoát bằng 0 "Process exited with code 0" hoặc output trống thì tức là bước vừa rồi đã chạy thành công mỹ mãn rồi đó).
-
-Bước trước đã hoàn tất, bạn kiểm tra kết quả rồi triển khai tiếp bước kế tiếp trong kế hoạch đã duyệt giúp mình nha:
-- Nhớ mỗi lượt chỉ tạo hoặc sửa ĐÚNG 1 FILE DUY NHẤT bằng <custom_tool_call name="apply_patch"> (hoặc chạy test/lệnh kiểm tra bằng exec_command).
-- Khi tất cả các bước trong kế hoạch đã hoàn thành, bạn viết câu trả lời kết luận tổng kết lại toàn bộ các thay đổi kèm link file tương đối [tên_file](đường_dẫn) cho mình đọc nhé!`;
+export const IMPLEMENT_PLAN_CONTINUATION_PROMPT = `Kết quả bước vừa rồi nằm trong \`<tool_result>\` (mã thoát \`0\` hoặc output trống = thành công). Bạn tiếp tục bước kế tiếp của kế hoạch (mỗi lượt tối đa 1 file qua \`apply_patch\`, hoặc chạy check bằng \`exec_command\`), xong hết thì tổng kết kèm link [tên_file](đường_dẫn).`;
 
 /**
  * Lời báo khi công cụ hoặc câu lệnh kiểm thử trên máy bị lỗi
@@ -277,10 +242,7 @@ export function formatUserInputAnswers(rawOutput: string): string {
  */
 export function buildPureConversationAnchor(): string {
   return `---
-Nhắc nhẹ định dạng để script của mình đọc không bị vấp nhé:
-- Bọc toàn bộ phản hồi trong duy nhất 1 khối 4-backtick: \`\`\`\`markdown ... \`\`\`\` (không viết chữ nào bên ngoài khối này).
-- Nếu chỉ trả lời/thảo luận: Bạn cứ viết nội dung Markdown tự nhiên trong cặp thẻ <webResponse>...</webResponse> cho mình đọc nha.
-- Nếu cần xem file hay chạy lệnh trên máy mình: Đặt trọn các thẻ <tool_call> hoặc <custom_tool_call name="apply_patch"> trong <webResponse> mà không chêm lời dẫn.`;
+Format bắt buộc: bọc toàn bộ phản hồi trong \`\`\`\`markdown ... \`\`\`\` duy nhất chứa \`<webResponse>...</webResponse>\` (Markdown thuần để trả lời, hoặc \`<tool_call>\` / \`<custom_tool_call name="apply_patch">\` nếu cần thao tác).`;
 }
 
 export const PURE_CONVERSATION_ANCHOR = buildPureConversationAnchor();
@@ -355,7 +317,7 @@ export function buildFormatRetryPrompt(options: FormatRetryOptions): string {
     return `Bạn ơi, công cụ bạn vừa yêu cầu gọi không tồn tại hoặc không được Codex IDE hỗ trợ ở phiên làm việc này (chưa có công cụ nào được chạy cả):
 - Điểm bị vấp: [${options.code}] ${options.message}
 
-Bạn vui lòng chỉ sử dụng công cụ đang xuất hiện trong danh sách AVAILABLE TOOLS của lượt hiện tại. Không gọi công cụ chỉ vì nó được nhắc trong hướng dẫn hoặc từng xuất hiện ở lượt trước, rồi gửi lại theo đúng response protocol nhé:
+Bạn vui lòng chỉ sử dụng công cụ đang xuất hiện trong [MCP TOOL CATALOG] (hoặc gọi \`tools.describe\` / \`tool_search\` nếu cần mở khóa). Không gọi công cụ không tồn tại, rồi gửi lại theo đúng response protocol nhé:
 
 \`\`\`\`markdown
 <webResponse>

@@ -40,6 +40,8 @@ export interface ScenarioBuilderInput {
   hasToolErrors?: boolean;
   hasUserInputAnswer?: boolean;
   userInputAnswersText?: string;
+  includeEnvironment?: boolean;
+  includeUserInstruction?: boolean;
 
   // Dữ liệu nội dung các khối
   structuredJsonOutputProtocol?: string;
@@ -167,147 +169,94 @@ export class ConversationScenarioBuilder {
       }
 
       case "PLAN_USER_INPUT_ANSWER": {
-        // Lượt người dùng vừa chọn phương án từ wizard request_user_input trong Plan Mode
         const answers = input.userInputAnswersText ? `\n\n${input.userInputAnswersText}` : "";
         openingSection = `${PLAN_USER_INPUT_ANSWER_PROMPT}${answers}\n\nBạn dựa trên các lựa chọn này của mình cùng kết quả khảo sát để tổng hợp và xuất bản bản kế hoạch hoàn chỉnh bọc trong cặp thẻ <proposed_plan>...</proposed_plan> bằng tiếng Việt cho mình duyệt nhé!`.trim();
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: true,
+          anchor: SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
+        });
         break;
       }
 
       case "USER_INPUT_ANSWER": {
-        // Lượt người dùng vừa trả lời wizard trong Default Mode
         const answers = input.userInputAnswersText ? `\n\n${input.userInputAnswersText}` : "";
         openingSection = `${USER_INPUT_ANSWER_PROMPT}${answers}`.trim();
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: true,
+          anchor: SHORT_OUTPUT_FORMAT_ANCHOR,
+        });
         break;
       }
 
       case "PLAN_SURVEY_CONTINUATION": {
-        // Turn tiếp theo trong Plan Mode (đã có kết quả đọc file khảo sát từ bước trước)
         openingSection = PLAN_SURVEY_CONTINUATION_PROMPT;
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: true,
+          anchor: SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
+        });
         break;
       }
 
       case "PLAN_INITIATION": {
-        // Turn bắt đầu Plan Mode (chưa có tool result)
-        // Tuyệt đối KHÔNG chèn TOOL_REMINDER_PROMPT "Mình vừa chạy các công cụ..."
         openingSection = PLAN_MODE_PROMPT;
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_PLAN_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: false,
+          anchor: SHORT_OUTPUT_FORMAT_PLAN_ANCHOR,
+        });
         break;
       }
 
       case "PLAN_KICKOFF": {
-        // Lượt đầu tiên vừa bấm nút Duyệt Plan (chưa có tool result)
         openingSection = IMPLEMENT_PLAN_PROMPT;
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: false,
+          anchor: SHORT_OUTPUT_FORMAT_ANCHOR,
+        });
         break;
       }
 
       case "PLAN_CONTINUATION": {
-        // Lượt tiếp theo của Plan (đã có tool result của bước trước)
-        // Không lặp lại câu duyệt plan, mà báo kết quả bước trước và nhờ làm bước sau
         openingSection = IMPLEMENT_PLAN_CONTINUATION_PROMPT;
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: true,
+          anchor: SHORT_OUTPUT_FORMAT_ANCHOR,
+        });
         break;
       }
 
       case "TOOL_ERROR_FEEDBACK": {
-        // Lượt lệnh trên máy bị lỗi: Báo lỗi thân thiện như đồng nghiệp
         openingSection = TOOL_ERROR_FEEDBACK_PROMPT;
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: true,
+          anchor: SHORT_OUTPUT_FORMAT_ANCHOR,
+        });
         break;
       }
 
       case "TOOL_RESULT_CONTINUATION": {
-        // Lượt nhận kết quả công cụ thông thường ngoài Plan Mode
         openingSection = TOOL_REMINDER_PROMPT;
         sections.push(openingSection);
-
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.toolResultsText) sections.push(input.toolResultsText);
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(SHORT_OUTPUT_FORMAT_ANCHOR);
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: true,
+          anchor: SHORT_OUTPUT_FORMAT_ANCHOR,
+        });
         break;
       }
 
       case "PURE_CONVERSATION":
       default: {
-        // Lượt đàm thoại, trao đổi, hỏi đáp bình thường hàng ngày (KHÔNG CÓ tool_result)
-        // Tuyệt đối không chèn "Mình vừa chạy các công cụ..."
-        openingSection = ""; // Không có lời nhắc công cụ mở đầu
-        if (input.environmentText) sections.push(input.environmentText);
-        sections.push(input.actionContractText);
-
-        if (input.userInstructionText) sections.push(input.userInstructionText);
-        if (input.hasImages) sections.push(WEB_IMAGE_ATTACHMENT_HINT);
-
-        sections.push(PURE_CONVERSATION_ANCHOR);
+        openingSection = "";
+        this.appendContinuationSections(sections, input, {
+          includeToolResults: false,
+          anchor: PURE_CONVERSATION_ANCHOR,
+        });
         break;
       }
     }
@@ -319,6 +268,31 @@ export class ConversationScenarioBuilder {
       finalPrompt,
       openingSection,
     };
+  }
+
+  private appendContinuationSections(
+    sections: string[],
+    input: ScenarioBuilderInput,
+    options: { includeToolResults: boolean; anchor: string },
+  ): void {
+    if (input.includeEnvironment !== false && input.environmentText) {
+      sections.push(input.environmentText);
+    }
+    if (input.actionContractText) {
+      sections.push(input.actionContractText);
+    }
+    if (options.includeToolResults && input.toolResultsText) {
+      sections.push(input.toolResultsText);
+    }
+    if (input.includeUserInstruction !== false && input.userInstructionText) {
+      sections.push(input.userInstructionText);
+    }
+    if (input.hasImages) {
+      sections.push(WEB_IMAGE_ATTACHMENT_HINT);
+    }
+    if (options.anchor) {
+      sections.push(options.anchor);
+    }
   }
 }
 

@@ -250,11 +250,12 @@ node math.test.js
     };
 
     const prompt = compileM365PromptViaWebCompiler(parsed, false);
-    // Khi có toolResult, BẮT BUỘC phải có TOOL_REMINDER_PROMPT để Copilot không bị mất ngữ cảnh tool
+    // Khi có toolResult, cần có TOOL_REMINDER_PROMPT tập trung vào <tool_result> mà không lặp lại danh sách tool
     expect(prompt).toContain(TOOL_REMINDER_PROMPT);
-    expect(prompt).toContain("nhớ mỗi lượt chỉ sửa 1 file bằng apply_patch nhé");
-    expect(prompt).toContain("mã thoát bằng 0");
+    expect(prompt).toContain("mỗi lượt 1 file");
+    expect(prompt).toContain("mã thoát `0`");
     expect(prompt).toContain("apply_patch");
+    expect(prompt).not.toContain("[MCP TOOL CATALOG]");
   });
 
   test("compileWebPrompt provides apply_patch guidance when implementing approved plan with toolResult", () => {

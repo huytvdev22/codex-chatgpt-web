@@ -7,6 +7,7 @@ import {
 import {
   isImplementingPlanRequest,
   WebPromptCompiler,
+  type McpToolDeltaOptions,
   type PromptCompileResult,
 } from "./prompt";
 
@@ -16,6 +17,9 @@ export interface CompileWebPromptOptions {
   maxPromptChars?: number;
   maxInputImages?: number;
   normalized?: NormalizedCodexRequest;
+  toolDelta?: McpToolDeltaOptions;
+  includeEnvironment?: boolean;
+  includeUserInstruction?: boolean;
 }
 
 /**
@@ -44,6 +48,9 @@ export function compileWebPrompt(
     isNewConversation: options.isNewConversation,
     assistantName: options.assistantName,
     maxPromptChars: options.maxPromptChars,
+    toolDelta: options.toolDelta,
+    includeEnvironment: options.includeEnvironment,
+    includeUserInstruction: options.includeUserInstruction,
   });
 }
 

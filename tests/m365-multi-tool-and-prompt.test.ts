@@ -18,24 +18,22 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   test("1. UNIFIED_TOOL_PROTOCOL đã loại bỏ hoàn toàn khối suy luận nội tâm và hướng dẫn xuất trực tiếp", () => {
     // Không còn khối khai báo cấu trúc <thought> suy luận nội tâm
     expect(UNIFIED_TOOL_PROTOCOL).not.toContain("[Suy luận nội tâm");
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("đừng chèn lời dẫn (như \"Để mình kiểm tra...\", \"Mình sẽ chạy lệnh...\") hay thẻ <thought>/<thinking>");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("<thought>");
 
     // Có chỉ thị xuất trực tiếp và cấm văn bản rườm rà
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("xuất thẳng");
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("đừng chèn lời dẫn");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("Không chèn lời dẫn");
 
     // Hỗ trợ gọi nhiều tool đồng thời
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("bạn có thể gọi nhiều <tool_call> liên tiếp trong cùng một lượt");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("nhiều `<tool_call>` song song");
 
     // Bảo toàn các quy tắc cốt lõi đã kiểm chứng
     expect(UNIFIED_TOOL_PROTOCOL).toContain("apply_patch");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("write_file");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("cat/echo/heredoc");
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("150 dòng");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("node_modules");
 
     // Lời nhắc chống từ chối và xin mã nguồn thủ công một cách tự nhiên
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("chưa có quyền truy cập máy tính hay bảo mình phải copy-paste file thủ công");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("copy-paste thủ công");
   });
 
   test("2. Cảnh báo quét đệ quy node_modules hiện diện trong các mẫu templates", () => {
@@ -45,7 +43,7 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
   });
 
   test("3. UNIFIED_TOOL_PROTOCOL chứa chỉ dẫn gọi nhiều tool song song", () => {
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("bạn có thể gọi nhiều <tool_call> liên tiếp trong cùng một lượt");
+    expect(UNIFIED_TOOL_PROTOCOL).toContain("nhiều `<tool_call>` song song");
   });
 
   test("4. XmlToolCallDetector phát hiện nhiều khối <tool_call> song song (Multi-Tool)", () => {
@@ -225,10 +223,10 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
     };
     const declared = renderDynamicToolDeclarations([mockTool]);
     expect(declared).toContain("request_user_input");
-    expect(declared).toContain("Mở hộp thoại hỏi người dùng");
+    expect(declared).toContain("Mở hộp thoại wizard hỏi người dùng");
   });
 
-  test("11. renderCompactDynamicToolDeclarations định nghĩa tóm tắt súc tích cho Turn 2", () => {
+  test("11. renderCompactDynamicToolDeclarations định nghĩa tóm tắt súc tích theo chuẩn MCP", () => {
     const mockTools: any = [
       { kind: "custom", identity: { name: "apply_patch" }, rawParameters: {} },
       { kind: "function", identity: { name: "read_file" }, rawParameters: { required: ["path"], properties: { path: { type: "string" } } } },
@@ -236,18 +234,21 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
       { kind: "function", identity: { name: "request_user_input" }, rawParameters: { required: ["questions"], properties: { questions: { type: "array" } } } },
     ];
     const compact = renderCompactDynamicToolDeclarations(mockTools);
-    expect(compact).toContain("[DANH SÁCH CÔNG CỤ HỖ TRỢ (RÚT GỌN)]");
+    expect(compact).toContain("[MCP TOOL CATALOG (RÚT GỌN)]");
     expect(compact).toContain("apply_patch [freeform]");
-    expect(compact).toContain("read_file [function]: path*");
-    expect(compact).toContain("exec_command [function]: cmd*");
-    expect(compact).toContain("request_user_input [function]: questions*");
+    expect(compact).toContain("read_file [function]");
+    expect(compact).toContain("exec_command [function]");
+    expect(compact).toContain("request_user_input [function]");
   });
 
-  test("12. promptCompiler từ Turn 2 (isNewConversation: false) sinh ra Compact Prompt và bảo toàn Environment Context", () => {
+  test("12. promptCompiler từ Turn 2 (isNewConversation: false) bỏ lặp lại danh sách tool & ví dụ mặc định", () => {
     const mockNormalized: any = {
       threadId: "th_123",
       turnId: "tu_123",
-      activeCodingTools: [],
+      activeCodingTools: [
+        { kind: "custom", identity: { name: "apply_patch", qualifiedName: "apply_patch" }, description: "Patch" },
+        { kind: "function", identity: { name: "exec_command", qualifiedName: "exec_command" }, description: "Exec", rawParameters: { type: "object", properties: { cmd: { type: "string" } }, required: ["cmd"] } },
+      ],
       priorHistory: [],
       trailingToolResults: [
         { callId: "c_1", toolName: "apply_patch", kind: "custom", output: "Success. Updated styles.css" },
@@ -262,31 +263,26 @@ describe("M365 Prompt Simplification & Parallel Tool Calls Tests", () => {
       context: { messages: [] },
     };
 
-    // 1. Turn 1 (isNewConversation: true) -> Full Prompt
+    // 1. Turn 1 (isNewConversation: true) -> Full MCP Tool Catalog
     const resTurn1 = promptCompiler.compile({
       normalized: mockNormalized,
       parsed: mockParsed,
       isNewConversation: true,
     });
-    expect(resTurn1.finalPrompt).toContain("[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]");
-    expect(resTurn1.finalPrompt).toContain("Hiện không có công cụ nào khả dụng cho lượt này.");
+    expect(resTurn1.finalPrompt).toContain("[MCP TOOL CATALOG]");
+    expect(resTurn1.finalPrompt).toContain("exec_command");
 
-    // 2. Turn 2 (isNewConversation: false) -> Compact Prompt
+    // 2. Turn 2 (isNewConversation: false) -> Lean Prompt: không lặp lại danh sách tool & không chèn env dư thừa khi có tool_result
     const resTurn2 = promptCompiler.compile({
       normalized: mockNormalized,
       parsed: mockParsed,
       isNewConversation: false,
     });
-    expect(resTurn2.finalPrompt).toContain("[DANH SÁCH CÔNG CỤ HỖ TRỢ (RÚT GỌN)]");
-    expect(resTurn2.finalPrompt).toContain("Hiện không có công cụ nào khả dụng.");
-    // Bảo toàn Ngữ cảnh Môi trường
-    expect(resTurn2.finalPrompt).toContain("[Thư mục làm việc trên máy mình]:");
-    expect(resTurn2.finalPrompt).toContain("/workspace/app");
-    // Loại bỏ các ví dụ dài dòng không cần thiết
+    expect(resTurn2.finalPrompt).not.toContain("[MCP TOOL CATALOG]");
+    expect(resTurn2.finalPrompt).not.toContain("core_tools");
     expect(resTurn2.finalPrompt).not.toContain('{"name": "git_status"');
     expect(resTurn2.finalPrompt).not.toContain('{"name": "grep_code"');
-
-    // Dynamic action contract phải ổn định giữa các turn khi inventory không thay đổi.
+    expect(resTurn2.finalPrompt).toContain("<tool_result id=\"c_1\">");
     expect(resTurn2.finalPrompt).toContain("tiếp tục sửa js/app.js");
   });
 

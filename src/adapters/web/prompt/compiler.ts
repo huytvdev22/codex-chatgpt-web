@@ -15,69 +15,14 @@ import {
 } from "./templates";
 import { conversationScenarioBuilder, type ConversationScenario } from "./conversation-scenario-builder";
 import { sanitizeCodexBoilerplate } from "../normalization/instruction-sanitizer";
+import { WebToolRegistry } from "../tools/web-tool-registry";
+import {
+  mcpToolCatalogRenderer,
+  type McpToolDeltaOptions,
+} from "./mcp-tool-catalog-renderer";
 import { hasActualPriorAssistantReply } from "../../base";
 
 export const DEFAULT_MAX_WEB_PROMPT_CHARS = 95_000;
-const MAX_COMPACT_TOOL_DESCRIPTION_CHARS = 320;
-const MAX_FULL_TOOL_DESCRIPTION_CHARS = 1_200;
-
-/**
- * Viết lại mô tả action cho M365 thay vì forward nguyên văn instruction dài
- * từ Codex. Contract kỹ thuật như wire_name, kind và parameters vẫn giữ nguyên.
- */
-function curateToolDescription(
-  tool: NormalizedTool,
-  compact: boolean
-): string {
-  const wireName =
-    tool.identity.qualifiedName || tool.identity.name;
-  const canonicalDescriptions: Record<string, string> = {
-    exec_command:
-      "Chạy câu lệnh CLI không tương tác trong môi trường và shell đã khai báo. Chỉ dùng khi không có semantic action phù hợp.",
-    write_stdin:
-      "Gửi thêm dữ liệu vào phiên exec_command đang chạy bằng session_id.",
-    list_mcp_resources:
-      "Liệt kê resource do MCP server cung cấp. Chỉ dùng khi yêu cầu cần dữ liệu từ MCP resource.",
-    list_mcp_resource_templates:
-      "Liệt kê resource template do MCP server cung cấp.",
-    read_mcp_resource:
-      "Đọc một MCP resource bằng server và URI chính xác.",
-    request_user_input:
-      "Mở hộp thoại hỏi người dùng khi action khả dụng và cần làm rõ thông tin quan trọng.",
-    apply_patch:
-      "Tạo hoặc sửa file bằng raw patch. Đây là freeform action; không bọc patch trong JSON arguments.",
-    view_image:
-      "Mở ảnh cục bộ để kiểm tra trực quan.",
-    get_goal:
-      "Đọc trạng thái goal hiện tại khi workflow goal được sử dụng.",
-    create_goal:
-      "Tạo goal chỉ khi người dùng hoặc instruction yêu cầu rõ ràng.",
-    update_goal:
-      "Cập nhật trạng thái goal hiện tại theo đúng lifecycle được hỗ trợ.",
-    "web.run":
-      "Truy cập web khi yêu cầu cần thông tin trực tuyến, dữ liệu mới hoặc nguồn bên ngoài. Chỉ truyền các tham số đúng schema.",
-    "image_gen.imagegen":
-      "Tạo hoặc chỉnh sửa hình ảnh khi người dùng yêu cầu nội dung trực quan.",
-  };
-
-  const curated =
-    canonicalDescriptions[wireName] ||
-    canonicalDescriptions[tool.identity.name];
-  if (curated) return curated;
-
-  const raw = (tool.description || "Không có mô tả.")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const cleaned = cleanToolDescription(wireName, raw);
-  const maxChars = compact
-    ? MAX_COMPACT_TOOL_DESCRIPTION_CHARS
-    : MAX_FULL_TOOL_DESCRIPTION_CHARS;
-
-  return cleaned.length > maxChars
-    ? `${cleaned.slice(0, maxChars).trimEnd()}…`
-    : cleaned;
-}
 
 /**
  * Loại bỏ instruction nội bộ của Codex khỏi prompt gửi sang web model.
@@ -103,288 +48,38 @@ export function truncateToolResult(content: string, maxChars?: number): string {
  * Rút gọn mô tả công cụ thông minh, loại bỏ các tài liệu dông dài của OpenAI và control tokens rác.
  */
 export function cleanToolDescription(name: string, rawDesc?: string): string {
-
-  if (!rawDesc) return "No description provided.";
-  let desc = rawDesc.trim();
-
-  // Khử các token placeholder rác dạng ¨C...C
-  desc = desc.replace(/¨C[a-zA-Z0-9_-]+C/g, "").replace(/\s{2,}/g, " ").trim();
-
-  // Đối với exec_command: Rút gọn các quy tắc Windows safety rules dông dài lặp lại
-  if (name.includes("exec_command") || name.includes("execcommand")) {
-    const firstPart = desc.split(/Windows safety rules:/i)[0].trim();
-    if (firstPart) {
-      desc = firstPart;
-    }
-  }
-
-  // Đối với web.run hoặc web: Cắt bỏ toàn bộ phần ví dụ, citations, decision boundary, word limits dài dằng dặc
-  if (name.includes("web") || desc.includes("## Examples") || desc.includes("---")) {
-    desc = desc.split("\n---")[0].split("\n##")[0].trim();
-  }
-
-  // Đối với update_goal hoặc create_goal: Chỉ giữ lại 1-2 câu đầu tiên mô tả chức năng
-  if (name.includes("goal") && desc.length > 200) {
-    const firstSentences = desc.split("\n\n")[0];
-    desc = firstSentences || desc.slice(0, 200);
-  }
-
-  // Đối với request_user_input hoặc request_user_input_async: Giữ 1-2 câu đầu mô tả chức năng
-  if (name.includes("request_user_input") && desc.length > 250) {
-    const firstSentences = desc.split("\n\n")[0];
-    desc = firstSentences || desc.slice(0, 200);
-  }
-
-  return desc.trim();
+  return WebToolRegistry.cleanDescription(name, rawDesc);
 }
 
 /**
- * Sinh ví dụ transport tối thiểu dựa trên đúng inventory của turn hiện tại.
- * Không quảng bá tool không tồn tại và không duy trì bộ ví dụ hard-code.
- */
-function renderDynamicToolExamples(tools: NormalizedTool[], compact = false): string {
-  const preferredFunctionNames = ["exec_command", "read_file", "view_file"];
-  const functionTool =
-    tools.find(tool => tool.kind === "function" && preferredFunctionNames.includes(tool.identity.name)) ||
-    tools.find(tool => tool.kind === "function");
-
-  const applyPatchTool = tools.find(
-    tool => tool.kind === "custom" && tool.identity.name === "apply_patch"
-  );
-  const examples: string[] = [];
-
-  if (functionTool?.kind === "function") {
-    const wireName =
-      functionTool.identity.qualifiedName || functionTool.identity.name;
-    const required = Array.isArray(functionTool.rawParameters.required)
-      ? functionTool.rawParameters.required.map(String)
-      : [];
-    const properties =
-      functionTool.rawParameters.properties &&
-        typeof functionTool.rawParameters.properties === "object" &&
-        !Array.isArray(functionTool.rawParameters.properties)
-        ? functionTool.rawParameters.properties as Record<string, unknown>
-        : {};
-    const argumentsExample = Object.fromEntries(
-      required.map(name => {
-        const schema = properties[name];
-        const type =
-          schema &&
-            typeof schema === "object" &&
-            !Array.isArray(schema) &&
-            typeof (schema as Record<string, unknown>).type === "string"
-            ? (schema as Record<string, unknown>).type
-            : "string";
-        const value =
-          type === "number" || type === "integer"
-            ? 1
-            : type === "boolean"
-              ? true
-              : type === "array"
-                ? []
-                : type === "object"
-                  ? {}
-                  : `<${name}>`;
-        return [name, value];
-      })
-    );
-
-    examples.push(`- Mẫu 1: Gọi công cụ function (đặt JSON arguments vào thẻ <tool_call>):
-\`\`\`\`markdown
-<webResponse>
-<tool_call>
-${JSON.stringify({ name: wireName, arguments: argumentsExample })}
-</tool_call>
-</webResponse>
-\`\`\`\``);
-  }
-
-  if (applyPatchTool) {
-    const wireName =
-      applyPatchTool.identity.qualifiedName || applyPatchTool.identity.name;
-    examples.push(`- Mẫu 2: Sửa file bằng apply_patch (đặt nội dung diff vào thẻ <custom_tool_call>):
-\`\`\`\`markdown
-<webResponse>
-<custom_tool_call name="${wireName}">
-*** Begin Patch
-*** Update File: path/to/file.ext
-@@
--old content
-+new content
-*** End Patch
-</custom_tool_call>
-</webResponse>
-\`\`\`\`
-
-File chưa tồn tại dùng *** Add File. File đã tồn tại dùng *** Update File.
-Không dùng *** Add File để giả định ghi đè file đã tồn tại.
-Khi sửa các dòng gần nhau, hãy gộp vào 1 hunk @@ duy nhất và giữ nguyên thụt lề file gốc, tránh chia nhỏ nhiều @@ vụn vặt.`);
-  }
-
-  return examples.length > 0
-    ? `[VÍ DỤ CÚ PHÁP GỌI CÔNG CỤ TRÊN MÁY MÌNH]\n(Khi cần thực thi, hãy đặt lệnh trong thẻ tương ứng bên dưới):\n\n${examples.join("\n\n")}`
-    : "";
-}
-
-/**
- * Render Tool Declaration chuẩn mực cho M365 Copilot.
- * Sinh inventory trực tiếp từ native tools do Codex cung cấp, tương tự mô hình
- * codex_tool_inventory của ChatGPT Web. M365 phải gọi đúng qualifiedName
- * và truyền arguments theo đúng JSON Schema được quảng bá.
+ * Render MCP Tool Catalog cho Turn 1 (Core inline schema + Extended catalog 1 dòng + tools.describe).
  */
 export function renderDynamicToolDeclarations(
   tools: NormalizedTool[] = [],
   assistantName: string = "trợ lý web",
+  deferredNamespaces: string[] = [],
 ): string {
-  if (tools.length === 0) {
-    return "[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]\n\nHiện không có công cụ nào khả dụng cho lượt này.";
-  }
-
-  const formatSchemaType = (schema: unknown): string => {
-    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
-      return "unknown";
-    }
-
-    const record = schema as Record<string, unknown>;
-    if (typeof record.type === "string") {
-      return record.type;
-    }
-    if (Array.isArray(record.type)) {
-      return record.type.map(String).join(" | ");
-    }
-    if (Array.isArray(record.enum) && record.enum.length > 0) {
-      return "enum";
-    }
-    return "unknown";
-  };
-
-  const formatSchemaDescription = (schema: unknown): string => {
-    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
-      return "";
-    }
-
-    const record = schema as Record<string, unknown>;
-    const description =
-      typeof record.description === "string"
-        ? record.description.replace(/\s+/g, " ").trim()
-        : "";
-    const enumValues = Array.isArray(record.enum)
-      ? record.enum.map(value => JSON.stringify(value)).join(" | ")
-      : "";
-
-    return [
-      description,
-      enumValues ? `Giá trị hợp lệ: ${enumValues}.` : "",
-    ].filter(Boolean).join(" ");
-  };
-
-  const inventory = tools.map((tool, index) => {
-    const wireName = tool.identity.qualifiedName || tool.identity.name;
-    const header =
-      `${index + 1}. ${wireName} ` +
-      `(${tool.kind === "custom" ? "freeform" : "function"})`;
-    const lines = [
-      header,
-      `   Mô tả: ${curateToolDescription(tool, false)}`,
-    ];
-
-    if (tool.identity.namespace) {
-      lines.push(`   Namespace: ${tool.identity.namespace}`);
-    }
-
-    if (tool.kind === "custom") {
-      lines.push(
-        "   Input: raw text hoàn chỉnh; không bọc trong arguments JSON."
-      );
-      if (tool.format !== undefined) {
-        lines.push("   Ràng buộc: input phải tuân theo grammar/format được IDE cung cấp.");
-      }
-      return lines.join("\n");
-    }
-
-    const required = new Set(
-      Array.isArray(tool.rawParameters.required)
-        ? tool.rawParameters.required.map(String)
-        : []
-    );
-    const properties =
-      tool.rawParameters.properties &&
-        typeof tool.rawParameters.properties === "object" &&
-        !Array.isArray(tool.rawParameters.properties)
-        ? tool.rawParameters.properties as Record<string, unknown>
-        : {};
-    const entries = Object.entries(properties);
-
-    if (entries.length === 0) {
-      lines.push("   Tham số: không có.");
-      return lines.join("\n");
-    }
-
-    lines.push("   Tham số:");
-    for (const [name, schema] of entries) {
-      const requiredLabel = required.has(name) ? "bắt buộc" : "tùy chọn";
-      const description = formatSchemaDescription(schema);
-      lines.push(
-        `   - ${name}: ${formatSchemaType(schema)}, ${requiredLabel}` +
-        `${description ? ` — ${description}` : ""}`
-      );
-    }
-
-    return lines.join("\n");
-  }).join("\n\n");
-
-  const examples = renderDynamicToolExamples(tools);
-
-  return `[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]
-
-Dưới đây là các công cụ mà script trên máy mình đã kết nối sẵn để thực thi giúp bạn:
-- Bạn chỉ cần dùng đúng tên công cụ dưới đây và truyền đúng các tham số theo schema.
-- Với công cụ dạng function: xuất thẻ <tool_call> kèm JSON arguments đúng tham số.
-- Với công cụ freeform (apply_patch): xuất trong <custom_tool_call name="apply_patch"> (không bọc trong JSON).
-- Nếu đã có công cụ đọc/sửa file phù hợp, bạn ưu tiên dùng hơn là chạy lệnh shell exec_command nhé.
-- Bạn không cần dùng các công cụ tìm kiếm web hay python nội bộ của ${assistantName}, cứ dùng các công cụ dưới đây để thao tác trực tiếp trên máy mình.
-
-${inventory}
-
-${examples}`;
+  return mcpToolCatalogRenderer.renderInitialCatalog({
+    tools,
+    assistantName,
+    deferredNamespaces,
+  });
 }
 
 /**
- * Render Tool Declaration phiên bản COMPACT cho M365 Copilot từ Turn 2 trở đi.
- * Vẫn lấy từ inventory thực tế để không quảng bá tool đã biến mất khỏi turn hiện tại.
+ * Render bản tóm tắt tên tool không kèm ví dụ dài dòng (chỉ dùng cho trường hợp cần liệt kê nhanh).
  */
 export function renderCompactDynamicToolDeclarations(tools: NormalizedTool[] = []): string {
   if (tools.length === 0) {
-    return "[DANH SÁCH CÔNG CỤ HỖ TRỢ (RÚT GỌN)]: Hiện không có công cụ nào khả dụng.";
+    return "[MCP TOOL CATALOG (RÚT GỌN)]: Hiện không có công cụ nào khả dụng.";
   }
 
-  const inventory = tools.map(tool => {
+  const summary = tools.map(tool => {
     const wireName = tool.identity.qualifiedName || tool.identity.name;
-    if (tool.kind === "custom") {
-      return `- ${wireName} [freeform] — ${curateToolDescription(tool, true)}`;
-    }
-
-    const required = Array.isArray(tool.rawParameters.required)
-      ? tool.rawParameters.required.map(String)
-      : [];
-    const properties =
-      tool.rawParameters.properties &&
-        typeof tool.rawParameters.properties === "object" &&
-        !Array.isArray(tool.rawParameters.properties)
-        ? Object.keys(tool.rawParameters.properties as Record<string, unknown>)
-        : [];
-    const fields = properties.map(name => required.includes(name) ? `${name}*` : name);
-
-    return `- ${wireName} [function]${fields.length > 0 ? `: ${fields.join(", ")}` : ""} — ${curateToolDescription(tool, true)}`;
+    return `- ${wireName} [${tool.kind === "custom" ? "freeform" : "function"}] — ${WebToolRegistry.getCuratedDescription(tool, true)}`;
   }).join("\n");
 
-  const examples = renderDynamicToolExamples(tools, true);
-
-  return `[DANH SÁCH CÔNG CỤ HỖ TRỢ (RÚT GỌN)]
-(Các trường có dấu * là tham số bắt buộc; công cụ function dùng JSON arguments; apply_patch dùng raw text):
-${inventory}
-
-${examples}`;
+  return `[MCP TOOL CATALOG (RÚT GỌN)]\n${summary}`;
 }
 
 export interface PromptSectionMetrics {
@@ -420,6 +115,9 @@ export interface PromptCompileInput {
   isNewConversation?: boolean;
   assistantName?: string;
   maxPromptChars?: number;
+  toolDelta?: McpToolDeltaOptions;
+  includeEnvironment?: boolean;
+  includeUserInstruction?: boolean;
 }
 
 export interface PromptCompileResult {
@@ -590,15 +288,21 @@ export class WebPromptCompiler {
     const actionContractText = structuredOutputFormat
       ? ""
       : isNewConversation
-        ? renderDynamicToolDeclarations(normalized.activeCodingTools, assistantName)
-        : renderCompactDynamicToolDeclarations(normalized.activeCodingTools);
+        ? mcpToolCatalogRenderer.renderInitialCatalog({
+            tools: normalized.activeCodingTools,
+            deferredNamespaces: normalized.deferredNamespaces,
+            assistantName,
+          })
+        : input.toolDelta
+          ? mcpToolCatalogRenderer.renderToolDelta(input.toolDelta)
+          : "";
 
     let environmentText = "";
     if (normalized.environmentContext) {
       environmentText = `[Thư mục làm việc trên máy mình]:\n${normalized.environmentContext}`;
     }
 
-    let devInstructionsContent = "";
+    let systemInstructionsContent = "";
     if (parsed?.context?.systemPrompt && parsed.context.systemPrompt.length > 0) {
       const filteredSystem = parsed.context.systemPrompt
         .map(sp => sanitizeCodexInstructions(sp))
@@ -611,12 +315,12 @@ export class WebPromptCompiler {
         .filter(sp => sp.length > 0)
         .join("\n\n");
       if (filteredSystem) {
-        devInstructionsContent = `[Chỉ dẫn từ hệ thống]:\n${filteredSystem}`;
+        systemInstructionsContent = `[Chỉ dẫn từ hệ thống]:\n${filteredSystem}`;
       }
     }
 
     let developerRulesText = "";
-    if (normalized.developerInstructions && normalized.developerInstructions.length > 0) {
+    if (!structuredOutputFormat && normalized.developerInstructions && normalized.developerInstructions.length > 0) {
       const cleanedRules = normalized.developerInstructions
         .map(r => sanitizeCodexInstructions(r))
         .filter(r => r.length > 0);
@@ -625,11 +329,12 @@ export class WebPromptCompiler {
           .map(r => (r.startsWith("-") || r.startsWith("*") || r.startsWith("#") || r.includes("\n")) ? r : `- ${r}`)
           .join("\n\n");
         developerRulesText = `[Một số quy ước làm việc trong dự án của mình]:\n${devRules}`;
-        devInstructionsContent = devInstructionsContent
-          ? `${devInstructionsContent}\n\n${developerRulesText}`
-          : developerRulesText;
       }
     }
+
+    const combinedDeveloperChars =
+      systemInstructionsContent.length +
+      (developerRulesText ? (systemInstructionsContent ? 2 : 0) + developerRulesText.length : 0);
 
     let priorHistoryText = "";
     if (isNewConversation && normalized.priorHistory.length > 0) {
@@ -713,6 +418,9 @@ export class WebPromptCompiler {
       ? ""
       : buildUnifiedToolProtocol(assistantName);
 
+    const includeEnvironment = input.includeEnvironment ?? (isNewConversation || !hasToolResults);
+    const includeUserInstruction = input.includeUserInstruction ?? true;
+
     // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
     const scenarioResult = conversationScenarioBuilder.buildTurnPrompt({
       isStructuredJsonOutput: Boolean(structuredOutputFormat),
@@ -724,11 +432,13 @@ export class WebPromptCompiler {
       hasToolErrors,
       hasUserInputAnswer,
       userInputAnswersText,
+      includeEnvironment,
+      includeUserInstruction,
       fullToolProtocol,
       actionContractText,
       environmentText,
       developerRulesText,
-      systemPromptText: devInstructionsContent,
+      systemPromptText: systemInstructionsContent,
       priorHistoryText,
       toolResultsText,
       userInstructionText,
@@ -754,13 +464,17 @@ export class WebPromptCompiler {
       `mode=${isNewConversation ? "full_handshake" : "incremental_scenario"}`
     );
 
+    const combinedDevText = [systemInstructionsContent, developerRulesText].filter(Boolean).join("\n\n");
+    const effectiveEnvText = includeEnvironment ? environmentText : "";
+    const effectiveUserText = includeUserInstruction ? userInstructionText : "";
+
     const metrics = calculatePromptMetrics({
       toolDeclaration: `${scenarioResult.openingSection}\n\n${actionContractText}`.trim(),
-      developerInstructions: devInstructionsContent,
+      developerInstructions: combinedDevText,
       history: priorHistoryText,
       toolResults: toolResultsText,
-      environment: environmentText,
-      userRequest: userInstructionText,
+      environment: effectiveEnvText,
+      userRequest: effectiveUserText,
       finalPrompt,
     });
 
@@ -768,13 +482,13 @@ export class WebPromptCompiler {
       threadId: normalized.threadId,
       turnId: normalized.turnId,
       toolsCount: normalized.activeCodingTools.length,
-      developerRulesCount: normalized.developerInstructions?.length || 0,
+      developerRulesCount: structuredOutputFormat ? 0 : (normalized.developerInstructions?.length || 0),
       historyTurns: normalized.priorHistory.length,
       toolResultsCount: normalized.trailingToolResults.length,
       toolPromptChars: scenarioResult.openingSection.length + actionContractText.length,
       historyChars: priorHistoryText.length,
-      developerChars: devInstructionsContent.length,
-      environmentChars: environmentText.length,
+      developerChars: combinedDeveloperChars,
+      environmentChars: effectiveEnvText.length,
       finalPromptChars: finalPrompt.length,
     };
 

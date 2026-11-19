@@ -53,3 +53,10 @@ export {
   buildFormatRetryPrompt,
   type FormatRetryOptions,
 } from "./templates";
+
+export {
+  McpToolCatalogRenderer,
+  mcpToolCatalogRenderer,
+  type McpInitialCatalogOptions,
+  type McpToolDeltaOptions,
+} from "./mcp-tool-catalog-renderer";

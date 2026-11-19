@@ -103,19 +103,28 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     expect(activeNames).toContain("run"); // web.run
   });
 
-  test("Phase 2: renderDynamicToolDeclarations sử dụng định dạng tool duy nhất và không nhồi additional tools ngoài lề", () => {
+  test("Phase 2: renderDynamicToolDeclarations sử dụng định dạng MCP JSON Catalog 2 tầng và không nhồi tool ngoài lề", () => {
     const payload = CodexRawPayload.from(sampleRaw);
     const normalized = CodexPayloadNormalizer.normalize(payload);
 
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
+    const jsonMatch = dynamicText.match(/```json\n([\s\S]*?)\n```/);
+    expect(jsonMatch).not.toBeNull();
+    const parsedCatalog = JSON.parse(jsonMatch![1]);
 
-    expect(dynamicText).toContain("[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]");
-    expect(dynamicText).toContain("exec_command (function)");
-    expect(dynamicText).toContain("apply_patch (freeform)");
-    expect(dynamicText).toContain("request_user_input (function)");
-    // Contract chỉ render action từ inventory hiện tại và giữ nguyên exact wire_name.
-    expect(dynamicText).toContain("create_goal (function)");
-    expect(dynamicText).toContain("web.run (function)");
+    expect(dynamicText).toContain("[MCP TOOL CATALOG]");
+    expect(parsedCatalog.core_tools.map((t: any) => t.name)).toEqual([
+      "exec_command",
+      "apply_patch",
+      "request_user_input",
+    ]);
+    // Tier 2 (extended_catalog) chỉ chứa tên + namespace + mô tả ngắn, kèm lookup_tool tools.describe
+    expect(parsedCatalog.extended_catalog.map((t: any) => t.name)).toEqual([
+      "create_goal",
+      "web.run",
+    ]);
+    expect(parsedCatalog.extended_catalog[1].inputSchema).toBeUndefined();
+    expect(parsedCatalog.lookup_tool.name).toBe("tools.describe");
 
     // Không còn các tên alias tự chế hay lẫn lộn
     expect(dynamicText).not.toContain("run_command(cmd)");
@@ -205,11 +214,11 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
     // 1. Dynamic contract chỉ được khai báo action thực sự có trong inventory.
-    expect(dynamicText).toContain("apply_patch (freeform)");
+    expect(dynamicText).toContain('"name": "apply_patch"');
+    expect(dynamicText).toContain('"kind": "custom"');
     expect(dynamicText).not.toContain("write_file");
 
     // 2. UNIFIED_TOOL_PROTOCOL phải có quy tắc cấm heredoc shell và hướng dẫn tạo file
-    expect(UNIFIED_TOOL_PROTOCOL).toContain("Khi bạn tạo mới hoặc chỉnh sửa file (Sử dụng apply_patch):");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("apply_patch");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("write_file");
     expect(UNIFIED_TOOL_PROTOCOL).toContain("cat/echo/heredoc");
@@ -283,9 +292,9 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
 
     // 2. Kiểm tra Dynamic Action Contract chỉ chứa action của current inventory.
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
-    expect(dynamicText).toContain("[DANH SÁCH CÔNG CỤ MÁY MÌNH HỖ TRỢ CHO BẠN Ở LƯỢT NÀY]");
-    expect(dynamicText).toContain("exec_command (function)");
-    expect(dynamicText).toContain("update_goal (function)");
+    expect(dynamicText).toContain("[MCP TOOL CATALOG]");
+    expect(dynamicText).toContain('"name": "exec_command"');
+    expect(dynamicText).toContain('"name": "update_goal"');
     expect(dynamicText).not.toContain("read_file");
     expect(dynamicText).not.toContain("list_dir");
     expect(dynamicText).not.toContain("search_files");
