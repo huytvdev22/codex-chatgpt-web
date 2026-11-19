@@ -43,6 +43,8 @@ interface MockSpeechPageOptions {
   pollStates?: Array<{ detectedError: string; audioSrc: string; isGenerating: boolean }>;
   onBotGuardProbe?: () => void;
   audioBytesText?: string;
+  autoPlayOnGenerate?: boolean;
+  hasPauseButton?: boolean;
 }
 
 function createMockSpeechPage(opts: MockSpeechPageOptions = {}) {
@@ -56,21 +58,34 @@ function createMockSpeechPage(opts: MockSpeechPageOptions = {}) {
   let drawerOpen = false;
   let openedCardIdx = -1;
   let runClicked = false;
+  let audioPlaying = false;
+  let pauseClickedCount = 0;
+  let lateGuardInstalled = false;
   let pollIdx = 0;
   let botGuardProbeCount = 0;
 
   const makeSimpleLoc = (sel: string, visible = true) => {
+    const isPauseSel = sel.includes('aria-label="Pause"');
     const loc: Record<string, unknown> = {
       page: () => page,
       first: () => loc,
       waitFor: async () => {},
-      isVisible: async () => visible,
+      isVisible: async () =>
+        isPauseSel ? audioPlaying && opts.hasPauseButton !== false : visible,
       count: async () => (visible ? 1 : 0),
       getAttribute: async () => (sel.includes("TEXT") ? "true" : null),
       scrollIntoViewIfNeeded: async () => {},
       hover: async () => {},
       click: async () => {
-        if (sel.includes("ctrl-enter-submits")) runClicked = true;
+        if (isPauseSel) {
+          pauseClickedCount += 1;
+          audioPlaying = false;
+          return;
+        }
+        if (sel.includes("ctrl-enter-submits")) {
+          runClicked = true;
+          if (opts.autoPlayOnGenerate) audioPlaying = true;
+        }
       },
       fill: async (val: string) => {
         filledFields[sel] = val;
@@ -205,6 +220,20 @@ function createMockSpeechPage(opts: MockSpeechPageOptions = {}) {
           currentVoiceLower: c.voice.toLowerCase(),
         }));
       }
+      if (arg && typeof arg === "object" && "action" in (arg as Record<string, unknown>)) {
+        const typedArg = arg as { action: string; allowDomPause?: boolean };
+        if (typedArg.action === "checkAudioPlaybackState") {
+          if (audioPlaying && typedArg.allowDomPause) {
+            audioPlaying = false;
+          }
+          return { audioCount: 1, playingCount: audioPlaying ? 1 : 0 };
+        }
+        if (typedArg.action === "installLateAutoPauseGuard") {
+          lateGuardInstalled = true;
+          audioPlaying = false;
+          return true;
+        }
+      }
       if (arg && typeof arg === "object" && "errorSelector" in (arg as Record<string, unknown>)) {
         if (opts.pollStates && opts.pollStates.length > 0) {
           const idx = Math.min(pollIdx, opts.pollStates.length - 1);
@@ -236,6 +265,9 @@ function createMockSpeechPage(opts: MockSpeechPageOptions = {}) {
     filledFields,
     gotoUrls,
     getBotGuardProbeCount: () => botGuardProbeCount,
+    getPauseClickedCount: () => pauseClickedCount,
+    isAudioPlaying: () => audioPlaying,
+    isLateGuardInstalled: () => lateGuardInstalled,
   };
 }
 
@@ -542,5 +574,41 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
     expect(Buffer.from(result.audioBase64, "base64").toString()).toBe(
       "WAV_FROM_blob:https://aistudio.google.com/chunk-2-new",
     );
+  });
+
+  test("executeSpeech tự động click nút Pause UI sau khi tạo voice xong để dừng autoplay", async () => {
+    const worker = new AiStudioSpeechWorker();
+    const mock = createMockSpeechPage({
+      autoPlayOnGenerate: true,
+      hasPauseButton: true,
+    });
+
+    await worker.executeSpeech(mock.page, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 1: Auto pause test",
+      speakers: [],
+    });
+
+    expect(mock.getPauseClickedCount()).toBe(1);
+    expect(mock.isAudioPlaying()).toBe(false);
+    expect(mock.isLateGuardInstalled()).toBe(true);
+  });
+
+  test("executeSpeech ép dừng DOM <audio> khi không thấy nút Pause UI mà trình phát vẫn đang chạy", async () => {
+    const worker = new AiStudioSpeechWorker();
+    const mock = createMockSpeechPage({
+      autoPlayOnGenerate: true,
+      hasPauseButton: false,
+    });
+
+    await worker.executeSpeech(mock.page, {
+      modelId: "gemini-2.5-pro-preview-tts",
+      text: "Speaker 1: DOM pause fallback test",
+      speakers: [],
+    });
+
+    expect(mock.getPauseClickedCount()).toBe(0);
+    expect(mock.isAudioPlaying()).toBe(false);
+    expect(mock.isLateGuardInstalled()).toBe(true);
   });
 });

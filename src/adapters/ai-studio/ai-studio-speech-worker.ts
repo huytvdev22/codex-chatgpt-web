@@ -64,6 +64,14 @@ const SPEECH_SELECTORS = {
   closeDrawerButton:
     'button[aria-label="Close panel"], button[data-test-close-button], button[mat-dialog-close]',
   downloadButton: 'button.download-button[aria-label="Download"]',
+  pauseAudioButton: [
+    'button[aria-label="Pause"]:not(.ctrl-enter-submits)',
+    'button[aria-label*="Pause audio" i]:not(.ctrl-enter-submits)',
+    'button[aria-label*="Pause playback" i]:not(.ctrl-enter-submits)',
+    'button[mattooltip="Pause"]:not(.ctrl-enter-submits)',
+    'button:not(.ctrl-enter-submits):has(.material-symbols-outlined:text-is("pause"))',
+    'button:not(.ctrl-enter-submits):has(.material-symbols-outlined:text-is("pause_circle"))',
+  ].join(", "),
   errorBanner:
     '[role="alert"], [role="status"], mat-snack-bar-container, simple-snack-bar, .mdc-snackbar, [class*="error-banner" i], [class*="toast" i], [class*="snackbar" i]',
 } as const;
@@ -284,12 +292,14 @@ export class AiStudioSpeechWorker {
 
     try {
       await clickResilient(page.locator(SPEECH_SELECTORS.runButton).first(), 3_000);
-      return await this.waitForGeneratedAudio(
+      const result = await this.waitForGeneratedAudio(
         page,
         baselineAudioSrc,
         options,
         () => inFlight.size > 0,
       );
+      await this.pauseGeneratedAudioPlayback(page);
+      return result;
     } finally {
       page.off("request", onReq);
       page.off("requestfinished", onDone);
@@ -808,5 +818,109 @@ export class AiStudioSpeechWorker {
     }
 
     return null;
+  }
+
+  /**
+   * Dừng tự động phát (autoplay) sau khi Google AI Studio `/generate-speech` vừa sinh audio xong
+   * (do tab speech được giữ lại tái sử dụng giữa các chunk).
+   * - Ưu tiên click đúng nút Pause UI (chỉ khớp trạng thái Pause, không bao giờ bấm nhầm Play).
+   * - Chỉ ép `audio.pause()` trong DOM khi nút UI không có hoặc vẫn đang phát, rồi cài guard 2s
+   *   chống autoplay khởi động trễ (tự hủy ngay khi người dùng tương tác trên trang).
+   */
+  private async pauseGeneratedAudioPlayback(page: Page): Promise<void> {
+    try {
+      const pauseButton = page.locator(SPEECH_SELECTORS.pauseAudioButton).first();
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        let clickedThisRound = false;
+        if (await pauseButton.isVisible().catch(() => false)) {
+          await pauseButton.click({ timeout: 1_000 }).catch(() => {});
+          clickedThisRound = true;
+          await page.waitForTimeout(120);
+        }
+
+        const audioState = await page
+          .evaluate(
+            ({ action, allowDomPause }) => {
+              if (action !== "checkAudioPlaybackState") return null;
+              const audios = Array.from(document.querySelectorAll<HTMLAudioElement>("audio"));
+              let playingCount = 0;
+              for (const audio of audios) {
+                if (!audio.paused) {
+                  if (allowDomPause) {
+                    try {
+                      audio.pause();
+                    } catch {}
+                  }
+                  if (!audio.paused) playingCount += 1;
+                }
+              }
+              return { audioCount: audios.length, playingCount };
+            },
+            { action: "checkAudioPlaybackState", allowDomPause: !clickedThisRound },
+          )
+          .catch(() => null);
+
+        if (!audioState) {
+          return;
+        }
+
+        const stillHasPauseBtn = await pauseButton.isVisible().catch(() => false);
+        if (audioState.playingCount === 0 && !stillHasPauseBtn && attempt >= 1) {
+          break;
+        }
+        await page.waitForTimeout(180);
+      }
+
+      await page
+        .evaluate(
+          ({ action }) => {
+            if (action !== "installLateAutoPauseGuard") return null;
+            const win = window as unknown as {
+              __codexSpeechAutoPauseUntil?: number;
+              __codexSpeechGuardBound?: boolean;
+            };
+            win.__codexSpeechAutoPauseUntil = Date.now() + 2_000;
+
+            for (const audio of document.querySelectorAll<HTMLAudioElement>("audio")) {
+              if (!audio.paused) {
+                try {
+                  audio.pause();
+                } catch {}
+              }
+            }
+
+            if (!win.__codexSpeechGuardBound) {
+              win.__codexSpeechGuardBound = true;
+              const cancelGuard = () => {
+                win.__codexSpeechAutoPauseUntil = 0;
+              };
+              document.addEventListener("pointerdown", cancelGuard, { capture: true, passive: true });
+              document.addEventListener("keydown", cancelGuard, { capture: true, passive: true });
+              document.addEventListener(
+                "play",
+                (evt) => {
+                  const target = evt.target;
+                  if (
+                    target instanceof HTMLAudioElement &&
+                    win.__codexSpeechAutoPauseUntil &&
+                    Date.now() <= win.__codexSpeechAutoPauseUntil
+                  ) {
+                    try {
+                      target.pause();
+                    } catch {}
+                  }
+                },
+                true,
+              );
+            }
+            return true;
+          },
+          { action: "installLateAutoPauseGuard" },
+        )
+        .catch(() => null);
+    } catch {
+      // Không làm fail lượt tạo audio nếu nút Pause đã tự tắt hoặc UI player chưa render
+    }
   }
 }
