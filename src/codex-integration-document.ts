@@ -249,6 +249,23 @@ export function readCodexModelContextOverride(): CodexModelContextOverride | und
   return contextWindow === undefined ? undefined : { contextWindow };
 }
 
+/**
+ * Đọc giá trị `model = "..."` ở top-level của `~/.codex/config.toml` (nếu có).
+ */
+export function readCodexConfiguredModel(): string | undefined {
+  const path = getCodexConfigPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    const text = readFileSync(path, "utf8");
+    const lines = splitLines(text);
+    const assignment = findTopLevelAssignment(lines, "model");
+    const model = assignment.present ? assignment.value?.trim() : undefined;
+    return model || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function assignments(lines: string[]): Record<ManagedAssignmentKey, PreviousAssignment> {
   return {
     openai_base_url: findTopLevelAssignment(lines, "openai_base_url"),

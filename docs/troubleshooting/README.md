@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **080** | Định tuyến lại request sinh tiêu đề thread của Codex sang đúng provider đang dùng | `server`, `ai-studio`, `m365-copilot` | ✅ Đã Confirm | [080-codex-thread-title-reroute-active-provider.md](./080-codex-thread-title-reroute-active-provider.md) |
 | **079** | Chuyển hẳn Google AI Studio sang Playwright CDP và gỡ bỏ hoàn toàn `electron-control` | `ai-studio`, `speech`, `web`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [079-consolidate-ai-studio-playwright-remove-electron-control.md](./079-consolidate-ai-studio-playwright-remove-electron-control.md) |
 | **078** | Bật nhầm Plan Mode từ `function_call_output` và lộ thẻ `<proposed_plan>` ở Default Mode | `web`, `m365-copilot` | ✅ Đã Confirm | [078-default-mode-false-plan-mode-and-proposed-plan-leak.md](./078-default-mode-false-plan-mode-and-proposed-plan-leak.md) |
 | **077** | Final answer M365 bị lộ `</webResponse>` và dính nội dung file từ `apply_patch` của lượt trước | `m365-copilot`, `web` | ✅ Đã Confirm | [077-m365-final-answer-leaks-previous-turn-code-lines.md](./077-m365-final-answer-leaks-previous-turn-code-lines.md) |
