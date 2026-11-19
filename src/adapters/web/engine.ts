@@ -6,6 +6,7 @@ import {
   type RawTurnResult,
 } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import { adapterFailureFromMessage } from "../../lib/errors";
 import { buildWebConversationKey } from "./conversation/conversation-key";
 import type { NormalizedImageAttachment } from "./normalization/canonical-types";
 import { compileWebPrompt } from "./compile-prompt";
@@ -639,9 +640,13 @@ export class WebTurnEngine {
         if (this.definition.policies?.emitErrorEventOnFailure ?? true) {
           const rawMsg = error instanceof Error ? error.message : String(error);
           const prefix = this.definition.policies?.errorMessagePrefix;
+          const classified = adapterFailureFromMessage(rawMsg);
           emit({
             type: "error",
             message: prefix ? `${prefix} ${rawMsg}` : rawMsg,
+            ...(classified.error.code === "insufficient_quota"
+              ? { retryable: false }
+              : {}),
           });
         }
 

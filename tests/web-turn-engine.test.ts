@@ -10,6 +10,7 @@ import {
   type WebRuntimeLifecycleOps,
 } from "../src/adapters/web";
 import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
+import { adapterFailureFromMessage } from "../src/lib/errors";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 function createParsedRequest(
@@ -1311,5 +1312,83 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       // Đảm bảo signal đã bị hủy của caller không làm AbortError khi gửi phase=end
       expect(recorded[1]?.signal).toBeUndefined();
     }
+  });
+
+  test("WebTurnEngine dừng ngay (không lặp format retry) và gắn insufficient_quota + retryable=false khi gặp daily chat limit", async () => {
+    let browserExecuteCalls = 0;
+    const endedStatuses: string[] = [];
+
+    const definition: WebProviderDefinition = {
+      id: "m365-copilot",
+      assistantName: "M365",
+      logPrefix: "m365-adapter",
+      abortMessage: "M365 aborted",
+      policies: {
+        maxFormatRetries: 3,
+        emitErrorEventOnFailure: true,
+        errorMessagePrefix: "[M365 Copilot]",
+        rethrowError: false,
+      },
+      conversation: {
+        resolveConversationKey: () => "quota-limit-conv",
+      },
+      browser: {
+        launcherProviderId: "m365",
+        connectorIdentity: "m365-copilot",
+        executeTurn: async () => {
+          browserExecuteCalls += 1;
+          throw new Error(
+            "[M365 Web Error] You've used your daily chat limit. Please try again tomorrow.",
+          );
+        },
+      },
+    };
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/nonexistent-launcher.json",
+      startTurn: async () => ({
+        surfaceId: "surface-quota",
+        conversationId: undefined,
+        connectorBound: false,
+        reused: false,
+        connection: {
+          descriptor: {} as never,
+          context: {} as never,
+          page: {} as never,
+          browser: { close: async () => {} } as never,
+        },
+      }),
+      heartbeatTurn: async () => {},
+      endTurn: async ({ activity }) => {
+        endedStatuses.push(activity.status);
+      },
+      closeTurn: async () => {},
+    };
+
+    const engine = new WebTurnEngine(definition, undefined, ops);
+    const events: AdapterEvent[] = [];
+    await engine.runTurn(
+      createParsedRequest([{ role: "user", content: "xin chào" }]),
+      { headers: new Headers() },
+      ev => events.push(ev),
+    );
+
+    expect(browserExecuteCalls).toBe(1);
+    expect(endedStatuses).toEqual(["failed"]);
+    expect(events).toEqual([
+      {
+        type: "error",
+        message:
+          "[M365 Copilot] [M365 Web Error] You've used your daily chat limit. Please try again tomorrow.",
+        retryable: false,
+      },
+    ]);
+
+    const mapped = adapterFailureFromMessage(
+      "[M365 Copilot] [M365 Web Error] You've used your daily chat limit. Please try again tomorrow.",
+    );
+    expect(mapped.httpStatus).toBe(429);
+    expect(mapped.error.type).toBe("insufficient_quota");
+    expect(mapped.error.code).toBe("insufficient_quota");
   });
 });

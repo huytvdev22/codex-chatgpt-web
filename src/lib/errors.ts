@@ -73,6 +73,25 @@ export function isClientClosedMessage(text: string): boolean {
   );
 }
 
+export function isInsufficientQuotaMessage(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("insufficient_quota") ||
+    lower.includes("exceeded your current quota") ||
+    lower.includes("quota exhausted") ||
+    lower.includes("account quota exceeded") ||
+    lower.includes("monthly quota exceeded") ||
+    lower.includes("daily quota exceeded") ||
+    lower.includes("used your daily chat limit") ||
+    lower.includes("reached your daily chat limit") ||
+    lower.includes("daily chat limit") ||
+    lower.includes("daily conversation limit") ||
+    lower.includes("reached the conversation limit") ||
+    lower.includes("giới hạn trò chuyện hàng ngày") ||
+    lower.includes("hết hạn mức hàng ngày")
+  );
+}
+
 export function classifyError(status: number, type: string, message: string): CodexErrorPayload {
   const text = message.toLowerCase();
   // Preserve explicit cancel types; unify message-inferred client closes onto
@@ -96,14 +115,7 @@ export function classifyError(status: number, type: string, message: string): Co
   ) {
     return { message, type: "invalid_request_error", code: "context_length_exceeded" };
   }
-  if (
-    text.includes("insufficient_quota") ||
-    text.includes("exceeded your current quota") ||
-    text.includes("quota exhausted") ||
-    text.includes("account quota exceeded") ||
-    text.includes("monthly quota exceeded") ||
-    text.includes("daily quota exceeded")
-  ) {
+  if (isInsufficientQuotaMessage(text)) {
     return { message, type: "insufficient_quota", code: "insufficient_quota" };
   }
   if (
@@ -194,6 +206,7 @@ export function inferHttpStatusFromAdapterMessage(message: string): number {
   // Client aborts must not look like upstream 502s in /api/logs.
   if (isClientClosedMessage(lower)) return 499;
   if (
+    isInsufficientQuotaMessage(lower) ||
     lower.includes("resource_exhausted") ||
     lower.includes("resource exhausted") ||
     lower.includes("rate limit") ||

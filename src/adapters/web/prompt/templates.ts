@@ -59,7 +59,7 @@ Quy ước định dạng phản hồi (bắt buộc):
    - Viết câu trả lời Markdown bên trong \`<webResponse>...</webResponse>\` (trong khối 4-backtick), không kèm thẻ tool.
    - Nhắc tới file/dòng code thì gắn link tương đối kiểu [index.html](index.html) hoặc [app.ts — dòng 25](src/app.ts#L25).
 
-Khảo sát mã nguồn: bạn tự do chọn công cụ phù hợp, nhớ bỏ qua thư mục nặng như \`node_modules\`, \`.git\`, \`dist\`, \`build\`. Chỉ dùng các tool có trong \`[MCP TOOL CATALOG]\` bên dưới.`;
+Khảo sát mã nguồn: bạn tự do chọn công cụ phù hợp, nhớ bỏ qua thư mục nặng như \`node_modules\`, \`.git\`, \`dist\`, \`build\`. Khi dùng PowerShell trên Windows để đọc/xuất nội dung UTF-8 (tiếng Việt), luôn thêm \`-Encoding UTF8\` vào \`Get-Content\` và đặt \`[Console]::OutputEncoding=[Text.Encoding]::UTF8\`. Chỉ dùng các tool có trong \`[MCP TOOL CATALOG]\` bên dưới.`;
 }
 
 export const UNIFIED_TOOL_PROTOCOL = buildUnifiedToolProtocol("Copilot");

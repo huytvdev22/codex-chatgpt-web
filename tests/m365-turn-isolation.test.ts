@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { M365DomObserver } from "../src/adapters/m365-copilot/m365-dom-observer";
+import {
+  detectM365MessageQuotaError,
+  M365DomObserver,
+} from "../src/adapters/m365-copilot/m365-dom-observer";
 import { M365ClipboardSalvage } from "../src/adapters/m365-copilot/m365-clipboard-salvage";
 
 type AttrMap = Record<string, string>;
@@ -466,5 +469,81 @@ describe("M365 multi-turn DOM & cache isolation", () => {
     const salvage = new M365ClipboardSalvage();
     const salvaged = await salvage.tryExtractCodeViaCopyButton(harness.page);
     expect(salvaged).toBeNull();
+  });
+
+  test("M365DomObserver phát hiện thông báo hết hạn mức ngày trong .fai-CopilotMessage__content và ném lỗi dừng ngay (không dính Share feedback)", async () => {
+    const harness = createDomHarness();
+    cleanups.push(harness.restore);
+
+    const observer = new M365DomObserver();
+    const baseline = await observer.captureBaseline(harness.page);
+    const runtimeState = observer.createRuntimeState();
+
+    // Đúng cấu trúc DOM thực tế khi M365 hết hạn mức ngày
+    const quotaContent = new FakeElement("div", {
+      id: "copilot-message-_r_226_",
+      className: "fai-CopilotMessage__content r1izxv8h",
+      children: [
+        new FakeElement("div", {
+          children: [
+            new FakeElement("div", {
+              children: [
+                new FakeElement("span", {
+                  text: "You've used your daily chat limit. Please try again tomorrow.",
+                }),
+                new FakeElement("span", {
+                  children: [
+                    new FakeElement("section", {
+                      children: [
+                        new FakeElement("div", {
+                          attrs: { role: "group", "aria-label": "Provide your feedback on BizChat" },
+                          children: [
+                            new FakeElement("button", { text: "Share feedback" }),
+                          ],
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+    const copilotMsg = new FakeElement("div", {
+      className: "fai-CopilotMessage",
+      attrs: { "data-content": "ai-message" },
+      children: [quotaContent],
+    });
+    harness.body.appendChild(copilotMsg);
+
+    const status = await observer.captureStatus(harness.page, baseline);
+    expect(status.detectedWebError).toBe(
+      "You've used your daily chat limit. Please try again tomorrow.",
+    );
+    expect(status.hasContent).toBe(false);
+    expect(status.blocks).toEqual([]);
+
+    await expect(
+      observer.applyStatus(harness.page, runtimeState, status, {}),
+    ).rejects.toThrow("[M365 Web Error] You've used your daily chat limit. Please try again tomorrow.");
+  });
+
+  test("detectM365MessageQuotaError không bắt nhầm nội dung kỹ thuật dài hoặc bọc trong <webResponse>", () => {
+    expect(
+      detectM365MessageQuotaError(
+        "<webResponse>\nYou've used your daily chat limit. Please try again tomorrow.\n</webResponse>",
+      ),
+    ).toBe("");
+    expect(
+      detectM365MessageQuotaError(
+        "Here is how we handle errors when Copilot prints 'You've used your daily chat limit': " +
+          "x".repeat(360),
+      ),
+    ).toBe("");
+    expect(
+      detectM365MessageQuotaError("You've used your daily chat limit. Please try again tomorrow."),
+    ).toBe("You've used your daily chat limit. Please try again tomorrow.");
   });
 });

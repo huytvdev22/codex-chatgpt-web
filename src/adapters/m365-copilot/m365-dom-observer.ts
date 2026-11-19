@@ -18,6 +18,33 @@ export function m365HtmlToMarkdown(html: string): string {
   });
 }
 
+const M365_BANNER_ERROR_PATTERN_SOURCE =
+  "something went wrong|try again|used your daily chat limit|daily chat limit|reached (?:the|your)(?: daily| conversation)? limit|limit exceeded|conversation limit|đã xảy ra lỗi|vượt quá giới hạn|giới hạn trò chuyện";
+
+const M365_MESSAGE_QUOTA_ERROR_PATTERN_SOURCES = [
+  "you(?:'|’)?ve\\s+(?:used|reached)\\s+your\\s+daily\\s+(?:chat\\s+)?limit",
+  "daily\\s+(?:chat|conversation|message)\\s+limit[^\\n]{0,100}try\\s+again\\s+tomorrow",
+  "you(?:'|’)?ve\\s+reached\\s+(?:the\\s+conversation|your(?:\\s+daily)?)\\s+limit",
+  "conversation\\s+limit\\s+(?:has\\s+been\\s+)?reached",
+  "bạn\\s+đã\\s+(?:dùng|đạt)\\s+(?:hết\\s+)?giới\\s+hạn\\s+(?:trò\\s+chuyện|tin\\s+nhắn)",
+] as const;
+
+/**
+ * Phát hiện thông báo hết hạn mức ngày / giới hạn hội thoại mà M365 Copilot render
+ * trực tiếp dưới dạng nội dung trong `.fai-CopilotMessage__content`.
+ * Chỉ match văn bản ngắn không chứa code block hay `<webResponse>` để tránh khớp nhầm nội dung kỹ thuật.
+ */
+export function detectM365MessageQuotaError(rawText: string): string {
+  const normalized = rawText.replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length > 400 || normalized.includes("<webResponse")) {
+    return "";
+  }
+  const isQuotaError = M365_MESSAGE_QUOTA_ERROR_PATTERN_SOURCES.some((src) =>
+    new RegExp(src, "i").test(normalized),
+  );
+  return isQuotaError ? normalized : "";
+}
+
 export interface M365ResponseBaseline {
   aiCount: number;
   count: number;
@@ -155,6 +182,11 @@ export class M365DomObserver {
       aiMessages.forEach(message => {
         message.setAttribute("data-codex-turn-baseline", "true");
       });
+      document.querySelectorAll(".fai-CopilotMessage__content").forEach(el => {
+        if (!el.closest("[data-codex-turn-baseline]")) {
+          el.setAttribute("data-codex-turn-baseline", "true");
+        }
+      });
 
       const latestMessage = aiMessages[aiMessages.length - 1] || null;
       return {
@@ -178,7 +210,13 @@ export class M365DomObserver {
   ): Promise<M365ResponseDomStatus> {
     const lightweightWhileGenerating =
       captureOptions.lightweightWhileGenerating === true;
-    const status = await page.evaluate(({ before, lightweightWhileGenerating: lightweightMode }) => {
+    const status = await page.evaluate(
+      ({
+        before,
+        lightweightWhileGenerating: lightweightMode,
+        bannerErrorPatternSource,
+        quotaMessagePatternSources,
+      }) => {
       const stopBtn = document.querySelector(
         'button[aria-label="Stop generating"], .fai-SendButton__stopIcon, [data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Dừng" i]',
       );
@@ -229,18 +267,51 @@ export class M365DomObserver {
       );
 
       // Quét thông báo lỗi hệ thống hoặc quota từ M365 Web
+      const bannerErrorRegex = new RegExp(bannerErrorPatternSource, "i");
+      const extractQuotaMessageFromElement = (rootEl: Element): string => {
+        const rawLen = (rootEl.textContent || "").length;
+        if (rawLen === 0 || rawLen > 600) return "";
+        if (rootEl.querySelector("pre, code, ms-code-block, .scriptor-component-code-block")) {
+          return "";
+        }
+        const clone = rootEl.cloneNode(true) as HTMLElement;
+        clone
+          .querySelectorAll(
+            "section, [role='group'], .fai-CopilotMessage__actions, .fai-CopilotMessage__accessibleHeading, button, svg",
+          )
+          .forEach((n) => n.remove());
+        const cleanText = (clone.textContent || "").replace(/\s+/g, " ").trim();
+        if (!cleanText || cleanText.length > 400 || cleanText.includes("<webResponse")) {
+          return "";
+        }
+        for (const src of quotaMessagePatternSources) {
+          if (new RegExp(src, "i").test(cleanText)) {
+            return cleanText;
+          }
+        }
+        return "";
+      };
+
       let detectedWebError = "";
-      const errorEl = document.querySelector(
+      const errorElements = document.querySelectorAll(
         '[data-testid="error-message"], .fai-ErrorMessage, [role="alert"], [class*="errorMessage" i], [class*="error-banner" i]',
       );
-      if (errorEl && errorEl.textContent?.trim()) {
-        const errText = errorEl.textContent.trim();
-        if (
-          /something went wrong|try again|reached the limit|limit exceeded|đã xảy ra lỗi|vượt quá giới hạn/i.test(
-            errText,
-          )
-        ) {
+      for (const errorEl of errorElements) {
+        const errText = (errorEl.textContent || "").replace(/\s+/g, " ").trim();
+        if (errText && bannerErrorRegex.test(errText)) {
           detectedWebError = errText;
+          break;
+        }
+      }
+      if (!detectedWebError) {
+        const standaloneContents = document.querySelectorAll(".fai-CopilotMessage__content");
+        for (const contentNode of standaloneContents) {
+          if (contentNode.closest("[data-codex-turn-baseline]")) continue;
+          const quotaMsg = extractQuotaMessageFromElement(contentNode);
+          if (quotaMsg) {
+            detectedWebError = quotaMsg;
+            break;
+          }
         }
       }
 
@@ -306,6 +377,20 @@ export class M365DomObserver {
           ".fai-CopilotMessage__content, [data-content='content'], .fui-ChatMessage__body, .fai-ChatMessage__content",
         ) ||
         lastMsg) as HTMLElement;
+
+      if (!detectedWebError) {
+        detectedWebError = extractQuotaMessageFromElement(contentEl);
+      }
+      if (detectedWebError) {
+        return {
+          isGenerating: false,
+          blocks: [],
+          isNew: true,
+          hasContent: false,
+          detectedWebError,
+          fastPathRawText: null,
+        };
+      }
 
       const codeBlockQuery =
         "div[role='group'][aria-label='Code Preview'], .scriptor-component-code-block, [class*='scriptor-component-code-block']";
@@ -680,7 +765,12 @@ export class M365DomObserver {
         isInputActionsIdle,
         hasCodeBlocks: liveCodeBlocks.length > 0,
       };
-    }, { before: beforeState, lightweightWhileGenerating });
+    }, {
+      before: beforeState,
+      lightweightWhileGenerating,
+      bannerErrorPatternSource: M365_BANNER_ERROR_PATTERN_SOURCE,
+      quotaMessagePatternSources: M365_MESSAGE_QUOTA_ERROR_PATTERN_SOURCES,
+    });
 
     return status as M365ResponseDomStatus;
   }
