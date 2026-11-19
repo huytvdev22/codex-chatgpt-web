@@ -522,7 +522,7 @@ export class WebTurnEngine {
           roundPrompt = [
             `<tool_result name="${INTERNAL_TOOL_DESCRIBE_NAME}">`,
             "```json",
-            JSON.stringify(lookupResult, null, 2),
+            JSON.stringify(lookupResult),
             "```",
             "</tool_result>",
             ...(mixedNotice ? [mixedNotice.trim()] : []),

@@ -135,7 +135,7 @@ describe("McpToolCatalogRenderer & Lean Turn 2+ Tests", () => {
 
     expect(deltaText).toContain("[MCP TOOL DELTA / SCHEMA CORRECTION: MISSING_ARGUMENT]");
     expect(deltaText).toContain('"multi_agent_v1.spawn_agent"');
-    expect(deltaText).toContain('"removed": [\n    "old_tool"\n  ]');
+    expect(deltaText).toContain('"removed":["old_tool"]');
     expect(deltaText).toContain('"schema_fix"');
   });
 

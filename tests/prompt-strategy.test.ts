@@ -214,8 +214,8 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
 
     // 1. Dynamic contract chỉ được khai báo action thực sự có trong inventory.
-    expect(dynamicText).toContain('"name": "apply_patch"');
-    expect(dynamicText).toContain('"kind": "custom"');
+    expect(dynamicText).toContain('"name":"apply_patch"');
+    expect(dynamicText).toContain('"kind":"custom"');
     expect(dynamicText).not.toContain("write_file");
 
     // 2. UNIFIED_TOOL_PROTOCOL phải có quy tắc cấm heredoc shell và hướng dẫn tạo file
@@ -293,8 +293,8 @@ describe("Unified M365 Prompt & Intelligence Preservation Tests", () => {
     // 2. Kiểm tra Dynamic Action Contract chỉ chứa action của current inventory.
     const dynamicText = renderDynamicToolDeclarations(normalized.activeCodingTools);
     expect(dynamicText).toContain("[MCP TOOL CATALOG]");
-    expect(dynamicText).toContain('"name": "exec_command"');
-    expect(dynamicText).toContain('"name": "update_goal"');
+    expect(dynamicText).toContain('"name":"exec_command"');
+    expect(dynamicText).toContain('"name":"update_goal"');
     expect(dynamicText).not.toContain("read_file");
     expect(dynamicText).not.toContain("list_dir");
     expect(dynamicText).not.toContain("search_files");

@@ -261,7 +261,7 @@ export interface StructuredJsonPromptOptions {
 export function buildStructuredJsonOutputProtocol(
   options: StructuredJsonPromptOptions,
 ): string {
-  const serializedSchema = JSON.stringify(options.schema, null, 2);
+  const serializedSchema = JSON.stringify(options.schema);
   return `Chào ${options.assistantName}, ở lượt này hệ thống cần kết quả dữ liệu có cấu trúc (Structured Output) để xử lý tự động theo JSON Schema "${options.schemaName}" (strict=${options.strict}):
 
 \`\`\`json
@@ -293,7 +293,7 @@ export function buildJsonSchemaRetryPrompt(options: {
   message: string;
   outputFormat: CodexJsonSchemaOutputFormat;
 }): string {
-  const serializedSchema = JSON.stringify(options.outputFormat.schema, null, 2);
+  const serializedSchema = JSON.stringify(options.outputFormat.schema);
   return `Phản hồi vừa rồi của bạn chưa đúng định dạng JSON hợp lệ theo JSON Schema "${options.outputFormat.name}" nên hệ thống chưa đọc được:
 - Lỗi phát hiện: ${options.message}
 

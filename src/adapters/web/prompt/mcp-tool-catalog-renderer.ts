@@ -160,7 +160,7 @@ export class McpToolCatalogRenderer {
       );
     }
 
-    lines.push("", "```json", JSON.stringify(catalogPayload, null, 2), "```");
+    lines.push("", "```json", JSON.stringify(catalogPayload), "```");
     return lines.join("\n");
   }
 
@@ -214,7 +214,7 @@ export class McpToolCatalogRenderer {
       : "[MCP TOOL DELTA]";
     const note = failedErrorMessage ? `${failedErrorMessage}\n` : "";
 
-    return `${header}\n${note}\`\`\`json\n${JSON.stringify(deltaPayload, null, 2)}\n\`\`\``;
+    return `${header}\n${note}\`\`\`json\n${JSON.stringify(deltaPayload)}\n\`\`\``;
   }
 }
 
