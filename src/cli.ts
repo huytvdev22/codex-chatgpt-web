@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { stdin, stdout } from "node:process";
 import { getConfigDir, getConfigPath, loadConfig } from "./config";
+import { extractChromeProfileSession } from "./chrome-session-extractor";
 import {
   inspectLauncherBrowserHost,
   readLauncherBrowserHostDescriptor,
@@ -334,6 +335,23 @@ async function main(): Promise<void> {
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "browser") {
     const action = args.shift();
+    if (action === "extract-chrome-session") {
+      const profileDir = takeOption(args, "--profile-dir");
+      const targetUrl = takeOption(args, "--target-url");
+      const chromePath = takeOption(args, "--chrome");
+      takeFlag(args, "--json");
+      assertNoArgs(args);
+      if (!profileDir || !targetUrl) {
+        throw new Error("browser extract-chrome-session requires --profile-dir and --target-url");
+      }
+      const extracted = await extractChromeProfileSession({
+        profileDir,
+        targetUrl,
+        ...(chromePath ? { chromeExecutablePath: chromePath } : {}),
+      });
+      stdout.write(`${JSON.stringify(extracted)}\n`);
+      return;
+    }
     assertNoArgs(args);
     if (action !== "check") throw new Error("Browser command must be: browser check");
     const config = loadConfig();

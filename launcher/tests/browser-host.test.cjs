@@ -2104,13 +2104,14 @@ test("TurnTabManager retains and reuses completed stateless surfaces (e.g. speec
   assert.equal(speechTab.traceId, "trace_speech_2");
 });
 
-test("Windows occlusion policy disables CalculateNativeWinOcclusion while keeping background throttling removal", () => {
+test("Windows occlusion policy and automation signal policy configure Chromium switches without overriding existing values", () => {
   const mainSource = fs.readFileSync(require.resolve("../electron/main.cjs"), "utf8");
   assert.match(mainSource, /removeSwitch\("disable-background-timer-throttling"\)/);
   assert.match(mainSource, /removeSwitch\("disable-backgrounding-occluded-windows"\)/);
   assert.match(mainSource, /removeSwitch\("disable-renderer-backgrounding"\)/);
-  assert.match(mainSource, /features\.add\("CalculateNativeWinOcclusion"\)/);
-  assert.match(mainSource, /commandLine\.appendSwitch\("disable-features"/);
+  assert.match(mainSource, /appendCommaSeparatedSwitch\(commandLine,\s*"disable-features",\s*"CalculateNativeWinOcclusion"\)/);
+  assert.match(mainSource, /appendCommaSeparatedSwitch\(commandLine,\s*"disable-blink-features",\s*"AutomationControlled"\)/);
+  assert.match(mainSource, /configureAutomationSignalsPolicy\(app\.commandLine\)/);
 });
 
 test("initializeTurnTab absorbs ERR_ABORTED redirect and retries on commit timeout", async () => {
@@ -2352,4 +2353,233 @@ test("BrowserHost.switchProviderProfile khóa khi turn đang chạy và tạo l�
   assert.deepEqual(ensuredKeys, ["ai-studio"]);
   assert.equal(persisted.at(-1)?.group?.activeProfileId, "p2");
   assert.equal(snap.providers[0].activeProfileId, "p2");
+});
+
+test("external Chrome login cookie mapper handles __Host-, __Secure-, host-only and domain cookies correctly", () => {
+  const {
+    toElectronCookieDetails,
+    hasGoogleAuthSessionCookies,
+  } = require("../electron/browser/external-chrome-login-service.cjs");
+
+  const hostCookie = toElectronCookieDetails({
+    name: "__Host-GAPS",
+    value: "gaps-val",
+    domain: "accounts.google.com",
+    path: "/signin",
+    expires: -1,
+    httpOnly: true,
+    secure: false,
+    sameSite: "Lax",
+  });
+  assert.deepEqual(hostCookie, {
+    url: "https://accounts.google.com/",
+    name: "__Host-GAPS",
+    value: "gaps-val",
+    path: "/",
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+  });
+  assert.equal("domain" in hostCookie, false);
+  assert.equal("expirationDate" in hostCookie, false);
+
+  const domainCookie = toElectronCookieDetails({
+    name: "__Secure-1PSID",
+    value: "psid-val",
+    domain: ".google.com",
+    path: "/",
+    expires: 1893456000,
+    httpOnly: true,
+    secure: true,
+    sameSite: "None",
+  });
+  assert.deepEqual(domainCookie, {
+    url: "https://google.com/",
+    name: "__Secure-1PSID",
+    value: "psid-val",
+    path: "/",
+    domain: ".google.com",
+    secure: true,
+    httpOnly: true,
+    sameSite: "no_restriction",
+    expirationDate: 1893456000,
+  });
+
+  assert.equal(hasGoogleAuthSessionCookies([{ name: "PREF", value: "1" }]), false);
+  assert.equal(hasGoogleAuthSessionCookies([{ name: "__Secure-1PSID", value: "psid-val" }]), true);
+});
+
+test("ExternalChromeLoginService starts, completes, and cleans up temporary profile dir", async () => {
+  const { ExternalChromeLoginService } = require("../electron/browser/external-chrome-login-service.cjs");
+  const { EventEmitter } = require("node:events");
+  const nodePath = require("node:path");
+  const nodeOs = require("node:os");
+  const tempRoot = fs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "ext-chrome-login-"));
+  const stateUpdates = [];
+  let killed = false;
+  let capturedProfileDir = null;
+
+  class FakeChild extends EventEmitter {
+    constructor() {
+      super();
+      this.exitCode = null;
+      this.signalCode = null;
+    }
+    kill() {
+      killed = true;
+      this.exitCode = 0;
+      this.emit("exit", 0, null);
+      return true;
+    }
+  }
+
+  try {
+    const service = new ExternalChromeLoginService({
+      tempRoot,
+      resolveChromePath: () => "/fake/Google Chrome",
+      spawnFn: (_exe, args) => {
+        const dirArg = args.find((a) => a.startsWith("--user-data-dir="));
+        capturedProfileDir = dirArg.slice("--user-data-dir=".length);
+        return new FakeChild();
+      },
+      runExtractor: async ({ profileDir }) => {
+        assert.equal(profileDir, capturedProfileDir);
+        assert.equal(fs.existsSync(profileDir), true);
+        return {
+          origin: "https://aistudio.google.com",
+          cookies: [
+            {
+              name: "SID",
+              value: "sid-test",
+              domain: ".google.com",
+              path: "/",
+              expires: -1,
+              httpOnly: true,
+              secure: true,
+              sameSite: "None",
+            },
+          ],
+          localStorage: [{ name: "k", value: "v" }],
+        };
+      },
+      onStateChanged: (next) => stateUpdates.push(next),
+    });
+
+    const initial = service.start({
+      providerId: "ai-studio",
+      profileId: "p2",
+      profileName: "Account 2",
+      targetUrl: "https://aistudio.google.com/prompts/new_chat",
+    });
+    assert.equal(initial.active, true);
+    assert.equal(initial.status, "waiting");
+    assert.equal(fs.existsSync(capturedProfileDir), true);
+
+    const completed = await service.complete();
+    assert.equal(killed, true);
+    assert.equal(completed.profileId, "p2");
+    assert.equal(completed.cookies.length, 1);
+    assert.equal(completed.cookies[0].name, "SID");
+    assert.equal(fs.existsSync(capturedProfileDir), false);
+    assert.equal(service.getState(), null);
+    assert.equal(stateUpdates.at(-1), null);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("BrowserHost.completeExternalLogin imports cookies into target profile session and marks profile authenticated", async () => {
+  const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const provider = new AiStudioBrowserProvider();
+  provider.configureProfiles({
+    activeProfileId: "p2",
+    profiles: [
+      { id: "default", name: "Default", authenticated: true },
+      { id: "p2", name: "Account 2", authenticated: false },
+    ],
+  });
+
+  const setCookies = [];
+  const clearedStorages = [];
+  const loadedUrls = [];
+  let flushed = false;
+
+  const contents = {
+    isDestroyed: () => false,
+    getURL: () => loadedUrls.at(-1) || "about:blank",
+    loadURL: async (url) => {
+      loadedUrls.push(url);
+    },
+    executeJavaScript: async () => true,
+    session: {
+      clearStorageData: async (opts) => clearedStorages.push(opts),
+      cookies: {
+        set: async (cookie) => setCookies.push(cookie),
+        flushStore: async () => { flushed = true; },
+      },
+      flushStorageData: () => {},
+    },
+  };
+
+  let externalState = {
+    active: true,
+    status: "waiting",
+    providerId: "ai-studio",
+    profileId: "p2",
+    profileName: "Account 2",
+  };
+  let hostAuth = false;
+
+  const fakeHost = {
+    provider: "ai-studio",
+    providerRegistry: {
+      has: (id) => id === "ai-studio",
+      get: (id) => (id === "ai-studio" ? provider : null),
+      list: () => [provider],
+      listIds: () => ["ai-studio"],
+    },
+    turnTabs: new Map(),
+    activeTraceId: null,
+    authenticatedByProvider: { "ai-studio": false },
+    view: { webContents: contents },
+    externalChromeLogin: {
+      getState: () => externalState,
+      complete: async () => {
+        externalState = null;
+        return {
+          providerId: "ai-studio",
+          profileId: "p2",
+          profileName: "Account 2",
+          origin: "https://aistudio.google.com",
+          cookies: [{ url: "https://google.com/", name: "SID", value: "ok", path: "/" }],
+          localStorage: [],
+        };
+      },
+    },
+    withManualOperation: async (_name, fn) => await fn(),
+    probeAuthentication: async () => {
+      hostAuth = true;
+      fakeHost.authenticatedByProvider["ai-studio"] = true;
+      provider.updateProfileAuthentication("p2", true);
+    },
+    persistSession: async () => {},
+    activateHomeSurface: () => {},
+    show: () => {},
+    snapshot: () => ({
+      provider: "ai-studio",
+      authenticated: hostAuth,
+      externalLogin: externalState,
+      providers: BrowserHost.prototype.listProviders.call(fakeHost),
+    }),
+  };
+  provider.probeAuthentication = async () => ({ authenticated: true, url: "https://aistudio.google.com/prompts/new_chat" });
+
+  const result = await BrowserHost.prototype.completeExternalLogin.call(fakeHost);
+  assert.equal(clearedStorages.length, 1);
+  assert.equal(setCookies.length, 1);
+  assert.equal(setCookies[0].name, "SID");
+  assert.equal(flushed, true);
+  assert.equal(result.authenticated, true);
+  assert.equal(result.externalLogin, null);
+  assert.equal(result.providers[0].profiles[1].authenticated, true);
 });

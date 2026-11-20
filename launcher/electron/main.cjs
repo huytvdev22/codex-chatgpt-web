@@ -3,7 +3,7 @@ configureWindowsTrust();
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { execFile, spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const {
   app,
@@ -19,6 +19,7 @@ const {
   navigationErrorForLog,
 } = require("./browser/browser-host.cjs");
 const { sanitizeChromeUserAgent } = require("./browser/providers/base-browser-provider.cjs");
+const { ExternalChromeLoginService } = require("./browser/external-chrome-login-service.cjs");
 const { BrowserControlServer } = require("./browser/control-server.cjs");
 const { getAutostart, setAutostart } = require("./app/autostart.cjs");
 const { CatalogMonitor } = require("./app/catalog-monitor.cjs");
@@ -42,7 +43,7 @@ const {
 const { createPersonalizationStore } = require("./infra/personalization-store.cjs");
 const { createSkillsStore } = require("./infra/skills-store.cjs");
 const { createUsageStore } = require("./infra/usage-store.cjs");
-const { runtimeBundlePaths } = require("./runtime/runtime-command.cjs");
+const { embeddedRuntimeInvocation, runtimeBundlePaths } = require("./runtime/runtime-command.cjs");
 const { RuntimeHost } = require("./runtime/runtime-host.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime/runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime/runtime-supervisor.cjs");
@@ -301,14 +302,48 @@ async function requestQuit() {
   }
 }
 
-function configureWindowsOcclusionPolicy(commandLine, platform = process.platform) {
-  // Trên Windows, khi BrowserWindow gọi hide() xuống tray hoặc bị che khuất,
-  // CalculateNativeWinOcclusion làm Chromium ngưng compositor/frame của các WebContentsView con
-  // dù đã gọi setBackgroundThrottling(false), khiến Playwright click/scroll treo tới timeout.
-  // Tắt riêng feature này nhưng vẫn giữ cơ chế backgroundThrottling cho các tab idle (lỗi 008).
-  if (platform !== "win32" || !commandLine) return;
+function runChromeSessionExtractor({ profileDir, chromeExecutablePath, targetUrl }) {
+  return new Promise((resolve, reject) => {
+    const invocation = embeddedRuntimeInvocation({
+      app,
+      sourceRoot: SOURCE_ROOT,
+      args: [
+        "browser",
+        "extract-chrome-session",
+        "--profile-dir",
+        profileDir,
+        "--target-url",
+        targetUrl,
+        ...(chromeExecutablePath ? ["--chrome", chromeExecutablePath] : []),
+        "--json",
+      ],
+    });
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    execFile(invocation.executable, invocation.args, {
+      cwd: invocation.cwd,
+      env,
+      timeout: 45_000,
+      maxBuffer: 4 * 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error((stderr || error.message || "Chrome session extractor failed").trim()));
+        return;
+      }
+      const line = String(stdout || "").trim().split(/\r?\n/).filter(Boolean).pop() || "";
+      try {
+        resolve(JSON.parse(line));
+      } catch {
+        reject(new Error("Chrome session extractor returned invalid JSON"));
+      }
+    });
+  });
+}
+
+function appendCommaSeparatedSwitch(commandLine, switchName, featureName) {
+  if (!commandLine || !switchName || !featureName) return;
   const existing = typeof commandLine.getSwitchValue === "function"
-    ? commandLine.getSwitchValue("disable-features")
+    ? commandLine.getSwitchValue(switchName)
     : "";
   const features = new Set(
     String(existing || "")
@@ -316,8 +351,24 @@ function configureWindowsOcclusionPolicy(commandLine, platform = process.platfor
       .map(item => item.trim())
       .filter(Boolean),
   );
-  features.add("CalculateNativeWinOcclusion");
-  commandLine.appendSwitch("disable-features", [...features].join(","));
+  features.add(featureName);
+  commandLine.appendSwitch(switchName, [...features].join(","));
+}
+
+function configureWindowsOcclusionPolicy(commandLine, platform = process.platform) {
+  // Trên Windows, khi BrowserWindow gọi hide() xuống tray hoặc bị che khuất,
+  // CalculateNativeWinOcclusion làm Chromium ngưng compositor/frame của các WebContentsView con
+  // dù đã gọi setBackgroundThrottling(false), khiến Playwright click/scroll treo tới timeout.
+  // Tắt riêng feature này nhưng vẫn giữ cơ chế backgroundThrottling cho các tab idle (lỗi 008).
+  if (platform !== "win32" || !commandLine) return;
+  appendCommaSeparatedSwitch(commandLine, "disable-features", "CalculateNativeWinOcclusion");
+}
+
+function configureAutomationSignalsPolicy(commandLine) {
+  // Chromium tự đặt navigator.webdriver = true khi bật --remote-debugging-port.
+  // Tắt Blink feature AutomationControlled trước app.whenReady() để tránh bị Google
+  // Sign-In và AI Studio gắn cờ tự động hóa sai lệch trên WebContentsView.
+  appendCommaSeparatedSwitch(commandLine, "disable-blink-features", "AutomationControlled");
 }
 
 async function start() {
@@ -340,6 +391,7 @@ async function start() {
   app.commandLine.removeSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.removeSwitch("disable-renderer-backgrounding");
   configureWindowsOcclusionPolicy(app.commandLine);
+  configureAutomationSignalsPolicy(app.commandLine);
   app.commandLine.appendSwitch("disable-component-update");
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
@@ -517,6 +569,26 @@ async function start() {
     publishOperation,
     supervisor: runtimeSupervisor,
   });
+  const externalChromeLogin = new ExternalChromeLoginService({
+    tempRoot: path.join(launcherUserData, "chrome-login-tmp"),
+    runExtractor: runChromeSessionExtractor,
+    logger,
+    onStateChanged: () => {
+      if (browserHost && !browserHost.destroyed) {
+        send("launcher:browser-state", browserHost.snapshot());
+      }
+    },
+    onAutoCompleted: () => {
+      void browserHost?.completeExternalLogin?.().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn("browser.external_login_auto_complete_failed", { message });
+        browserHost?.setState?.({ status: "error", message, loading: false });
+      });
+    },
+    onUnexpectedExit: (message) => {
+      browserHost?.setState?.({ status: "error", message, loading: false });
+    },
+  });
   browserHost = new BrowserHost({
     window: mainWindow,
     descriptorPath: BROWSER_DESCRIPTOR_PATH,
@@ -534,6 +606,7 @@ async function start() {
     provider: stateStore.read().selectedProvider,
     providerRegistry,
     providerProfiles: stateStore.read().providerProfiles,
+    externalChromeLogin,
     onProviderProfilesChanged: (providerId, group) => {
       const current = stateStore.read();
       const next = stateStore.update({

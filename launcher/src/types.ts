@@ -179,6 +179,14 @@ export interface LauncherState {
   selectedProvider: string;
 }
 
+export interface ExternalLoginState {
+  active: boolean;
+  status: "waiting" | "importing";
+  providerId: string;
+  profileId: string;
+  profileName: string;
+}
+
 export interface BrowserState {
   status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
   message: string;
@@ -187,6 +195,7 @@ export interface BrowserState {
   authenticated: boolean;
   authenticatedByProvider?: Record<string, boolean>;
   providers?: BrowserProviderInfo[];
+  externalLogin?: ExternalLoginState | null;
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -287,6 +296,9 @@ export interface LauncherApi {
   ): Promise<{ snapshot: BrowserState; profile: BrowserProfileInfo }>;
   deleteProviderProfile(providerId: string, profileId: string): Promise<BrowserState>;
   openLogin(providerId?: string, profileId?: string): Promise<BrowserState>;
+  startExternalLogin(providerId?: string, profileId?: string): Promise<BrowserState>;
+  completeExternalLogin(): Promise<BrowserState>;
+  cancelExternalLogin(): Promise<BrowserState>;
   smokeTest(
     providerId?: string,
     profileId?: string,

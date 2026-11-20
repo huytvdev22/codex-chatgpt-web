@@ -656,7 +656,10 @@ function BrowserSurface({
 }) {
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const [switchingProfile, setSwitchingProfile] = useState(false);
+  const [externalLoginBusy, setExternalLoginBusy] = useState(false);
   const visible = browser?.visible === true;
+  const externalLogin = browser?.externalLogin ?? null;
+  const externalLoginActive = Boolean(externalLogin?.active);
   const navigationLocked = browser?.status === "running" || browser?.status === "testing";
   const activeProviderId = browser?.provider || providers[0]?.id || "m365";
   const activeProvider = providers.find((item) => item.id === activeProviderId) ?? providers[0];
@@ -664,7 +667,11 @@ function BrowserSurface({
   const supportsProfiles = activeProvider?.supportsProfiles === true;
   const profiles = activeProvider?.profiles ?? [];
   const activeProfileId = activeProvider?.activeProfileId || "default";
-  const profileControlLocked = switchingProvider || switchingProfile || navigationLocked;
+  const activeProfile = profiles.find((item) => item.id === activeProfileId);
+  const profileControlLocked = switchingProvider || switchingProfile || navigationLocked || externalLoginActive;
+  const showChromeSignInAssist = activeProviderId === "ai-studio"
+    && (externalLoginActive || (visible && (!browser?.authenticated || browser?.url?.includes("accounts.google.com"))));
+  const isGoogleRejectedUrl = Boolean(browser?.url?.includes("accounts.google.com/v3/signin/rejected"));
   const switchProvider = async (providerId: string) => {
     if (switchingProvider || navigationLocked || providerId === activeProviderId) return;
     setSwitchingProvider(true);
@@ -700,6 +707,42 @@ function BrowserSurface({
       setError(messageOf(cause));
     } finally {
       setSwitchingProfile(false);
+    }
+  };
+  const startExternalChromeLogin = async (providerId = activeProviderId, profileId = activeProfileId) => {
+    if (externalLoginBusy || navigationLocked || switchingProvider) return;
+    setExternalLoginBusy(true);
+    setError(null);
+    try {
+      await api!.startExternalLogin(providerId, profileId);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setExternalLoginBusy(false);
+    }
+  };
+  const completeExternalChromeLogin = async () => {
+    if (externalLoginBusy) return;
+    setExternalLoginBusy(true);
+    setError(null);
+    try {
+      await api!.completeExternalLogin();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setExternalLoginBusy(false);
+    }
+  };
+  const cancelExternalChromeLogin = async () => {
+    if (externalLoginBusy) return;
+    setExternalLoginBusy(true);
+    setError(null);
+    try {
+      await api!.cancelExternalLogin();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setExternalLoginBusy(false);
     }
   };
   const navigate = async (action: "back" | "forward" | "reload") => {
@@ -869,6 +912,58 @@ function BrowserSurface({
         ) : null}
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
+      {showChromeSignInAssist ? (
+        <div className={`browser-auth-assist-bar${isGoogleRejectedUrl ? " is-warning" : ""}`}>
+          {externalLoginActive && externalLogin ? (
+            <>
+              <span className="browser-auth-assist-text">
+                {externalLogin.status === "importing"
+                  ? `Importing Google Chrome session for ${externalLogin.profileName}...`
+                  : `Chrome window opened for ${externalLogin.profileName}. Sign in to Google AI Studio in Chrome, then click Import session.`}
+              </span>
+              <div className="browser-auth-assist-actions">
+                <PrimaryButton
+                  disabled={externalLoginBusy || externalLogin.status === "importing"}
+                  onClick={() => void completeExternalChromeLogin()}
+                >
+                  {externalLogin.status === "importing" ? "Importing..." : "Import session"}
+                </PrimaryButton>
+                <SecondaryButton
+                  disabled={externalLoginBusy || externalLogin.status === "importing"}
+                  onClick={() => void cancelExternalChromeLogin()}
+                >
+                  Cancel
+                </SecondaryButton>
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="browser-auth-assist-text">
+                {isGoogleRejectedUrl
+                  ? `Google blocked embedded sign-in for ${activeProfile?.name || providerLabel}. Sign in using your system Google Chrome window:`
+                  : `Need 2FA, Passkey, or having sign-in trouble for ${activeProfile?.name || providerLabel}?`}
+              </span>
+              <div className="browser-auth-assist-actions">
+                {isGoogleRejectedUrl ? (
+                  <PrimaryButton
+                    disabled={externalLoginBusy || navigationLocked}
+                    onClick={() => void startExternalChromeLogin(activeProviderId, activeProfileId)}
+                  >
+                    Sign in with Chrome
+                  </PrimaryButton>
+                ) : (
+                  <SecondaryButton
+                    disabled={externalLoginBusy || navigationLocked}
+                    onClick={() => void startExternalChromeLogin(activeProviderId, activeProfileId)}
+                  >
+                    Sign in with Chrome
+                  </SecondaryButton>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
       <div className="browser-viewport" ref={browserSlotRef}>
         {!visible ? (
           <div className="browser-empty">
@@ -1113,6 +1208,17 @@ function SetupSurface({
                                 >
                                   {profile.authenticated ? "Open" : "Sign in"}
                                 </SecondaryButton>
+                                {!profile.authenticated ? (
+                                  <SecondaryButton
+                                    disabled={globalActionDisabled}
+                                    onClick={() => void run(async () => {
+                                      await activateBrowser(true);
+                                      await api!.startExternalLogin(provider.id, profile.id);
+                                    })}
+                                  >
+                                    Chrome
+                                  </SecondaryButton>
+                                ) : null}
                                 <SecondaryButton
                                   disabled={globalActionDisabled}
                                   onClick={() => {

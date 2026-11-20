@@ -121,6 +121,7 @@ class BrowserHost {
     providerRegistry = null,
     providerProfiles = null,
     onProviderProfilesChanged = null,
+    externalChromeLogin = null,
   }) {
     this.window = window;
     this.descriptorPath = descriptorPath;
@@ -131,6 +132,7 @@ class BrowserHost {
     this.helper = helper;
     this.logger = logger;
     this.onProviderProfilesChanged = onProviderProfilesChanged;
+    this.externalChromeLogin = externalChromeLogin;
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
@@ -313,6 +315,9 @@ class BrowserHost {
     if (this.manualOperation || this.loginOperation) {
       throw new Error(`Browser is busy with ${this.currentOperation()}`);
     }
+    if (this.externalChromeLogin?.getState?.()?.active) {
+      throw new Error("Finish or cancel the active Chrome sign-in session first");
+    }
     return providerObj;
   }
 
@@ -360,6 +365,9 @@ class BrowserHost {
 
   async switchProvider(providerId) {
     if (!hasProviderOnHost(this, providerId)) return this.snapshot();
+    if (this.externalChromeLogin?.getState?.()?.active) {
+      throw new Error("Finish or cancel the active Chrome sign-in session first");
+    }
     const providerObj = resolveProviderFromHost(this, providerId);
     this.provider = providerObj.id;
     const viewExisted = this.primaryViewManager.has(providerObj.id);
@@ -872,6 +880,7 @@ class BrowserHost {
       provider: this.provider,
       providers: typeof this.listProviders === "function" ? this.listProviders() : [],
       authenticatedByProvider: { ...(this.authenticatedByProvider || {}) },
+      externalLogin: this.externalChromeLogin?.getState?.() ?? null,
       tabs: includeHomeTab
         ? (this.turnTabs.size > 0
             ? [
@@ -1372,6 +1381,139 @@ class BrowserHost {
     return this.snapshot();
   }
 
+  async startExternalLogin(providerId = this.provider, profileId = null) {
+    if (!this.externalChromeLogin) {
+      throw new Error("External Chrome sign-in is unavailable");
+    }
+    if (this.externalChromeLogin.getState()?.active) {
+      return this.snapshot();
+    }
+    if (this.activeTraceId || [...this.turnTabs.values()].some((tab) => tab.status === "running")) {
+      throw new Error("Cannot start Chrome sign-in while a Codex turn is running");
+    }
+    if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
+      await this.switchProvider(providerId);
+    }
+    const providerObj = resolveProviderFromHost(this);
+    if (profileId
+      && providerObj.isProfileSupported?.()
+      && profileId !== providerObj.getActiveProfileId()
+      && typeof this.switchProviderProfile === "function") {
+      await this.switchProviderProfile(providerObj.id, profileId);
+    }
+    const activeProfileId = providerObj.getActiveProfileId?.() || "default";
+    const activeProfile = providerObj.getProfiles?.().find((item) => item.id === activeProfileId);
+    const profileName = activeProfile?.name || providerObj.displayName;
+
+    this.externalChromeLogin.start({
+      providerId: providerObj.id,
+      profileId: activeProfileId,
+      profileName,
+      targetUrl: providerObj.homeUrl,
+    });
+    this.homeSurfaceOpen = true;
+    this.activateHomeSurface();
+    this.show();
+    return this.snapshot();
+  }
+
+  async completeExternalLogin() {
+    if (!this.externalChromeLogin) {
+      throw new Error("External Chrome sign-in is unavailable");
+    }
+    if (this.externalLoginCompletion) {
+      return await this.externalLoginCompletion;
+    }
+    const operation = (async () => {
+      const sessionData = await this.externalChromeLogin.complete();
+      const targetProviderId = sessionData.providerId || this.provider;
+      const targetProviderObj = resolveProviderFromHost(this, targetProviderId);
+      return await this.withManualOperation(`${targetProviderObj.displayName} Chrome sign-in`, async () => {
+        if (this.provider !== targetProviderId && typeof this.switchProvider === "function") {
+          await this.switchProvider(targetProviderId);
+        }
+        const providerObj = resolveProviderFromHost(this);
+        if (sessionData.profileId
+          && providerObj.isProfileSupported?.()
+          && sessionData.profileId !== providerObj.getActiveProfileId()
+          && typeof this.switchProviderProfile === "function") {
+          await this.switchProviderProfile(providerObj.id, sessionData.profileId);
+        }
+        if (this.authView) this.closeAuthView(this.authView, true, false);
+        const contents = this.view?.webContents;
+        if (!contents || contents.isDestroyed()) {
+          throw new Error("Embedded browser session is unavailable");
+        }
+        const browserSession = contents.session;
+        this.homeSurfaceOpen = true;
+        await contents.loadURL(IDLE_BROWSER_URL);
+        await browserSession.clearStorageData({ storages: ["cookies", "localstorage"] });
+        for (const cookie of sessionData.cookies) {
+          try {
+            await browserSession.cookies.set(cookie);
+          } catch (cookieError) {
+            this.logger?.warn?.("browser.external_login_cookie_rejected", {
+              name: cookie?.name,
+              message: cookieError instanceof Error ? cookieError.message : String(cookieError),
+            });
+          }
+        }
+        browserSession.flushStorageData?.();
+        await browserSession.cookies?.flushStore?.();
+        await contents.loadURL(providerObj.homeUrl);
+
+        if (Array.isArray(sessionData.localStorage) && sessionData.localStorage.length > 0) {
+          const applied = await contents.executeJavaScript(`(() => {
+            if (location.origin !== ${JSON.stringify(sessionData.origin)}) return false;
+            for (const entry of ${JSON.stringify(sessionData.localStorage)}) {
+              if (entry && typeof entry.name === "string" && typeof entry.value === "string") {
+                localStorage.setItem(entry.name, entry.value);
+              }
+            }
+            return true;
+          })()`, true).catch(() => false);
+          if (applied) {
+            await contents.loadURL(providerObj.homeUrl);
+          }
+        }
+
+        for (let attempt = 0; attempt < 15; attempt += 1) {
+          if (contents.isDestroyed()) break;
+          const probe = await providerObj.probeAuthentication(contents).catch(() => null);
+          if (probe?.authenticated) break;
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+
+        await this.probeAuthentication();
+        if (!this.authenticatedByProvider?.[providerObj.id]) {
+          throw new Error(
+            `${providerObj.displayName} did not recognize a signed-in session after importing Chrome cookies. Please complete sign-in in Chrome and try again.`,
+          );
+        }
+        await this.persistSession();
+        this.activateHomeSurface();
+        this.show();
+        return this.snapshot();
+      });
+    })();
+
+    const tracked = operation.finally(() => {
+      if (this.externalLoginCompletion === tracked) {
+        this.externalLoginCompletion = null;
+      }
+    });
+    this.externalLoginCompletion = tracked;
+    return await tracked;
+  }
+
+  async cancelExternalLogin() {
+    if (!this.externalChromeLogin) return this.snapshot();
+    await this.externalChromeLogin.cancel();
+    const snap = this.snapshot();
+    this.publishState?.(snap);
+    return snap;
+  }
+
   async logout() {
     const providerObj = resolveProviderFromHost(this);
     return await this.withManualOperation(`${providerObj.displayName} logout`, async () => {
@@ -1651,6 +1793,7 @@ class BrowserHost {
     this.turnTabManager?.destroy();
     this.primaryViewManager?.destroyAll();
     this.providerViews?.clear();
+    this.externalChromeLogin?.destroy?.();
     this.view = null;
   }
 }

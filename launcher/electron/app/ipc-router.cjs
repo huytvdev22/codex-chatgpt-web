@@ -217,6 +217,18 @@ class IpcRouter {
       if (!getBrowserHost()) await awaitRuntimeStartup();
       return await getBrowserHost().openLogin(providerId, profileId);
     });
+    handle("launcher:browser-external-login-start", async (_event, providerId, profileId = null) => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return await getBrowserHost().startExternalLogin(providerId, profileId);
+    });
+    handle("launcher:browser-external-login-complete", async () => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return await getBrowserHost().completeExternalLogin();
+    });
+    handle("launcher:browser-external-login-cancel", async () => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return await getBrowserHost().cancelExternalLogin();
+    });
     handle("launcher:browser-smoke", async (_event, providerId, profileId = null) => {
       const browserHost = getBrowserHost();
       const result = await browserHost.smokeTest(providerId, profileId);

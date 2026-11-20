@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **093** | Google Sign-In báo "Couldn't sign you in" ở Embedded Electron -> Bổ sung Sign in with Chrome & Import Cookie | `ai-studio`, `electron`, `launcher`, `chrome-login` | ✅ Đã Confirm | [093-google-signin-rejected-automation-controlled.md](./093-google-signin-rejected-automation-controlled.md) |
 | **092** | Hỗ trợ Đa Profile Google AI Studio (1-Click Switcher & Cách ly Partition) | `ai-studio`, `launcher`, `electron`, `profiles` | ⏳ Chờ User Test & Confirm | [092-ai-studio-multi-profile-partition-isolation.md](./092-ai-studio-multi-profile-partition-isolation.md) |
 | **091** | Cấu hình AI Studio 1M Token, Khớp Context Window Codex & Fix Treo Abort/Network Khi Tab Ẩn | `ai-studio`, `model-catalog`, `codex-usage`, `web-turn-engine` | ⏳ Chờ User Test & Confirm | [091-ai-studio-1m-context-window-and-abort-hang-fix.md](./091-ai-studio-1m-context-window-and-abort-hang-fix.md) |
 | **090** | Giảm tải Main Thread UI trong `AiStudioDomObserver` & Smart Auto-Scroll | `ai-studio`, `playwright`, `performance` | ⏳ Chờ User Test & Confirm | [090-ai-studio-dom-polling-reflow-and-smart-autoscroll.md](./090-ai-studio-dom-polling-reflow-and-smart-autoscroll.md) |
