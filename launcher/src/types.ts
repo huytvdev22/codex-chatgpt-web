@@ -125,6 +125,17 @@ export interface PersonalizationSettings {
   updatedAt: string | null;
 }
 
+export interface BrowserProfileInfo {
+  id: string;
+  name: string;
+  authenticated: boolean;
+}
+
+export interface ProviderProfilesGroup {
+  activeProfileId: string;
+  profiles: BrowserProfileInfo[];
+}
+
 export interface BrowserProviderInfo {
   id: string;
   displayName: string;
@@ -132,6 +143,9 @@ export interface BrowserProviderInfo {
   partition: string;
   active: boolean;
   authenticated: boolean;
+  supportsProfiles?: boolean;
+  activeProfileId?: string;
+  profiles?: BrowserProfileInfo[];
 }
 
 export interface ProviderSmokeStatus {
@@ -160,6 +174,7 @@ export interface LauncherState {
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
   codexRestartRequired?: boolean;
+  providerProfiles?: Record<string, ProviderProfilesGroup>;
   sessionRefreshReminderAt: string | null;
   selectedProvider: string;
 }
@@ -192,6 +207,7 @@ export interface BrowserTabState {
   loading: boolean;
   active: boolean;
   closable: boolean;
+  profileId?: string;
 }
 
 export interface DoctorCheck {
@@ -259,8 +275,22 @@ export interface LauncherApi {
   closeBrowserTab(tabId: string): Promise<BrowserState>;
   listProviders(): Promise<BrowserProviderInfo[]>;
   switchProvider(providerId: string): Promise<BrowserState>;
-  openLogin(providerId?: string): Promise<BrowserState>;
-  smokeTest(providerId?: string): Promise<{ ok: boolean; effort: string; response: string }>;
+  switchProviderProfile(providerId: string, profileId: string): Promise<BrowserState>;
+  createProviderProfile(
+    providerId: string,
+    name?: string,
+  ): Promise<{ snapshot: BrowserState; profile: BrowserProfileInfo }>;
+  renameProviderProfile(
+    providerId: string,
+    profileId: string,
+    name: string,
+  ): Promise<{ snapshot: BrowserState; profile: BrowserProfileInfo }>;
+  deleteProviderProfile(providerId: string, profileId: string): Promise<BrowserState>;
+  openLogin(providerId?: string, profileId?: string): Promise<BrowserState>;
+  smokeTest(
+    providerId?: string,
+    profileId?: string,
+  ): Promise<{ ok: boolean; effort: string; response: string }>;
   doctor(): Promise<DoctorReport>;
   openSwagger(): Promise<{ url: string }>;
   cancelTurns(): Promise<{ stdout: string }>;

@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const { randomBytes } = require("node:crypto");
-const { WebContentsView, shell } = require("electron");
+const { WebContentsView, session, shell } = require("electron");
 const { writePrivateFileAtomic } = require("../infra/atomic-file.cjs");
 const { PrimaryViewManager } = require("./primary-view-manager.cjs");
 const { BrowserProviderRegistry } = require("./providers/browser-provider-registry.cjs");
@@ -119,6 +119,8 @@ class BrowserHost {
     getUseSavedChats = () => false,
     provider = null,
     providerRegistry = null,
+    providerProfiles = null,
+    onProviderProfilesChanged = null,
   }) {
     this.window = window;
     this.descriptorPath = descriptorPath;
@@ -128,10 +130,18 @@ class BrowserHost {
     this.getConnectorName = getConnectorName;
     this.helper = helper;
     this.logger = logger;
+    this.onProviderProfilesChanged = onProviderProfilesChanged;
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
     this.providerRegistry = providerRegistry || createDefaultProviderRegistry({ descriptorPath, profile });
+    if (providerProfiles && typeof providerProfiles === "object") {
+      for (const registeredProvider of this.providerRegistry.list()) {
+        if (registeredProvider.isProfileSupported?.() && providerProfiles[registeredProvider.id]) {
+          registeredProvider.configureProfiles(providerProfiles[registeredProvider.id]);
+        }
+      }
+    }
     const requestedProvider = provider || this.providerRegistry.defaultId();
     const activeProvider = resolveProviderFromHost(this, requestedProvider);
 
@@ -155,7 +165,10 @@ class BrowserHost {
     this.surfaceId = initialSurfaceId;
     this.authenticatedByProvider = {};
     for (const registeredProvider of this.providerRegistry.list()) {
-      this.authenticatedByProvider[registeredProvider.id] = false;
+      const activeProfile = registeredProvider.isProfileSupported?.()
+        ? registeredProvider.getProfiles?.().find((p) => p.id === registeredProvider.getActiveProfileId?.())
+        : null;
+      this.authenticatedByProvider[registeredProvider.id] = Boolean(activeProfile?.authenticated);
     }
     this.providerViews = new Map();
 
@@ -272,7 +285,49 @@ class BrowserHost {
       partition: providerObj.partition,
       active: providerObj.id === this.provider,
       authenticated: Boolean(this.authenticatedByProvider?.[providerObj.id]),
+      supportsProfiles: Boolean(providerObj.isProfileSupported?.()),
+      activeProfileId: providerObj.getActiveProfileId?.() || "default",
+      profiles: providerObj.getProfiles?.() || [],
     }));
+  }
+
+  _persistProviderProfiles(providerObj) {
+    if (!providerObj?.isProfileSupported?.()) return;
+    this.onProviderProfilesChanged?.(providerObj.id, {
+      activeProfileId: providerObj.getActiveProfileId(),
+      profiles: providerObj.getProfiles(),
+    });
+  }
+
+  _assertProfileMutationAllowed(providerId) {
+    if (!hasProviderOnHost(this, providerId)) {
+      throw new Error(`Unknown browser provider: ${providerId}`);
+    }
+    const providerObj = resolveProviderFromHost(this, providerId);
+    if (!providerObj.isProfileSupported?.()) {
+      throw new Error(`${providerObj.displayName} does not support multiple profiles`);
+    }
+    if (this.activeTraceId || [...this.turnTabs.values()].some((tab) => tab.status === "running")) {
+      throw new Error(`Cannot switch or modify profiles while a Codex turn is running`);
+    }
+    if (this.manualOperation || this.loginOperation) {
+      throw new Error(`Browser is busy with ${this.currentOperation()}`);
+    }
+    return providerObj;
+  }
+
+  _destroyManagedPrimaryView(providerId) {
+    const view = this.primaryViewManager?.get?.(providerId) || this.providerViews?.get?.(providerId) || null;
+    const contents = view?.webContents;
+    if (contents && this.shellZoomShortcutBindings) {
+      const binding = this.shellZoomShortcutBindings.get(contents);
+      if (binding && !contents.isDestroyed?.()) {
+        contents.off?.("before-input-event", binding);
+      }
+      this.shellZoomShortcutBindings.delete(contents);
+    }
+    this.primaryViewManager?.destroy?.(providerId);
+    this.providerViews?.delete?.(providerId);
   }
 
   releaseInactivePrimaryViews(activeProvider) {
@@ -344,6 +399,120 @@ class BrowserHost {
 
     this.syncViewVisibility();
     await this.probeAuthentication();
+    this.writeDescriptor();
+    const snap = this.snapshot();
+    this.publishState?.(snap);
+    return snap;
+  }
+
+  async switchProviderProfile(providerId, profileId) {
+    const providerObj = this._assertProfileMutationAllowed(providerId);
+    const prevProfileId = providerObj.getActiveProfileId();
+    const nextProfileId = providerObj.setActiveProfile(profileId);
+
+    const activeProfile = providerObj.getProfiles().find((item) => item.id === nextProfileId);
+    const cachedAuth = Boolean(activeProfile?.authenticated);
+    this.authenticatedByProvider ||= {};
+    this.authenticatedByProvider[providerObj.id] = cachedAuth;
+
+    if (prevProfileId !== nextProfileId) {
+      this._destroyManagedPrimaryView(providerObj.id);
+    }
+
+    if (this.provider === providerObj.id) {
+      const viewExisted = this.primaryViewManager.has(providerObj.id);
+      this.view = this.primaryViewManager.ensure(providerObj.id);
+      if (!viewExisted) {
+        this.primaryRendererReady = false;
+        this.primaryDeviceEmulationDirty = true;
+        this.primaryDeviceEmulationViewport = null;
+        this.view.webContents.setZoomFactor(this.state.zoomFactor);
+        this.bindShellZoomShortcuts(this.view.webContents);
+        this.bindWebContents(this.view, providerObj.id);
+        this.bindAuthenticationChanges();
+      }
+      this.surfaceId = surfaceIdForHost(this, providerObj.id);
+      this.partition = providerObj.partition;
+      this.setState({
+        provider: providerObj.id,
+        title: providerObj.getFallbackTitle(),
+        authenticated: cachedAuth,
+      });
+
+      this.releaseInactivePrimaryViews(providerObj.id);
+      this.primaryViewManager.activate(
+        providerObj.id,
+        this.boundsReady ? this.bounds : this.hiddenTurnBounds(),
+      );
+
+      const currentUrl = this.view.webContents.getURL() || "";
+      if (!providerObj.isAuthOrAppUrl(currentUrl)) {
+        try {
+          await this.view.webContents.loadURL(providerObj.homeUrl);
+        } catch (err) {
+          this.logger.error("browser.switch_profile_load_failed", {
+            provider: providerObj.id,
+            profileId: nextProfileId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      await this.probeAuthentication();
+      if (!this.homeSurfaceOpen) {
+        this.parkIdlePrimaryView();
+      }
+      this.syncViewVisibility();
+    }
+
+    this._persistProviderProfiles(providerObj);
+    this.writeDescriptor();
+    const snap = this.snapshot();
+    this.publishState?.(snap);
+    return snap;
+  }
+
+  createProviderProfile(providerId, name = "") {
+    const providerObj = this._assertProfileMutationAllowed(providerId);
+    const profile = providerObj.createProfile(name);
+    this._persistProviderProfiles(providerObj);
+    const snap = this.snapshot();
+    this.publishState?.(snap);
+    return { snapshot: snap, profile };
+  }
+
+  renameProviderProfile(providerId, profileId, name) {
+    if (!hasProviderOnHost(this, providerId)) {
+      throw new Error(`Unknown browser provider: ${providerId}`);
+    }
+    const providerObj = resolveProviderFromHost(this, providerId);
+    const profile = providerObj.renameProfile(profileId, name);
+    this._persistProviderProfiles(providerObj);
+    const snap = this.snapshot();
+    this.publishState?.(snap);
+    return { snapshot: snap, profile };
+  }
+
+  async deleteProviderProfile(providerId, profileId) {
+    const providerObj = this._assertProfileMutationAllowed(providerId);
+    const normalizedId = typeof profileId === "string" ? profileId.trim().toLowerCase() : "";
+    if (normalizedId === providerObj.getActiveProfileId() && normalizedId !== "default") {
+      await this.switchProviderProfile(providerObj.id, "default");
+    }
+    for (const tab of [...this.turnTabs.values()]) {
+      if ((tab.provider || this.provider) === providerObj.id
+        && (tab.profileId || "default") === normalizedId
+        && tab.status !== "running") {
+        this.removeTurnTab(tab, false);
+      }
+    }
+    const removed = providerObj.deleteProfile(normalizedId);
+    if (removed.storePath) {
+      try { fs.rmSync(removed.storePath, { force: true }); } catch {}
+    }
+    if (removed.partition && session && typeof session.fromPartition === "function") {
+      await session.fromPartition(removed.partition)?.clearStorageData?.().catch(() => {});
+    }
+    this._persistProviderProfiles(providerObj);
     this.writeDescriptor();
     const snap = this.snapshot();
     this.publishState?.(snap);
@@ -1182,11 +1351,17 @@ class BrowserHost {
     });
   }
 
-  async openLogin(providerId) {
+  async openLogin(providerId, profileId = null) {
     if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
       await this.switchProvider(providerId);
     }
     const providerObj = resolveProviderFromHost(this);
+    if (profileId
+      && providerObj.isProfileSupported?.()
+      && profileId !== providerObj.getActiveProfileId()
+      && typeof this.switchProviderProfile === "function") {
+      await this.switchProviderProfile(providerObj.id, profileId);
+    }
     this.homeSurfaceOpen = true;
     this.activateHomeSurface();
     this.show();
@@ -1205,6 +1380,8 @@ class BrowserHost {
       await contents.session.clearStorageData();
       this.authenticatedByProvider ||= {};
       this.authenticatedByProvider[providerObj.id] = false;
+      providerObj.updateProfileAuthentication?.(providerObj.getActiveProfileId?.(), false);
+      this._persistProviderProfiles?.(providerObj);
       this.setState({
         authenticated: false,
         loading: true,
@@ -1265,6 +1442,8 @@ class BrowserHost {
       if (result.authenticated) {
         this.reauthenticationRequired = false;
         this.authenticatedByProvider[providerObj.id] = true;
+        providerObj.updateProfileAuthentication?.(providerObj.getActiveProfileId?.(), true);
+        this._persistProviderProfiles?.(providerObj);
         if (this.authView && !this.authView.webContents.isDestroyed()) {
           this.closeAuthView(this.authView, true, false);
         }
@@ -1280,6 +1459,8 @@ class BrowserHost {
         });
       } else {
         this.authenticatedByProvider[providerObj.id] = false;
+        providerObj.updateProfileAuthentication?.(providerObj.getActiveProfileId?.(), false);
+        this._persistProviderProfiles?.(providerObj);
         const loaded = result.readyState === "complete";
         this.setState({
           status: loaded ? "signed-out" : "loading",
@@ -1301,9 +1482,16 @@ class BrowserHost {
     return tracked;
   }
 
-  async smokeTest(providerId) {
+  async smokeTest(providerId, profileId = null) {
     if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
       await this.switchProvider(providerId);
+    }
+    const providerObj = resolveProviderFromHost(this);
+    if (profileId
+      && providerObj.isProfileSupported?.()
+      && profileId !== providerObj.getActiveProfileId()
+      && typeof this.switchProviderProfile === "function") {
+      await this.switchProviderProfile(providerObj.id, profileId);
     }
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
   }

@@ -2163,3 +2163,193 @@ test("initializeTurnTab absorbs ERR_ABORTED redirect and retries on commit timeo
   assert.equal(marked, true);
   assert.equal(tab.initializingSurface, false);
 });
+
+test("AiStudioBrowserProvider & TurnTabManager cô lập partition, ConversationStore và retained tab theo từng profile", async () => {
+  const nodeOs = require("node:os");
+  const nodePath = require("node:path");
+  const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const { TurnTabManager } = require("../electron/browser/turn-tab-manager.cjs");
+  const dir = fs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "ai-studio-profiles-"));
+  try {
+    const descriptorPath = nodePath.join(dir, "launcher-browser.json");
+    const provider = new AiStudioBrowserProvider({ descriptorPath });
+    assert.equal(provider.isProfileSupported(), true);
+    assert.equal(provider.getActiveProfileId(), "default");
+    assert.equal(provider.partitionForProfile("default"), "persist:codex-web-aistudio");
+
+    const p2 = provider.createProfile("Work Gmail");
+    assert.equal(p2.id, "p2");
+    assert.equal(p2.name, "Work Gmail");
+    assert.equal(provider.partitionForProfile("p2"), "persist:codex-web-aistudio-p2");
+
+    const convKey = "a".repeat(64);
+    provider.bind(convKey, "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb", "default");
+    provider.bind(convKey, "2g5WLlcLH6QyduSNLWZO5cS4USCdd2SPc", "p2");
+    assert.equal(provider.conversationId(convKey, "default"), "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb");
+    assert.equal(provider.conversationId(convKey, "p2"), "2g5WLlcLH6QyduSNLWZO5cS4USCdd2SPc");
+    assert.equal(fs.existsSync(nodePath.join(dir, "ai-studio-conversations.json")), true);
+    assert.equal(fs.existsSync(nodePath.join(dir, "ai-studio-profile-p2-conversations.json")), true);
+
+    provider.setActiveProfile("p2");
+    assert.equal(provider.partition, "persist:codex-web-aistudio-p2");
+
+    const readyTabDefault = {
+      id: "tab-default-1",
+      surfaceId: "surf-default",
+      traceId: "trace-default-1",
+      conversationKey: convKey,
+      connectorIdentity: undefined,
+      connectorBound: false,
+      provider: "ai-studio",
+      profileId: "default",
+      conversationId: "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb",
+      helperPid: 111,
+      status: "ready",
+      lastHeartbeatAt: Date.now(),
+      view: { webContents: { isDestroyed: () => false, setBackgroundThrottling() {} } },
+    };
+
+    const createdTabs = [];
+    const fakeHost = {
+      provider: "ai-studio",
+      turnTabs: new Map([[readyTabDefault.id, readyTabDefault]]),
+      closedTurnOwners: new Map(),
+      userCancelledTurnOwners: new Map(),
+      lastClosedAtByProvider: new Map(),
+      providerRegistry: {
+        has: (id) => id === "ai-studio",
+        get: () => provider,
+      },
+      logger: { info() {}, warn() {}, error() {} },
+      snapshot() { return {}; },
+      publishState() {},
+      writeDescriptor() {},
+      syncViewVisibility() {},
+      parkIdlePrimaryView() {},
+      async createTurnTab(traceId, _helperPid, conversationKeyArg, _conn, _sig, providerId) {
+        const activeId = provider.getActiveProfileId();
+        const created = {
+          id: "tab-p2-1",
+          surfaceId: "surf-p2",
+          traceId,
+          conversationKey: conversationKeyArg,
+          connectorBound: false,
+          provider: providerId,
+          profileId: activeId,
+          conversationId: provider.conversationId(conversationKeyArg, activeId),
+          status: "running",
+          view: { webContents: { isDestroyed: () => false, setBackgroundThrottling() {} } },
+        };
+        createdTabs.push(created);
+        fakeHost.turnTabs.set(created.id, created);
+        return created;
+      },
+    };
+
+    const manager = new TurnTabManager(fakeHost, { standalone: true, aiStudioReopenCooldownMs: 0 });
+    const lease = await manager.beginTurn(
+      "trace-p2-1",
+      false,
+      222,
+      convKey,
+      undefined,
+      false,
+      "ai-studio",
+      new AbortController().signal,
+    );
+    assert.equal(lease.reused, false);
+    assert.equal(lease.tabId, "tab-p2-1");
+    assert.equal(createdTabs.length, 1);
+    assert.equal(createdTabs[0].profileId, "p2");
+    assert.equal(createdTabs[0].conversationId, "2g5WLlcLH6QyduSNLWZO5cS4USCdd2SPc");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("BrowserHost.switchProviderProfile khóa khi turn đang chạy và tạo lại PrimaryView theo partition mới", async () => {
+  const { BrowserHost } = require("../electron/browser/browser-host.cjs");
+  const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const { BrowserProviderRegistry } = require("../electron/browser/providers/browser-provider-registry.cjs");
+
+  const provider = new AiStudioBrowserProvider();
+  provider.createProfile("Account 2");
+  const registry = new BrowserProviderRegistry();
+  registry.register(provider);
+
+  const persisted = [];
+  const destroyedKeys = [];
+  const ensuredKeys = [];
+  const newView = {
+    webContents: {
+      isDestroyed: () => false,
+      getURL: () => "https://aistudio.google.com/prompts/new_chat",
+      setZoomFactor() {},
+      setBackgroundThrottling() {},
+      on() {},
+      off() {},
+      once() {},
+      setWindowOpenHandler() {},
+      loadURL: async () => {},
+      session: { cookies: { on() {}, off() {} }, clearStorageData: async () => {} },
+    },
+    setBounds() {},
+    setVisible() {},
+  };
+
+  const fakeHost = {
+    provider: "ai-studio",
+    providerRegistry: registry,
+    turnTabs: new Map([["t1", { status: "running", traceId: "trace-running-1" }]]),
+    activeTraceId: "trace-running-1",
+    manualOperation: null,
+    loginOperation: null,
+    primaryViewManager: {
+      has: () => false,
+      get: () => newView,
+      destroy: (k) => destroyedKeys.push(k),
+      ensure: (k) => {
+        ensuredKeys.push(k);
+        return newView;
+      },
+      activate() {},
+    },
+    providerViews: new Map(),
+    shellZoomShortcutBindings: new Map(),
+    surfaceIds: new Map(),
+    state: { zoomFactor: 1 },
+    homeSurfaceOpen: false,
+    boundsReady: false,
+    onProviderProfilesChanged: (id, group) => persisted.push({ id, group }),
+    _persistProviderProfiles: BrowserHost.prototype._persistProviderProfiles,
+    _assertProfileMutationAllowed: BrowserHost.prototype._assertProfileMutationAllowed,
+    _destroyManagedPrimaryView: BrowserHost.prototype._destroyManagedPrimaryView,
+    bindShellZoomShortcuts() {},
+    bindWebContents() {},
+    bindAuthenticationChanges() {},
+    setState() {},
+    releaseInactivePrimaryViews() {},
+    hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1024, height: 720 }),
+    probeAuthentication: async () => ({ authenticated: false }),
+    parkIdlePrimaryView() {},
+    syncViewVisibility() {},
+    writeDescriptor() {},
+    snapshot: () => ({ provider: "ai-studio", providers: BrowserHost.prototype.listProviders.call(fakeHost) }),
+    publishState() {},
+  };
+
+  await assert.rejects(
+    BrowserHost.prototype.switchProviderProfile.call(fakeHost, "ai-studio", "p2"),
+    /while a Codex turn is running/,
+  );
+
+  fakeHost.activeTraceId = null;
+  fakeHost.turnTabs.clear();
+  const snap = await BrowserHost.prototype.switchProviderProfile.call(fakeHost, "ai-studio", "p2");
+  assert.equal(provider.getActiveProfileId(), "p2");
+  assert.equal(fakeHost.partition, "persist:codex-web-aistudio-p2");
+  assert.deepEqual(destroyedKeys, ["ai-studio"]);
+  assert.deepEqual(ensuredKeys, ["ai-studio"]);
+  assert.equal(persisted.at(-1)?.group?.activeProfileId, "p2");
+  assert.equal(snap.providers[0].activeProfileId, "p2");
+});

@@ -521,3 +521,39 @@ test("launcher descriptor and turn lifecycle accept generalized providerSurfaceI
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+test("readLauncherBrowserHostDescriptor chấp nhận partition đa profile cho Google AI Studio (prod & dev)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "launcher-profile-desc-"));
+  roots.push(dir);
+
+  const helperExec = process.execPath;
+  const helperScript = join(dir, "helper.cjs");
+  writeFileSync(helperScript, "module.exports = {};\n");
+
+  for (const [profileKind, partition] of [
+    ["production", "persist:codex-web-aistudio-p2"],
+    ["development", "persist:codex-web-gpt-dev-ai-studio-p2"],
+  ] as const) {
+    const descPath = join(dir, `desc-${profileKind}.json`);
+    writeFileSync(
+      descPath,
+      `${JSON.stringify({
+        version: 3,
+        kind: LAUNCHER_BROWSER_HOST_KIND,
+        profile: profileKind,
+        pid: process.pid,
+        endpoint: "http://127.0.0.1:39110",
+        control: { endpoint: "http://127.0.0.1:39111", token: "c".repeat(48) },
+        helper: { executable: helperExec, script: helperScript },
+        partition,
+        idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+        surfaceId: "launcher_surface_id_0123456789AB",
+        surfaceTargets: { launcher_surface_id_0123456789AB: "target-1" },
+        createdAt: new Date().toISOString(),
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const parsed = readLauncherBrowserHostDescriptor(descPath);
+    expect(parsed.partition).toBe(partition);
+  }
+});

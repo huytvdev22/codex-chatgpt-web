@@ -533,6 +533,17 @@ async function start() {
     showWindow: showMainWindow,
     provider: stateStore.read().selectedProvider,
     providerRegistry,
+    providerProfiles: stateStore.read().providerProfiles,
+    onProviderProfilesChanged: (providerId, group) => {
+      const current = stateStore.read();
+      const next = stateStore.update({
+        providerProfiles: {
+          ...(current.providerProfiles || {}),
+          [providerId]: group,
+        },
+      });
+      send("launcher:state-changed", next);
+    },
   });
   await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();

@@ -204,6 +204,7 @@ class TurnTabManager {
       loading: tab.loading === true,
       active: this.host.selectedTabId === tab.id,
       closable: true,
+      ...(tab.profileId ? { profileId: tab.profileId } : {}),
     };
   }
 
@@ -269,11 +270,17 @@ class TurnTabManager {
     const resolvedInitialUrl = typeof initialUrl === "string" && initialUrl.trim() && providerObj.isAllowedNavigation(initialUrl)
       ? initialUrl.trim()
       : null;
-    const bootstrapUrl = resolvedInitialUrl || providerObj.initialUrl?.(conversationKey) || providerObj.homeUrl;
-    const conversationId = providerObj.conversationId?.(conversationKey) || null;
+    const activeProfileId = typeof providerObj.getActiveProfileId === "function"
+      ? providerObj.getActiveProfileId()
+      : "default";
+    const targetPartition = typeof providerObj.partitionForProfile === "function"
+      ? providerObj.partitionForProfile(activeProfileId)
+      : providerObj.partition;
+    const bootstrapUrl = resolvedInitialUrl || providerObj.initialUrl?.(conversationKey, activeProfileId) || providerObj.homeUrl;
+    const conversationId = providerObj.conversationId?.(conversationKey, activeProfileId) || null;
     const view = new WebContentsView({
       webPreferences: {
-        partition: providerObj.partition,
+        partition: targetPartition,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -290,6 +297,7 @@ class TurnTabManager {
       connectorIdentity,
       connectorBound: false,
       provider: providerObj.id,
+      profileId: activeProfileId,
       conversationId,
       helperPid,
       view,
@@ -633,11 +641,15 @@ class TurnTabManager {
       || (sameTrace.provider || "m365") !== providerId)) {
       throw new Error(`Browser turn ${traceId} conversation metadata does not match its owned tab`);
     }
+    const activeProfileId = typeof providerObj.getActiveProfileId === "function"
+      ? providerObj.getActiveProfileId()
+      : "default";
     const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
       tab.status === "ready"
       && tab.conversationKey === conversationKey
       && tab.connectorIdentity === connectorIdentity
       && (tab.provider || "m365") === providerId
+      && (tab.profileId || "default") === activeProfileId
       && (!connectorIdentity || tab.connectorBound === true)
     )) : [];
     if (retainedMatches.length > 1) {
@@ -778,7 +790,11 @@ class TurnTabManager {
         message = `${providerObj.displayName} completed without a valid persistent conversation id`;
         effectiveConnectorBound = false;
       } else {
-        tab.conversationId = providerObj.bind(tab.conversationKey, normalizedConversationId);
+        tab.conversationId = providerObj.bind(
+          tab.conversationKey,
+          normalizedConversationId,
+          tab.profileId || "default",
+        );
         effectiveConnectorBound = true;
       }
     }

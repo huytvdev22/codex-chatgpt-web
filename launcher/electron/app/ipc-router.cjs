@@ -197,13 +197,29 @@ class IpcRouter {
       }
       return nextSnapshot;
     });
-    handle("launcher:browser-login", async (_event, providerId) => {
+    handle("launcher:switch-provider-profile", async (_event, providerId, profileId) => {
       if (!getBrowserHost()) await awaitRuntimeStartup();
-      return await getBrowserHost().openLogin(providerId);
+      return await getBrowserHost().switchProviderProfile(providerId, profileId);
     });
-    handle("launcher:browser-smoke", async (_event, providerId) => {
+    handle("launcher:create-provider-profile", async (_event, providerId, name) => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return getBrowserHost().createProviderProfile(providerId, name);
+    });
+    handle("launcher:rename-provider-profile", async (_event, providerId, profileId, name) => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return getBrowserHost().renameProviderProfile(providerId, profileId, name);
+    });
+    handle("launcher:delete-provider-profile", async (_event, providerId, profileId) => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return await getBrowserHost().deleteProviderProfile(providerId, profileId);
+    });
+    handle("launcher:browser-login", async (_event, providerId, profileId = null) => {
+      if (!getBrowserHost()) await awaitRuntimeStartup();
+      return await getBrowserHost().openLogin(providerId, profileId);
+    });
+    handle("launcher:browser-smoke", async (_event, providerId, profileId = null) => {
       const browserHost = getBrowserHost();
-      const result = await browserHost.smokeTest(providerId);
+      const result = await browserHost.smokeTest(providerId, profileId);
       const targetProvider = providerId || browserHost.provider || stateStore.read().selectedProvider || "m365";
       const current = stateStore.read();
       const updatedState = stateStore.update({

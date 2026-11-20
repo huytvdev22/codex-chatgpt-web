@@ -4,6 +4,8 @@ const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 420;
 const SESSION_REFRESH_REMINDER_INTERVAL_MS = 48 * 60 * 60 * 1000;
+const DEFAULT_PROVIDER_PROFILE_ID = "default";
+const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 const DEFAULT_STATE = Object.freeze({
   version: 1,
@@ -27,6 +29,59 @@ const DEFAULT_STATE = Object.freeze({
   selectedProvider: "m365",
 });
 
+function cloneDefaultProviderProfiles() {
+  return {
+    "ai-studio": {
+      activeProfileId: DEFAULT_PROVIDER_PROFILE_ID,
+      profiles: [{ id: DEFAULT_PROVIDER_PROFILE_ID, name: "Default", authenticated: false }],
+    },
+  };
+}
+
+function sanitizeProviderProfiles(rawValue) {
+  const result = cloneDefaultProviderProfiles();
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return result;
+
+  for (const [providerId, group] of Object.entries(rawValue)) {
+    if (!providerId || !/^[a-z0-9-]+$/.test(providerId)) continue;
+    if (!group || typeof group !== "object" || Array.isArray(group)) continue;
+
+    const seen = new Set();
+    const sanitizedList = [];
+    const rawProfiles = Array.isArray(group.profiles) ? group.profiles : [];
+    for (const item of rawProfiles) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const id = typeof item.id === "string" ? item.id.trim().toLowerCase() : "";
+      if (!id || !PROFILE_ID_PATTERN.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      const rawName = typeof item.name === "string" ? item.name.trim() : "";
+      const name = rawName ? rawName.slice(0, 40) : (id === DEFAULT_PROVIDER_PROFILE_ID ? "Default" : id);
+      sanitizedList.push({
+        id,
+        name,
+        authenticated: item.authenticated === true,
+      });
+    }
+
+    if (!seen.has(DEFAULT_PROVIDER_PROFILE_ID)) {
+      sanitizedList.unshift({ id: DEFAULT_PROVIDER_PROFILE_ID, name: "Default", authenticated: false });
+    }
+
+    const requestedActive = typeof group.activeProfileId === "string"
+      ? group.activeProfileId.trim().toLowerCase()
+      : DEFAULT_PROVIDER_PROFILE_ID;
+    const activeProfileId = sanitizedList.some(entry => entry.id === requestedActive)
+      ? requestedActive
+      : DEFAULT_PROVIDER_PROFILE_ID;
+
+    result[providerId] = {
+      activeProfileId,
+      profiles: sanitizedList,
+    };
+  }
+  return result;
+}
+
 function sanitizeSmokePassedByProvider(rawValue) {
   const result = {};
   if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return result;
@@ -48,7 +103,10 @@ function nextSessionRefreshReminderAt(now = Date.now()) {
 }
 
 function readState(filePath, { defaultProvider = DEFAULT_STATE.selectedProvider, isValidProvider = null } = {}) {
-  const defaults = { ...DEFAULT_STATE, selectedProvider: defaultProvider };
+  const defaults = {
+    ...DEFAULT_STATE,
+    selectedProvider: defaultProvider,
+  };
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!parsed || parsed.version !== 1) return { ...defaults };
@@ -64,6 +122,11 @@ function readState(filePath, { defaultProvider = DEFAULT_STATE.selectedProvider,
       state.selectedProvider = providerId;
     }
     state.smokePassedByProvider = sanitizeSmokePassedByProvider(parsed.smokePassedByProvider);
+    if (parsed.providerProfiles !== undefined) {
+      state.providerProfiles = sanitizeProviderProfiles(parsed.providerProfiles);
+    } else {
+      delete state.providerProfiles;
+    }
     for (const key of [
       "onboardingComplete",
       "githubOpened",
@@ -140,6 +203,9 @@ function createStateStore(filePath, options = {}) {
     },
     update(patch) {
       const next = { ...state, ...patch, version: 1 };
+      if (patch && Object.hasOwn(patch, "providerProfiles")) {
+        next.providerProfiles = sanitizeProviderProfiles(patch.providerProfiles);
+      }
       writeState(filePath, next);
       state = next;
       return structuredClone(next);
@@ -148,11 +214,14 @@ function createStateStore(filePath, options = {}) {
 }
 
 module.exports = {
+  DEFAULT_PROVIDER_PROFILE_ID,
+  PROFILE_ID_PATTERN,
   SESSION_REFRESH_REMINDER_INTERVAL_MS,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   createStateStore,
   nextSessionRefreshReminderAt,
+  sanitizeProviderProfiles,
   validateSidebarState,
 };
 

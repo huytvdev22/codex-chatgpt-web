@@ -655,11 +655,16 @@ function BrowserSurface({
   setError: (error: string | null) => void;
 }) {
   const [switchingProvider, setSwitchingProvider] = useState(false);
+  const [switchingProfile, setSwitchingProfile] = useState(false);
   const visible = browser?.visible === true;
   const navigationLocked = browser?.status === "running" || browser?.status === "testing";
   const activeProviderId = browser?.provider || providers[0]?.id || "m365";
   const activeProvider = providers.find((item) => item.id === activeProviderId) ?? providers[0];
   const providerLabel = activeProvider?.displayName || activeProviderId;
+  const supportsProfiles = activeProvider?.supportsProfiles === true;
+  const profiles = activeProvider?.profiles ?? [];
+  const activeProfileId = activeProvider?.activeProfileId || "default";
+  const profileControlLocked = switchingProvider || switchingProfile || navigationLocked;
   const switchProvider = async (providerId: string) => {
     if (switchingProvider || navigationLocked || providerId === activeProviderId) return;
     setSwitchingProvider(true);
@@ -670,6 +675,31 @@ function BrowserSurface({
       setError(messageOf(cause));
     } finally {
       setSwitchingProvider(false);
+    }
+  };
+  const switchProfile = async (profileId: string) => {
+    if (!supportsProfiles || profileControlLocked || profileId === activeProfileId) return;
+    setSwitchingProfile(true);
+    setError(null);
+    try {
+      await api!.switchProviderProfile(activeProviderId, profileId);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setSwitchingProfile(false);
+    }
+  };
+  const createQuickProfile = async () => {
+    if (!supportsProfiles || profileControlLocked) return;
+    setSwitchingProfile(true);
+    setError(null);
+    try {
+      const created = await api!.createProviderProfile(activeProviderId);
+      await api!.openLogin(activeProviderId, created.profile.id);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setSwitchingProfile(false);
     }
   };
   const navigate = async (action: "back" | "forward" | "reload") => {
@@ -789,6 +819,30 @@ function BrowserSurface({
             })}
           </div>
         ) : null}
+        {supportsProfiles && profiles.length > 0 ? (
+          <div className="profile-switcher" role="group" aria-label="Provider profile switcher">
+            <select
+              aria-label="Active account profile"
+              className="profile-switcher-select"
+              disabled={profileControlLocked}
+              onChange={(event) => void switchProfile(event.target.value)}
+              title="Switch Google account profile"
+              value={activeProfileId}
+            >
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}{profile.authenticated ? " ●" : " ○"}
+                </option>
+              ))}
+            </select>
+            <IconButton
+              disabled={profileControlLocked}
+              icon="plus"
+              label="Add account profile"
+              onClick={() => void createQuickProfile()}
+            />
+          </div>
+        ) : null}
         <div className="browser-zoom-controls">
           <IconButton icon="minus" label={copy.zoomOut} onClick={() => void zoom("out")} />
           <button
@@ -859,13 +913,16 @@ function SetupSurface({
   updateState: (state: LauncherState) => void;
 }) {
   const [localBusy, setLocalBusy] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
+  const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
+  const [renamingDraft, setRenamingDraft] = useState("");
 
   const providers = resolveProviders(browser, snapshot);
   const activeProviderId = browser?.provider || snapshot.state.selectedProvider || providers[0].id;
   const authMap = browser?.authenticatedByProvider || {};
   const smokeMap = snapshot.state.smokePassedByProvider || snapshot.smokePassedByProvider || {};
   const modelSummary = providers.map((item) => item.displayName).join(", ");
-  const isRunningTurn = browser?.status === "running";
+  const isRunningTurn = browser?.status === "running" || browser?.status === "testing";
   const globalActionDisabled = localBusy || operation?.status === "running" || isRunningTurn;
 
   const run = async (action: () => Promise<void>) => {
@@ -948,6 +1005,143 @@ function SetupSurface({
                 title={`Run browser smoke test (${provider.displayName})`}
               />
             </div>
+            {provider.supportsProfiles ? (() => {
+              const savedGroup = snapshot.state.providerProfiles?.[provider.id];
+              const providerProfiles = provider.profiles?.length
+                ? provider.profiles
+                : savedGroup?.profiles ?? [{ id: "default", name: "Default", authenticated: isAuthed }];
+              const currentProfileId = provider.activeProfileId || savedGroup?.activeProfileId || "default";
+              return (
+                <div className="profile-manager">
+                  <div className="profile-manager-header">
+                    <span>Account Profiles</span>
+                    <div className="profile-manager-add">
+                      <input
+                        className="profile-name-input"
+                        disabled={globalActionDisabled}
+                        maxLength={40}
+                        onChange={(event) => setNewProfileName(event.target.value)}
+                        placeholder="Account name (optional)"
+                        type="text"
+                        value={newProfileName}
+                      />
+                      <SecondaryButton
+                        disabled={globalActionDisabled}
+                        onClick={() => void run(async () => {
+                          const created = await api!.createProviderProfile(provider.id, newProfileName.trim());
+                          setNewProfileName("");
+                          await activateBrowser();
+                          await api!.openLogin(provider.id, created.profile.id);
+                        })}
+                      >
+                        Add profile
+                      </SecondaryButton>
+                    </div>
+                  </div>
+                  <div className="profile-manager-list">
+                    {providerProfiles.map((profile) => {
+                      const isCurrentProfile = profile.id === currentProfileId;
+                      const isEditing = renamingProfileId === profile.id;
+                      return (
+                        <div className={`profile-row${isCurrentProfile ? " is-active" : ""}`} key={profile.id}>
+                          <div className="profile-row-info">
+                            <StateDot state={profile.authenticated ? "ready" : "idle"} />
+                            {isEditing ? (
+                              <input
+                                autoFocus
+                                className="profile-name-input is-inline"
+                                maxLength={40}
+                                onChange={(event) => setRenamingDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    void run(async () => {
+                                      await api!.renameProviderProfile(provider.id, profile.id, renamingDraft);
+                                      setRenamingProfileId(null);
+                                    });
+                                  } else if (event.key === "Escape") {
+                                    setRenamingProfileId(null);
+                                  }
+                                }}
+                                type="text"
+                                value={renamingDraft}
+                              />
+                            ) : (
+                              <>
+                                <strong className="profile-row-name">{profile.name}</strong>
+                                {isCurrentProfile ? <span className="profile-active-badge">Active</span> : null}
+                              </>
+                            )}
+                          </div>
+                          <div className="profile-row-actions">
+                            {isEditing ? (
+                              <>
+                                <SecondaryButton
+                                  disabled={globalActionDisabled || !renamingDraft.trim()}
+                                  onClick={() => void run(async () => {
+                                    await api!.renameProviderProfile(provider.id, profile.id, renamingDraft);
+                                    setRenamingProfileId(null);
+                                  })}
+                                >
+                                  Save
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  onClick={() => setRenamingProfileId(null)}
+                                >
+                                  Cancel
+                                </SecondaryButton>
+                              </>
+                            ) : (
+                              <>
+                                {!isCurrentProfile ? (
+                                  <SecondaryButton
+                                    disabled={globalActionDisabled}
+                                    onClick={() => void run(async () => {
+                                      if (!isActiveProvider) await api!.switchProvider(provider.id);
+                                      await api!.switchProviderProfile(provider.id, profile.id);
+                                    })}
+                                  >
+                                    Use
+                                  </SecondaryButton>
+                                ) : null}
+                                <SecondaryButton
+                                  disabled={globalActionDisabled}
+                                  onClick={() => void run(async () => {
+                                    await activateBrowser();
+                                    if (!isActiveProvider) await api!.switchProvider(provider.id);
+                                    await api!.openLogin(provider.id, profile.id);
+                                  })}
+                                >
+                                  {profile.authenticated ? "Open" : "Sign in"}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  disabled={globalActionDisabled}
+                                  onClick={() => {
+                                    setRenamingProfileId(profile.id);
+                                    setRenamingDraft(profile.name);
+                                  }}
+                                >
+                                  Rename
+                                </SecondaryButton>
+                                {profile.id !== "default" ? (
+                                  <SecondaryButton
+                                    disabled={globalActionDisabled}
+                                    onClick={() => void run(async () => {
+                                      await api!.deleteProviderProfile(provider.id, profile.id);
+                                    })}
+                                  >
+                                    Delete
+                                  </SecondaryButton>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })() : null}
           </div>
         );
       })}

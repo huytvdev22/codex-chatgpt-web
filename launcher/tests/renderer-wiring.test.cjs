@@ -705,3 +705,35 @@ test("personalization tab is wired across sidebar, preload, and IPC router", () 
   assert.match(ipcRouterSource, /handle\("launcher:personalization-get",/);
   assert.match(ipcRouterSource, /handle\("launcher:personalization-save",/);
 });
+
+test("multi-profile state sanitization and renderer/preload/IPC wiring work end-to-end", () => {
+  const { sanitizeProviderProfiles } = require("../electron/infra/state-store.cjs");
+  const normalized = sanitizeProviderProfiles({
+    "ai-studio": {
+      activeProfileId: "missing-id",
+      profiles: [
+        { id: "p2", name: "  Work Gmail  ", authenticated: true },
+        { id: "INVALID_ID!", name: "Bad" },
+        { id: "p2", name: "Duplicate" },
+      ],
+    },
+  });
+
+  assert.equal(normalized["ai-studio"].activeProfileId, "default");
+  assert.deepEqual(normalized["ai-studio"].profiles, [
+    { id: "default", name: "Default", authenticated: false },
+    { id: "p2", name: "Work Gmail", authenticated: true },
+  ]);
+
+  assert.match(preloadSource, /switchProviderProfile:\s*\(providerId,\s*profileId\)\s*=>/);
+  assert.match(preloadSource, /createProviderProfile:\s*\(providerId,\s*name\)\s*=>/);
+  assert.match(preloadSource, /renameProviderProfile:\s*\(providerId,\s*profileId,\s*name\)\s*=>/);
+  assert.match(preloadSource, /deleteProviderProfile:\s*\(providerId,\s*profileId\)\s*=>/);
+  assert.match(ipcRouterSource, /handle\("launcher:switch-provider-profile",/);
+  assert.match(ipcRouterSource, /handle\("launcher:create-provider-profile",/);
+  assert.match(ipcRouterSource, /handle\("launcher:rename-provider-profile",/);
+  assert.match(ipcRouterSource, /handle\("launcher:delete-provider-profile",/);
+  assert.match(appSource, /className="profile-switcher"/);
+  assert.match(appSource, /className="profile-manager"/);
+  assert.match(appSource, /api!\.switchProviderProfile\(/);
+});

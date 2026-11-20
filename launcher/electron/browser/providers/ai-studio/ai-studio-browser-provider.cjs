@@ -91,8 +91,17 @@ class AiStudioBrowserProvider extends BaseBrowserProvider {
       maxPersistedBindings: MAX_PERSISTED_AI_STUDIO_BINDINGS,
       smokeTitle: "Google AI Studio",
       descriptorPath,
+      supportsProfiles: true,
     });
     this.smokeTester = smokeTester;
+  }
+
+  partitionForProfile(profileId = this.activeProfileId) {
+    const normalized = typeof profileId === "string" ? profileId.trim().toLowerCase() : "";
+    if (!normalized || normalized === "default") {
+      return this.basePartition;
+    }
+    return `${this.basePartition}-${normalized}`;
   }
 
   onPrimarySessionCreated(browserSession) {
