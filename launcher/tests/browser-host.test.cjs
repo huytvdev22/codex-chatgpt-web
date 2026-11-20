@@ -2584,17 +2584,19 @@ test("BrowserHost.completeExternalLogin imports cookies into target profile sess
   assert.equal(result.providers[0].profiles[1].authenticated, true);
 });
 
-test("BrowserHost.openLogin delegates ai-studio directly to startExternalLogin and masks unauthenticated primary view", async () => {
+test("BrowserHost.openLogin delegates unauthenticated ai-studio to startExternalLogin, opens authenticated profile in Launcher, and masks unauthenticated primary view", async () => {
   const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
   const provider = new AiStudioBrowserProvider();
   provider.configureProfiles({
     activeProfileId: "default",
     profiles: [
       { id: "default", name: "Default", authenticated: false },
+      { id: "p2", name: "Account 2", authenticated: true },
     ],
   });
 
   const started = [];
+  const loadedUrls = [];
   const viewVisibilityCalls = [];
   const fakeHost = {
     provider: "ai-studio",
@@ -2613,7 +2615,12 @@ test("BrowserHost.openLogin delegates ai-studio directly to startExternalLogin a
     window: { isVisible: () => true, isMinimized: () => false },
     view: {
       setVisible: (v) => viewVisibilityCalls.push(v),
-      webContents: { isDestroyed: () => false, loadURL: () => { throw new Error("must not load embedded URL"); } },
+      webContents: {
+        isDestroyed: () => false,
+        getURL: () => loadedUrls.at(-1) || "about:blank",
+        loadURL: (url) => { loadedUrls.push(url); return Promise.resolve(); },
+        session: { cookies: { get: async () => [] } },
+      },
     },
     externalChromeLogin: {
       getState: () => null,
@@ -2622,6 +2629,11 @@ test("BrowserHost.openLogin delegates ai-studio directly to startExternalLogin a
     selectedTurnTab: () => null,
     presentPrimaryView: (v) => viewVisibilityCalls.push(`present:${v}`),
     presentTurnView: () => {},
+    switchProviderProfile: async (_providerId, profileId) => {
+      provider.setActiveProfile(profileId);
+      const profile = provider.getProfiles().find((p) => p.id === profileId);
+      fakeHost.authenticatedByProvider["ai-studio"] = Boolean(profile?.authenticated);
+    },
     startExternalLogin: BrowserHost.prototype.startExternalLogin,
     activateHomeSurface: () => {},
     show: () => {},
@@ -2632,13 +2644,163 @@ test("BrowserHost.openLogin delegates ai-studio directly to startExternalLogin a
   assert.equal(started.length, 1);
   assert.equal(started[0].providerId, "ai-studio");
   assert.equal(started[0].profileId, "default");
+  assert.equal(loadedUrls.length, 0);
 
   BrowserHost.prototype.syncViewVisibility.call(fakeHost);
   assert.equal(viewVisibilityCalls.includes("present:false"), true);
   assert.equal(viewVisibilityCalls.includes(false), true);
 
+  // Opening an already authenticated profile must NOT launch Chrome; it loads homeUrl in Launcher
+  await BrowserHost.prototype.openLogin.call(fakeHost, "ai-studio", "p2");
+  assert.equal(started.length, 1);
+  assert.equal(loadedUrls.at(-1), provider.homeUrl);
+
   viewVisibilityCalls.length = 0;
-  fakeHost.authenticatedByProvider["ai-studio"] = true;
   BrowserHost.prototype.syncViewVisibility.call(fakeHost);
   assert.equal(viewVisibilityCalls.includes("present:true"), true);
+});
+
+test("switching to an uncached profile recovers authentication from existing partition cookies", async () => {
+  const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const provider = new AiStudioBrowserProvider();
+  provider.configureProfiles({
+    activeProfileId: "p3",
+    profiles: [
+      { id: "default", name: "Default", authenticated: false },
+      { id: "p3", name: "Account 3", authenticated: true },
+    ],
+  });
+
+  const loadedUrls = [];
+  const defaultView = {
+    setZoomFactor() {},
+    setBounds() {},
+    setVisible() {},
+    webContents: {
+      isDestroyed: () => false,
+      getURL: () => loadedUrls.at(-1) || "about:blank",
+      setZoomFactor() {},
+      loadURL: async (url) => { loadedUrls.push(url); },
+      session: {
+        cookies: {
+          get: async () => [
+            { name: "__Secure-1PSID", value: "live-sid", domain: ".google.com" },
+          ],
+        },
+      },
+    },
+  };
+
+  let stateAuth = false;
+  const persisted = [];
+  const fakeHost = {
+    provider: "ai-studio",
+    providerRegistry: {
+      has: (id) => id === "ai-studio",
+      get: (id) => (id === "ai-studio" ? provider : null),
+      list: () => [provider],
+      listIds: () => ["ai-studio"],
+    },
+    turnTabs: new Map(),
+    activeTraceId: null,
+    authenticatedByProvider: { "ai-studio": true },
+    externalChromeLogin: { getState: () => null },
+    view: defaultView,
+    primaryViewManager: {
+      has: () => false,
+      get: () => defaultView,
+      destroy() {},
+      ensure: () => defaultView,
+      activate() {},
+    },
+    providerViews: new Map(),
+    shellZoomShortcutBindings: new Map(),
+    surfaceIds: new Map(),
+    state: { zoomFactor: 1 },
+    homeSurfaceOpen: true,
+    boundsReady: true,
+    bounds: { x: 0, y: 0, width: 1024, height: 720 },
+    onProviderProfilesChanged: (id, group) => persisted.push({ id, group }),
+    _persistProviderProfiles: BrowserHost.prototype._persistProviderProfiles,
+    _assertProfileMutationAllowed: BrowserHost.prototype._assertProfileMutationAllowed,
+    _destroyManagedPrimaryView: BrowserHost.prototype._destroyManagedPrimaryView,
+    bindShellZoomShortcuts() {},
+    bindWebContents() {},
+    bindAuthenticationChanges() {},
+    setState(patch) {
+      if (typeof patch?.authenticated === "boolean") stateAuth = patch.authenticated;
+    },
+    releaseInactivePrimaryViews() {},
+    hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1024, height: 720 }),
+    probeAuthentication: async () => ({ authenticated: true }),
+    parkIdlePrimaryView() {},
+    syncViewVisibility() {},
+    writeDescriptor() {},
+    snapshot: () => ({
+      provider: "ai-studio",
+      authenticated: stateAuth,
+      providers: BrowserHost.prototype.listProviders.call(fakeHost),
+    }),
+    publishState() {},
+  };
+
+  const snap = await BrowserHost.prototype.switchProviderProfile.call(fakeHost, "ai-studio", "default");
+  assert.equal(loadedUrls.includes(provider.homeUrl), true);
+  assert.equal(snap.authenticated, true);
+  assert.equal(snap.providers[0].profiles.find((p) => p.id === "default").authenticated, true);
+  assert.equal(persisted.at(-1).group.profiles.find((p) => p.id === "default").authenticated, true);
+});
+
+test("AiStudio probeAuthentication preserves authenticated flag during transient loading when session cookies remain", async () => {
+  const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const provider = new AiStudioBrowserProvider();
+  provider.configureProfiles({
+    activeProfileId: "default",
+    profiles: [{ id: "default", name: "Default", authenticated: true }],
+  });
+  provider.probeAuthentication = async () => ({
+    url: "https://aistudio.google.com/prompts/new_chat",
+    composer: false,
+    signInButton: false,
+    authenticated: false,
+    readyState: "interactive",
+  });
+
+  const persisted = [];
+  let cookieList = [{ name: "SID", value: "live", domain: ".google.com" }];
+  const fakeHost = {
+    provider: "ai-studio",
+    providerRegistry: {
+      has: (id) => id === "ai-studio",
+      get: (id) => (id === "ai-studio" ? provider : null),
+      list: () => [provider],
+      listIds: () => ["ai-studio"],
+    },
+    authenticatedByProvider: { "ai-studio": true },
+    authenticationRevision: 1,
+    state: { authenticated: true },
+    view: {
+      webContents: {
+        isDestroyed: () => false,
+        getURL: () => "https://aistudio.google.com/prompts/new_chat",
+        session: {
+          cookies: { get: async () => cookieList },
+        },
+      },
+    },
+    _persistProviderProfiles: (p) => persisted.push(p.getProfiles()),
+    setState(patch) {
+      this.state = { ...this.state, ...patch };
+    },
+    snapshot: () => ({ authenticated: fakeHost.state.authenticated }),
+  };
+
+  const transientSnap = await BrowserHost.prototype.probeAuthentication.call(fakeHost);
+  assert.equal(transientSnap.authenticated, true);
+  assert.equal(provider.getProfiles()[0].authenticated, true);
+
+  cookieList = [];
+  const signedOutSnap = await BrowserHost.prototype.probeAuthentication.call(fakeHost);
+  assert.equal(signedOutSnap.authenticated, false);
+  assert.equal(provider.getProfiles()[0].authenticated, false);
 });

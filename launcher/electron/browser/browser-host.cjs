@@ -113,7 +113,24 @@ function shouldMaskPrimaryViewForExternalLogin(host) {
 }
 
 async function syncPrimaryViewAfterSwitch(host, providerObj, cachedAuth, logEventName, extraMeta = {}) {
-  if (usesExternalChromeLogin(host, providerObj) && !cachedAuth) {
+  let effectiveAuth = Boolean(cachedAuth);
+  if (!effectiveAuth && typeof providerObj.hasAuthCookies === "function") {
+    const hasCookies = await providerObj.hasAuthCookies(host.view?.webContents?.session);
+    if (hasCookies === true) {
+      effectiveAuth = true;
+      host.authenticatedByProvider ||= {};
+      host.authenticatedByProvider[providerObj.id] = true;
+      providerObj.updateProfileAuthentication?.(providerObj.getActiveProfileId?.(), true);
+      host._persistProviderProfiles?.(providerObj);
+      host.setState({
+        authenticated: true,
+        status: host.activeTraceId ? "running" : "ready",
+        message: `${providerObj.displayName} is ready`,
+      });
+    }
+  }
+
+  if (usesExternalChromeLogin(host, providerObj) && !effectiveAuth) {
     const currentUrl = host.view.webContents.getURL() || "";
     if (currentUrl && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
       await host.view.webContents.loadURL(IDLE_BROWSER_URL).catch(() => {});
@@ -379,6 +396,14 @@ class BrowserHost {
       }
       this.shellZoomShortcutBindings.delete(contents);
     }
+    if (contents && this.authenticationCookieBindings) {
+      const sessionCookies = contents.session?.cookies;
+      const cookieListener = sessionCookies ? this.authenticationCookieBindings.get(sessionCookies) : null;
+      if (sessionCookies && cookieListener) {
+        sessionCookies.off?.("changed", cookieListener);
+        this.authenticationCookieBindings.delete(sessionCookies);
+      }
+    }
     this.primaryViewManager?.destroy?.(providerId);
     this.providerViews?.delete?.(providerId);
   }
@@ -574,7 +599,47 @@ class BrowserHost {
     })()`, true).catch(() => {});
   }
 
+  async syncProfilesAuthFromSessions() {
+    if (!session || typeof session.fromPartition !== "function") return false;
+    const providers = this.providerRegistry ? this.providerRegistry.list() : [];
+    let anyChanged = false;
+    for (const providerObj of providers) {
+      if (!providerObj?.isProfileSupported?.() || typeof providerObj.hasAuthCookies !== "function") continue;
+      let providerChanged = false;
+      for (const profile of providerObj.getProfiles()) {
+        const partition = providerObj.partitionForProfile(profile.id);
+        const profileSession = session.fromPartition(partition);
+        const hasCookies = await providerObj.hasAuthCookies(profileSession);
+        if (typeof hasCookies === "boolean" && Boolean(profile.authenticated) !== hasCookies) {
+          providerObj.updateProfileAuthentication(profile.id, hasCookies);
+          providerChanged = true;
+          anyChanged = true;
+        }
+      }
+      if (providerChanged) {
+        const activeId = providerObj.getActiveProfileId?.();
+        const activeProfile = providerObj.getProfiles().find((p) => p.id === activeId);
+        this.authenticatedByProvider ||= {};
+        this.authenticatedByProvider[providerObj.id] = Boolean(activeProfile?.authenticated);
+        this._persistProviderProfiles?.(providerObj);
+      }
+    }
+    if (anyChanged) {
+      const activeAuth = Boolean(this.authenticatedByProvider?.[this.provider]);
+      if (this.state && Boolean(this.state.authenticated) !== activeAuth) {
+        this.state = {
+          ...this.state,
+          authenticated: activeAuth,
+          status: activeAuth ? (this.activeTraceId ? "running" : "ready") : this.state.status,
+        };
+      }
+      this.publishState?.(this.snapshot());
+    }
+    return anyChanged;
+  }
+
   async initializePrimaryView() {
+    await this.syncProfilesAuthFromSessions().catch(() => false);
     if (this.view) {
       this.view.setBounds(this.hiddenTurnBounds());
       this.view.setVisible(true);
@@ -802,9 +867,12 @@ class BrowserHost {
 
   bindAuthenticationChanges() {
     this.authenticationCookieBindings ||= new Map();
-    const listener = (_event, cookie, cause, removed) => {
+    const listener = (sessionCookies) => (_event, cookie, cause, removed) => {
       if (removed && (cause === "overwrite" || cause === "expired-overwrite")) return;
       if (!removed && this.authenticationRefresh) return;
+      if (this.view?.webContents?.session?.cookies && sessionCookies !== this.view.webContents.session.cookies) {
+        return;
+      }
       const providers = this.providerRegistry
         ? this.providerRegistry.list()
         : [resolveProviderFromHost(this, "m365")];
@@ -822,10 +890,13 @@ class BrowserHost {
     }
     for (const sessionCookies of sessions) {
       if (this.authenticationCookieBindings.has(sessionCookies)) continue;
-      sessionCookies.on("changed", listener);
-      this.authenticationCookieBindings.set(sessionCookies, listener);
+      const boundListener = listener(sessionCookies);
+      sessionCookies.on("changed", boundListener);
+      this.authenticationCookieBindings.set(sessionCookies, boundListener);
     }
-    this.authenticationCookieListener = listener;
+    this.authenticationCookieListener = this.view?.webContents?.session?.cookies
+      ? this.authenticationCookieBindings.get(this.view.webContents.session.cookies)
+      : null;
   }
 
   refreshAuthenticationFromSession() {
@@ -1254,7 +1325,9 @@ class BrowserHost {
     }
     this.show();
     const currentUrl = this.view.webContents.getURL() || "";
-    if (!this.selectedTurnTab()) {
+    const shouldSkipUnauthedExternalLoad = usesExternalChromeLogin(this, providerObj)
+      && !this.authenticatedByProvider?.[providerObj.id];
+    if (!this.selectedTurnTab() && !shouldSkipUnauthedExternalLoad) {
       if (!providerObj.isAuthOrAppUrl(currentUrl) || currentUrl === IDLE_BROWSER_URL || currentUrl === "about:blank") {
         await this.view.webContents.loadURL(providerObj.homeUrl);
         if (inspectSession) await this.probeAuthentication();
@@ -1394,13 +1467,6 @@ class BrowserHost {
   }
 
   async openLogin(providerId, profileId = null) {
-    const targetProviderId = providerId || this.provider;
-    const targetProviderObj = hasProviderOnHost(this, targetProviderId)
-      ? resolveProviderFromHost(this, targetProviderId)
-      : resolveProviderFromHost(this);
-    if (usesExternalChromeLogin(this, targetProviderObj)) {
-      return await this.startExternalLogin(targetProviderObj.id, profileId);
-    }
     if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
       await this.switchProvider(providerId);
     }
@@ -1411,11 +1477,34 @@ class BrowserHost {
       && typeof this.switchProviderProfile === "function") {
       await this.switchProviderProfile(providerObj.id, profileId);
     }
+
+    const activeProfileId = providerObj.getActiveProfileId?.() || "default";
+    const activeProfile = providerObj.isProfileSupported?.()
+      ? providerObj.getProfiles?.().find((item) => item.id === activeProfileId)
+      : null;
+    let isAlreadyAuthenticated = Boolean(
+      activeProfile ? activeProfile.authenticated : this.authenticatedByProvider?.[providerObj.id],
+    );
+    if (!isAlreadyAuthenticated && typeof providerObj.hasAuthCookies === "function") {
+      const hasCookies = await providerObj.hasAuthCookies(this.view?.webContents?.session);
+      if (hasCookies === true) {
+        isAlreadyAuthenticated = true;
+        this.authenticatedByProvider ||= {};
+        this.authenticatedByProvider[providerObj.id] = true;
+        providerObj.updateProfileAuthentication?.(activeProfileId, true);
+        this._persistProviderProfiles?.(providerObj);
+      }
+    }
+
+    if (usesExternalChromeLogin(this, providerObj) && !isAlreadyAuthenticated) {
+      return await this.startExternalLogin(providerObj.id, activeProfileId);
+    }
+
     this.homeSurfaceOpen = true;
     this.activateHomeSurface();
     this.show();
     const current = this.view.webContents.getURL();
-    if (!providerObj.isAuthOrAppUrl(current)) {
+    if (!providerObj.isAuthOrAppUrl(current) || current === IDLE_BROWSER_URL || current === "about:blank") {
       void this.view.webContents.loadURL(providerObj.homeUrl);
     }
     return this.snapshot();
@@ -1646,16 +1735,27 @@ class BrowserHost {
           loading: false,
         });
       } else {
-        this.authenticatedByProvider[providerObj.id] = false;
-        providerObj.updateProfileAuthentication?.(providerObj.getActiveProfileId?.(), false);
-        this._persistProviderProfiles?.(providerObj);
+        const resultUrl = String(result.url || url || "").toLowerCase();
+        let shouldMarkSignedOut = true;
+        if (typeof providerObj.hasAuthCookies === "function") {
+          const hasCookies = await providerObj.hasAuthCookies(this.view.webContents.session);
+          const explicitlyLoginScreen = result.readyState === "complete"
+            && (resultUrl.includes("accounts.google.com") || result.signInButton === true);
+          shouldMarkSignedOut = explicitlyLoginScreen || hasCookies === false;
+        }
+        if (shouldMarkSignedOut) {
+          this.authenticatedByProvider[providerObj.id] = false;
+          providerObj.updateProfileAuthentication?.(providerObj.getActiveProfileId?.(), false);
+          this._persistProviderProfiles?.(providerObj);
+        }
         const loaded = result.readyState === "complete";
+        const effectiveAuth = shouldMarkSignedOut ? false : Boolean(this.authenticatedByProvider[providerObj.id]);
         this.setState({
-          status: loaded ? "signed-out" : "loading",
+          status: loaded ? (effectiveAuth ? "ready" : "signed-out") : "loading",
           message: loaded
-            ? `Sign in to ${providerObj.displayName}`
+            ? (effectiveAuth ? `${providerObj.displayName} is ready` : `Sign in to ${providerObj.displayName}`)
             : `Waiting for ${providerObj.displayName}`,
-          authenticated: false,
+          authenticated: effectiveAuth,
           url: result.url || url,
           title: providerObj.getFallbackTitle(),
           loading: !loaded,

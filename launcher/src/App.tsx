@@ -668,9 +668,10 @@ function BrowserSurface({
   const profiles = activeProvider?.profiles ?? [];
   const activeProfileId = activeProvider?.activeProfileId || "default";
   const activeProfile = profiles.find((item) => item.id === activeProfileId);
+  const activeTabId = browser?.activeTabId || "home";
   const profileControlLocked = switchingProvider || switchingProfile || navigationLocked || externalLoginActive;
   const showExternalChromeCard = activeProviderId === "ai-studio"
-    && (externalLoginActive || !browser?.authenticated);
+    && (externalLoginActive || (!browser?.authenticated && (!visible || activeTabId === "home")));
   const switchProvider = async (providerId: string) => {
     if (switchingProvider || navigationLocked || providerId === activeProviderId) return;
     setSwitchingProvider(true);
@@ -1005,6 +1006,10 @@ function SetupSurface({
   const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
   const [renamingDraft, setRenamingDraft] = useState("");
 
+  useEffect(() => {
+    void api?.listProviders?.().catch(() => {});
+  }, []);
+
   const providers = resolveProviders(browser, snapshot);
   const activeProviderId = browser?.provider || snapshot.state.selectedProvider || providers[0].id;
   const authMap = browser?.authenticatedByProvider || {};
@@ -1048,8 +1053,12 @@ function SetupSurface({
     >
       {providers.map((provider, providerIndex) => {
         const isActiveProvider = provider.id === activeProviderId;
+        const activeProfileAuth = provider.supportsProfiles
+          ? provider.profiles?.find((item) => item.id === (provider.activeProfileId || "default"))?.authenticated
+          : undefined;
         const isAuthed = Boolean(
-          authMap[provider.id]
+          activeProfileAuth
+          ?? authMap[provider.id]
           ?? provider.authenticated
           ?? (isActiveProvider && browser?.authenticated),
         );

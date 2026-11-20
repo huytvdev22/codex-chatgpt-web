@@ -1,4 +1,5 @@
 const { BaseBrowserProvider, sanitizeChromeUserAgent } = require("../base-browser-provider.cjs");
+const { GOOGLE_AUTH_COOKIE_NAMES } = require("../../external-chrome-login-service.cjs");
 const {
   allowedAiStudioNavigation,
   bindAiStudioTurnContents,
@@ -149,6 +150,26 @@ class AiStudioBrowserProvider extends BaseBrowserProvider {
     return allowedAiStudioAuthUrl(rawUrl);
   }
 
+  async hasAuthCookies(browserSession) {
+    if (typeof browserSession?.cookies?.get !== "function") return null;
+    try {
+      const cookies = await browserSession.cookies.get({});
+      const nowSeconds = Date.now() / 1000;
+      return Array.isArray(cookies) && cookies.some((cookie) => (
+        cookie
+        && typeof cookie.name === "string"
+        && GOOGLE_AUTH_COOKIE_NAMES.has(cookie.name)
+        && typeof cookie.value === "string"
+        && cookie.value.length > 0
+        && typeof cookie.domain === "string"
+        && cookie.domain.includes("google.com")
+        && (!Number.isFinite(cookie.expirationDate) || cookie.expirationDate > nowSeconds)
+      ));
+    } catch {
+      return null;
+    }
+  }
+
   async probeAuthentication(contents) {
     return await contents.executeJavaScript(`(() => {
       const href = location.href;
@@ -159,6 +180,7 @@ class AiStudioBrowserProvider extends BaseBrowserProvider {
       return {
         url: href,
         composer,
+        signInButton,
         authenticated: isAiStudio && !isLogin && (composer || !signInButton),
         readyState: document.readyState,
       };
@@ -169,6 +191,7 @@ class AiStudioBrowserProvider extends BaseBrowserProvider {
       return {
         url: liveUrl,
         composer: false,
+        signInButton: isLogin,
         authenticated: isAiStudio && !isLogin,
         readyState: "complete",
       };

@@ -186,7 +186,12 @@ class IpcRouter {
     handle("launcher:browser-zoom", (_event, action) => getBrowserHost()?.zoom(action) ?? null);
     handle("launcher:browser-tab-select", (_event, tabId) => getBrowserHost()?.selectTab(tabId) ?? null);
     handle("launcher:browser-tab-close", (_event, tabId) => getBrowserHost()?.closeTab(tabId) ?? null);
-    handle("launcher:list-providers", () => getBrowserHost()?.listProviders?.() ?? []);
+    handle("launcher:list-providers", async () => {
+      const browserHost = getBrowserHost();
+      if (!browserHost) return [];
+      await browserHost.syncProfilesAuthFromSessions?.().catch(() => {});
+      return browserHost.listProviders?.() ?? [];
+    });
     handle("launcher:switch-provider", async (_event, providerId) => {
       if (!getBrowserHost()) await awaitRuntimeStartup();
       const browserHost = getBrowserHost();

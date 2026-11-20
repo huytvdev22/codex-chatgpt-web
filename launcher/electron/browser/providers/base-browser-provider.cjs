@@ -337,6 +337,10 @@ class BaseBrowserProvider {
 
   async waitForAuthenticationSettle(_contents, _timeoutMs) {}
 
+  async hasAuthCookies(_browserSession) {
+    return null;
+  }
+
   async runSmokeTest(_context) {
     throw new Error(`Smoke test is not supported for browser provider "${this.id}"`);
   }

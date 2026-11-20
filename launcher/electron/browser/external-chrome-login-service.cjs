@@ -358,6 +358,7 @@ class ExternalChromeLoginService {
 
 module.exports = {
   ExternalChromeLoginService,
+  GOOGLE_AUTH_COOKIE_NAMES,
   hasGoogleAuthSessionCookies,
   resolveChromeExecutablePath,
   toElectronCookieDetails,
