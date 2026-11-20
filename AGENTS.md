@@ -11,6 +11,7 @@
    - **Dùng `abstract class` đúng chỗ:** Ưu tiên dùng `abstract class` + Template Method/Strategy (tương tự `BaseModelProvider`) khi có nhiều implementation chia sẻ khung xử lý chung, đóng gói rõ `private`/`protected`/`public`.
    - **Tránh OOP cực đoan:** Không tạo `abstract class`, interface 1-1 hay pattern cầu kỳ khi chỉ có 1 implementation duy nhất hoặc khi một function/type đơn giản giải quyết gọn hơn.
 8. **Kiểm thử E2E bằng Codex CLI:** Khi cần tự kiểm thử luồng chạy thực tế (Launcher + Turn Trace + Codex CLI), đọc và thực hiện theo [.agents/skills/e2e-codex-cli-test/SKILL.md](.agents/skills/e2e-codex-cli-test/SKILL.md).
+9. **Kiểm thử UI Electron Launcher bằng `agent-desktop`:** Khi cần tự kiểm thử tương tác giao diện Electron Launcher (Setup, chuyển provider/profile, `WebContentsView`), đọc và thực hiện theo [.agents/skills/launcher-ui-e2e-test/SKILL.md](.agents/skills/launcher-ui-e2e-test/SKILL.md).
 
 ## Electron Development Guidelines
 

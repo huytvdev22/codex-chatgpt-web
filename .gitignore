@@ -29,3 +29,4 @@ codex-extension/
 !.agents/skills/
 .agents/skills/*
 !.agents/skills/e2e-codex-cli-test/
+!.agents/skills/launcher-ui-e2e-test/
