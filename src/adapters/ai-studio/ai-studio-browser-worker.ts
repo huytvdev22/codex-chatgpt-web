@@ -176,7 +176,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         console.warn(
           `[ai-studio-worker] Gặp lỗi tạm thời từ AI Studio (${errMsg}), tự phục hồi và thử lại (${attemptIdx + 1}/${MAX_TRANSIENT_WEB_RETRIES})...`,
         );
-        await options.heartbeat?.().catch(() => {});
+        await options.heartbeat?.().catch(() => { });
         await this.dismissErrorToasts(page);
         await humanPause(page, 1_400, 2_200);
         if (options.signal?.aborted) throw error;
@@ -186,7 +186,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         this.botGuardSettledPages.delete(page);
         await page
           .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
-          .catch(() => {});
+          .catch(() => { });
 
         if (liveConversationId && !currentOptions.existingConversationId) {
           currentOptions = {
@@ -230,7 +230,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         .evaluate(() => {
           window.dispatchEvent(new Event("resize"));
         })
-        .catch(() => {});
+        .catch(() => { });
       await this.dismissObstructingNudges(page);
       try {
         await composer.waitFor({ state: "visible", timeout: 3_000 });
@@ -242,7 +242,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         this.botGuardSettledPages.delete(page);
         await page
           .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
-          .catch(() => {});
+          .catch(() => { });
         await this.dismissObstructingNudges(page);
         await composer.waitFor({ state: "visible", timeout: timeoutMs });
       }
@@ -260,7 +260,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
             btn.click();
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     } catch {
       // Non-fatal
     }
@@ -289,7 +289,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const tracker: NetworkTracker = {
       inFlight,
       seenGenerationRequest: false,
-      cleanup: () => {},
+      cleanup: () => { },
     };
 
     const onRequest = (req: Request) => {
@@ -345,7 +345,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       await this.waitForVisibleComposer(page, 20_000);
       await page
         .waitForSelector(".chat-session-content ms-chat-turn", { timeout: 15_000 })
-        .catch(() => {});
+        .catch(() => { });
       this.retainedConversationIds.set(page, options.existingConversationId);
       return;
     }
@@ -367,43 +367,43 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const targetNewChatUrl = buildAiStudioNewChatUrl(modelName);
     const isOnNewChatUrl = initialUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
     if (isOnNewChatUrl) {
-      await this.waitForVisibleComposer(page, 12_000).catch(() => {});
+      await this.waitForVisibleComposer(page, 12_000).catch(() => { });
     }
 
     const isCleanBlankNewChat = isOnNewChatUrl
       ? await page
-          .evaluate(
-            ({ expectedModel }) => {
-              const turns = document.querySelectorAll(".chat-session-content ms-chat-turn");
-              if (turns.length > 0) return false;
-              const composers = Array.from(
-                document.querySelectorAll<HTMLTextAreaElement>(
-                  'textarea[aria-label="Enter a prompt"]',
-                ),
+        .evaluate(
+          ({ expectedModel }) => {
+            const turns = document.querySelectorAll(".chat-session-content ms-chat-turn");
+            if (turns.length > 0) return false;
+            const composers = Array.from(
+              document.querySelectorAll<HTMLTextAreaElement>(
+                'textarea[aria-label="Enter a prompt"]',
+              ),
+            );
+            const visibleComposer = composers.find((el) => {
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return (
+                rect.width > 0 &&
+                rect.height > 0 &&
+                style.display !== "none" &&
+                style.visibility !== "hidden"
               );
-              const visibleComposer = composers.find((el) => {
-                const rect = el.getBoundingClientRect();
-                const style = window.getComputedStyle(el);
-                return (
-                  rect.width > 0 &&
-                  rect.height > 0 &&
-                  style.display !== "none" &&
-                  style.visibility !== "hidden"
-                );
-              });
-              if (!visibleComposer) return false;
-              try {
-                const current = new URL(location.href);
-                const modelParam = current.searchParams.get("model");
-                if (expectedModel && modelParam && modelParam !== expectedModel) {
-                  return false;
-                }
-              } catch {}
-              return true;
-            },
-            { expectedModel: modelName },
-          )
-          .catch(() => false)
+            });
+            if (!visibleComposer) return false;
+            try {
+              const current = new URL(location.href);
+              const modelParam = current.searchParams.get("model");
+              if (expectedModel && modelParam && modelParam !== expectedModel) {
+                return false;
+              }
+            } catch { }
+            return true;
+          },
+          { expectedModel: modelName },
+        )
+        .catch(() => false)
       : false;
 
     if (!isCleanBlankNewChat || currentConversationId) {
@@ -439,7 +439,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     if (!this.botGuardSettledPages.has(page)) {
       this.botGuardSettledPages.add(page);
-      await waitForBotGuardReady(page, 2_000, 2_800).catch(() => {});
+      await waitForBotGuardReady(page, 2_000, 2_800).catch(() => { });
     }
     await humanPause(page, 280, 480);
   }
@@ -468,7 +468,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         return;
       }
     }
-    await page.keyboard.press("Escape").catch(() => {});
+    await page.keyboard.press("Escape").catch(() => { });
   }
 
   /**
@@ -484,7 +484,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
           break;
         }
         await clickResilient(dismissButton, 1_500).catch(async () => {
-          await dismissButton.click({ force: true, timeout: 1_500 }).catch(() => {});
+          await dismissButton.click({ force: true, timeout: 1_500 }).catch(() => { });
         });
         dismissedAny = true;
         await page.waitForTimeout(150);
@@ -523,15 +523,15 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     const composer = this.getVisibleComposerLocator(page);
     await composer.waitFor({ state: "visible", timeout: 10_000 });
-    await composer.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
-    await composer.hover({ timeout: 1_000 }).catch(() => {});
+    await composer.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => { });
+    await composer.hover({ timeout: 1_000 }).catch(() => { });
     await humanPause(page, 180, 340);
-    await composer.click({ timeout: 2_500 }).catch(() => {});
+    await composer.click({ timeout: 2_500 }).catch(() => { });
     // Nhịp nghỉ tự nhiên sau khi focus trước khi điền prompt
     await humanPause(page, 280, 480);
 
     const fillTimeoutMs = promptText.length > 8_000 ? 4_000 : 8_000;
-    await composer.fill(promptText, { force: true, timeout: fillTimeoutMs }).catch(() => {});
+    await composer.fill(promptText, { force: true, timeout: fillTimeoutMs }).catch(() => { });
     const currentValue = await composer.inputValue().catch(() => "");
     if (!currentValue || currentValue.length < Math.min(promptText.length, 32)) {
       await page.evaluate(
@@ -639,7 +639,12 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
           const isStop = btns.some((btn) => {
             const rect = btn.getBoundingClientRect();
             if (rect.width <= 0 && rect.height <= 0) return false;
-            const txt = (btn.innerText || btn.getAttribute("aria-label") || "")
+            const txt = (
+              btn.getAttribute("aria-label") ||
+              btn.getAttribute("mattooltip") ||
+              btn.textContent ||
+              ""
+            )
               .trim()
               .toLowerCase();
             return txt.includes("stop") || txt.includes("cancel");
@@ -649,7 +654,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
             primaryBtn?.disabled || primaryBtn?.getAttribute("aria-disabled") === "true",
           );
           const liveText = Array.from(document.querySelectorAll<HTMLElement>(liveSelector))
-            .map((el) => (el.innerText || "").trim())
+            .map((el) => (el.textContent || el.getAttribute("aria-label") || "").trim())
             .join(" ");
           const editor = document.querySelector<HTMLTextAreaElement>(composerSelector);
           return {
@@ -691,13 +696,13 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         if (attempt === 0) {
           await humanPause(page, 320, 580);
           await clickResilient(runBtn, 2_500).catch(async () => {
-            await composer.press("Meta+Enter").catch(() => {});
+            await composer.press("Meta+Enter").catch(() => { });
           });
         } else if (attempt === 1) {
           await this.dismissObstructingNudges(page);
           await humanPause(page, 220, 380);
           await composer.press("Meta+Enter").catch(async () => {
-            await runBtn.click({ force: true, timeout: 1_500 }).catch(() => {});
+            await runBtn.click({ force: true, timeout: 1_500 }).catch(() => { });
           });
         } else {
           await runBtn.click({ force: true, timeout: 1_500 }).catch(async () => {
@@ -718,6 +723,9 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         "[ai-studio-worker] Không thể xác nhận prompt đã được gửi trên AI Studio.",
       );
     }
+
+    // Cuộn xuống đáy 1 lần sau khi bấm Run để AI Studio giữ auto-scroll cho turn mới
+    await this.scrollChatToBottom(page);
   }
 
   protected override shouldDelayFirstObservation(): boolean {
@@ -761,7 +769,50 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   ): Promise<void> {
     const state = this.getRuntimeState(page);
     state.attempts += 1;
-    state.pendingStatus = await this.domObserver.captureStatus(page, baseline);
+    const status = await this.domObserver.captureStatus(page, baseline);
+    state.pendingStatus = status;
+
+    const needsVirtualScrollNudge =
+      !status.hasNewAnswerTurn ||
+      !status.hasContent ||
+      (!status.isGenerating && !status.hasTurnFooter);
+    if (needsVirtualScrollNudge && state.attempts % 6 === 0) {
+      await this.scrollChatToBottom(page);
+    }
+  }
+
+  private async scrollChatToBottom(page: Page): Promise<void> {
+    try {
+      await page
+        .evaluate(() => {
+          const chatRoot = document.querySelector<HTMLElement>(".chat-session-content");
+          const candidates: Array<HTMLElement | null> = [];
+          let cur: HTMLElement | null = chatRoot;
+          while (cur) {
+            candidates.push(cur);
+            cur = cur.parentElement;
+          }
+          candidates.push(document.scrollingElement as HTMLElement | null);
+
+          for (const el of candidates) {
+            if (!el) continue;
+            const style = window.getComputedStyle(el);
+            const isScrollableY =
+              el === document.scrollingElement ||
+              /(auto|scroll|overlay)/i.test(style.overflowY);
+            if (isScrollableY && el.scrollHeight - el.clientHeight > 8) {
+              el.scrollTop = el.scrollHeight;
+              return;
+            }
+          }
+
+          const lastTurn = chatRoot?.querySelector<HTMLElement>("ms-chat-turn:last-of-type");
+          lastTurn?.scrollIntoView({ block: "end" });
+        })
+        .catch(() => {});
+    } catch {
+      // Best-effort virtual-scroll nudge
+    }
   }
 
   protected override async observeResponse(
@@ -886,7 +937,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     baselineAnswerCount: number,
   ): Promise<string | null> {
     try {
-      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => { });
       await page.evaluate(() => {
         const win = window as unknown as Record<string, unknown>;
         win.__aistudio_last_copied_markdown = null;
@@ -897,7 +948,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
             navigator.clipboard.writeText = async (text: string) => {
               win.__aistudio_last_copied_markdown = text;
               if (origWriteText) {
-                await origWriteText(text).catch(() => {});
+                await origWriteText(text).catch(() => { });
               }
             };
           }
@@ -917,14 +968,14 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       if (count <= baselineAnswerCount) return null;
 
       const targetTurn = answerTurns.nth(count - 1);
-      await targetTurn.scrollIntoViewIfNeeded().catch(() => {});
-      await targetTurn.hover({ position: { x: 24, y: 24 }, timeout: 2_000 }).catch(() => {});
+      await targetTurn.scrollIntoViewIfNeeded().catch(() => { });
+      await targetTurn.hover({ position: { x: 24, y: 24 }, timeout: 2_000 }).catch(() => { });
 
       const openOptionsBtn = targetTurn.locator(OPEN_OPTIONS_BUTTON_SELECTOR).first();
       if (await openOptionsBtn.isVisible().catch(() => false)) {
-        await openOptionsBtn.click({ timeout: 2_000 }).catch(() => {});
+        await openOptionsBtn.click({ timeout: 2_000 }).catch(() => { });
         const menuItems = page.locator('[role="menuitem"], button.mat-mdc-menu-item');
-        await menuItems.first().waitFor({ state: "visible", timeout: 2_000 }).catch(() => {});
+        await menuItems.first().waitFor({ state: "visible", timeout: 2_000 }).catch(() => { });
         const labels: string[] = await menuItems
           .evaluateAll((els) =>
             els.map((el) => {
@@ -938,11 +989,11 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
           .catch(() => []);
         const idx = resolveClipboardMenuItemIndex(labels);
         if (idx >= 0) {
-          await menuItems.nth(idx).click({ timeout: 2_000 }).catch(() => {});
+          await menuItems.nth(idx).click({ timeout: 2_000 }).catch(() => { });
           const copied = await this.readCapturedClipboard(page);
           if (copied) return copied;
         } else {
-          await page.keyboard.press("Escape").catch(() => {});
+          await page.keyboard.press("Escape").catch(() => { });
         }
       }
 
@@ -950,7 +1001,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       if (codeBlocksCount === 1) {
         const copyBtn = targetTurn.locator(CODE_COPY_BUTTON_SELECTOR).first();
         if (await copyBtn.isVisible().catch(() => false)) {
-          await copyBtn.click({ timeout: 2_000 }).catch(() => {});
+          await copyBtn.click({ timeout: 2_000 }).catch(() => { });
           const copied = await this.readCapturedClipboard(page);
           if (copied) return normalizeCopiedAiStudioCodeSnippet(copied);
         }
@@ -979,7 +1030,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
               const sys = await navigator.clipboard.readText();
               if (sys && sys.trim().length > 0) return sys.trim();
             }
-          } catch {}
+          } catch { }
           return null;
         })
         .catch(() => null);

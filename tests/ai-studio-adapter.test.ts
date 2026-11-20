@@ -981,4 +981,174 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     expect(reloadCount).toBe(1);
     expect(visibleWaitCalls).toBe(3);
   });
+
+  test("AiStudioDomObserver bỏ qua cloneNode/innerText nặng khi đang generating và tăng activityKey theo answerTextLength", async () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    const gen1 = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        thoughtTextLength: 100,
+        answerTextLength: 240,
+        rawHtml: "",
+        rawText: "",
+        hasContent: true,
+      },
+      true,
+    );
+    const gen2 = observer.applyStatus(
+      state,
+      {
+        isGenerating: true,
+        responseReadyLive: false,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: false,
+        thoughtsCount: 1,
+        thoughtTextLength: 100,
+        answerTextLength: 520,
+        rawHtml: "",
+        rawText: "",
+        hasContent: true,
+      },
+      true,
+    );
+    expect(gen1.isGenerating).toBe(true);
+    expect(gen1.isCompleted).toBe(false);
+    expect(gen2.activityKey).not.toBe(gen1.activityKey);
+
+    let cloneCalls = 0;
+    let isStopShowing = true;
+    const origDocument = (globalThis as { document?: unknown }).document;
+    const fakeStopBtn = {
+      getBoundingClientRect: () => ({ width: 80, height: 32 }),
+      getAttribute: (attr: string) => (attr === "aria-label" ? "Stop generating" : null),
+      textContent: "Stop",
+      get innerText(): string {
+        throw new Error("captureStatus không nên đọc innerText trên nút Stop");
+      },
+    };
+    const fakeAnswerEl = {
+      textContent: "Đoạn trả lời dài",
+      innerHTML: "<p>Đoạn trả lời dài</p>",
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      cloneNode: () => {
+        cloneCalls += 1;
+        return {
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          innerHTML: "<p>Đoạn trả lời dài</p>",
+          textContent: "Đoạn trả lời dài",
+          innerText: "Đoạn trả lời dài",
+        };
+      },
+      get innerText(): string {
+        throw new Error("captureStatus không nên đọc innerText trực tiếp trên DOM thật");
+      },
+    };
+    (globalThis as { document?: unknown }).document = {
+      querySelectorAll: (sel: string) => {
+        if (sel.includes("ms-button") || sel.includes("Stop")) {
+          return isStopShowing ? [fakeStopBtn] : [];
+        }
+        if (sel.includes("chat-turn-container.model")) {
+          return [fakeAnswerEl];
+        }
+        return [];
+      },
+    };
+
+    try {
+      const fakePage = {
+        evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => fn(arg),
+      } as never;
+
+      const whileGenerating = await observer.captureStatus(fakePage, {
+        modelContainerCount: 0,
+        answerCount: 0,
+        thoughtsCount: 0,
+        lastAnswerText: "",
+      });
+      expect(whileGenerating.isGenerating).toBe(true);
+      expect(whileGenerating.answerTextLength).toBe(16);
+      expect(whileGenerating.rawHtml).toBe("");
+      expect(cloneCalls).toBe(0);
+
+      isStopShowing = false;
+      const afterDone = await observer.captureStatus(fakePage, {
+        modelContainerCount: 0,
+        answerCount: 0,
+        thoughtsCount: 0,
+        lastAnswerText: "",
+      });
+      expect(afterDone.isGenerating).toBe(false);
+      expect(afterDone.rawHtml).toBe("<p>Đoạn trả lời dài</p>");
+      expect(cloneCalls).toBe(1);
+    } finally {
+      (globalThis as { document?: unknown }).document = origDocument;
+    }
+  });
+
+  test("AiStudioBrowserWorker chỉ smart auto-scroll khi thiếu turn/footer (mỗi 6 nhịp) và không giật cuộn khi đang stream ổn", async () => {
+    const worker = new AiStudioBrowserWorker();
+    let scrollCalls = 0;
+
+    (
+      worker as unknown as {
+        scrollChatToBottom: () => Promise<void>;
+      }
+    ).scrollChatToBottom = async () => {
+      scrollCalls += 1;
+    };
+
+    let mockStatus = {
+      isGenerating: true,
+      responseReadyLive: false,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: false,
+      thoughtsCount: 0,
+      thoughtTextLength: 0,
+      answerTextLength: 100,
+      rawHtml: "",
+      rawText: "",
+      hasContent: true,
+    };
+
+    (
+      worker as unknown as {
+        domObserver: { captureStatus: () => Promise<typeof mockStatus> };
+      }
+    ).domObserver.captureStatus = async () => mockStatus;
+
+    const helper = worker as unknown as {
+      initializeTurnState: (p: unknown, o: Record<string, unknown>) => Promise<void>;
+      beforeObserveResponse: (p: unknown, b: Record<string, unknown>) => Promise<void>;
+    };
+    const fakePageWithEvents = {
+      on: () => {},
+      off: () => {},
+    } as never;
+    await helper.initializeTurnState(fakePageWithEvents, {});
+
+    for (let i = 0; i < 6; i += 1) {
+      await helper.beforeObserveResponse(fakePageWithEvents, {});
+    }
+    expect(scrollCalls).toBe(0);
+
+    mockStatus = {
+      ...mockStatus,
+      isGenerating: false,
+      hasTurnFooter: false,
+    };
+    for (let i = 0; i < 6; i += 1) {
+      await helper.beforeObserveResponse(fakePageWithEvents, {});
+    }
+    expect(scrollCalls).toBe(1);
+  });
 });

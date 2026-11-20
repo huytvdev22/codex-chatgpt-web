@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **090** | Giảm tải Main Thread UI trong `AiStudioDomObserver` & Smart Auto-Scroll | `ai-studio`, `playwright`, `performance` | ⏳ Chờ User Test & Confirm | [090-ai-studio-dom-polling-reflow-and-smart-autoscroll.md](./090-ai-studio-dom-polling-reflow-and-smart-autoscroll.md) |
 | **089** | Tự phục hồi AI Studio `permission denied` & `hidden <textarea>` + Bỏ `Recent Turns` | `ai-studio`, `electron`, `launcher`, `usage` | ✅ Đã Confirm | [089-ai-studio-hidden-composer-and-permission-denied-recovery.md](./089-ai-studio-hidden-composer-and-permission-denied-recovery.md) |
 | **088** | Theo dõi Token Usage (AI Studio DOM `ms-token-count` + `tiktoken`, Tab `Usage` & Chat Footer) | `usage`, `ai-studio`, `m365-copilot`, `launcher` | ✅ Đã Confirm | [088-token-usage-tracking-and-ai-studio-dom.md](./088-token-usage-tracking-and-ai-studio-dom.md) |
 | **087** | Triển khai Native Codex Skills Bridge & Skills Control (`/v1/responses` + Electron Launcher) | `web`, `skills`, `launcher`, `electron`, `all-providers` | ✅ Đã Confirm | [087-native-codex-skills-bridge.md](./087-native-codex-skills-bridge.md) |

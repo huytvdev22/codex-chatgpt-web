@@ -15,6 +15,7 @@ export interface AiStudioDomStatus {
   hasTurnFooter: boolean;
   thoughtsCount: number;
   thoughtTextLength: number;
+  answerTextLength?: number;
   rawHtml: string;
   rawText: string;
   singleMarkdownCodeBlockText?: string | null;
@@ -127,9 +128,9 @@ export class AiStudioDomObserver {
           const rect = el.getBoundingClientRect();
           if (rect.width <= 0 && rect.height <= 0) return false;
           const label = (
-            el.innerText ||
             el.getAttribute("aria-label") ||
             el.getAttribute("mattooltip") ||
+            el.textContent ||
             ""
           )
             .trim()
@@ -140,7 +141,7 @@ export class AiStudioDomObserver {
         const liveText = Array.from(
           document.querySelectorAll<HTMLElement>(selectors.liveStatus),
         )
-          .map((el) => (el.innerText || el.textContent || "").trim())
+          .map((el) => (el.textContent || el.getAttribute("aria-label") || "").trim())
           .join(" ");
         const isLiveRunning = /running/i.test(liveText);
         const isResponseReadyLive = /response ready/i.test(liveText);
@@ -152,7 +153,7 @@ export class AiStudioDomObserver {
         for (const alertEl of document.querySelectorAll<HTMLElement>(
           '[role="alert"], mat-snack-bar-container, simple-snack-bar, [class*="error-banner" i], [class*="toast" i]',
         )) {
-          const text = (alertEl.innerText || alertEl.textContent || "").trim();
+          const text = (alertEl.textContent || "").trim();
           if (text && alertErrorRegex.test(text)) {
             detectedWebError = text.replace(/\s+/g, " ").slice(0, 300);
             break;
@@ -168,8 +169,7 @@ export class AiStudioDomObserver {
         const thoughtsCount = thoughtContainers.length;
         const lastThought = thoughtContainers[thoughtContainers.length - 1];
         const thoughtTextLength = lastThought
-          ? (lastThought.innerText || lastThought.textContent || "").trim()
-              .length
+          ? (lastThought.textContent || "").trim().length
           : 0;
         const answerContainers = allContainers.filter(
           (el) => !el.querySelector(selectors.thoughtPanel),
@@ -185,6 +185,7 @@ export class AiStudioDomObserver {
             hasTurnFooter: false,
             thoughtsCount,
             thoughtTextLength,
+            answerTextLength: 0,
             rawHtml: "",
             rawText: "",
             singleMarkdownCodeBlockText: null,
@@ -196,6 +197,26 @@ export class AiStudioDomObserver {
         const hasTurnFooter = Boolean(
           targetAnswer.querySelector(selectors.turnFooter),
         );
+
+        // Fast-path nhẹ khi model vẫn đang stream: tránh cloneNode & innerText reflow
+        // liên tục trên UI Thread của AI Studio vì worker không stream chunk trung gian.
+        if (isGenerating) {
+          const lightweightLen = (targetAnswer.textContent || "").trim().length;
+          return {
+            isGenerating: true,
+            responseReadyLive: isResponseReadyLive,
+            hasNewAnswerTurn: true,
+            hasTurnFooter,
+            thoughtsCount,
+            thoughtTextLength,
+            answerTextLength: lightweightLen,
+            rawHtml: "",
+            rawText: "",
+            singleMarkdownCodeBlockText: null,
+            hasContent: lightweightLen > 0,
+            detectedWebError,
+          };
+        }
         const clone = targetAnswer.cloneNode(true) as HTMLElement;
         for (const noise of clone.querySelectorAll(
           [
@@ -343,12 +364,17 @@ export class AiStudioDomObserver {
           : `thinking:${status.thoughtsCount}`
         : "idle";
 
+    const answerLength =
+      status.answerTextLength !== undefined && !normalizedText
+        ? status.answerTextLength
+        : normalizedText.length;
+
     return {
       text: normalizedText,
       isGenerating: status.isGenerating || networkInFlight,
       isCompleted,
       networkInFlight,
-      activityKey: `${phase}:${status.thoughtsCount}:${status.thoughtTextLength}:${normalizedText.length}:${status.hasTurnFooter ? "footer" : "stream"}`,
+      activityKey: `${phase}:${status.thoughtsCount}:${status.thoughtTextLength}:${answerLength}:${status.hasTurnFooter ? "footer" : "stream"}`,
       status,
       timedOut: false,
     };
