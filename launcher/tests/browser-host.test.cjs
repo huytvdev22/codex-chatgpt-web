@@ -2583,3 +2583,62 @@ test("BrowserHost.completeExternalLogin imports cookies into target profile sess
   assert.equal(result.externalLogin, null);
   assert.equal(result.providers[0].profiles[1].authenticated, true);
 });
+
+test("BrowserHost.openLogin delegates ai-studio directly to startExternalLogin and masks unauthenticated primary view", async () => {
+  const { AiStudioBrowserProvider } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const provider = new AiStudioBrowserProvider();
+  provider.configureProfiles({
+    activeProfileId: "default",
+    profiles: [
+      { id: "default", name: "Default", authenticated: false },
+    ],
+  });
+
+  const started = [];
+  const viewVisibilityCalls = [];
+  const fakeHost = {
+    provider: "ai-studio",
+    providerRegistry: {
+      has: (id) => id === "ai-studio",
+      get: (id) => (id === "ai-studio" ? provider : null),
+      list: () => [provider],
+      listIds: () => ["ai-studio"],
+    },
+    turnTabs: new Map(),
+    activeTraceId: null,
+    authenticatedByProvider: { "ai-studio": false },
+    visible: true,
+    surfaceActive: true,
+    boundsReady: true,
+    window: { isVisible: () => true, isMinimized: () => false },
+    view: {
+      setVisible: (v) => viewVisibilityCalls.push(v),
+      webContents: { isDestroyed: () => false, loadURL: () => { throw new Error("must not load embedded URL"); } },
+    },
+    externalChromeLogin: {
+      getState: () => null,
+      start: (payload) => started.push(payload),
+    },
+    selectedTurnTab: () => null,
+    presentPrimaryView: (v) => viewVisibilityCalls.push(`present:${v}`),
+    presentTurnView: () => {},
+    startExternalLogin: BrowserHost.prototype.startExternalLogin,
+    activateHomeSurface: () => {},
+    show: () => {},
+    snapshot: () => ({ ok: true }),
+  };
+
+  await BrowserHost.prototype.openLogin.call(fakeHost, "ai-studio", "default");
+  assert.equal(started.length, 1);
+  assert.equal(started[0].providerId, "ai-studio");
+  assert.equal(started[0].profileId, "default");
+
+  BrowserHost.prototype.syncViewVisibility.call(fakeHost);
+  assert.equal(viewVisibilityCalls.includes("present:false"), true);
+  assert.equal(viewVisibilityCalls.includes(false), true);
+
+  viewVisibilityCalls.length = 0;
+  fakeHost.authenticatedByProvider["ai-studio"] = true;
+  BrowserHost.prototype.syncViewVisibility.call(fakeHost);
+  assert.equal(viewVisibilityCalls.includes("present:true"), true);
+});

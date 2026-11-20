@@ -862,37 +862,6 @@ code {
   }
 }
 
-.browser-auth-assist-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-elevated, #1d1f23);
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.browser-auth-assist-bar.is-warning {
-  background: rgb(245 158 11 / 12%);
-  border-bottom-color: rgb(245 158 11 / 28%);
-  color: var(--color-text-primary);
-}
-
-.browser-auth-assist-text {
-  min-width: 0;
-  flex: 1;
-}
-
-.browser-auth-assist-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
 .browser-viewport {
   position: relative;
   min-width: 0;

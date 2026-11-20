@@ -98,6 +98,54 @@ function surfaceIdForHost(host, providerId) {
   return host.surfaceIds.get(id);
 }
 
+function usesExternalChromeLogin(host, providerObj) {
+  return Boolean(host?.externalChromeLogin && providerObj?.id === "ai-studio");
+}
+
+function shouldMaskPrimaryViewForExternalLogin(host) {
+  return Boolean(
+    host?.externalChromeLogin
+    && host.provider === "ai-studio"
+    && !host.authenticatedByProvider?.["ai-studio"]
+    && host.manualOperation !== "session refresh"
+    && !host.loginOperation,
+  );
+}
+
+async function syncPrimaryViewAfterSwitch(host, providerObj, cachedAuth, logEventName, extraMeta = {}) {
+  if (usesExternalChromeLogin(host, providerObj) && !cachedAuth) {
+    const currentUrl = host.view.webContents.getURL() || "";
+    if (currentUrl && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
+      await host.view.webContents.loadURL(IDLE_BROWSER_URL).catch(() => {});
+    }
+    host.setState({
+      status: "signed-out",
+      message: `Sign in to ${providerObj.displayName} with Chrome`,
+      authenticated: false,
+      url: IDLE_BROWSER_URL,
+      title: providerObj.getFallbackTitle(),
+      loading: false,
+    });
+    host.syncViewVisibility?.();
+    return;
+  }
+
+  const currentUrl = host.view.webContents.getURL() || "";
+  if (!providerObj.isAuthOrAppUrl(currentUrl)) {
+    try {
+      await host.view.webContents.loadURL(providerObj.homeUrl);
+    } catch (err) {
+      host.logger?.error?.(logEventName, {
+        provider: providerObj.id,
+        ...extraMeta,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  host.syncViewVisibility?.();
+  await host.probeAuthentication();
+}
+
 /**
  * Facade điều phối cửa sổ trình duyệt nhúng: gắn kết PrimaryViewManager,
  * TurnTabManager và BrowserProviderRegistry thông qua giao diện đa hình.
@@ -393,20 +441,7 @@ class BrowserHost {
       this.boundsReady ? this.bounds : this.hiddenTurnBounds(),
     );
 
-    const currentUrl = this.view.webContents.getURL() || "";
-    if (!providerObj.isAuthOrAppUrl(currentUrl)) {
-      try {
-        await this.view.webContents.loadURL(providerObj.homeUrl);
-      } catch (err) {
-        this.logger.error("browser.switch_provider_load_failed", {
-          provider: providerObj.id,
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    this.syncViewVisibility();
-    await this.probeAuthentication();
+    await syncPrimaryViewAfterSwitch(this, providerObj, cachedAuth, "browser.switch_provider_load_failed");
     this.writeDescriptor();
     const snap = this.snapshot();
     this.publishState?.(snap);
@@ -453,19 +488,13 @@ class BrowserHost {
         this.boundsReady ? this.bounds : this.hiddenTurnBounds(),
       );
 
-      const currentUrl = this.view.webContents.getURL() || "";
-      if (!providerObj.isAuthOrAppUrl(currentUrl)) {
-        try {
-          await this.view.webContents.loadURL(providerObj.homeUrl);
-        } catch (err) {
-          this.logger.error("browser.switch_profile_load_failed", {
-            provider: providerObj.id,
-            profileId: nextProfileId,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      await this.probeAuthentication();
+      await syncPrimaryViewAfterSwitch(
+        this,
+        providerObj,
+        cachedAuth,
+        "browser.switch_profile_load_failed",
+        { profileId: nextProfileId },
+      );
       if (!this.homeSurfaceOpen) {
         this.parkIdlePrimaryView();
       }
@@ -1034,7 +1063,11 @@ class BrowserHost {
     const visible = windowVisible
       && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
     const selected = this.selectedTurnTab();
-    this.presentPrimaryView(visible && !this.authView && !selected);
+    const maskForExternalLogin = shouldMaskPrimaryViewForExternalLogin(this);
+    this.presentPrimaryView(visible && !this.authView && !selected && !maskForExternalLogin);
+    if (maskForExternalLogin && this.view && !this.view.webContents?.isDestroyed?.()) {
+      this.view.setVisible?.(false);
+    }
     for (const tab of this.turnTabs.values()) {
       const tabVisible = visible && !this.authView && selected?.id === tab.id;
       this.presentTurnView(tab, tabVisible);
@@ -1361,6 +1394,13 @@ class BrowserHost {
   }
 
   async openLogin(providerId, profileId = null) {
+    const targetProviderId = providerId || this.provider;
+    const targetProviderObj = hasProviderOnHost(this, targetProviderId)
+      ? resolveProviderFromHost(this, targetProviderId)
+      : resolveProviderFromHost(this);
+    if (usesExternalChromeLogin(this, targetProviderObj)) {
+      return await this.startExternalLogin(targetProviderObj.id, profileId);
+    }
     if (providerId && providerId !== this.provider && typeof this.switchProvider === "function") {
       await this.switchProvider(providerId);
     }
@@ -1526,12 +1566,18 @@ class BrowserHost {
       this._persistProviderProfiles?.(providerObj);
       this.setState({
         authenticated: false,
-        loading: true,
-        message: `Signing out of ${providerObj.displayName}`,
-        status: "loading",
+        loading: !usesExternalChromeLogin(this, providerObj),
+        message: usesExternalChromeLogin(this, providerObj)
+          ? `Sign in to ${providerObj.displayName} with Chrome`
+          : `Signing out of ${providerObj.displayName}`,
+        status: usesExternalChromeLogin(this, providerObj) ? "signed-out" : "loading",
       });
-      await contents.loadURL(providerObj.homeUrl);
-      await this.probeAuthentication();
+      if (usesExternalChromeLogin(this, providerObj)) {
+        await contents.loadURL(IDLE_BROWSER_URL);
+      } else {
+        await contents.loadURL(providerObj.homeUrl);
+        await this.probeAuthentication();
+      }
       this.activateHomeSurface();
       this.show();
       this.logger.info("browser.logout_completed");
@@ -1614,6 +1660,9 @@ class BrowserHost {
           title: providerObj.getFallbackTitle(),
           loading: !loaded,
         });
+      }
+      if (usesExternalChromeLogin(this, providerObj)) {
+        this.syncViewVisibility?.();
       }
       return this.snapshot();
     })();

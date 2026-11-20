@@ -738,14 +738,14 @@ test("multi-profile state sanitization and renderer/preload/IPC wiring work end-
   assert.match(appSource, /api!\.switchProviderProfile\(/);
 });
 
-test("external Chrome login IPC, preload and UI assist bar wiring are connected", () => {
+test("external Chrome login IPC, preload and UI Chrome sign-in view wiring are connected", () => {
   assert.match(preloadSource, /startExternalLogin:\s*\(providerId,\s*profileId\)\s*=>\s*ipcRenderer\.invoke\("launcher:browser-external-login-start"/);
   assert.match(preloadSource, /completeExternalLogin:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:browser-external-login-complete"\)/);
   assert.match(preloadSource, /cancelExternalLogin:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:browser-external-login-cancel"\)/);
   assert.match(ipcRouterSource, /handle\("launcher:browser-external-login-start",/);
   assert.match(ipcRouterSource, /handle\("launcher:browser-external-login-complete",/);
   assert.match(ipcRouterSource, /handle\("launcher:browser-external-login-cancel",/);
-  assert.match(appSource, /browser-auth-assist-bar/);
+  assert.match(appSource, /browser-external-signin/);
   assert.match(appSource, /Sign in with Chrome/);
   assert.match(appSource, /Import session/);
   assert.match(appSource, /api!\.startExternalLogin\(/);

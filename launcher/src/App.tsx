@@ -669,9 +669,8 @@ function BrowserSurface({
   const activeProfileId = activeProvider?.activeProfileId || "default";
   const activeProfile = profiles.find((item) => item.id === activeProfileId);
   const profileControlLocked = switchingProvider || switchingProfile || navigationLocked || externalLoginActive;
-  const showChromeSignInAssist = activeProviderId === "ai-studio"
-    && (externalLoginActive || (visible && (!browser?.authenticated || browser?.url?.includes("accounts.google.com"))));
-  const isGoogleRejectedUrl = Boolean(browser?.url?.includes("accounts.google.com/v3/signin/rejected"));
+  const showExternalChromeCard = activeProviderId === "ai-studio"
+    && (externalLoginActive || !browser?.authenticated);
   const switchProvider = async (providerId: string) => {
     if (switchingProvider || navigationLocked || providerId === activeProviderId) return;
     setSwitchingProvider(true);
@@ -912,60 +911,54 @@ function BrowserSurface({
         ) : null}
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
-      {showChromeSignInAssist ? (
-        <div className={`browser-auth-assist-bar${isGoogleRejectedUrl ? " is-warning" : ""}`}>
-          {externalLoginActive && externalLogin ? (
-            <>
-              <span className="browser-auth-assist-text">
-                {externalLogin.status === "importing"
-                  ? `Importing Google Chrome session for ${externalLogin.profileName}...`
-                  : `Chrome window opened for ${externalLogin.profileName}. Sign in to Google AI Studio in Chrome, then click Import session.`}
-              </span>
-              <div className="browser-auth-assist-actions">
-                <PrimaryButton
-                  disabled={externalLoginBusy || externalLogin.status === "importing"}
-                  onClick={() => void completeExternalChromeLogin()}
-                >
-                  {externalLogin.status === "importing" ? "Importing..." : "Import session"}
-                </PrimaryButton>
-                <SecondaryButton
-                  disabled={externalLoginBusy || externalLogin.status === "importing"}
-                  onClick={() => void cancelExternalChromeLogin()}
-                >
-                  Cancel
-                </SecondaryButton>
-              </div>
-            </>
-          ) : (
-            <>
-              <span className="browser-auth-assist-text">
-                {isGoogleRejectedUrl
-                  ? `Google blocked embedded sign-in for ${activeProfile?.name || providerLabel}. Sign in using your system Google Chrome window:`
-                  : `Need 2FA, Passkey, or having sign-in trouble for ${activeProfile?.name || providerLabel}?`}
-              </span>
-              <div className="browser-auth-assist-actions">
-                {isGoogleRejectedUrl ? (
+      <div className="browser-viewport" ref={browserSlotRef}>
+        {showExternalChromeCard ? (
+          <div className="browser-empty browser-external-signin">
+            <BrandMark />
+            {externalLoginActive && externalLogin ? (
+              <>
+                <h1>Chrome opened for {externalLogin.profileName}</h1>
+                <p>
+                  {externalLogin.status === "importing"
+                    ? `Importing your signed-in Google AI Studio session into ${externalLogin.profileName}…`
+                    : "Sign in to Google AI Studio in the Google Chrome window, then click Import session."}
+                </p>
+                <div className="browser-empty-actions">
+                  <PrimaryButton
+                    disabled={externalLoginBusy || externalLogin.status === "importing"}
+                    onClick={() => void completeExternalChromeLogin()}
+                  >
+                    {externalLogin.status === "importing" ? "Importing..." : "Import session"}
+                  </PrimaryButton>
+                  <SecondaryButton
+                    disabled={externalLoginBusy || externalLogin.status === "importing"}
+                    onClick={() => void cancelExternalChromeLogin()}
+                  >
+                    Cancel
+                  </SecondaryButton>
+                </div>
+              </>
+            ) : (
+              <>
+                <h1>Sign in to {providerLabel} ({activeProfile?.name || "Default"})</h1>
+                <p>Google AI Studio signs in through your system Google Chrome window and keeps each profile isolated.</p>
+                <div className="browser-empty-actions">
                   <PrimaryButton
                     disabled={externalLoginBusy || navigationLocked}
                     onClick={() => void startExternalChromeLogin(activeProviderId, activeProfileId)}
                   >
                     Sign in with Chrome
                   </PrimaryButton>
-                ) : (
-                  <SecondaryButton
-                    disabled={externalLoginBusy || navigationLocked}
-                    onClick={() => void startExternalChromeLogin(activeProviderId, activeProfileId)}
-                  >
-                    Sign in with Chrome
-                  </SecondaryButton>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      ) : null}
-      <div className="browser-viewport" ref={browserSlotRef}>
-        {!visible ? (
+                  {(browser?.tabs ?? []).length > 0 && !visible ? (
+                    <SecondaryButton onClick={() => void toggle()}>
+                      Show Browser
+                    </SecondaryButton>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
+        ) : !visible ? (
           <div className="browser-empty">
             <BrandMark />
             <h1>{copy.noActiveTask}</h1>
@@ -1072,9 +1065,13 @@ function SetupSurface({
               <SetupRow
                 action={isAuthed
                   ? copy.signedIn
-                  : browser?.status === "loading" && isActiveProvider ? copy.checkingSignIn : copy.signIn}
+                  : browser?.status === "loading" && isActiveProvider
+                    ? copy.checkingSignIn
+                    : (provider.id === "ai-studio" ? "Sign in with Chrome" : copy.signIn)}
                 complete={isAuthed}
-                description={`Sign in directly in the embedded ${provider.displayName} browser. Login stays in this launcher's private profile.`}
+                description={provider.id === "ai-studio"
+                  ? `Sign in through your system Google Chrome browser. Session stays isolated per ${provider.displayName} profile.`
+                  : `Sign in directly in the embedded ${provider.displayName} browser. Login stays in this launcher's private profile.`}
                 disabled={globalActionDisabled}
                 index={signInIndex}
                 onAction={() => run(async () => {
@@ -1206,19 +1203,8 @@ function SetupSurface({
                                     await api!.openLogin(provider.id, profile.id);
                                   })}
                                 >
-                                  {profile.authenticated ? "Open" : "Sign in"}
+                                  {profile.authenticated ? "Open" : (provider.id === "ai-studio" ? "Sign in with Chrome" : "Sign in")}
                                 </SecondaryButton>
-                                {!profile.authenticated ? (
-                                  <SecondaryButton
-                                    disabled={globalActionDisabled}
-                                    onClick={() => void run(async () => {
-                                      await activateBrowser(true);
-                                      await api!.startExternalLogin(provider.id, profile.id);
-                                    })}
-                                  >
-                                    Chrome
-                                  </SecondaryButton>
-                                ) : null}
                                 <SecondaryButton
                                   disabled={globalActionDisabled}
                                   onClick={() => {
