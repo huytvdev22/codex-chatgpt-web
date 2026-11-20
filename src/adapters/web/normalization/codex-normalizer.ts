@@ -20,6 +20,8 @@ import {
   extractDeferredToolNamespaces,
   sanitizeCodexBoilerplate,
 } from "./instruction-sanitizer";
+import { CodexSkillParser } from "../../../skills/codex-skill-parser";
+import type { HostSkillEntry, SelectedSkillEntry } from "../../../skills/types";
 
 export interface CodexNormalizeOptions {
   /** Giới hạn tối đa số lượng ảnh giữ lại trong 1 lượt (mặc định 3). */
@@ -513,6 +515,11 @@ export class CodexPayloadNormalizer {
       const isUserRole = item.role === "user" || (item.type === "message" && item.role === "user");
       if (!isUserRole) continue;
 
+      const text = this.extractTextFromContent((item as any).content);
+      if (CodexSkillParser.isSelectedSkillItem(item as any, text)) {
+        continue;
+      }
+
       // Kiểm tra metadata xem có phải là user request thật hay không
       const meta = (item as any).internal_chat_message_metadata_passthrough;
       const kinds = Array.isArray(meta?.content_item_kinds) ? ((meta.content_item_kinds as unknown[]) as string[]) : [];
@@ -652,6 +659,25 @@ export class CodexPayloadNormalizer {
       rawFallback?: string;
     } | null = null;
 
+    // Xác định ranh giới turn hiện tại (sau assistant message cuối cùng trước/bằng latestUserIdx)
+    // để tách riêng selectedSkills được chọn cho lượt hiện tại.
+    let currentTurnStartIdx = 0;
+    const scanUpperBound = latestUserIdx !== -1 ? latestUserIdx : input.length - 1;
+    for (let i = scanUpperBound; i >= 0; i--) {
+      const candidate = input[i];
+      if (!candidate) continue;
+      const isAssistantMsg =
+        candidate.role === "assistant" ||
+        (candidate.type === "message" && candidate.role === "assistant");
+      if (isAssistantMsg) {
+        currentTurnStartIdx = i + 1;
+        break;
+      }
+    }
+
+    const rawHostSkillTexts: string[] = [];
+    const selectedSkills: SelectedSkillEntry[] = [];
+
     // Xây dựng priorHistory: LOẠI BỎ hoàn toàn latest user item và các tin nhắn hệ thống nội bộ của Codex
     const priorHistory: NormalizedTurn[] = [];
     for (let i = 0; i < input.length; i++) {
@@ -668,6 +694,20 @@ export class CodexPayloadNormalizer {
         text = this.extractTextFromContent((item as any).content);
       } else if (item.type === "agent_message") {
         text = this.extractTextFromContent((item as any).content || "");
+      }
+
+      if (text && text.includes("<skills_instructions>")) {
+        rawHostSkillTexts.push(text);
+      }
+
+      if (text && CodexSkillParser.isSelectedSkillItem(item as any, text)) {
+        if (i >= currentTurnStartIdx) {
+          const parsedSkill = CodexSkillParser.parseSelectedSkill(text);
+          if (parsedSkill) {
+            selectedSkills.push(parsedSkill);
+          }
+        }
+        continue;
       }
 
       if (text) {
@@ -837,6 +877,17 @@ export class CodexPayloadNormalizer {
     const images = this.extractImages(rawPayload, options);
 
     const systemInstructions = options?.parsed?.context?.systemPrompt?.filter(Boolean);
+    const resolvedWorkspaceCwd = latestEnvFields?.cwd;
+    const availableSkills: HostSkillEntry[] = [];
+    const seenAvailableSkills = new Set<string>();
+    for (const rawSkillText of rawHostSkillTexts) {
+      for (const entry of CodexSkillParser.extractHostSkills(rawSkillText, resolvedWorkspaceCwd)) {
+        const key = `${entry.name}::${entry.absolutePath}`;
+        if (seenAvailableSkills.has(key)) continue;
+        seenAvailableSkills.add(key);
+        availableSkills.push(entry);
+      }
+    }
 
     return {
       model: rawPayload.model || "",
@@ -846,7 +897,7 @@ export class CodexPayloadNormalizer {
       ...(systemInstructions && systemInstructions.length > 0 ? { systemInstructions } : {}),
       developerInstructions: developerInstructions.length > 0 ? developerInstructions : undefined,
       environmentContext: latestEnvFields ? this.formatEnvironmentFields(latestEnvFields) : undefined,
-      ...(latestEnvFields?.cwd ? { workspaceCwd: latestEnvFields.cwd } : {}),
+      ...(resolvedWorkspaceCwd ? { workspaceCwd: resolvedWorkspaceCwd } : {}),
       priorHistory,
       latestUserInstruction,
       trailingToolResults,
@@ -857,6 +908,8 @@ export class CodexPayloadNormalizer {
       collaborationMode: this.detectCollaborationMode(rawPayload, input),
       rawSnapshot: rawPayload.toJSON(),
       images: images.length > 0 ? images : undefined,
+      ...(availableSkills.length > 0 ? { availableSkills } : {}),
+      ...(selectedSkills.length > 0 ? { selectedSkills } : {}),
     };
   }
 

@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **087** | Triển khai Native Codex Skills Bridge & Skills Control (`/v1/responses` + Electron Launcher) | `web`, `skills`, `launcher`, `electron`, `all-providers` | ✅ Đã Confirm | [087-native-codex-skills-bridge.md](./087-native-codex-skills-bridge.md) |
 | **086** | Triển khai Personalization & Workspace Memory 2 tầng (`/v1/responses` + Electron Launcher) | `web`, `launcher`, `electron`, `all-providers` | ✅ Đã Confirm | [086-personalization-and-workspace-memory.md](./086-personalization-and-workspace-memory.md) |
 | **085** | Lặp `apply_patch` 6 lần liên tiếp tới khi bị `WebTurnLoopGuard` ngắt sau lỗi `apply_patch verification failed` | `web`, `m365-copilot`, `ai-studio` | ✅ Đã Confirm | [085-apply-patch-verification-failed-repeated-loop.md](./085-apply-patch-verification-failed-repeated-loop.md) |
 | **084** | M365 Copilot lặp retry khi hết hạn mức ngày & lỗi font tiếng Việt khi PowerShell chạy `Get-Content` | `m365-copilot`, `web`, `server` | ✅ Đã Confirm | [084-m365-daily-chat-limit-stop-and-powershell-utf8-hint.md](./084-m365-daily-chat-limit-stop-and-powershell-utf8-hint.md) |

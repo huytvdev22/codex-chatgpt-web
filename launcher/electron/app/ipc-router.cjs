@@ -60,6 +60,7 @@ class IpcRouter {
       logger,
       stateStore,
       personalizationStore,
+      skillsStore,
       launcherProfile,
       isDevProfile,
       coreHome,
@@ -378,6 +379,16 @@ class IpcRouter {
       if (!personalizationStore) throw new Error("Personalization store is unavailable");
       const saved = personalizationStore.save(value);
       send("launcher:personalization-changed", saved);
+      return saved;
+    });
+    handle("launcher:skills-get", () => {
+      if (!skillsStore) throw new Error("Skills store is unavailable");
+      return skillsStore.read();
+    });
+    handle("launcher:skills-save", (_event, value) => {
+      if (!skillsStore) throw new Error("Skills store is unavailable");
+      const saved = skillsStore.save(value);
+      send("launcher:skills-changed", saved);
       return saved;
     });
     handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));

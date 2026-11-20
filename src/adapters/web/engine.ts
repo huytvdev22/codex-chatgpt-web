@@ -11,6 +11,10 @@ import {
   personalizationPromptBuilder,
   personalizationStore,
 } from "../../personalization";
+import {
+  skillPromptBuilder,
+  skillsStore,
+} from "../../skills";
 import { buildWebConversationKey } from "./conversation/conversation-key";
 import type { NormalizedImageAttachment } from "./normalization/canonical-types";
 import { compileWebPrompt } from "./compile-prompt";
@@ -243,11 +247,38 @@ export class WebTurnEngine {
       const personalizationSnapshot = useCompiledPrompt
         ? personalizationStore.getSnapshot()
         : undefined;
+      const skillsSnapshot = useCompiledPrompt
+        ? skillsStore.getSnapshot()
+        : undefined;
+      if (normalized.availableSkills && normalized.availableSkills.length > 0) {
+        skillsStore.recordDiscoveredSkills(normalized.availableSkills);
+      }
+      const filteredHostSkills =
+        useCompiledPrompt && skillsSnapshot
+          ? skillPromptBuilder.filterHostSkills(normalized.availableSkills, skillsSnapshot.settings)
+          : [];
+      const availableSkillsDigest =
+        useCompiledPrompt && skillsSnapshot
+          ? skillPromptBuilder.computeAvailableSkillsDigest(
+              filteredHostSkills,
+              skillsSnapshot.settings,
+            )
+          : undefined;
+      const selectedSkillsDigest =
+        useCompiledPrompt && skillsSnapshot
+          ? skillPromptBuilder.computeSelectedSkillsDigest(
+              normalized.selectedSkills,
+              skillsSnapshot.settings,
+            )
+          : undefined;
+
       const directives = useCompiledPrompt
         ? this.sessionStore.resolveTurnDirectives(sessionKey, {
             isNewConversation,
             normalized,
             personalizationDigest: personalizationSnapshot?.digest,
+            availableSkillsDigest,
+            selectedSkillsDigest,
           })
         : undefined;
 
@@ -261,6 +292,17 @@ export class WebTurnEngine {
               normalized.workspaceCwd,
               personalizationSnapshot.settings.enabled &&
                 personalizationSnapshot.settings.workspaceMemoryEnabled,
+            )
+          : "";
+      const availableSkillsText =
+        useCompiledPrompt && directives?.includeAvailableSkills
+          ? skillPromptBuilder.buildAvailableSkillsSection(filteredHostSkills)
+          : "";
+      const selectedSkillsText =
+        useCompiledPrompt && directives?.includeSelectedSkills && skillsSnapshot
+          ? skillPromptBuilder.buildSelectedSkillsSection(
+              normalized.selectedSkills,
+              skillsSnapshot.settings,
             )
           : "";
 
@@ -278,6 +320,9 @@ export class WebTurnEngine {
             includePersonalization: !structuredOutputFormat,
             personalizationText,
             workspaceMemoryHintText,
+            includeSkills: !structuredOutputFormat,
+            availableSkillsText,
+            selectedSkillsText,
           });
       const initialPrompt = this.definition.compilePrompt
         ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
@@ -661,6 +706,10 @@ export class WebTurnEngine {
               normalized,
               describedToolNames,
               personalizationSnapshot?.digest,
+              {
+                availableSkillsDigest,
+                selectedSkillsDigest,
+              },
             );
           }
           finalStatus = "completed";
@@ -688,6 +737,10 @@ export class WebTurnEngine {
             normalized,
             describedToolNames,
             personalizationSnapshot?.digest,
+            {
+              availableSkillsDigest,
+              selectedSkillsDigest,
+            },
           );
         }
 

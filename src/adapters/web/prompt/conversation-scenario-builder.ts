@@ -53,6 +53,8 @@ export interface ScenarioBuilderInput {
   developerRulesText?: string;
   personalizationText?: string;
   workspaceMemoryHintText?: string;
+  availableSkillsText?: string;
+  selectedSkillsText?: string;
   systemPromptText?: string;
   priorHistoryText?: string;
   toolResultsText?: string;
@@ -157,6 +159,7 @@ export class ConversationScenarioBuilder {
         if (input.developerRulesText) projectContext.push(input.developerRulesText);
         if (input.personalizationText) projectContext.push(input.personalizationText);
         if (input.workspaceMemoryHintText) projectContext.push(input.workspaceMemoryHintText);
+        if (input.availableSkillsText) projectContext.push(input.availableSkillsText);
 
         if (projectContext.length > 0) {
           sections.push(projectContext.join("\n\n"));
@@ -170,6 +173,7 @@ export class ConversationScenarioBuilder {
           }
           taskBlocks.push(input.toolResultsText);
         }
+        if (input.selectedSkillsText) taskBlocks.push(input.selectedSkillsText);
         if (input.userInstructionText) taskBlocks.push(input.userInstructionText);
         if (input.hasImages) taskBlocks.push(WEB_IMAGE_ATTACHMENT_HINT);
 
@@ -303,11 +307,17 @@ export class ConversationScenarioBuilder {
     if (options.includeWorkspaceMemoryHint && input.workspaceMemoryHintText) {
       sections.push(input.workspaceMemoryHintText);
     }
+    if (input.availableSkillsText) {
+      sections.push(input.availableSkillsText);
+    }
     if (input.actionContractText) {
       sections.push(input.actionContractText);
     }
     if (options.includeToolResults && input.toolResultsText) {
       sections.push(input.toolResultsText);
+    }
+    if (input.selectedSkillsText) {
+      sections.push(input.selectedSkillsText);
     }
     if (input.includeUserInstruction !== false && input.userInstructionText) {
       sections.push(input.userInstructionText);

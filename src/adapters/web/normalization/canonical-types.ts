@@ -1,4 +1,5 @@
 import type { CodexRawRequestWire } from "./codex-raw-payload";
+import type { HostSkillEntry, SelectedSkillEntry } from "../../../skills/types";
 
 /**
  * Định danh chuẩn của công cụ, bảo toàn cả namespace và short name.
@@ -105,5 +106,7 @@ export interface NormalizedCodexRequest {
   collaborationMode: "default" | "plan";
   rawSnapshot: CodexRawRequestWire;
   images?: NormalizedImageAttachment[];
+  availableSkills?: HostSkillEntry[];
+  selectedSkills?: SelectedSkillEntry[];
 }
 

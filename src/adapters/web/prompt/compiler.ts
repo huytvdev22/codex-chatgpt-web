@@ -25,6 +25,10 @@ import {
   personalizationPromptBuilder,
   personalizationStore,
 } from "../../../personalization";
+import {
+  skillPromptBuilder,
+  skillsStore,
+} from "../../../skills";
 
 export const DEFAULT_MAX_WEB_PROMPT_CHARS = 95_000;
 
@@ -125,6 +129,9 @@ export interface PromptCompileInput {
   includePersonalization?: boolean;
   personalizationText?: string;
   workspaceMemoryHintText?: string;
+  includeSkills?: boolean;
+  availableSkillsText?: string;
+  selectedSkillsText?: string;
 }
 
 export interface PromptCompileResult {
@@ -491,6 +498,37 @@ export class WebPromptCompiler {
             : "";
     }
 
+    const includeSkills = input.includeSkills ?? true;
+    let availableSkillsText = "";
+    let selectedSkillsText = "";
+    if (!structuredOutputFormat && includeSkills) {
+      const needAvailableFallback = input.availableSkillsText === undefined && isNewConversation;
+      const needSelectedFallback = input.selectedSkillsText === undefined;
+      const fallbackSkillsSnapshot =
+        needAvailableFallback || needSelectedFallback
+          ? skillsStore.getSnapshot()
+          : undefined;
+
+      if (input.availableSkillsText !== undefined) {
+        availableSkillsText = input.availableSkillsText;
+      } else if (needAvailableFallback && fallbackSkillsSnapshot) {
+        const filtered = skillPromptBuilder.filterHostSkills(
+          normalized.availableSkills,
+          fallbackSkillsSnapshot.settings,
+        );
+        availableSkillsText = skillPromptBuilder.buildAvailableSkillsSection(filtered);
+      }
+
+      if (input.selectedSkillsText !== undefined) {
+        selectedSkillsText = input.selectedSkillsText;
+      } else if (needSelectedFallback && fallbackSkillsSnapshot) {
+        selectedSkillsText = skillPromptBuilder.buildSelectedSkillsSection(
+          normalized.selectedSkills,
+          fallbackSkillsSnapshot.settings,
+        );
+      }
+    }
+
     // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
     const buildScenario = (historyOverride: string) =>
       conversationScenarioBuilder.buildTurnPrompt({
@@ -512,6 +550,8 @@ export class WebPromptCompiler {
         developerRulesText,
         personalizationText,
         workspaceMemoryHintText,
+        availableSkillsText,
+        selectedSkillsText,
         systemPromptText: systemInstructionsContent,
         priorHistoryText: historyOverride,
         toolResultsText,

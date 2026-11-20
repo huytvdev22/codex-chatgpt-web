@@ -23,6 +23,9 @@ export interface CompileWebPromptOptions {
   includePersonalization?: boolean;
   personalizationText?: string;
   workspaceMemoryHintText?: string;
+  includeSkills?: boolean;
+  availableSkillsText?: string;
+  selectedSkillsText?: string;
 }
 
 /**
@@ -57,6 +60,9 @@ export function compileWebPrompt(
     includePersonalization: options.includePersonalization,
     personalizationText: options.personalizationText,
     workspaceMemoryHintText: options.workspaceMemoryHintText,
+    includeSkills: options.includeSkills,
+    availableSkillsText: options.availableSkillsText,
+    selectedSkillsText: options.selectedSkillsText,
   });
 }
 

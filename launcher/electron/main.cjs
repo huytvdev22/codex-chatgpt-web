@@ -40,6 +40,7 @@ const {
   nextSessionRefreshReminderAt,
 } = require("./infra/state-store.cjs");
 const { createPersonalizationStore } = require("./infra/personalization-store.cjs");
+const { createSkillsStore } = require("./infra/skills-store.cjs");
 const { runtimeBundlePaths } = require("./runtime/runtime-command.cjs");
 const { RuntimeHost } = require("./runtime/runtime-host.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime/runtime-install.cjs");
@@ -419,6 +420,10 @@ async function start() {
     logger,
     stateStore,
     personalizationStore: createPersonalizationStore(path.join(CORE_HOME, "personalization.json")),
+    skillsStore: createSkillsStore(
+      path.join(CORE_HOME, "skills.json"),
+      path.join(CORE_HOME, "discovered-skills.json"),
+    ),
     launcherProfile: LAUNCHER_PROFILE,
     isDevProfile: IS_DEV_PROFILE,
     coreHome: CORE_HOME,

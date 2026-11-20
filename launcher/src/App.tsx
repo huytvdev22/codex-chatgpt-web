@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { PersonalizationSurface } from "./components/PersonalizationSurface";
+import { SkillsSurface } from "./components/SkillsSurface";
 import type {
   BrowserProviderInfo,
   BrowserState,
@@ -464,6 +465,12 @@ function LauncherShell({
                   label={copy.personalization}
                   onClick={() => navigateSurface("personalization")}
                 />
+                <SidebarItem
+                  active={surface === "skills"}
+                  icon="skills"
+                  label={copy.skills}
+                  onClick={() => navigateSurface("skills")}
+                />
               </SidebarGroup>
             </nav>
 
@@ -522,6 +529,13 @@ function LauncherShell({
             ) : null}
             {surface === "personalization" ? (
               <PersonalizationSurface
+                api={api!}
+                copy={copy}
+                setError={setError}
+              />
+            ) : null}
+            {surface === "skills" ? (
+              <SkillsSurface
                 api={api!}
                 copy={copy}
                 setError={setError}

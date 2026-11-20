@@ -24,6 +24,7 @@ export type IconName =
   | "settings"
   | "setup"
   | "sidebar"
+  | "skills"
   | "spark"
   | "trash"
   | "update"
@@ -56,6 +57,7 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
       {name === "settings" ? <><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15.03 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" /></> : null}
       {name === "setup" ? <><path {...common} d="M14.7 6.3a4 4 0 0 0-5 5L4 17l3 3 5.7-5.7a4 4 0 0 0 5-5l-2.5 2.5-3-3 2.5-2.5Z" /></> : null}
       {name === "sidebar" ? <><rect {...common} x="3" y="4" width="18" height="16" rx="2.5" /><path {...common} d="M9 4v16" /></> : null}
+      {name === "skills" ? <><path {...common} d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" /></> : null}
       {name === "spark" ? <path {...common} d="m12 3 2.8 6.2L21 12l-6.2 2.8L12 21l-2.8-6.2L3 12l6.2-2.8L12 3Z" /> : null}
       {name === "trash" ? <><path {...common} d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" /></> : null}
       {name === "update" ? <><path {...common} d="M12 3v12M7.5 10.5 12 15l4.5-4.5" /><path {...common} d="M5 19h14" /></> : null}

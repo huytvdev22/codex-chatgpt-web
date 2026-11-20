@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setPreference: (key, value) => ipcRenderer.invoke("launcher:set-preference", key, value),
   getPersonalization: () => ipcRenderer.invoke("launcher:personalization-get"),
   savePersonalization: (settings) => ipcRenderer.invoke("launcher:personalization-save", settings),
+  getSkills: () => ipcRenderer.invoke("launcher:skills-get"),
+  saveSkills: (settings) => ipcRenderer.invoke("launcher:skills-save", settings),
   setSidebarState: (state) => ipcRenderer.invoke("launcher:sidebar-state", state),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
   windowState: () => ipcRenderer.invoke("launcher:window-state"),

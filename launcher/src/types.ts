@@ -2,7 +2,31 @@ import languages from "../electron/languages.json";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
-export type Surface = "browser" | "setup" | "settings" | "personalization";
+export type Surface = "browser" | "setup" | "settings" | "personalization" | "skills";
+
+export type SkillSourceKind = "workspace" | "user" | "system" | "unknown";
+
+export interface SkillsSettings {
+  version: 1;
+  enabled: boolean;
+  autoDiscoverHostSkills: boolean;
+  includeSystemSkills: boolean;
+  disabledSkills: string[];
+  updatedAt: string | null;
+}
+
+export interface DiscoveredSkillRecord {
+  name: string;
+  description: string;
+  absolutePath: string;
+  source: SkillSourceKind;
+  lastSeenAt: string;
+}
+
+export interface SkillsStatePayload {
+  settings: SkillsSettings;
+  discoveredSkills: DiscoveredSkillRecord[];
+}
 
 export type PersonalizationTone =
   | "default"
@@ -185,6 +209,8 @@ export interface LauncherApi {
   ): Promise<LauncherState>;
   getPersonalization(): Promise<PersonalizationSettings>;
   savePersonalization(settings: PersonalizationSettings): Promise<PersonalizationSettings>;
+  getSkills(): Promise<SkillsStatePayload>;
+  saveSkills(settings: SkillsSettings): Promise<SkillsStatePayload>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;

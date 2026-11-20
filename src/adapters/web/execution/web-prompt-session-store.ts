@@ -15,6 +15,8 @@ export interface WebPromptSessionSnapshot {
   lastUserInstructionDigest?: string;
   lastEnvironmentDigest?: string;
   lastPersonalizationDigest?: string;
+  lastAvailableSkillsDigest?: string;
+  lastSelectedSkillsDigest?: string;
   lastCollaborationMode?: "default" | "plan";
   pendingSchemaError?: PendingSchemaErrorState;
   updatedAt: number;
@@ -24,6 +26,8 @@ export interface PromptTurnDirectives {
   includeEnvironment: boolean;
   includeUserInstruction: boolean;
   includePersonalization: boolean;
+  includeAvailableSkills: boolean;
+  includeSelectedSkills: boolean;
   toolDelta?: McpToolDeltaOptions;
 }
 
@@ -72,17 +76,29 @@ export class WebPromptSessionStore {
       isNewConversation: boolean;
       normalized: NormalizedCodexRequest;
       personalizationDigest?: string;
+      availableSkillsDigest?: string;
+      selectedSkillsDigest?: string;
     },
   ): PromptTurnDirectives {
-    const { isNewConversation, normalized, personalizationDigest = "" } = input;
+    const {
+      isNewConversation,
+      normalized,
+      personalizationDigest = "",
+      availableSkillsDigest = "",
+      selectedSkillsDigest = "",
+    } = input;
     const hasToolResults = normalized.trailingToolResults.length > 0;
     const hasPersonalization = personalizationDigest.length > 0;
+    const hasAvailableSkills = availableSkillsDigest.length > 0;
+    const hasSelectedSkills = selectedSkillsDigest.length > 0;
 
     if (!sessionKey) {
       return {
         includeEnvironment: isNewConversation || !hasToolResults,
         includeUserInstruction: true,
         includePersonalization: isNewConversation && hasPersonalization,
+        includeAvailableSkills: isNewConversation && hasAvailableSkills,
+        includeSelectedSkills: hasSelectedSkills && (isNewConversation || !hasToolResults),
         toolDelta: undefined,
       };
     }
@@ -93,6 +109,8 @@ export class WebPromptSessionStore {
         includeEnvironment: true,
         includeUserInstruction: true,
         includePersonalization: hasPersonalization,
+        includeAvailableSkills: hasAvailableSkills,
+        includeSelectedSkills: hasSelectedSkills,
         toolDelta: undefined,
       };
     }
@@ -106,6 +124,8 @@ export class WebPromptSessionStore {
         includeEnvironment: !hasToolResults,
         includeUserInstruction: true,
         includePersonalization: hasPersonalization && !hasToolResults,
+        includeAvailableSkills: hasAvailableSkills && !hasToolResults,
+        includeSelectedSkills: hasSelectedSkills && !hasToolResults,
         toolDelta: undefined,
       };
     }
@@ -128,6 +148,15 @@ export class WebPromptSessionStore {
 
     const includePersonalization =
       hasPersonalization && personalizationDigest !== (snapshot.lastPersonalizationDigest ?? "");
+
+    const includeAvailableSkills =
+      hasAvailableSkills &&
+      !hasToolResults &&
+      availableSkillsDigest !== (snapshot.lastAvailableSkillsDigest ?? "");
+
+    const includeSelectedSkills =
+      hasSelectedSkills &&
+      (!hasToolResults || selectedSkillsDigest !== (snapshot.lastSelectedSkillsDigest ?? ""));
 
     const addedTools: NormalizedTool[] = [];
     const currentNames = new Set<string>();
@@ -158,6 +187,8 @@ export class WebPromptSessionStore {
       includeEnvironment,
       includeUserInstruction,
       includePersonalization,
+      includeAvailableSkills,
+      includeSelectedSkills,
       toolDelta: hasDelta
         ? {
             currentTools: normalized.activeCodingTools,
@@ -180,6 +211,10 @@ export class WebPromptSessionStore {
     normalized: NormalizedCodexRequest,
     describedNames: string[] = [],
     personalizationDigest?: string,
+    skillsDigests?: {
+      availableSkillsDigest?: string;
+      selectedSkillsDigest?: string;
+    },
   ): void {
     if (!sessionKey) return;
     this.pruneExpired();
@@ -209,6 +244,14 @@ export class WebPromptSessionStore {
         personalizationDigest !== undefined
           ? personalizationDigest
           : existing?.lastPersonalizationDigest,
+      lastAvailableSkillsDigest:
+        skillsDigests?.availableSkillsDigest !== undefined
+          ? skillsDigests.availableSkillsDigest
+          : existing?.lastAvailableSkillsDigest,
+      lastSelectedSkillsDigest:
+        skillsDigests?.selectedSkillsDigest !== undefined
+          ? skillsDigests.selectedSkillsDigest
+          : existing?.lastSelectedSkillsDigest,
       lastCollaborationMode: normalized.collaborationMode,
       pendingSchemaError: undefined,
       updatedAt: Date.now(),
