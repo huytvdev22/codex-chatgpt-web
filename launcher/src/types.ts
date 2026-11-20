@@ -73,7 +73,27 @@ export interface UsageStatePayload {
   summary: UsageSummary;
 }
 
-export type SkillSourceKind = "workspace" | "user" | "system" | "unknown";
+export type SkillSourceKind = "workspace" | "custom" | "user" | "system" | "unknown";
+
+export interface SkillDirectoryEntry {
+  path: string;
+  enabled: boolean;
+}
+
+export interface ScannedSkillDirectory {
+  path: string;
+  resolvedPath: string;
+  enabled: boolean;
+  exists: boolean;
+  skillCount: number;
+  error: string | null;
+}
+
+export interface SuggestedSkillDirectory {
+  path: string;
+  resolvedPath: string;
+  skillCount: number;
+}
 
 export interface SkillsSettings {
   version: 1;
@@ -81,6 +101,7 @@ export interface SkillsSettings {
   autoDiscoverHostSkills: boolean;
   includeSystemSkills: boolean;
   disabledSkills: string[];
+  skillDirectories: SkillDirectoryEntry[];
   updatedAt: string | null;
 }
 
@@ -90,10 +111,15 @@ export interface DiscoveredSkillRecord {
   absolutePath: string;
   source: SkillSourceKind;
   lastSeenAt: string;
+  directoryPath?: string;
+  allowImplicitInvocation?: boolean;
+  overriddenBy?: SkillSourceKind | null;
 }
 
 export interface SkillsStatePayload {
   settings: SkillsSettings;
+  directories: ScannedSkillDirectory[];
+  suggestedDirectories: SuggestedSkillDirectory[];
   discoveredSkills: DiscoveredSkillRecord[];
 }
 
@@ -322,6 +348,8 @@ export interface LauncherApi {
   savePersonalization(settings: PersonalizationSettings): Promise<PersonalizationSettings>;
   getSkills(): Promise<SkillsStatePayload>;
   saveSkills(settings: SkillsSettings): Promise<SkillsStatePayload>;
+  pickSkillDirectory(): Promise<{ cancelled: boolean; path: string | null }>;
+  openSkillDirectory(targetPath: string): Promise<{ ok: boolean; path: string }>;
   getUsage(range?: UsageRange): Promise<UsageStatePayload>;
   saveUsageSettings(settings: UsageSettings, range?: UsageRange): Promise<UsageStatePayload>;
   clearUsageHistory(range?: UsageRange): Promise<UsageStatePayload>;

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { dirname, posix, win32 } from "node:path";
+import { skillDirectoryScanner } from "./skill-directory-scanner";
 import type {
   HostSkillEntry,
   SelectedSkillEntry,
@@ -9,10 +10,14 @@ import type {
 
 const SOURCE_ORDER: Record<SkillSourceKind, number> = {
   workspace: 0,
-  user: 1,
-  unknown: 2,
-  system: 3,
+  custom: 1,
+  user: 2,
+  unknown: 3,
+  system: 4,
 };
+
+const SKILL_MENTION_REGEX =
+  /(?:^|[\s([{"'`,;:])\$([a-zA-Z0-9][a-zA-Z0-9._-]{0,119})(?=$|[\s.,;:!?)\]}"'`/])/g;
 
 function resolveSkillDir(filePath: string): string {
   if (!filePath) return "";
@@ -23,10 +28,37 @@ function resolveSkillDir(filePath: string): string {
 }
 
 /**
- * Biên dịch danh sách Skills khả dụng (dạng siêu tối giản `name -> path`)
- * và các Skill được người dùng kích hoạt trực tiếp qua `/skill` / `$skill`.
+ * Biên dịch danh sách Skills khả dụng (dạng siêu tối giản `name -> path`),
+ * hợp nhất nguồn Codex Host + Custom Skill Directories và tự nạp nội dung `$tên-skill`.
  */
 export class SkillPromptBuilder {
+  public mergeSkills(
+    hostSkills: readonly HostSkillEntry[] | undefined,
+    directorySkills: readonly HostSkillEntry[] | undefined,
+  ): HostSkillEntry[] {
+    const combined: HostSkillEntry[] = [
+      ...(hostSkills ?? []),
+      ...(directorySkills ?? []),
+    ];
+    if (combined.length === 0) return [];
+
+    const sorted = [...combined].sort((a, b) => {
+      const rankDiff = SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source];
+      return rankDiff !== 0 ? rankDiff : 0;
+    });
+
+    const seen = new Set<string>();
+    const merged: HostSkillEntry[] = [];
+    for (const skill of sorted) {
+      const key = skill.name.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(skill);
+    }
+
+    return merged;
+  }
+
   public filterHostSkills(
     skills: readonly HostSkillEntry[] | undefined,
     settings: SkillsSettings,
@@ -39,6 +71,9 @@ export class SkillPromptBuilder {
     );
 
     const filtered = skills.filter((skill) => {
+      if (skill.allowImplicitInvocation === false) {
+        return false;
+      }
       if (!settings.includeSystemSkills && skill.source === "system") {
         return false;
       }
@@ -52,6 +87,76 @@ export class SkillPromptBuilder {
       const rankDiff = SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source];
       return rankDiff !== 0 ? rankDiff : 0;
     });
+  }
+
+  public extractExplicitSkillMentions(userInstruction: string | undefined): string[] {
+    if (!userInstruction || !userInstruction.includes("$")) return [];
+    const seen = new Set<string>();
+    const names: string[] = [];
+    SKILL_MENTION_REGEX.lastIndex = 0;
+
+    let match: RegExpExecArray | null;
+    while ((match = SKILL_MENTION_REGEX.exec(userInstruction)) !== null) {
+      const candidate = (match[1] ?? "").trim();
+      if (!candidate) continue;
+      const key = candidate.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(candidate);
+    }
+    return names;
+  }
+
+  public resolveExplicitSkillMentions(
+    userInstruction: string | undefined,
+    mergedSkills: readonly HostSkillEntry[] | undefined,
+    existingSelected: readonly SelectedSkillEntry[] | undefined,
+    settings: SkillsSettings,
+    readContent: (absolutePath: string) => string | null = (absolutePath) =>
+      skillDirectoryScanner.readSkillContent(absolutePath),
+  ): SelectedSkillEntry[] {
+    const base = [...(existingSelected ?? [])];
+    if (!settings.enabled || !userInstruction || !mergedSkills || mergedSkills.length === 0) {
+      return base;
+    }
+
+    const mentionedNames = this.extractExplicitSkillMentions(userInstruction);
+    if (mentionedNames.length === 0) {
+      return base;
+    }
+
+    const disabledSet = new Set(
+      settings.disabledSkills.map((item) => item.trim().toLowerCase()).filter(Boolean),
+    );
+    const alreadySelected = new Set(
+      base.map((item) => item.name.trim().toLowerCase()).filter(Boolean),
+    );
+    const skillByName = new Map<string, HostSkillEntry>();
+    for (const skill of mergedSkills) {
+      const key = skill.name.trim().toLowerCase();
+      if (key && !skillByName.has(key)) {
+        skillByName.set(key, skill);
+      }
+    }
+
+    for (const rawName of mentionedNames) {
+      const key = rawName.toLowerCase();
+      if (alreadySelected.has(key) || disabledSet.has(key)) continue;
+      const matched = skillByName.get(key);
+      if (!matched || !matched.absolutePath) continue;
+
+      const body = readContent(matched.absolutePath);
+      if (!body) continue;
+
+      alreadySelected.add(key);
+      base.push({
+        name: matched.name,
+        path: matched.absolutePath,
+        body,
+      });
+    }
+
+    return base;
   }
 
   public computeAvailableSkillsDigest(

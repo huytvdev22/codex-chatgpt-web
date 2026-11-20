@@ -8,8 +8,11 @@ import {
 import type {
   DiscoveredSkillRecord,
   LauncherApi,
+  ScannedSkillDirectory,
+  SkillDirectoryEntry,
   SkillSourceKind,
   SkillsSettings,
+  SuggestedSkillDirectory,
 } from "../types";
 
 const DEFAULT_SETTINGS: SkillsSettings = {
@@ -18,6 +21,7 @@ const DEFAULT_SETTINGS: SkillsSettings = {
   autoDiscoverHostSkills: true,
   includeSystemSkills: false,
   disabledSkills: [],
+  skillDirectories: [{ path: "~/.codex/skills", enabled: true }],
   updatedAt: null,
 };
 
@@ -27,10 +31,13 @@ function messageOf(cause: unknown): string {
 
 const SOURCE_ORDER: Record<SkillSourceKind, number> = {
   workspace: 0,
-  user: 1,
-  unknown: 2,
-  system: 3,
+  custom: 1,
+  user: 2,
+  unknown: 3,
+  system: 4,
 };
+
+type SourceFilter = "all" | "workspace" | "custom" | "system";
 
 export function SkillsSurface({
   api,
@@ -42,23 +49,43 @@ export function SkillsSurface({
   setError: (error: string | null) => void;
 }) {
   const [settings, setSettings] = useState<SkillsSettings>(DEFAULT_SETTINGS);
+  const [directories, setDirectories] = useState<ScannedSkillDirectory[]>([]);
+  const [suggestedDirectories, setSuggestedDirectories] = useState<SuggestedSkillDirectory[]>([]);
   const [discovered, setDiscovered] = useState<DiscoveredSkillRecord[]>([]);
+  const [manualPath, setManualPath] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const applyPayload = useCallback(
+    (payload: {
+      settings: SkillsSettings;
+      directories?: ScannedSkillDirectory[];
+      suggestedDirectories?: SuggestedSkillDirectory[];
+      discoveredSkills: DiscoveredSkillRecord[];
+    }) => {
+      setSettings(payload.settings);
+      setDirectories(Array.isArray(payload.directories) ? payload.directories : []);
+      setSuggestedDirectories(
+        Array.isArray(payload.suggestedDirectories) ? payload.suggestedDirectories : [],
+      );
+      setDiscovered(Array.isArray(payload.discoveredSkills) ? payload.discoveredSkills : []);
+    },
+    [],
+  );
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const payload = await api.getSkills();
-      setSettings(payload.settings);
-      setDiscovered(payload.discoveredSkills);
+      applyPayload(payload);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
       setLoading(false);
     }
-  }, [api, setError]);
+  }, [api, applyPayload, setError]);
 
   useEffect(() => {
     void loadSkills();
@@ -70,15 +97,14 @@ export function SkillsSurface({
       setError(null);
       try {
         const saved = await api.saveSkills(next);
-        setSettings(saved.settings);
-        setDiscovered(saved.discoveredSkills);
+        applyPayload(saved);
       } catch (cause) {
         setError(messageOf(cause));
       } finally {
         setSaving(false);
       }
     },
-    [api, setError],
+    [api, applyPayload, setError],
   );
 
   const disabledSet = useMemo(
@@ -86,12 +112,20 @@ export function SkillsSurface({
     [settings.disabledSkills],
   );
 
-  const visibleSkills = useMemo(() => {
+  const sortedSkills = useMemo(() => {
     return [...discovered].sort((a, b) => {
       const diff = SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source];
       return diff !== 0 ? diff : a.name.localeCompare(b.name);
     });
   }, [discovered]);
+
+  const visibleSkills = useMemo(() => {
+    if (sourceFilter === "all") return sortedSkills;
+    if (sourceFilter === "custom") {
+      return sortedSkills.filter((item) => item.source === "custom" || item.source === "user");
+    }
+    return sortedSkills.filter((item) => item.source === sourceFilter);
+  }, [sortedSkills, sourceFilter]);
 
   const activeCount = useMemo(
     () => filterSkillsForPrompt(discovered, settings).length,
@@ -107,12 +141,77 @@ export function SkillsSurface({
     switch (source) {
       case "workspace":
         return copy.skillsSourceWorkspace;
+      case "custom":
+        return copy.skillsSourceCustom;
       case "user":
         return copy.skillsSourceUser;
       case "system":
         return copy.skillsSourceSystem;
       default:
         return copy.skillsSourceUnknown;
+    }
+  };
+
+  const addDirectoryPath = useCallback(
+    async (rawPath: string) => {
+      const cleaned = rawPath.trim();
+      if (!cleaned) return;
+      const nextDirs: SkillDirectoryEntry[] = [
+        ...settings.skillDirectories,
+        { path: cleaned, enabled: true },
+      ];
+      const next: SkillsSettings = {
+        ...settings,
+        skillDirectories: nextDirs,
+      };
+      setSettings(next);
+      await persistSettings(next);
+    },
+    [persistSettings, settings],
+  );
+
+  const handlePickDirectory = async () => {
+    setError(null);
+    try {
+      const picked = await api.pickSkillDirectory();
+      if (!picked.cancelled && picked.path) {
+        await addDirectoryPath(picked.path);
+      }
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
+
+  const handleAddManualDirectory = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const cleaned = manualPath.trim();
+    if (!cleaned) return;
+    setManualPath("");
+    await addDirectoryPath(cleaned);
+  };
+
+  const handleToggleDirectory = (targetPath: string) => {
+    const nextDirs = settings.skillDirectories.map((entry) =>
+      entry.path === targetPath ? { ...entry, enabled: !entry.enabled } : entry,
+    );
+    const next: SkillsSettings = { ...settings, skillDirectories: nextDirs };
+    setSettings(next);
+    void persistSettings(next);
+  };
+
+  const handleRemoveDirectory = (targetPath: string) => {
+    const nextDirs = settings.skillDirectories.filter((entry) => entry.path !== targetPath);
+    const next: SkillsSettings = { ...settings, skillDirectories: nextDirs };
+    setSettings(next);
+    void persistSettings(next);
+  };
+
+  const handleOpenDirectory = async (targetPath: string) => {
+    setError(null);
+    try {
+      await api.openSkillDirectory(targetPath);
+    } catch (cause) {
+      setError(messageOf(cause));
     }
   };
 
@@ -129,6 +228,18 @@ export function SkillsSurface({
     setSettings(next);
     void persistSettings(next);
   };
+
+  const sourceCounts = useMemo(() => {
+    let workspace = 0;
+    let custom = 0;
+    let system = 0;
+    for (const item of sortedSkills) {
+      if (item.source === "workspace") workspace++;
+      else if (item.source === "custom" || item.source === "user") custom++;
+      else if (item.source === "system") system++;
+    }
+    return { all: sortedSkills.length, workspace, custom, system };
+  }, [sortedSkills]);
 
   return (
     <section className="content-surface">
@@ -220,8 +331,129 @@ export function SkillsSurface({
             </div>
 
             <div className="section-heading is-spaced">
+              <span>{copy.skillsSectionDirectories}</span>
+              <button
+                className="text-button"
+                disabled={loading || saving || !settings.enabled}
+                onClick={() => void handlePickDirectory()}
+                type="button"
+              >
+                <Icon
+                  name="folder"
+                  style={{ width: 13, height: 13, marginRight: 5, verticalAlign: "-2px" }}
+                />
+                {copy.skillsAddFolder}
+              </button>
+            </div>
+            <p className="personalization-hint">{copy.skillsDirectoriesHint}</p>
+
+            <form className="skills-dir-composer" onSubmit={(e) => void handleAddManualDirectory(e)}>
+              <input
+                aria-label={copy.skillsAddPathPlaceholder}
+                className="skills-dir-input"
+                disabled={saving || !settings.enabled}
+                onChange={(event) => setManualPath(event.target.value)}
+                placeholder={copy.skillsAddPathPlaceholder}
+                type="text"
+                value={manualPath}
+              />
+              <button
+                className="secondary-button"
+                disabled={saving || !settings.enabled || !manualPath.trim()}
+                type="submit"
+              >
+                {copy.skillsAddPathAction}
+              </button>
+            </form>
+
+            {suggestedDirectories.length > 0 ? (
+              <div className="skills-suggestions">
+                <span className="skills-suggestions-label">{copy.skillsSuggestedLabel}:</span>
+                {suggestedDirectories.map((item) => (
+                  <button
+                    className="skills-suggestion-chip"
+                    disabled={saving || !settings.enabled}
+                    key={item.resolvedPath}
+                    onClick={() => void addDirectoryPath(item.path)}
+                    title={item.resolvedPath}
+                    type="button"
+                  >
+                    <Icon name="plus" style={{ width: 11, height: 11 }} />
+                    <span>{item.path}</span>
+                    <span>({item.skillCount})</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="skills-dir-list">
+              {directories.length === 0 ? (
+                <div className="personalization-empty">{copy.skillsEmptyDirectories}</div>
+              ) : (
+                directories.map((dir) => (
+                  <div
+                    className={`skills-dir-row${dir.enabled && settings.enabled ? "" : " is-disabled"}`}
+                    key={dir.path}
+                  >
+                    <button
+                      aria-checked={dir.enabled}
+                      className={`switch${dir.enabled ? " is-on" : ""}`}
+                      disabled={saving || !settings.enabled}
+                      onClick={() => handleToggleDirectory(dir.path)}
+                      role="switch"
+                      type="button"
+                    >
+                      <span />
+                    </button>
+
+                    <div className="skills-dir-meta">
+                      <div className="skills-dir-head">
+                        <span className="skills-dir-path">{dir.path}</span>
+                        {dir.exists ? (
+                          <small className="skills-source-tag">
+                            {copy.skillsDirSkillCount.replace("{count}", String(dir.skillCount))}
+                          </small>
+                        ) : (
+                          <small className="skills-source-tag is-warning">
+                            {copy.skillsDirNotFound}
+                          </small>
+                        )}
+                      </div>
+                      {dir.resolvedPath && dir.resolvedPath !== dir.path ? (
+                        <small className="skills-dir-resolved">{dir.resolvedPath}</small>
+                      ) : null}
+                    </div>
+
+                    <div className="skills-dir-actions">
+                      <button
+                        aria-label={copy.skillsDirOpen}
+                        className="skills-icon-btn"
+                        disabled={!dir.exists || saving}
+                        onClick={() => void handleOpenDirectory(dir.path)}
+                        title={copy.skillsDirOpen}
+                        type="button"
+                      >
+                        <Icon name="external" style={{ width: 14, height: 14 }} />
+                      </button>
+                      <button
+                        aria-label={copy.skillsDirRemove}
+                        className="skills-icon-btn"
+                        disabled={saving}
+                        onClick={() => handleRemoveDirectory(dir.path)}
+                        title={copy.skillsDirRemove}
+                        type="button"
+                      >
+                        <Icon name="trash" style={{ width: 14, height: 14 }} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="section-heading is-spaced">
               <span>
-                {copy.skillsSectionDiscovered} ({activeCount}/{visibleSkills.length})
+                {copy.skillsSectionDiscovered} ({activeCount}/{sortedSkills.length})
               </span>
               <button
                 className="text-button"
@@ -229,10 +461,35 @@ export function SkillsSurface({
                 onClick={() => void loadSkills()}
                 type="button"
               >
-                <Icon name="reload" style={{ width: 13, height: 13, marginRight: 4, verticalAlign: "-2px" }} />
+                <Icon
+                  name="reload"
+                  style={{ width: 13, height: 13, marginRight: 4, verticalAlign: "-2px" }}
+                />
                 {copy.skillsRefresh}
               </button>
             </div>
+
+            {sortedSkills.length > 0 ? (
+              <div className="skills-filter-bar">
+                {(
+                  [
+                    ["all", `${copy.skillsFilterAll} (${sourceCounts.all})`],
+                    ["workspace", `${copy.skillsSourceWorkspace} (${sourceCounts.workspace})`],
+                    ["custom", `${copy.skillsSourceCustom} (${sourceCounts.custom})`],
+                    ["system", `${copy.skillsSourceSystem} (${sourceCounts.system})`],
+                  ] as Array<[SourceFilter, string]>
+                ).map(([key, label]) => (
+                  <button
+                    className={`skills-filter-pill${sourceFilter === key ? " is-active" : ""}`}
+                    key={key}
+                    onClick={() => setSourceFilter(key)}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             <div className="personalization-memories-list">
               {visibleSkills.length === 0 ? (
@@ -241,11 +498,15 @@ export function SkillsSurface({
                 visibleSkills.map((item) => {
                   const hiddenBySystemSetting =
                     item.source === "system" && !settings.includeSystemSkills;
+                  const directOnly = item.allowImplicitInvocation === false;
+                  const overridden = Boolean(item.overriddenBy);
                   const individuallyEnabled = !disabledSet.has(item.name.trim().toLowerCase());
                   const rowActive =
                     settings.enabled &&
                     settings.autoDiscoverHostSkills &&
                     !hiddenBySystemSetting &&
+                    !directOnly &&
+                    !overridden &&
                     individuallyEnabled;
 
                   return (
@@ -256,7 +517,7 @@ export function SkillsSurface({
                       <button
                         aria-checked={individuallyEnabled}
                         className={`switch${individuallyEnabled ? " is-on" : ""}`}
-                        disabled={saving || !settings.enabled || hiddenBySystemSetting}
+                        disabled={saving || !settings.enabled || overridden}
                         onClick={() => handleToggleSkill(item.name)}
                         role="switch"
                         type="button"
@@ -268,6 +529,17 @@ export function SkillsSurface({
                         <div className="skills-item-head">
                           <strong>{item.name}</strong>
                           <small className="skills-source-tag">{sourceLabel(item.source)}</small>
+                          {item.overriddenBy ? (
+                            <small className="skills-source-tag is-warning">
+                              {copy.skillsTagOverridden.replace(
+                                "{source}",
+                                sourceLabel(item.overriddenBy),
+                              )}
+                            </small>
+                          ) : null}
+                          {directOnly ? (
+                            <small className="skills-source-tag">{copy.skillsTagDirectOnly}</small>
+                          ) : null}
                         </div>
                         {item.description ? (
                           <small className="skills-item-desc">{item.description}</small>

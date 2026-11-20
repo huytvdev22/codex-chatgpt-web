@@ -509,11 +509,20 @@ export class WebPromptCompiler {
           ? skillsStore.getSnapshot()
           : undefined;
 
+      const fallbackDirectorySkills =
+        fallbackSkillsSnapshot
+          ? skillsStore.getDirectorySkills(fallbackSkillsSnapshot.settings)
+          : [];
+      const fallbackMergedSkills =
+        fallbackSkillsSnapshot
+          ? skillPromptBuilder.mergeSkills(normalized.availableSkills, fallbackDirectorySkills)
+          : [];
+
       if (input.availableSkillsText !== undefined) {
         availableSkillsText = input.availableSkillsText;
       } else if (needAvailableFallback && fallbackSkillsSnapshot) {
         const filtered = skillPromptBuilder.filterHostSkills(
-          normalized.availableSkills,
+          fallbackMergedSkills,
           fallbackSkillsSnapshot.settings,
         );
         availableSkillsText = skillPromptBuilder.buildAvailableSkillsSection(filtered);
@@ -522,8 +531,14 @@ export class WebPromptCompiler {
       if (input.selectedSkillsText !== undefined) {
         selectedSkillsText = input.selectedSkillsText;
       } else if (needSelectedFallback && fallbackSkillsSnapshot) {
-        selectedSkillsText = skillPromptBuilder.buildSelectedSkillsSection(
+        const resolvedSelected = skillPromptBuilder.resolveExplicitSkillMentions(
+          normalized.latestUserInstruction,
+          fallbackMergedSkills,
           normalized.selectedSkills,
+          fallbackSkillsSnapshot.settings,
+        );
+        selectedSkillsText = skillPromptBuilder.buildSelectedSkillsSection(
+          resolvedSelected,
           fallbackSkillsSnapshot.settings,
         );
       }

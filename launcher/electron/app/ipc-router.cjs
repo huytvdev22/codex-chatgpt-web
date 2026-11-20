@@ -1,4 +1,4 @@
-const { BrowserWindow, dialog, ipcMain } = require("electron");
+const { BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const languages = require("../languages.json");
 const { releaseRetainedConversation } = require("../browser/retained-turn-release.cjs");
 const { registerLoggedIpc } = require("../infra/logging.cjs");
@@ -424,6 +424,34 @@ class IpcRouter {
       const saved = skillsStore.save(value);
       send("launcher:skills-changed", saved);
       return saved;
+    });
+    handle("launcher:skills-pick-directory", async () => {
+      const parentWindow = getMainWindow?.();
+      const options = {
+        properties: ["openDirectory", "createDirectory"],
+      };
+      const result = parentWindow && !parentWindow.isDestroyed()
+        ? await dialog.showOpenDialog(parentWindow, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled || !Array.isArray(result.filePaths) || !result.filePaths[0]) {
+        return { cancelled: true, path: null };
+      }
+      return { cancelled: false, path: result.filePaths[0] };
+    });
+    handle("launcher:skills-open-directory", async (_event, targetPath) => {
+      if (!skillsStore) throw new Error("Skills store is unavailable");
+      if (typeof targetPath !== "string" || !targetPath.trim()) {
+        throw new Error("Directory path is required");
+      }
+      const allowedPath = skillsStore.resolveAllowedDirectory(targetPath);
+      if (!allowedPath) {
+        throw new Error("Directory is not in configured skill directories or does not exist");
+      }
+      const errorMessage = await shell.openPath(allowedPath);
+      if (errorMessage) {
+        throw new Error(errorMessage);
+      }
+      return { ok: true, path: allowedPath };
     });
     handle("launcher:usage-get", (_event, range) => {
       if (!usageStore) throw new Error("Usage store is unavailable");

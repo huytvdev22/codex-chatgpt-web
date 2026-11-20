@@ -3,9 +3,15 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFile, getConfigDir } from "../config";
 import {
+  skillDirectoryScanner,
+  type SkillDirectoryScanner,
+} from "./skill-directory-scanner";
+import {
   createDefaultSkillsSettings,
+  getDefaultSkillDirectories,
   type DiscoveredSkillRecord,
   type HostSkillEntry,
+  type SkillDirectoryEntry,
   type SkillSourceKind,
   type SkillsSettings,
 } from "./types";
@@ -22,8 +28,22 @@ interface CachedFileState {
   snapshot: SkillsSnapshot;
 }
 
+interface CachedDirectoryScan {
+  key: string;
+  scannedAt: number;
+  skills: HostSkillEntry[];
+}
+
 const MAX_DISABLED_SKILLS = 200;
-const VALID_SOURCES = new Set<SkillSourceKind>(["workspace", "user", "system", "unknown"]);
+const MAX_SKILL_DIRECTORIES = 30;
+const DIRECTORY_SCAN_CACHE_TTL_MS = 5_000;
+const VALID_SOURCES = new Set<SkillSourceKind>([
+  "workspace",
+  "custom",
+  "user",
+  "system",
+  "unknown",
+]);
 
 function normalizeSkillNameList(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -39,6 +59,50 @@ function normalizeSkillNameList(raw: unknown): string[] {
     result.push(cleaned);
     if (result.length >= MAX_DISABLED_SKILLS) break;
   }
+  return result;
+}
+
+function normalizeSkillDirectories(raw: unknown): SkillDirectoryEntry[] {
+  if (raw === undefined) {
+    return getDefaultSkillDirectories();
+  }
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const result: SkillDirectoryEntry[] = [];
+  const caseInsensitive = process.platform === "win32" || process.platform === "darwin";
+
+  for (const item of raw) {
+    let rawPath = "";
+    let enabled = true;
+
+    if (typeof item === "string") {
+      rawPath = item;
+    } else if (item && typeof item === "object" && !Array.isArray(item)) {
+      const obj = item as Record<string, unknown>;
+      rawPath = typeof obj.path === "string" ? obj.path : "";
+      enabled = obj.enabled !== false;
+    } else {
+      continue;
+    }
+
+    const cleaned = rawPath.trim().slice(0, 500);
+    if (!cleaned) continue;
+
+    const expanded = skillDirectoryScanner.expandPath(cleaned);
+    const dedupKey = (caseInsensitive ? expanded.toLowerCase() : expanded).replace(/[\\/]+$/, "");
+    if (!dedupKey || seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    result.push({
+      path: cleaned,
+      enabled,
+    });
+    if (result.length >= MAX_SKILL_DIRECTORIES) break;
+  }
+
   return result;
 }
 
@@ -60,21 +124,24 @@ export function sanitizeSkillsSettings(raw: unknown): SkillsSettings {
     autoDiscoverHostSkills: obj.autoDiscoverHostSkills !== false,
     includeSystemSkills: obj.includeSystemSkills === true,
     disabledSkills: normalizeSkillNameList(obj.disabledSkills),
+    skillDirectories: normalizeSkillDirectories(obj.skillDirectories),
     updatedAt,
   };
 }
 
 /**
  * Kho đọc và hot-reload cấu hình Native Skills Bridge từ `<configDir>/skills.json`,
- * đồng thời lưu cache metadata các skill Codex đã gửi để Launcher UI hiển thị cho người dùng bật/tắt.
+ * quét các thư mục skill đã cấu hình và lưu cache metadata các skill Codex đã gửi.
  */
 export class SkillsStore {
   private cache: CachedFileState | null = null;
+  private directoryScanCache: CachedDirectoryScan | null = null;
   private lastDiscoveredDigest = "";
 
   constructor(
     private readonly customFilePath?: string,
     private readonly customDiscoveredFilePath?: string,
+    private readonly scanner: SkillDirectoryScanner = skillDirectoryScanner,
   ) {}
 
   public resolveFilePath(): string {
@@ -119,6 +186,36 @@ export class SkillsStore {
     }
   }
 
+  public getDirectorySkills(settings?: SkillsSettings): HostSkillEntry[] {
+    const activeSettings = settings ?? this.getSnapshot().settings;
+    if (!activeSettings.enabled || activeSettings.skillDirectories.length === 0) {
+      return [];
+    }
+
+    const enabledDirs = activeSettings.skillDirectories.filter((entry) => entry.enabled);
+    if (enabledDirs.length === 0) {
+      return [];
+    }
+
+    const cacheKey = JSON.stringify(enabledDirs);
+    const now = Date.now();
+    if (
+      this.directoryScanCache &&
+      this.directoryScanCache.key === cacheKey &&
+      now - this.directoryScanCache.scannedAt < DIRECTORY_SCAN_CACHE_TTL_MS
+    ) {
+      return this.directoryScanCache.skills;
+    }
+
+    const result = this.scanner.scanDirectories(enabledDirs);
+    this.directoryScanCache = {
+      key: cacheKey,
+      scannedAt: now,
+      skills: result.skills,
+    };
+    return result.skills;
+  }
+
   public recordDiscoveredSkills(skills: readonly HostSkillEntry[]): void {
     if (skills.length === 0) return;
     try {
@@ -159,6 +256,7 @@ export class SkillsStore {
 
   public clearCache(): void {
     this.cache = null;
+    this.directoryScanCache = null;
     this.lastDiscoveredDigest = "";
   }
 }

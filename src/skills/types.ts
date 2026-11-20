@@ -1,4 +1,21 @@
-export type SkillSourceKind = "workspace" | "user" | "system" | "unknown";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+export type SkillSourceKind = "workspace" | "custom" | "user" | "system" | "unknown";
+
+export interface SkillDirectoryEntry {
+  path: string;
+  enabled: boolean;
+}
+
+export interface ScannedSkillDirectory {
+  path: string;
+  resolvedPath: string;
+  enabled: boolean;
+  exists: boolean;
+  skillCount: number;
+  error: string | null;
+}
 
 export interface HostSkillEntry {
   name: string;
@@ -6,6 +23,8 @@ export interface HostSkillEntry {
   shortPath: string;
   absolutePath: string;
   source: SkillSourceKind;
+  directoryPath?: string;
+  allowImplicitInvocation?: boolean;
 }
 
 export interface SelectedSkillEntry {
@@ -20,6 +39,7 @@ export interface SkillsSettings {
   autoDiscoverHostSkills: boolean;
   includeSystemSkills: boolean;
   disabledSkills: string[];
+  skillDirectories: SkillDirectoryEntry[];
   updatedAt: string | null;
 }
 
@@ -29,6 +49,18 @@ export interface DiscoveredSkillRecord {
   absolutePath: string;
   source: SkillSourceKind;
   lastSeenAt: string;
+  directoryPath?: string;
+  allowImplicitInvocation?: boolean;
+  overriddenBy?: SkillSourceKind | null;
+}
+
+export function getDefaultSkillDirectories(): SkillDirectoryEntry[] {
+  const defaultCodexHome = resolve(join(homedir(), ".codex"));
+  const envCodexHome = process.env.CODEX_HOME?.trim();
+  if (envCodexHome && resolve(envCodexHome) !== defaultCodexHome) {
+    return [{ path: join(envCodexHome, "skills"), enabled: true }];
+  }
+  return [{ path: "~/.codex/skills", enabled: true }];
 }
 
 export function createDefaultSkillsSettings(): SkillsSettings {
@@ -38,6 +70,7 @@ export function createDefaultSkillsSettings(): SkillsSettings {
     autoDiscoverHostSkills: true,
     includeSystemSkills: false,
     disabledSkills: [],
+    skillDirectories: getDefaultSkillDirectories(),
     updatedAt: null,
   };
 }

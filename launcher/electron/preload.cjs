@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   savePersonalization: (settings) => ipcRenderer.invoke("launcher:personalization-save", settings),
   getSkills: () => ipcRenderer.invoke("launcher:skills-get"),
   saveSkills: (settings) => ipcRenderer.invoke("launcher:skills-save", settings),
+  pickSkillDirectory: () => ipcRenderer.invoke("launcher:skills-pick-directory"),
+  openSkillDirectory: (targetPath) => ipcRenderer.invoke("launcher:skills-open-directory", targetPath),
   getUsage: (range) => ipcRenderer.invoke("launcher:usage-get", range),
   saveUsageSettings: (settings, range) => ipcRenderer.invoke("launcher:usage-save-settings", settings, range),
   clearUsageHistory: (range) => ipcRenderer.invoke("launcher:usage-clear", range),

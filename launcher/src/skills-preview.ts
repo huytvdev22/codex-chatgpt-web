@@ -6,9 +6,10 @@ import type {
 
 const SOURCE_ORDER: Record<SkillSourceKind, number> = {
   workspace: 0,
-  user: 1,
-  unknown: 2,
-  system: 3,
+  custom: 1,
+  user: 2,
+  unknown: 3,
+  system: 4,
 };
 
 export function filterSkillsForPrompt(
@@ -19,12 +20,20 @@ export function filterSkillsForPrompt(
   const disabledSet = new Set(
     settings.disabledSkills.map((item) => item.trim().toLowerCase()).filter(Boolean),
   );
-  const filtered = skills.filter((skill) => {
-    if (!settings.includeSystemSkills && skill.source === "system") return false;
-    if (disabledSet.has(skill.name.trim().toLowerCase())) return false;
-    return true;
-  });
-  return [...filtered].sort((a, b) => SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source]);
+  const seenNames = new Set<string>();
+  const filtered: DiscoveredSkillRecord[] = [];
+  const sorted = [...skills].sort((a, b) => SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source]);
+
+  for (const skill of sorted) {
+    if (skill.overriddenBy) continue;
+    if (skill.allowImplicitInvocation === false) continue;
+    if (!settings.includeSystemSkills && skill.source === "system") continue;
+    const key = skill.name.trim().toLowerCase();
+    if (!key || disabledSet.has(key) || seenNames.has(key)) continue;
+    seenNames.add(key);
+    filtered.push(skill);
+  }
+  return filtered;
 }
 
 export function renderAvailableSkillsPreview(

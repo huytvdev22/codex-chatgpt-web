@@ -260,9 +260,26 @@ export class WebTurnEngine {
       if (normalized.availableSkills && normalized.availableSkills.length > 0) {
         skillsStore.recordDiscoveredSkills(normalized.availableSkills);
       }
+      const directorySkills =
+        useCompiledPrompt && skillsSnapshot
+          ? skillsStore.getDirectorySkills(skillsSnapshot.settings)
+          : [];
+      const mergedSkills =
+        useCompiledPrompt && skillsSnapshot
+          ? skillPromptBuilder.mergeSkills(normalized.availableSkills, directorySkills)
+          : [];
       const filteredHostSkills =
         useCompiledPrompt && skillsSnapshot
-          ? skillPromptBuilder.filterHostSkills(normalized.availableSkills, skillsSnapshot.settings)
+          ? skillPromptBuilder.filterHostSkills(mergedSkills, skillsSnapshot.settings)
+          : [];
+      const resolvedSelectedSkills =
+        useCompiledPrompt && skillsSnapshot
+          ? skillPromptBuilder.resolveExplicitSkillMentions(
+              normalized.latestUserInstruction,
+              mergedSkills,
+              normalized.selectedSkills,
+              skillsSnapshot.settings,
+            )
           : [];
       const availableSkillsDigest =
         useCompiledPrompt && skillsSnapshot
@@ -274,7 +291,7 @@ export class WebTurnEngine {
       const selectedSkillsDigest =
         useCompiledPrompt && skillsSnapshot
           ? skillPromptBuilder.computeSelectedSkillsDigest(
-              normalized.selectedSkills,
+              resolvedSelectedSkills,
               skillsSnapshot.settings,
             )
           : undefined;
@@ -308,7 +325,7 @@ export class WebTurnEngine {
       const selectedSkillsText =
         useCompiledPrompt && directives?.includeSelectedSkills && skillsSnapshot
           ? skillPromptBuilder.buildSelectedSkillsSection(
-              normalized.selectedSkills,
+              resolvedSelectedSkills,
               skillsSnapshot.settings,
             )
           : "";
