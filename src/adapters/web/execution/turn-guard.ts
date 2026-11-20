@@ -6,6 +6,7 @@ export const MAX_TOOL_ITERATIONS = 500;
 export const MAX_IDENTICAL_TOOL_CALLS = 10;
 export const MAX_IDENTICAL_READ_TOOL_CALLS = 20;
 export const MAX_IDENTICAL_WRITE_TOOL_CALLS = 6;
+export const MAX_IDENTICAL_FAILED_TOOL_CALLS = 3;
 export const GUARD_TTL_MS = 15 * 60 * 1000; // 15 phút
 
 export const READ_ONLY_TOOLS = WebToolRegistry.READ_ONLY_TOOLS;
@@ -18,10 +19,19 @@ export function isReadOnlyTool(name?: string): boolean {
 }
 
 /**
- * Lấy giới hạn số lần lặp liên tiếp tối đa cho phép dựa trên loại công cụ (Read vs Write).
+ * Lấy giới hạn số lần lặp liên tiếp tối đa cho phép dựa trên loại công cụ (Read vs Write)
+ * và trạng thái vừa thất bại ở lượt trước.
  */
-export function getMaxIdenticalToolCalls(name?: string): number {
-  return isReadOnlyTool(name) ? MAX_IDENTICAL_READ_TOOL_CALLS : MAX_IDENTICAL_WRITE_TOOL_CALLS;
+export function getMaxIdenticalToolCalls(
+  name?: string,
+  options?: { previousToolFailed?: boolean },
+): number {
+  const baseLimit = isReadOnlyTool(name)
+    ? MAX_IDENTICAL_READ_TOOL_CALLS
+    : MAX_IDENTICAL_WRITE_TOOL_CALLS;
+  return options?.previousToolFailed
+    ? Math.min(baseLimit, MAX_IDENTICAL_FAILED_TOOL_CALLS)
+    : baseLimit;
 }
 
 export const conversationGuard = new Map<string, ConversationGuardState>();

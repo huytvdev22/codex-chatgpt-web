@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **085** | Lặp `apply_patch` 6 lần liên tiếp tới khi bị `WebTurnLoopGuard` ngắt sau lỗi `apply_patch verification failed` | `web`, `m365-copilot`, `ai-studio` | ✅ Đã Confirm | [085-apply-patch-verification-failed-repeated-loop.md](./085-apply-patch-verification-failed-repeated-loop.md) |
 | **084** | M365 Copilot lặp retry khi hết hạn mức ngày & lỗi font tiếng Việt khi PowerShell chạy `Get-Content` | `m365-copilot`, `web`, `server` | ✅ Đã Confirm | [084-m365-daily-chat-limit-stop-and-powershell-utf8-hint.md](./084-m365-daily-chat-limit-stop-and-powershell-utf8-hint.md) |
 | **083** | Tab `/generate-speech` tự phát audio sau khi tạo voice xong mà không click Pause | `ai-studio`, `speech` | ✅ Đã Confirm | [083-ai-studio-speech-auto-pause-after-generation.md](./083-ai-studio-speech-auto-pause-after-generation.md) |
 | **082** | Lặp 2 dòng `Thời gian:` qua nửa đêm và treo `composer.fill: Timeout 30000ms exceeded` ở AI Studio | `web`, `ai-studio` | ✅ Đã Confirm | [082-duplicate-env-timestamp-and-composer-fill-timeout.md](./082-duplicate-env-timestamp-and-composer-fill-timeout.md) |

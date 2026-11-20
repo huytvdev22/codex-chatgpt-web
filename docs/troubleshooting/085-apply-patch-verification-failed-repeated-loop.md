@@ -1,0 +1,16 @@
+# 085: Lặp `apply_patch` 6 lần liên tiếp tới khi bị `WebTurnLoopGuard` ngắt phiên sau lỗi `apply_patch verification failed`
+
+> **Trạng thái:** ✅ Đã Confirm  
+> **Providers:** `web`, `m365-copilot`, `ai-studio`  
+> **Keywords:** `apply_patch verification failed`, `Repeated Tool Calls`, `WebTurnLoopGuard`, `hasToolErrors`, `TOOL_ERROR_FEEDBACK`, `MAX_IDENTICAL_FAILED_TOOL_CALLS`
+
+## ⚡ TL;DR
+1. **Triệu chứng:** Khi `apply_patch` bị Codex từ chối bằng `apply_patch verification failed: Failed to find expected lines...`, model web lặp đi lặp lại đúng payload `apply_patch` đó qua 6 lượt tới khi `WebTurnLoopGuard` ngắt phiên bằng `[!WARNING] Phát hiện vòng lặp vô hạn (Repeated Tool Calls): Công cụ apply_patch đã được yêu cầu lặp lại 6 lần liên tiếp với cùng tham số`.
+2. **Nguyên nhân gốc rễ:** (a) `hasToolErrors` ở [compiler.ts](../../src/adapters/web/prompt/compiler.ts) chỉ kiểm tra `exit code 1`/`Error:`/`Command failed:` nên bỏ lọt `apply_patch verification failed` (và exit code khác `1`), khiến lượt nhận lỗi bị gửi `TOOL_REMINDER_PROMPT` (`mã thoát 0...`) thay vì `TOOL_ERROR_FEEDBACK`; (b) `TOOL_ERROR_FEEDBACK` & `PLAN_CONTINUATION` chưa có hướng dẫn cấm lặp patch cũ / bắt đọc lại file, và `WebTurnLoopGuard` đợi đủ `6` lượt write lặp thay vì nhắc đổi hướng hoặc dừng sớm khi công cụ vừa fail.
+3. **Cách sửa:** (a) Bổ sung `isApplyPatchVerificationError()` + `isToolResultError()` và bơm `APPLY_PATCH_ERROR_RECOVERY_HINT` vào `TOOL_ERROR_FEEDBACK` & `PLAN_CONTINUATION`; (b) Khi `previousToolFailed` + trùng tool fingerprint lượt trước, `WebTurnEngine` gửi 1 lượt nhắc nội bộ (`buildRepeatedFailedToolRecoveryPrompt`) trước khi forward sang Codex, và giảm ngưỡng dừng cho tool đang lỗi xuống `MAX_IDENTICAL_FAILED_TOOL_CALLS = 3` trong `WebTurnLoopGuard`.
+
+## Thay đổi
+- [src/adapters/web/prompt/compiler.ts](../../src/adapters/web/prompt/compiler.ts), [src/adapters/web/prompt/conversation-scenario-builder.ts](../../src/adapters/web/prompt/conversation-scenario-builder.ts), [src/adapters/web/prompt/templates.ts](../../src/adapters/web/prompt/templates.ts), [src/adapters/web/prompt/index.ts](../../src/adapters/web/prompt/index.ts): Nhận diện `apply_patch verification failed` + non-zero exit codes khác `1`, bơm `APPLY_PATCH_ERROR_RECOVERY_HINT` và thêm `buildRepeatedFailedToolRecoveryPrompt()`.
+- [src/adapters/web/execution/turn-guard.ts](../../src/adapters/web/execution/turn-guard.ts), [src/adapters/web/execution/web-turn-loop-guard.ts](../../src/adapters/web/execution/web-turn-loop-guard.ts), [src/adapters/web/execution/index.ts](../../src/adapters/web/execution/index.ts): Thêm `MAX_IDENTICAL_FAILED_TOOL_CALLS = 3`, `wouldRepeatPreviousToolCall()`, và hỗ trợ `previousToolFailed` / `nudgedRepeatedFailure` trong `evaluate()`.
+- [src/adapters/web/engine.ts](../../src/adapters/web/engine.ts): Chặn 1 lượt nội bộ khi model lặp lại đúng tool call vừa thất bại và truyền ngữ cảnh lỗi vào `loopGuard.evaluate()`.
+- [tests/m365-conversation-scenarios.test.ts](../../tests/m365-conversation-scenarios.test.ts), [tests/m365-cognitive-loop.test.ts](../../tests/m365-cognitive-loop.test.ts), [tests/web-turn-engine.test.ts](../../tests/web-turn-engine.test.ts): Bổ sung test phân loại lỗi `apply_patch`, nhắc nội bộ phục hồi bằng `read_file` và dừng sớm khi model vẫn lặp lại patch lỗi.

@@ -4,16 +4,21 @@ import {
   detectConversationScenario,
   type ConversationScenario,
 } from "../src/adapters/web/prompt/conversation-scenario-builder";
-import { promptCompiler } from "../src/adapters/web/prompt/compiler";
+import {
+  promptCompiler,
+  isApplyPatchVerificationError,
+  isToolResultError,
+  sanitizeCodexInstructions,
+} from "../src/adapters/web/prompt/compiler";
 import {
   PLAN_MODE_PROMPT,
   IMPLEMENT_PLAN_PROMPT,
   IMPLEMENT_PLAN_CONTINUATION_PROMPT,
   TOOL_REMINDER_PROMPT,
   TOOL_ERROR_FEEDBACK_PROMPT,
+  APPLY_PATCH_ERROR_RECOVERY_HINT,
   PURE_CONVERSATION_ANCHOR,
 } from "../src/adapters/web/prompt/templates";
-import { sanitizeCodexInstructions } from "../src/adapters/web/prompt/compiler";
 
 describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () => {
   const baseNormalized: any = {
@@ -305,5 +310,74 @@ describe("M365 Conversation Scenario Builder & Human-Companion Tone Tests", () =
 
     expect(res.finalPrompt).toContain("[CÂU TRẢ LỜI CỦA MÌNH CHO CÂU HỎI CỦA BẠN]");
     expect(res.finalPrompt).toContain("- **confirm**: Đồng ý triển khai");
+  });
+
+  test("12. Nhận diện chính xác apply_patch verification failed và exit code khác 1 để bơm APPLY_PATCH_ERROR_RECOVERY_HINT", () => {
+    const patchFailureOutput =
+      "apply_patch verification failed: Failed to find expected lines in D:\\Tiet kiem\\TestDesign.md:\n### TC-04: Validate";
+    expect(
+      isApplyPatchVerificationError({ toolName: "apply_patch", output: patchFailureOutput }),
+    ).toBe(true);
+    expect(
+      isToolResultError({ toolName: "apply_patch", output: patchFailureOutput }),
+    ).toBe(true);
+    expect(
+      isToolResultError({ toolName: "exec_command", output: "Process exited with code 2\nSyntax error" }),
+    ).toBe(true);
+    // File stdout thành công chứa chữ 'Failed to find expected lines' không bị nhận nhầm là apply_patch error
+    expect(
+      isApplyPatchVerificationError({
+        toolName: "exec_command",
+        output: "Chunk ID: c1\nProcess exited with code 0\nOutput:\nconst msg = 'Failed to find expected lines';",
+      }),
+    ).toBe(false);
+
+    const compiled = promptCompiler.compile({
+      normalized: {
+        ...baseNormalized,
+        trailingToolResults: [
+          {
+            callId: "call_h4kmxe5f",
+            toolName: "apply_patch",
+            output: patchFailureOutput,
+          },
+        ],
+        latestUserInstruction: "cập nhật testcase",
+      },
+      parsed: { ...baseParsed },
+      isNewConversation: false,
+    });
+
+    expect(compiled.scenario).toBe("TOOL_ERROR_FEEDBACK");
+    expect(compiled.finalPrompt).toContain(TOOL_ERROR_FEEDBACK_PROMPT);
+    expect(compiled.finalPrompt).toContain(APPLY_PATCH_ERROR_RECOVERY_HINT);
+    expect(compiled.finalPrompt).not.toContain(TOOL_REMINDER_PROMPT);
+
+    const planCompiled = promptCompiler.compile({
+      normalized: {
+        ...baseNormalized,
+        trailingToolResults: [
+          {
+            callId: "call_plan_patch_fail",
+            toolName: "apply_patch",
+            output: patchFailureOutput,
+          },
+        ],
+        latestUserInstruction: "Yes, implement this plan",
+      },
+      parsed: {
+        ...baseParsed,
+        context: {
+          ...baseParsed.context,
+          messages: [{ role: "user", content: "Yes, implement this plan" }],
+        },
+      },
+      isNewConversation: false,
+      isImplementingPlan: true,
+    });
+
+    expect(planCompiled.scenario).toBe("PLAN_CONTINUATION");
+    expect(planCompiled.finalPrompt).toContain(TOOL_ERROR_FEEDBACK_PROMPT);
+    expect(planCompiled.finalPrompt).toContain(APPLY_PATCH_ERROR_RECOVERY_HINT);
   });
 });

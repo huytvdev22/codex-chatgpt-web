@@ -9,6 +9,7 @@ import {
   getMaxIdenticalToolCalls,
   MAX_IDENTICAL_READ_TOOL_CALLS,
   MAX_IDENTICAL_WRITE_TOOL_CALLS,
+  MAX_IDENTICAL_FAILED_TOOL_CALLS,
   stableToolFingerprint,
   WebTurnLoopGuard,
   conversationGuard,
@@ -58,6 +59,83 @@ describe("M365 Cognitive Loop & Turn Guard Tests", () => {
       expect(stoppedAtLimit).toBe(true);
       expect(events.some(e => e.type === "text_delta" && e.text.includes("Phát hiện vòng lặp vô hạn"))).toBe(true);
       expect(events.some(e => e.type === "done" && e.endTurn === true)).toBe(true);
+    } finally {
+      guard.clear(convKey);
+      conversationGuard.delete(convKey);
+    }
+  });
+
+  test("WebTurnLoopGuard ngắt sớm ở lần thứ 3 (hoặc thứ 2 sau nhắc nội bộ) khi công cụ vừa lỗi bị lặp lại", () => {
+    const guard = new WebTurnLoopGuard();
+    const convKey = `test-failed-loop-${Date.now()}`;
+    const events: AdapterEvent[] = [];
+    const clientTools = [
+      {
+        name: "apply_patch",
+        type: "custom",
+        description: "Apply patch",
+      },
+    ] as any;
+    const protocolResult: any = {
+      kind: "tool_calls",
+      calls: [
+        {
+          name: "apply_patch",
+          arguments: {
+            input: "*** Begin Patch\n*** Update File: a.md\n@@\n-x\n+y\n*** End Patch",
+          },
+        },
+      ],
+    };
+
+    try {
+      expect(
+        guard.evaluate({
+          protocolResult,
+          clientTools,
+          conversationKey: convKey,
+          logPrefix: "test-web",
+          emit: event => events.push(event),
+        }),
+      ).toBe(false);
+
+      expect(
+        guard.wouldRepeatPreviousToolCall({
+          protocolResult,
+          clientTools,
+          conversationKey: convKey,
+        }),
+      ).toBe(true);
+
+      // Nếu không có nhắc nội bộ, dừng ở ngưỡng MAX_IDENTICAL_FAILED_TOOL_CALLS (3) thay vì 6
+      expect(
+        guard.evaluate({
+          protocolResult,
+          clientTools,
+          conversationKey: convKey,
+          logPrefix: "test-web",
+          emit: event => events.push(event),
+          previousToolFailed: true,
+        }),
+      ).toBe(false);
+
+      const stoppedAt3 = guard.evaluate({
+        protocolResult,
+        clientTools,
+        conversationKey: convKey,
+        logPrefix: "test-web",
+        emit: event => events.push(event),
+        previousToolFailed: true,
+      });
+      expect(stoppedAt3).toBe(true);
+      expect(MAX_IDENTICAL_FAILED_TOOL_CALLS).toBe(3);
+      expect(
+        events.some(
+          e =>
+            e.type === "text_delta" &&
+            e.text.includes("Phát hiện vòng lặp lỗi công cụ"),
+        ),
+      ).toBe(true);
     } finally {
       guard.clear(convKey);
       conversationGuard.delete(convKey);

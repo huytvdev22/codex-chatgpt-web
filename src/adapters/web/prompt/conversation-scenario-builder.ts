@@ -5,6 +5,7 @@ import {
   IMPLEMENT_PLAN_CONTINUATION_PROMPT,
   TOOL_REMINDER_PROMPT,
   TOOL_ERROR_FEEDBACK_PROMPT,
+  APPLY_PATCH_ERROR_RECOVERY_HINT,
   PLAN_USER_INPUT_ANSWER_PROMPT,
   USER_INPUT_ANSWER_PROMPT,
   PLAN_SURVEY_CONTINUATION_PROMPT,
@@ -38,6 +39,7 @@ export interface ScenarioBuilderInput {
   isImplementingPlan: boolean;
   hasToolResults: boolean;
   hasToolErrors?: boolean;
+  hasApplyPatchError?: boolean;
   hasUserInputAnswer?: boolean;
   userInputAnswersText?: string;
   includeEnvironment?: boolean;
@@ -72,6 +74,7 @@ export function detectConversationScenario(input: {
   isImplementingPlan: boolean;
   hasToolResults: boolean;
   hasToolErrors?: boolean;
+  hasApplyPatchError?: boolean;
   hasUserInputAnswer?: boolean;
 }): ConversationScenario {
   if (input.isStructuredJsonOutput) {
@@ -157,7 +160,12 @@ export class ConversationScenarioBuilder {
 
         const taskBlocks: string[] = [];
         if (input.priorHistoryText) taskBlocks.push(input.priorHistoryText);
-        if (input.toolResultsText) taskBlocks.push(input.toolResultsText);
+        if (input.toolResultsText) {
+          if (input.hasApplyPatchError) {
+            taskBlocks.push(APPLY_PATCH_ERROR_RECOVERY_HINT);
+          }
+          taskBlocks.push(input.toolResultsText);
+        }
         if (input.userInstructionText) taskBlocks.push(input.userInstructionText);
         if (input.hasImages) taskBlocks.push(WEB_IMAGE_ATTACHMENT_HINT);
 
@@ -221,7 +229,11 @@ export class ConversationScenarioBuilder {
       }
 
       case "PLAN_CONTINUATION": {
-        openingSection = IMPLEMENT_PLAN_CONTINUATION_PROMPT;
+        openingSection = input.hasApplyPatchError
+          ? `${TOOL_ERROR_FEEDBACK_PROMPT}\n\n${APPLY_PATCH_ERROR_RECOVERY_HINT}`
+          : input.hasToolErrors
+            ? TOOL_ERROR_FEEDBACK_PROMPT
+            : IMPLEMENT_PLAN_CONTINUATION_PROMPT;
         sections.push(openingSection);
         this.appendContinuationSections(sections, input, {
           includeToolResults: true,
@@ -231,7 +243,9 @@ export class ConversationScenarioBuilder {
       }
 
       case "TOOL_ERROR_FEEDBACK": {
-        openingSection = TOOL_ERROR_FEEDBACK_PROMPT;
+        openingSection = input.hasApplyPatchError
+          ? `${TOOL_ERROR_FEEDBACK_PROMPT}\n\n${APPLY_PATCH_ERROR_RECOVERY_HINT}`
+          : TOOL_ERROR_FEEDBACK_PROMPT;
         sections.push(openingSection);
         this.appendContinuationSections(sections, input, {
           includeToolResults: true,

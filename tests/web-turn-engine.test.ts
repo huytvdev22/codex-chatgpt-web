@@ -1391,4 +1391,162 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(mapped.error.type).toBe("insufficient_quota");
     expect(mapped.error.code).toBe("insufficient_quota");
   });
+
+  test("26. Tự động nhắc nội bộ và dừng sớm khi model lặp lại apply_patch vừa bị verification failed", async () => {
+    const patchBody = [
+      "*** Begin Patch",
+      "*** Update File: TestDesign.md",
+      "@@",
+      " ### TC-04",
+      "-old",
+      "+new",
+      "*** End Patch",
+    ].join("\n");
+    const patchResponse = [
+      "````markdown",
+      "<webResponse>",
+      '<custom_tool_call name="apply_patch">',
+      patchBody,
+      "</custom_tool_call>",
+      "</webResponse>",
+      "````",
+    ].join("\n");
+    const readFileResponse = [
+      "````markdown",
+      "<webResponse>",
+      "<tool_call>",
+      '{"name":"read_file","arguments":{"path":"TestDesign.md"}}',
+      "</tool_call>",
+      "</webResponse>",
+      "````",
+    ].join("\n");
+
+    const clientTools = [
+      {
+        name: "apply_patch",
+        type: "custom",
+        description: "Apply patch",
+      },
+      {
+        name: "read_file",
+        description: "Read file",
+        parameters: { type: "object", properties: { path: { type: "string" } } },
+      },
+    ];
+
+    const runScenario = async (mode: "recover" | "stubborn") => {
+      const key = `patch-loop-${mode}-${Date.now()}`;
+      conversationGuard.delete(key);
+      const sentPrompts: string[] = [];
+      let turnIndex = 0;
+
+      const engine = new WebTurnEngine({
+        id: "m365-copilot",
+        assistantName: "M365",
+        logPrefix: "m365-adapter",
+        policies: {
+          manageLauncherLeaseInEngine: false,
+          enableToolLoopGuard: true,
+        },
+        conversation: { resolveConversationKey: () => key },
+        browser: {
+          launcherProviderId: "m365",
+          connectorIdentity: "m365-copilot",
+          executeTurn: async ({ prompt }) => {
+            sentPrompts.push(prompt);
+            turnIndex += 1;
+            if (turnIndex === 1) {
+              return { rawResponse: patchResponse };
+            }
+            if (turnIndex === 2) {
+              // Model cố lặp lại y hệt apply_patch vừa fail ở turn 2
+              return { rawResponse: patchResponse };
+            }
+            // Sau cú nhắc nội bộ: either recovers via read_file or keeps repeating apply_patch
+            return {
+              rawResponse: mode === "recover" ? readFileResponse : patchResponse,
+            };
+          },
+        },
+      });
+
+      const turn1Events: AdapterEvent[] = [];
+      await engine.runTurn(
+        createParsedRequest([{ role: "user", content: "Sửa TestDesign.md" }], clientTools as any),
+        { headers: new Headers() },
+        ev => turn1Events.push(ev),
+      );
+
+      const failedToolReq: CodexParsedRequest = {
+        modelId: "test-web/default",
+        stream: true,
+        options: { reasoning: "medium" } as any,
+        context: {
+          systemPrompt: ["System prompt"],
+          messages: [
+            { role: "user", content: "Sửa TestDesign.md", timestamp: Date.now() },
+            { role: "assistant", content: "Đang sửa file", timestamp: Date.now() },
+          ] as any,
+          tools: clientTools as any,
+        },
+        _rawBody: {
+          model: "test-web/default",
+          input: [
+            { role: "user", content: "Sửa TestDesign.md" },
+            {
+              type: "custom_tool_call",
+              call_id: "call_patch_1",
+              name: "apply_patch",
+              input: patchBody,
+            },
+            {
+              type: "custom_tool_call_output",
+              call_id: "call_patch_1",
+              output:
+                "apply_patch verification failed: Failed to find expected lines in TestDesign.md:\n### TC-04",
+            },
+          ],
+        },
+      };
+
+      const turn2Events: AdapterEvent[] = [];
+      await engine.runTurn(
+        failedToolReq,
+        { headers: new Headers() },
+        ev => turn2Events.push(ev),
+      );
+
+      conversationGuard.delete(key);
+      return { turn1Events, turn2Events, sentPrompts };
+    };
+
+    // Trường hợp A: Model nghe lời nhắc nội bộ và chuyển sang read_file
+    const recovered = await runScenario("recover");
+    expect(recovered.sentPrompts.length).toBe(3);
+    expect(recovered.sentPrompts[1]).toContain("[LỖI ĐỐI CHIẾU apply_patch]");
+    expect(recovered.sentPrompts[2]).toContain("y hệt tham số vừa thất bại");
+    expect(recovered.sentPrompts[2]).toContain("read_file");
+    expect(
+      recovered.turn2Events.some(
+        e => e.type === "tool_call_start" && e.name === "read_file",
+      ),
+    ).toBe(true);
+
+    // Trường hợp B: Model vẫn cố chấp lặp lại apply_patch sau nhắc nội bộ -> dừng ngay, không gửi tới Codex 6 lần
+    const stubborn = await runScenario("stubborn");
+    expect(stubborn.sentPrompts.length).toBe(3);
+    expect(
+      stubborn.turn2Events.some(e => e.type === "tool_call_start"),
+    ).toBe(false);
+    expect(
+      stubborn.turn2Events.some(
+        e =>
+          e.type === "text_delta" &&
+          e.text.includes("Phát hiện vòng lặp lỗi công cụ"),
+      ),
+    ).toBe(true);
+    expect(
+      stubborn.turn2Events.some(e => e.type === "done" && e.endTurn === true),
+    ).toBe(true);
+  });
 });

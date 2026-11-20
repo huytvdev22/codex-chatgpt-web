@@ -16,6 +16,8 @@ export interface WebTurnLoopGuardInput {
   logPrefix: string;
   emit: (event: AdapterEvent) => void;
   usage?: CodexUsage;
+  previousToolFailed?: boolean;
+  nudgedRepeatedFailure?: boolean;
 }
 
 /**
@@ -23,6 +25,50 @@ export interface WebTurnLoopGuardInput {
  * lặp đi lặp lại hoặc vượt quá tổng số lượt tool call trong một phiên hội thoại.
  */
 export class WebTurnLoopGuard {
+  private computeFingerprint(
+    protocolResult: Extract<StrictWebResponseResult, { kind: "tool_calls" }>,
+    clientTools: CodexTool[],
+  ): {
+    fingerprint: string;
+    primaryToolName: string;
+  } {
+    const mappedCalls = protocolResult.calls.map(rawCall => ({
+      rawCall,
+      mapped: WebToolBridge.mapToolCall(rawCall, clientTools),
+    }));
+    const fingerprint = mappedCalls
+      .map(call =>
+        stableToolFingerprint(call.mapped.name, call.mapped.arguments),
+      )
+      .sort()
+      .join("|");
+    return {
+      fingerprint,
+      primaryToolName: mappedCalls[0]?.mapped.name || "unknown",
+    };
+  }
+
+  /**
+   * Kiểm tra xem lượt tool call vừa nhận có trùng hệt công cụ + tham số của lượt liền trước không.
+   */
+  public wouldRepeatPreviousToolCall(input: {
+    protocolResult: StrictWebResponseResult;
+    clientTools: CodexTool[];
+    conversationKey?: string;
+  }): boolean {
+    const { protocolResult, clientTools, conversationKey } = input;
+    if (!conversationKey || protocolResult.kind !== "tool_calls") {
+      return false;
+    }
+    cleanExpiredConversationGuards();
+    const prevFingerprint = conversationGuard.get(conversationKey)?.lastToolFingerprint;
+    if (!prevFingerprint) {
+      return false;
+    }
+    const { fingerprint } = this.computeFingerprint(protocolResult, clientTools);
+    return fingerprint === prevFingerprint;
+  }
+
   /**
    * Kiểm tra kết quả giao thức. Trả về true nếu loop guard đã chặn và kết thúc lượt.
    */
@@ -34,6 +80,8 @@ export class WebTurnLoopGuard {
       logPrefix,
       emit,
       usage,
+      previousToolFailed,
+      nudgedRepeatedFailure,
     } = input;
 
     if (protocolResult.kind !== "tool_calls") {
@@ -42,11 +90,6 @@ export class WebTurnLoopGuard {
       }
       return false;
     }
-
-    const mappedCalls = protocolResult.calls.map(rawCall => ({
-      rawCall,
-      mapped: WebToolBridge.mapToolCall(rawCall, clientTools),
-    }));
 
     cleanExpiredConversationGuards();
     const guardKey =
@@ -60,12 +103,8 @@ export class WebTurnLoopGuard {
 
     guardState.toolIterations += 1;
     guardState.updatedAt = Date.now();
-    const currentFingerprint = mappedCalls
-      .map(call =>
-        stableToolFingerprint(call.mapped.name, call.mapped.arguments),
-      )
-      .sort()
-      .join("|");
+    const { fingerprint: currentFingerprint, primaryToolName: currentToolName } =
+      this.computeFingerprint(protocolResult, clientTools);
 
     if (currentFingerprint === guardState.lastToolFingerprint) {
       guardState.identicalToolCount += 1;
@@ -76,16 +115,23 @@ export class WebTurnLoopGuard {
 
     conversationGuard.set(guardKey, guardState);
 
-    const currentToolName = mappedCalls[0]?.mapped.name || "unknown";
-    const maxIdenticalAllowed = getMaxIdenticalToolCalls(currentToolName);
-    if (guardState.identicalToolCount >= maxIdenticalAllowed) {
+    const maxIdenticalAllowed = getMaxIdenticalToolCalls(currentToolName, {
+      previousToolFailed,
+    });
+    const effectiveRepeatCount =
+      guardState.identicalToolCount +
+      (previousToolFailed && nudgedRepeatedFailure ? 1 : 0);
+    if (effectiveRepeatCount >= maxIdenticalAllowed) {
       console.warn(
-        `[${logPrefix}] Ngắt vòng lặp: Công cụ ${currentToolName} bị gọi lặp lại ${maxIdenticalAllowed} lần liên tiếp.`,
+        `[${logPrefix}] Ngắt vòng lặp: Công cụ ${currentToolName} bị gọi lặp lại ${guardState.identicalToolCount} lần liên tiếp${previousToolFailed ? " sau khi thất bại" : ""}.`,
       );
       conversationGuard.delete(guardKey);
+      const warningText = previousToolFailed
+        ? `\n\n> [!WARNING]\n> **Phát hiện vòng lặp lỗi công cụ (Repeated Failed Tool Calls):** Công cụ \`${currentToolName}\` vừa thất bại ở lượt trước nhưng vẫn bị yêu cầu lặp lại ${guardState.identicalToolCount} lần liên tiếp với cùng tham số${nudgedRepeatedFailure ? " (dù đã nhắc đổi hướng)" : ""}. Hệ thống tự động dừng để tránh lặp vô hạn.`
+        : `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${currentToolName}\` đã được yêu cầu lặp lại ${maxIdenticalAllowed} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`;
       emit({
         type: "text_delta",
-        text: `\n\n> [!WARNING]\n> **Phát hiện vòng lặp vô hạn (Repeated Tool Calls):** Công cụ \`${currentToolName}\` đã được yêu cầu lặp lại ${maxIdenticalAllowed} lần liên tiếp với cùng tham số. Hệ thống tự động kết thúc để bảo vệ môi trường làm việc.`,
+        text: warningText,
       });
       emit({
         type: "done",

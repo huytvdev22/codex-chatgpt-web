@@ -13,8 +13,11 @@ import { compileWebPrompt } from "./compile-prompt";
 import { CodexPayloadNormalizer, CodexRawPayload } from "./normalization";
 import {
   buildFormatRetryPrompt,
+  buildRepeatedFailedToolRecoveryPrompt,
+  isApplyPatchVerificationError,
   isImplementingPlanRequest,
   isStructuredJsonOutputTurn,
+  isToolResultError,
   mcpToolCatalogRenderer,
   SHORT_OUTPUT_FORMAT_ANCHOR,
 } from "./prompt";
@@ -298,6 +301,17 @@ export class WebTurnEngine {
 
         let roundPrompt = initialPrompt;
         let isInitialRound = true;
+        let describeRoundsUsed = 0;
+        const failedToolResults =
+          normalized.trailingToolResults.filter(isToolResultError);
+        const previousToolFailed = failedToolResults.length > 0;
+        const previousApplyPatchFailed = failedToolResults.some(
+          isApplyPatchVerificationError,
+        );
+        const previousErrorSnippet = failedToolResults[0]?.output
+          ?.trim()
+          .slice(0, 400);
+        let didRepeatedFailedToolNudge = false;
         let protocolResult!: Exclude<StrictWebResponseResult, { kind: "protocol_error" }>;
 
         for (let describeRound = 0; ; describeRound += 1) {
@@ -415,7 +429,7 @@ export class WebTurnEngine {
                     WebToolRegistry.isInternalDescribeTool(call.name),
                   );
                   if (describeCalls.length > 0) {
-                    if (describeRound >= MAX_TOOL_DESCRIBE_ROUNDS) {
+                    if (describeRoundsUsed >= MAX_TOOL_DESCRIBE_ROUNDS) {
                       const limitError: Extract<StrictWebResponseResult, { kind: "protocol_error" }> = {
                         kind: "protocol_error",
                         code: "INVALID_TOOL_CALL",
@@ -536,8 +550,37 @@ export class WebTurnEngine {
           });
 
           if (!pendingDescribeCalls || pendingDescribeCalls.length === 0) {
+            if (
+              this.definition.policies?.enableToolLoopGuard &&
+              previousToolFailed &&
+              !didRepeatedFailedToolNudge &&
+              this.loopGuard.wouldRepeatPreviousToolCall({
+                protocolResult,
+                clientTools: parsed.context.tools || [],
+                conversationKey,
+              })
+            ) {
+              didRepeatedFailedToolNudge = true;
+              const repeatedToolName =
+                protocolResult.kind === "tool_calls"
+                  ? protocolResult.calls[0]?.name || "unknown"
+                  : "unknown";
+              console.warn(
+                `[${this.definition.logPrefix}] Phát hiện model lặp lại công cụ vừa lỗi (${repeatedToolName}); gửi nhắc sửa hướng nội bộ trước khi forward.`,
+              );
+              roundPrompt = buildRepeatedFailedToolRecoveryPrompt({
+                toolName: repeatedToolName,
+                isApplyPatch:
+                  previousApplyPatchFailed || repeatedToolName === "apply_patch",
+                errorSnippet: previousErrorSnippet,
+              });
+              isInitialRound = false;
+              continue;
+            }
             break;
           }
+
+          describeRoundsUsed += 1;
 
           const requestedNames = extractRequestedToolNames(pendingDescribeCalls);
           const lookupResult = WebToolRegistry.describeTools(
@@ -583,6 +626,8 @@ export class WebTurnEngine {
             logPrefix: this.definition.logPrefix,
             emit,
             usage,
+            previousToolFailed,
+            nudgedRepeatedFailure: didRepeatedFailedToolNudge,
           })
         ) {
           if (!structuredOutputFormat) {

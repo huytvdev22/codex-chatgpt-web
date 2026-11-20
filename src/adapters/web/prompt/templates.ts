@@ -176,6 +176,40 @@ export const TOOL_ERROR_FEEDBACK_PROMPT = `Bạn ơi, lệnh hoặc công cụ v
 Bạn xem lại nguyên nhân lỗi rồi xuất lệnh kiểm tra hoặc xuất khối <custom_tool_call name="apply_patch"> sửa lại giúp mình nha!`;
 
 /**
+ * Hướng dẫn phục hồi chuyên biệt khi apply_patch không khớp dòng ngữ cảnh trên đĩa
+ */
+export const APPLY_PATCH_ERROR_RECOVERY_HINT = `[LỖI ĐỐI CHIẾU apply_patch]: Patch vừa bị từ chối vì dòng ngữ cảnh (expected lines, số dòng trống, thụt lề hoặc ký tự đặc biệt) không khớp nội dung file thật trên đĩa.
+- TUYỆT ĐỐI KHÔNG gửi lại nguyên patch cũ hay đoán mò lại các dòng ngữ cảnh.
+- Hãy đọc lại chính xác vùng cần sửa trong file thật (dùng \`read_file\` hoặc \`exec_command\` với \`Get-Content -Encoding UTF8 -LiteralPath ...\` kèm đánh số dòng) để đối chiếu đúng từng ký tự/dòng trống, hoặc thu nhỏ phạm vi hunk trước khi gọi lại \`apply_patch\`.`;
+
+/**
+ * Tạo prompt nhắc nội bộ khi model web vừa lặp lại đúng công cụ + tham số vừa thất bại ở lượt trước.
+ */
+export function buildRepeatedFailedToolRecoveryPrompt(options: {
+  toolName: string;
+  isApplyPatch?: boolean;
+  errorSnippet?: string;
+}): string {
+  const reason = options.errorSnippet
+    ? `\n- Lỗi vừa nhận ở lượt trước:\n\`\`\`\n${options.errorSnippet}\n\`\`\``
+    : "";
+  const specificAction = options.isApplyPatch
+    ? "Tuyệt đối KHÔNG gửi lại khối `apply_patch` cũ nữa. Hãy gọi `read_file` (hoặc `exec_command` với `Get-Content -Encoding UTF8 -LiteralPath ...` kèm đánh số dòng) để đọc lại chính xác nội dung thực tế của file rồi mới tạo patch mới, hoặc báo rõ khó khăn bằng Markdown nếu không thể sửa."
+    : "Tuyệt đối KHÔNG lặp lại y hệt lệnh/tham số vừa lỗi nữa. Hãy đổi cách kiểm tra/tham số khác hoặc báo rõ nguyên nhân cho mình bằng Markdown.";
+
+  return `Bạn ơi, ở phản hồi vừa rồi bạn lại yêu cầu gọi công cụ \`${options.toolName}\` với **y hệt tham số vừa thất bại** ở lượt ngay trước đó.${reason}
+
+${specificAction}
+
+Vui lòng trả lời lại ngay theo đúng khung:
+\`\`\`\`markdown
+<webResponse>
+... gọi tool kiểm tra/đọc lại file hoặc patch đã sửa mới (KHÔNG lặp lại tham số cũ), HOẶC kết luận Markdown ...
+</webResponse>
+\`\`\`\``;
+}
+
+/**
  * Lời nhắc khi người dùng vừa trả lời wizard khảo sát trong Plan Mode
  */
 export const PLAN_USER_INPUT_ANSWER_PROMPT = `[MÌNH ĐÃ CHỌN XONG CÁC PHƯƠNG ÁN - BẮT ĐẦU XUẤT BẢN KẾ HOẠCH]

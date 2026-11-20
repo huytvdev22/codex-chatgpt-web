@@ -240,6 +240,43 @@ export function isStructuredJsonOutputTurn(
   return parsed?.options?.outputFormat?.type === "json_schema" && !hasToolResults;
 }
 
+/**
+ * Nhận diện kết quả tool `apply_patch` bị từ chối khi verify hunk / context lines.
+ */
+export function isApplyPatchVerificationError(result: {
+  toolName?: string;
+  output: string;
+}): boolean {
+  const output = result.output.trim();
+  if (!output) return false;
+  return (
+    /^apply_patch verification failed\b/im.test(output) ||
+    /^apply_patch\b[^\n]*\bfailed\b/im.test(output) ||
+    (result.toolName === "apply_patch" &&
+      (/Failed to find expected lines\b/i.test(output) ||
+        /invalid hunk\b/i.test(output) ||
+        /^Error:/i.test(output)))
+  );
+}
+
+/**
+ * Nhận diện kết quả thực thi công cụ thất bại từ Codex để kích hoạt TOOL_ERROR_FEEDBACK.
+ */
+export function isToolResultError(result: {
+  toolName?: string;
+  output: string;
+}): boolean {
+  if (isApplyPatchVerificationError(result)) return true;
+  const output = result.output;
+  return (
+    /Process exited with code [1-9]\d*/.test(output) ||
+    /[Ee]xit code:\s*[1-9]\d*/.test(output) ||
+    output.startsWith("Error:") ||
+    output.startsWith("Lỗi:") ||
+    output.includes("Command failed:")
+  );
+}
+
 export interface WebPromptCompilerOptions {
   assistantName?: string;
   maxPromptChars?: number;
@@ -369,15 +406,11 @@ export class WebPromptCompiler {
       userInstructionText = `[Yêu cầu hiện tại của mình]:\n${normalized.latestUserInstruction}`;
     }
 
-    const hasToolErrors = normalized.trailingToolResults.some(
-      r =>
-        r.output.includes("Process exited with code 1") ||
-        r.output.includes("exit code: 1") ||
-        r.output.includes("Exit code: 1") ||
-        r.output.startsWith("Error:") ||
-        r.output.startsWith("Lỗi:") ||
-        r.output.includes("Command failed:")
+    const hasApplyPatchError = normalized.trailingToolResults.some(
+      isApplyPatchVerificationError,
     );
+    const hasToolErrors =
+      hasApplyPatchError || normalized.trailingToolResults.some(isToolResultError);
 
     // Nhận diện xem có kết quả trả lời của request_user_input hay không
     const userInputToolResult = normalized.trailingToolResults.find(res => {
@@ -430,6 +463,7 @@ export class WebPromptCompiler {
       isImplementingPlan,
       hasToolResults,
       hasToolErrors,
+      hasApplyPatchError,
       hasUserInputAnswer,
       userInputAnswersText,
       includeEnvironment,
