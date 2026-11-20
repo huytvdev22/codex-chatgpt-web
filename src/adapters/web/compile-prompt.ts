@@ -20,6 +20,9 @@ export interface CompileWebPromptOptions {
   toolDelta?: McpToolDeltaOptions;
   includeEnvironment?: boolean;
   includeUserInstruction?: boolean;
+  includePersonalization?: boolean;
+  personalizationText?: string;
+  workspaceMemoryHintText?: string;
 }
 
 /**
@@ -51,6 +54,9 @@ export function compileWebPrompt(
     toolDelta: options.toolDelta,
     includeEnvironment: options.includeEnvironment,
     includeUserInstruction: options.includeUserInstruction,
+    includePersonalization: options.includePersonalization,
+    personalizationText: options.personalizationText,
+    workspaceMemoryHintText: options.workspaceMemoryHintText,
   });
 }
 

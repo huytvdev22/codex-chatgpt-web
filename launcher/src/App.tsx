@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
+import { PersonalizationSurface } from "./components/PersonalizationSurface";
 import type {
   BrowserProviderInfo,
   BrowserState,
@@ -457,6 +458,12 @@ function LauncherShell({
                   label={copy.setup}
                   onClick={() => navigateSurface("setup")}
                 />
+                <SidebarItem
+                  active={surface === "personalization"}
+                  icon="personalization"
+                  label={copy.personalization}
+                  onClick={() => navigateSurface("personalization")}
+                />
               </SidebarGroup>
             </nav>
 
@@ -511,6 +518,13 @@ function LauncherShell({
                 setError={setError}
                 snapshot={snapshot}
                 updateState={updateState}
+              />
+            ) : null}
+            {surface === "personalization" ? (
+              <PersonalizationSurface
+                api={api!}
+                copy={copy}
+                setError={setError}
               />
             ) : null}
             {surface === "settings" ? (

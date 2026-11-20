@@ -51,6 +51,8 @@ export interface ScenarioBuilderInput {
   actionContractText: string;
   environmentText?: string;
   developerRulesText?: string;
+  personalizationText?: string;
+  workspaceMemoryHintText?: string;
   systemPromptText?: string;
   priorHistoryText?: string;
   toolResultsText?: string;
@@ -153,6 +155,8 @@ export class ConversationScenarioBuilder {
         if (input.systemPromptText) projectContext.push(input.systemPromptText);
         if (input.environmentText) projectContext.push(input.environmentText);
         if (input.developerRulesText) projectContext.push(input.developerRulesText);
+        if (input.personalizationText) projectContext.push(input.personalizationText);
+        if (input.workspaceMemoryHintText) projectContext.push(input.workspaceMemoryHintText);
 
         if (projectContext.length > 0) {
           sections.push(projectContext.join("\n\n"));
@@ -269,6 +273,7 @@ export class ConversationScenarioBuilder {
         openingSection = "";
         this.appendContinuationSections(sections, input, {
           includeToolResults: false,
+          includeWorkspaceMemoryHint: true,
           anchor: PURE_CONVERSATION_ANCHOR,
         });
         break;
@@ -287,10 +292,16 @@ export class ConversationScenarioBuilder {
   private appendContinuationSections(
     sections: string[],
     input: ScenarioBuilderInput,
-    options: { includeToolResults: boolean; anchor: string },
+    options: { includeToolResults: boolean; includeWorkspaceMemoryHint?: boolean; anchor: string },
   ): void {
     if (input.includeEnvironment !== false && input.environmentText) {
       sections.push(input.environmentText);
+    }
+    if (input.personalizationText) {
+      sections.push(input.personalizationText);
+    }
+    if (options.includeWorkspaceMemoryHint && input.workspaceMemoryHintText) {
+      sections.push(input.workspaceMemoryHintText);
     }
     if (input.actionContractText) {
       sections.push(input.actionContractText);

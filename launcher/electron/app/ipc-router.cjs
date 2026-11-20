@@ -59,6 +59,7 @@ class IpcRouter {
       app,
       logger,
       stateStore,
+      personalizationStore,
       launcherProfile,
       isDevProfile,
       coreHome,
@@ -368,6 +369,16 @@ class IpcRouter {
       const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
       if (!ordinary) throw new Error("Unknown preference");
       return stateStore.update({ [key]: value === true });
+    });
+    handle("launcher:personalization-get", () => {
+      if (!personalizationStore) throw new Error("Personalization store is unavailable");
+      return personalizationStore.read();
+    });
+    handle("launcher:personalization-save", (_event, value) => {
+      if (!personalizationStore) throw new Error("Personalization store is unavailable");
+      const saved = personalizationStore.save(value);
+      send("launcher:personalization-changed", saved);
+      return saved;
     });
     handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
     handle("launcher:update-install", async () => {

@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setFreshConversationPerTurn: (enabled) => ipcRenderer.invoke("launcher:fresh-conversation-per-turn", enabled),
   setUseSavedChats: (enabled) => ipcRenderer.invoke("launcher:use-saved-chats", enabled),
   setPreference: (key, value) => ipcRenderer.invoke("launcher:set-preference", key, value),
+  getPersonalization: () => ipcRenderer.invoke("launcher:personalization-get"),
+  savePersonalization: (settings) => ipcRenderer.invoke("launcher:personalization-save", settings),
   setSidebarState: (state) => ipcRenderer.invoke("launcher:sidebar-state", state),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
   windowState: () => ipcRenderer.invoke("launcher:window-state"),

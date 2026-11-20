@@ -695,3 +695,13 @@ test("settings opens Swagger UI for production runtime when server is healthy", 
   assert.deepEqual(opened, ["http://127.0.0.1:17899/swagger"]);
   assert.deepEqual({ ...result }, { url: "http://127.0.0.1:17899/swagger" });
 });
+
+test("personalization tab is wired across sidebar, preload, and IPC router", () => {
+  assert.match(appSource, /PersonalizationSurface/);
+  assert.match(appSource, /navigateSurface\("personalization"\)/);
+  assert.match(appSource, /surface === "personalization"/);
+  assert.match(preloadSource, /getPersonalization:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("launcher:personalization-get"\)/);
+  assert.match(preloadSource, /savePersonalization:\s*\(settings\)\s*=>\s*ipcRenderer\.invoke\("launcher:personalization-save", settings\)/);
+  assert.match(ipcRouterSource, /handle\("launcher:personalization-get",/);
+  assert.match(ipcRouterSource, /handle\("launcher:personalization-save",/);
+});

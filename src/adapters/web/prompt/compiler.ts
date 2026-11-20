@@ -21,6 +21,10 @@ import {
   type McpToolDeltaOptions,
 } from "./mcp-tool-catalog-renderer";
 import { hasActualPriorAssistantReply } from "../../base";
+import {
+  personalizationPromptBuilder,
+  personalizationStore,
+} from "../../../personalization";
 
 export const DEFAULT_MAX_WEB_PROMPT_CHARS = 95_000;
 
@@ -118,6 +122,9 @@ export interface PromptCompileInput {
   toolDelta?: McpToolDeltaOptions;
   includeEnvironment?: boolean;
   includeUserInstruction?: boolean;
+  includePersonalization?: boolean;
+  personalizationText?: string;
+  workspaceMemoryHintText?: string;
 }
 
 export interface PromptCompileResult {
@@ -453,35 +460,80 @@ export class WebPromptCompiler {
 
     const includeEnvironment = input.includeEnvironment ?? (isNewConversation || !hasToolResults);
     const includeUserInstruction = input.includeUserInstruction ?? true;
+    const includePersonalization = input.includePersonalization ?? true;
+
+    let personalizationText = "";
+    let workspaceMemoryHintText = "";
+    if (!structuredOutputFormat && includePersonalization) {
+      const needGlobalFallback = input.personalizationText === undefined && isNewConversation;
+      const needWorkspaceFallback = input.workspaceMemoryHintText === undefined;
+      const fallbackSnapshot =
+        needGlobalFallback || needWorkspaceFallback
+          ? personalizationStore.getSnapshot()
+          : undefined;
+
+      personalizationText =
+        input.personalizationText !== undefined
+          ? input.personalizationText
+          : needGlobalFallback && fallbackSnapshot
+            ? personalizationPromptBuilder.buildGlobalSection(fallbackSnapshot.settings)
+            : "";
+
+      workspaceMemoryHintText =
+        input.workspaceMemoryHintText !== undefined
+          ? input.workspaceMemoryHintText
+          : needWorkspaceFallback && fallbackSnapshot
+            ? personalizationPromptBuilder.buildWorkspaceMemoryHint(
+                normalized.workspaceCwd,
+                fallbackSnapshot.settings.enabled &&
+                  fallbackSnapshot.settings.workspaceMemoryEnabled,
+              )
+            : "";
+    }
 
     // 3. Đạo diễn kịch bản hội thoại tự nhiên thông qua ConversationScenarioBuilder
-    const scenarioResult = conversationScenarioBuilder.buildTurnPrompt({
-      isStructuredJsonOutput: Boolean(structuredOutputFormat),
-      structuredJsonOutputProtocol,
-      isNewConversation,
-      isPlanMode,
-      isImplementingPlan,
-      hasToolResults,
-      hasToolErrors,
-      hasApplyPatchError,
-      hasUserInputAnswer,
-      userInputAnswersText,
-      includeEnvironment,
-      includeUserInstruction,
-      fullToolProtocol,
-      actionContractText,
-      environmentText,
-      developerRulesText,
-      systemPromptText: systemInstructionsContent,
-      priorHistoryText,
-      toolResultsText,
-      userInstructionText,
-      hasImages: Boolean(normalized.images && normalized.images.length > 0),
-    });
+    const buildScenario = (historyOverride: string) =>
+      conversationScenarioBuilder.buildTurnPrompt({
+        isStructuredJsonOutput: Boolean(structuredOutputFormat),
+        structuredJsonOutputProtocol,
+        isNewConversation,
+        isPlanMode,
+        isImplementingPlan,
+        hasToolResults,
+        hasToolErrors,
+        hasApplyPatchError,
+        hasUserInputAnswer,
+        userInputAnswersText,
+        includeEnvironment,
+        includeUserInstruction,
+        fullToolProtocol,
+        actionContractText,
+        environmentText,
+        developerRulesText,
+        personalizationText,
+        workspaceMemoryHintText,
+        systemPromptText: systemInstructionsContent,
+        priorHistoryText: historyOverride,
+        toolResultsText,
+        userInstructionText,
+        hasImages: Boolean(normalized.images && normalized.images.length > 0),
+      });
 
+    let scenarioResult = buildScenario(priorHistoryText);
     let finalPrompt = scenarioResult.finalPrompt;
 
-    // 4. Budget Guard: Cắt tỉa nếu vượt quá ngưỡng an toàn được cấu hình cho adapter
+    // 4. Budget Guard: Ưu tiên rút gọn lịch sử cũ trước để giữ nguyên Personalization & yêu cầu hiện tại
+    if (finalPrompt.length > maxPromptChars && priorHistoryText.length > 0) {
+      const overflow = finalPrompt.length - maxPromptChars + 160;
+      const allowedHistoryChars = Math.max(0, priorHistoryText.length - overflow);
+      const trimmedHistory =
+        allowedHistoryChars > 240
+          ? `... [Một số lịch sử trao đổi cũ được rút gọn để tối ưu độ dài] ...\n\n${priorHistoryText.slice(-allowedHistoryChars)}`
+          : "";
+      scenarioResult = buildScenario(trimmedHistory);
+      finalPrompt = scenarioResult.finalPrompt;
+    }
+
     if (finalPrompt.length > maxPromptChars) {
       const headLimit = Math.min(25_000, Math.floor(maxPromptChars * 0.3));
       const tailLimit = Math.max(0, maxPromptChars - headLimit - 200);

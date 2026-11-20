@@ -846,6 +846,7 @@ export class CodexPayloadNormalizer {
       ...(systemInstructions && systemInstructions.length > 0 ? { systemInstructions } : {}),
       developerInstructions: developerInstructions.length > 0 ? developerInstructions : undefined,
       environmentContext: latestEnvFields ? this.formatEnvironmentFields(latestEnvFields) : undefined,
+      ...(latestEnvFields?.cwd ? { workspaceCwd: latestEnvFields.cwd } : {}),
       priorHistory,
       latestUserInstruction,
       trailingToolResults,

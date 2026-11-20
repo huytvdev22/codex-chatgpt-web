@@ -39,6 +39,7 @@ const {
   createStateStore,
   nextSessionRefreshReminderAt,
 } = require("./infra/state-store.cjs");
+const { createPersonalizationStore } = require("./infra/personalization-store.cjs");
 const { runtimeBundlePaths } = require("./runtime/runtime-command.cjs");
 const { RuntimeHost } = require("./runtime/runtime-host.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime/runtime-install.cjs");
@@ -417,6 +418,7 @@ async function start() {
     app,
     logger,
     stateStore,
+    personalizationStore: createPersonalizationStore(path.join(CORE_HOME, "personalization.json")),
     launcherProfile: LAUNCHER_PROFILE,
     isDevProfile: IS_DEV_PROFILE,
     coreHome: CORE_HOME,

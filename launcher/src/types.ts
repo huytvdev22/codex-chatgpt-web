@@ -2,7 +2,35 @@ import languages from "../electron/languages.json";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
-export type Surface = "browser" | "setup" | "settings";
+export type Surface = "browser" | "setup" | "settings" | "personalization";
+
+export type PersonalizationTone =
+  | "default"
+  | "concise_technical"
+  | "friendly"
+  | "formal"
+  | "mentor";
+
+export interface SavedMemoryItem {
+  id: string;
+  content: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonalizationSettings {
+  version: 1;
+  enabled: boolean;
+  workspaceMemoryEnabled: boolean;
+  baseTone: PersonalizationTone;
+  nickname: string;
+  roleOrStack: string;
+  aboutYou: string;
+  customInstructions: string;
+  memories: SavedMemoryItem[];
+  updatedAt: string | null;
+}
 
 export interface BrowserProviderInfo {
   id: string;
@@ -155,6 +183,8 @@ export interface LauncherApi {
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,
   ): Promise<LauncherState>;
+  getPersonalization(): Promise<PersonalizationSettings>;
+  savePersonalization(settings: PersonalizationSettings): Promise<PersonalizationSettings>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;

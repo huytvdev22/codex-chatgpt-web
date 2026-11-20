@@ -93,6 +93,7 @@ export interface NormalizedCodexRequest {
   turnId?: string;
   systemInstructions?: string[];
   environmentContext?: string;
+  workspaceCwd?: string;
   developerInstructions?: string[];
   priorHistory: NormalizedTurn[];
   latestUserInstruction?: string;

@@ -7,6 +7,10 @@ import {
 } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { adapterFailureFromMessage } from "../../lib/errors";
+import {
+  personalizationPromptBuilder,
+  personalizationStore,
+} from "../../personalization";
 import { buildWebConversationKey } from "./conversation/conversation-key";
 import type { NormalizedImageAttachment } from "./normalization/canonical-types";
 import { compileWebPrompt } from "./compile-prompt";
@@ -235,12 +239,30 @@ export class WebTurnEngine {
         : true;
 
       const sessionKey = conversationKey || threadId;
-      const directives = !structuredOutputFormat && !this.definition.compilePrompt
+      const useCompiledPrompt = !structuredOutputFormat && !this.definition.compilePrompt;
+      const personalizationSnapshot = useCompiledPrompt
+        ? personalizationStore.getSnapshot()
+        : undefined;
+      const directives = useCompiledPrompt
         ? this.sessionStore.resolveTurnDirectives(sessionKey, {
             isNewConversation,
             normalized,
+            personalizationDigest: personalizationSnapshot?.digest,
           })
         : undefined;
+
+      const personalizationText =
+        useCompiledPrompt && directives?.includePersonalization && personalizationSnapshot
+          ? personalizationPromptBuilder.buildGlobalSection(personalizationSnapshot.settings)
+          : "";
+      const workspaceMemoryHintText =
+        useCompiledPrompt && personalizationSnapshot
+          ? personalizationPromptBuilder.buildWorkspaceMemoryHint(
+              normalized.workspaceCwd,
+              personalizationSnapshot.settings.enabled &&
+                personalizationSnapshot.settings.workspaceMemoryEnabled,
+            )
+          : "";
 
       const compileResult = this.definition.compilePrompt
         ? undefined
@@ -253,6 +275,9 @@ export class WebTurnEngine {
             toolDelta: directives?.toolDelta,
             includeEnvironment: directives?.includeEnvironment,
             includeUserInstruction: directives?.includeUserInstruction,
+            includePersonalization: !structuredOutputFormat,
+            personalizationText,
+            workspaceMemoryHintText,
           });
       const initialPrompt = this.definition.compilePrompt
         ? this.definition.compilePrompt(parsed, isNewConversation, normalized)
@@ -631,7 +656,12 @@ export class WebTurnEngine {
           })
         ) {
           if (!structuredOutputFormat) {
-            this.sessionStore.commitTurnPrompt(sessionKey, normalized, describedToolNames);
+            this.sessionStore.commitTurnPrompt(
+              sessionKey,
+              normalized,
+              describedToolNames,
+              personalizationSnapshot?.digest,
+            );
           }
           finalStatus = "completed";
           return;
@@ -653,7 +683,12 @@ export class WebTurnEngine {
         });
 
         if (!structuredOutputFormat) {
-          this.sessionStore.commitTurnPrompt(sessionKey, normalized, describedToolNames);
+          this.sessionStore.commitTurnPrompt(
+            sessionKey,
+            normalized,
+            describedToolNames,
+            personalizationSnapshot?.digest,
+          );
         }
 
         finalStatus = "completed";

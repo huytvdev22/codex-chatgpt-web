@@ -14,6 +14,7 @@ export interface WebPromptSessionSnapshot {
   describedTools: Set<string>;
   lastUserInstructionDigest?: string;
   lastEnvironmentDigest?: string;
+  lastPersonalizationDigest?: string;
   lastCollaborationMode?: "default" | "plan";
   pendingSchemaError?: PendingSchemaErrorState;
   updatedAt: number;
@@ -22,6 +23,7 @@ export interface WebPromptSessionSnapshot {
 export interface PromptTurnDirectives {
   includeEnvironment: boolean;
   includeUserInstruction: boolean;
+  includePersonalization: boolean;
   toolDelta?: McpToolDeltaOptions;
 }
 
@@ -69,15 +71,18 @@ export class WebPromptSessionStore {
     input: {
       isNewConversation: boolean;
       normalized: NormalizedCodexRequest;
+      personalizationDigest?: string;
     },
   ): PromptTurnDirectives {
-    const { isNewConversation, normalized } = input;
+    const { isNewConversation, normalized, personalizationDigest = "" } = input;
     const hasToolResults = normalized.trailingToolResults.length > 0;
+    const hasPersonalization = personalizationDigest.length > 0;
 
     if (!sessionKey) {
       return {
         includeEnvironment: isNewConversation || !hasToolResults,
         includeUserInstruction: true,
+        includePersonalization: isNewConversation && hasPersonalization,
         toolDelta: undefined,
       };
     }
@@ -87,6 +92,7 @@ export class WebPromptSessionStore {
       return {
         includeEnvironment: true,
         includeUserInstruction: true,
+        includePersonalization: hasPersonalization,
         toolDelta: undefined,
       };
     }
@@ -99,6 +105,7 @@ export class WebPromptSessionStore {
       return {
         includeEnvironment: !hasToolResults,
         includeUserInstruction: true,
+        includePersonalization: hasPersonalization && !hasToolResults,
         toolDelta: undefined,
       };
     }
@@ -118,6 +125,9 @@ export class WebPromptSessionStore {
     const includeUserInstruction = !hasToolResults
       ? true
       : Boolean(currentUserDigest) && currentUserDigest !== snapshot.lastUserInstructionDigest;
+
+    const includePersonalization =
+      hasPersonalization && personalizationDigest !== (snapshot.lastPersonalizationDigest ?? "");
 
     const addedTools: NormalizedTool[] = [];
     const currentNames = new Set<string>();
@@ -147,6 +157,7 @@ export class WebPromptSessionStore {
     return {
       includeEnvironment,
       includeUserInstruction,
+      includePersonalization,
       toolDelta: hasDelta
         ? {
             currentTools: normalized.activeCodingTools,
@@ -168,6 +179,7 @@ export class WebPromptSessionStore {
     sessionKey: string | undefined,
     normalized: NormalizedCodexRequest,
     describedNames: string[] = [],
+    personalizationDigest?: string,
   ): void {
     if (!sessionKey) return;
     this.pruneExpired();
@@ -193,6 +205,10 @@ export class WebPromptSessionStore {
       lastEnvironmentDigest: normalized.environmentContext
         ? sha256(normalized.environmentContext)
         : existing?.lastEnvironmentDigest,
+      lastPersonalizationDigest:
+        personalizationDigest !== undefined
+          ? personalizationDigest
+          : existing?.lastPersonalizationDigest,
       lastCollaborationMode: normalized.collaborationMode,
       pendingSchemaError: undefined,
       updatedAt: Date.now(),
