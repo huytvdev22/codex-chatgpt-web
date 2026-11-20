@@ -2,7 +2,76 @@ import languages from "../electron/languages.json";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
-export type Surface = "browser" | "setup" | "settings" | "personalization" | "skills";
+export type Surface = "browser" | "setup" | "settings" | "personalization" | "skills" | "usage";
+
+export type UsageRange = "today" | "7d" | "30d" | "all";
+export type TokenSourceKind = "ai-studio-dom" | "tiktoken";
+
+export interface UsageSettings {
+  version: 1;
+  showChatFooter: boolean;
+  updatedAt: string | null;
+}
+
+export interface UsageGroupSummary {
+  key: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalDurationMs: number;
+  lastContextTokens: number | null;
+  lastTimestamp: string;
+}
+
+export interface PromptBreakdownMetrics {
+  toolDeclarationChars: number;
+  developerChars: number;
+  historyChars: number;
+  toolResultsChars: number;
+  environmentChars: number;
+  userRequestChars: number;
+  finalPromptChars: number;
+}
+
+export interface UsageTurnRecord {
+  id: string;
+  timestamp: string;
+  providerId: string;
+  modelId: string;
+  threadId?: string;
+  conversationKey?: string;
+  scenario?: string;
+  status: "completed" | "failed";
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  contextTokens?: number;
+  tokenSource: TokenSourceKind;
+  durationMs: number;
+  attempts: number;
+  breakdown?: PromptBreakdownMetrics;
+}
+
+export interface UsageSummary {
+  range: UsageRange;
+  totals: {
+    turns: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    avgDurationMs: number;
+    lastContextTokens: number | null;
+  };
+  byProvider: UsageGroupSummary[];
+  byModel: UsageGroupSummary[];
+  recentTurns: UsageTurnRecord[];
+}
+
+export interface UsageStatePayload {
+  settings: UsageSettings;
+  summary: UsageSummary;
+}
 
 export type SkillSourceKind = "workspace" | "user" | "system" | "unknown";
 
@@ -211,6 +280,9 @@ export interface LauncherApi {
   savePersonalization(settings: PersonalizationSettings): Promise<PersonalizationSettings>;
   getSkills(): Promise<SkillsStatePayload>;
   saveSkills(settings: SkillsSettings): Promise<SkillsStatePayload>;
+  getUsage(range?: UsageRange): Promise<UsageStatePayload>;
+  saveUsageSettings(settings: UsageSettings, range?: UsageRange): Promise<UsageStatePayload>;
+  clearUsageHistory(range?: UsageRange): Promise<UsageStatePayload>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;

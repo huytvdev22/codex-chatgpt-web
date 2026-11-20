@@ -15,6 +15,13 @@ import {
   skillPromptBuilder,
   skillsStore,
 } from "../../skills";
+import {
+  computeAccurateTurnUsage,
+  UsageFooterFormatter,
+  usageHistoryStore,
+  usageSettingsStore,
+  type ProviderReportedTokens,
+} from "../../usage";
 import { buildWebConversationKey } from "./conversation/conversation-key";
 import type { NormalizedImageAttachment } from "./normalization/canonical-types";
 import { compileWebPrompt } from "./compile-prompt";
@@ -354,8 +361,14 @@ export class WebTurnEngine {
         ? this.definition.capability.resolveReasoningEffort(parsed)
         : parsed.options.reasoning;
 
+      const turnStartedAt = Date.now();
       let finalStatus: WebTurnFinalStatus = "failed";
       let totalPromptChars = 0;
+      const attemptPrompts: string[] = [];
+      const attemptOutputs: string[] = [];
+      let firstBeforeContextTokens: number | undefined;
+      let latestAfterContextTokens: number | undefined;
+      let latestReportedSource: ProviderReportedTokens["source"] | undefined;
       let lastRaw = "";
       let traceError: unknown;
       const describedToolNames: string[] = [];
@@ -398,6 +411,7 @@ export class WebTurnEngine {
               pendingDescribeCalls = undefined;
               pendingExternalCallsCount = 0;
               totalPromptChars += prompt.length;
+              attemptPrompts.push(prompt);
               traceSession?.recordAttemptPrompt({
                 attempt: describeRound * (maxRetries + 1) + attempt,
                 isRetry: isRetry || !isInitialRound,
@@ -433,6 +447,21 @@ export class WebTurnEngine {
                   heartbeat: acquired.heartbeat,
                 });
                 rawWebResponseForTrace = result.rawResponse;
+                attemptOutputs.push(result.rawResponse);
+                if (result.providerReportedTokens) {
+                  latestReportedSource = result.providerReportedTokens.source;
+                  if (
+                    firstBeforeContextTokens === undefined &&
+                    result.providerReportedTokens.beforeContextTokens !== undefined
+                  ) {
+                    firstBeforeContextTokens =
+                      result.providerReportedTokens.beforeContextTokens;
+                  }
+                  if (result.providerReportedTokens.contextTokens !== undefined) {
+                    latestAfterContextTokens =
+                      result.providerReportedTokens.contextTokens;
+                  }
+                }
 
                 if (this.definition.conversation.onConversationUpdated) {
                   const updatedId =
@@ -679,13 +708,93 @@ export class WebTurnEngine {
           isInitialRound = false;
         }
 
+        const aggregatedReportedTokens: ProviderReportedTokens | undefined =
+          latestReportedSource && latestAfterContextTokens !== undefined && latestAfterContextTokens > 0
+            ? {
+                ...(firstBeforeContextTokens !== undefined
+                  ? { beforeContextTokens: firstBeforeContextTokens }
+                  : {}),
+                contextTokens: latestAfterContextTokens,
+                ...(firstBeforeContextTokens !== undefined &&
+                latestAfterContextTokens > firstBeforeContextTokens
+                  ? {
+                      turnDeltaTokens:
+                        latestAfterContextTokens - firstBeforeContextTokens,
+                    }
+                  : firstBeforeContextTokens === undefined
+                    ? { turnDeltaTokens: latestAfterContextTokens }
+                    : {}),
+                source: latestReportedSource,
+              }
+            : undefined;
+
+        const accurateUsage = computeAccurateTurnUsage({
+          prompts: attemptPrompts.length > 0 ? attemptPrompts : [initialPrompt],
+          rawOutputs: attemptOutputs.length > 0 ? attemptOutputs : [lastRaw],
+          providerReportedTokens: aggregatedReportedTokens,
+          modelId: parsed.modelId,
+        });
+
         const usage = this.definition.response?.computeUsage
           ? this.definition.response.computeUsage({
               initialPrompt,
               totalPromptChars,
               lastRaw,
+              prompts: attemptPrompts,
+              rawOutputs: attemptOutputs,
+              providerReportedTokens: aggregatedReportedTokens,
             })
           : undefined;
+        const trackedUsage = usage ?? accurateUsage.usage;
+
+        const turnDurationMs = Math.max(0, Date.now() - turnStartedAt);
+        const totalTokensForRecord =
+          trackedUsage.totalTokens ?? trackedUsage.inputTokens + trackedUsage.outputTokens;
+        const { sessionContextTokens, taskUsage } = !structuredOutputFormat
+          ? this.sessionStore.previewTaskUsage(sessionKey, normalized, {
+              inputTokens: trackedUsage.inputTokens,
+              outputTokens: trackedUsage.outputTokens,
+              totalTokens: totalTokensForRecord,
+              contextTokens: accurateUsage.contextTokens,
+              turnStartedAt,
+            })
+          : {
+              sessionContextTokens: accurateUsage.contextTokens ?? totalTokensForRecord,
+              taskUsage: undefined,
+            };
+
+        const recordTurnUsage = () => {
+          usageHistoryStore.append({
+            id: turnTraceId,
+            timestamp: new Date().toISOString(),
+            providerId: this.definition.id,
+            modelId: parsed.modelId,
+            threadId,
+            conversationKey,
+            scenario: compileResult?.scenario,
+            status: "completed",
+            inputTokens: trackedUsage.inputTokens,
+            outputTokens: trackedUsage.outputTokens,
+            totalTokens: totalTokensForRecord,
+            contextTokens: sessionContextTokens,
+            tokenSource: accurateUsage.tokenSource,
+            durationMs: turnDurationMs,
+            attempts: Math.max(1, attemptPrompts.length),
+            ...(compileResult
+              ? {
+                  breakdown: {
+                    toolDeclarationChars: compileResult.metrics.toolDeclaration,
+                    developerChars: compileResult.metrics.developerInstructions,
+                    historyChars: compileResult.metrics.history,
+                    toolResultsChars: compileResult.metrics.toolResults,
+                    environmentChars: compileResult.metrics.environment,
+                    userRequestChars: compileResult.metrics.userRequest,
+                    finalPromptChars: compileResult.metrics.finalPrompt,
+                  },
+                }
+              : {}),
+          });
+        };
 
         if (
           this.definition.policies?.enableToolLoopGuard &&
@@ -710,14 +819,41 @@ export class WebTurnEngine {
                 availableSkillsDigest,
                 selectedSkillsDigest,
               },
+              {
+                sessionContextTokens,
+                activeTaskUsage: taskUsage,
+              },
             );
           }
+          recordTurnUsage();
           finalStatus = "completed";
           return;
         }
 
+        const usageSettings = usageSettingsStore.getSnapshot().settings;
+        const resultToEmit =
+          !structuredOutputFormat &&
+          usageSettings.showChatFooter &&
+          protocolResult.kind === "final_answer"
+            ? {
+                ...protocolResult,
+                content: UsageFooterFormatter.appendFooter(protocolResult.content, {
+                  modelId: parsed.modelId,
+                  stepsCount: taskUsage?.stepsCount ?? 1,
+                  inputTokens: taskUsage?.inputTokens ?? trackedUsage.inputTokens,
+                  outputTokens: taskUsage?.outputTokens ?? trackedUsage.outputTokens,
+                  totalTokens: taskUsage?.totalTokens ?? totalTokensForRecord,
+                  contextTokens: sessionContextTokens,
+                  tokenSource: accurateUsage.tokenSource,
+                  durationMs: taskUsage
+                    ? Math.max(turnDurationMs, Date.now() - taskUsage.startedAt)
+                    : turnDurationMs,
+                }),
+              }
+            : protocolResult;
+
         emitWebProtocolResponse({
-          result: protocolResult,
+          result: resultToEmit,
           clientTools: parsed.context.tools || [],
           emit,
           createCallId:
@@ -741,9 +877,14 @@ export class WebTurnEngine {
               availableSkillsDigest,
               selectedSkillsDigest,
             },
+            {
+              sessionContextTokens,
+              activeTaskUsage: taskUsage,
+            },
           );
         }
 
+        recordTurnUsage();
         finalStatus = "completed";
       } catch (error) {
         if (!structuredOutputFormat && lastProtocolError && lastFailedToolName) {

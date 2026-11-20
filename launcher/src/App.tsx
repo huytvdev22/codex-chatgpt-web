@@ -16,6 +16,7 @@ import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { PersonalizationSurface } from "./components/PersonalizationSurface";
 import { SkillsSurface } from "./components/SkillsSurface";
+import { UsageSurface } from "./components/UsageSurface";
 import type {
   BrowserProviderInfo,
   BrowserState,
@@ -471,6 +472,12 @@ function LauncherShell({
                   label={copy.skills}
                   onClick={() => navigateSurface("skills")}
                 />
+                <SidebarItem
+                  active={surface === "usage"}
+                  icon="activity"
+                  label={copy.usage}
+                  onClick={() => navigateSurface("usage")}
+                />
               </SidebarGroup>
             </nav>
 
@@ -536,6 +543,13 @@ function LauncherShell({
             ) : null}
             {surface === "skills" ? (
               <SkillsSurface
+                api={api!}
+                copy={copy}
+                setError={setError}
+              />
+            ) : null}
+            {surface === "usage" ? (
+              <UsageSurface
                 api={api!}
                 copy={copy}
                 setError={setError}

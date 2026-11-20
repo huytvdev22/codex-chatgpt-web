@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hasActualPriorAssistantReply, type ProviderAdapter } from "../base";
 import type { CodexParsedRequest } from "../../types";
+import { computeAccurateTurnUsage } from "../../usage";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { M365BrowserWorker } from "./m365-browser-worker";
@@ -222,15 +223,16 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         includeDetailedDoneEvent: true,
         toolCallStopReason: "tool_use",
         toolCallEndTurn: false,
-        computeUsage: ({ totalPromptChars, lastRaw }) => {
-          const inputTokens = Math.ceil(totalPromptChars / 4);
-          const outputTokens = Math.ceil((lastRaw.length || 10) / 4);
-          return {
-            inputTokens,
-            outputTokens,
-            totalTokens: inputTokens + outputTokens,
-          };
-        },
+        computeUsage: ({
+          initialPrompt,
+          lastRaw,
+          prompts,
+          rawOutputs,
+        }) =>
+          computeAccurateTurnUsage({
+            prompts: prompts ?? [initialPrompt],
+            rawOutputs: rawOutputs ?? [lastRaw],
+          }).usage,
       },
     });
     this.worker = worker;

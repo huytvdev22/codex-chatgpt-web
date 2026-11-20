@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **088** | Theo dõi Token Usage (AI Studio DOM `ms-token-count` + `tiktoken`, Tab `Usage` & Chat Footer) | `usage`, `ai-studio`, `m365-copilot`, `launcher` | ✅ Đã Confirm | [088-token-usage-tracking-and-ai-studio-dom.md](./088-token-usage-tracking-and-ai-studio-dom.md) |
 | **087** | Triển khai Native Codex Skills Bridge & Skills Control (`/v1/responses` + Electron Launcher) | `web`, `skills`, `launcher`, `electron`, `all-providers` | ✅ Đã Confirm | [087-native-codex-skills-bridge.md](./087-native-codex-skills-bridge.md) |
 | **086** | Triển khai Personalization & Workspace Memory 2 tầng (`/v1/responses` + Electron Launcher) | `web`, `launcher`, `electron`, `all-providers` | ✅ Đã Confirm | [086-personalization-and-workspace-memory.md](./086-personalization-and-workspace-memory.md) |
 | **085** | Lặp `apply_patch` 6 lần liên tiếp tới khi bị `WebTurnLoopGuard` ngắt sau lỗi `apply_patch verification failed` | `web`, `m365-copilot`, `ai-studio` | ✅ Đã Confirm | [085-apply-patch-verification-failed-repeated-loop.md](./085-apply-patch-verification-failed-repeated-loop.md) |

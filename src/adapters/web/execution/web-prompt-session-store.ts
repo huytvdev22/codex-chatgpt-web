@@ -9,6 +9,15 @@ export interface PendingSchemaErrorState {
   message: string;
 }
 
+export interface TaskUsageAccumulator {
+  userInstructionDigest?: string;
+  stepsCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  startedAt: number;
+}
+
 export interface WebPromptSessionSnapshot {
   announcedToolDigests: Map<string, string>;
   describedTools: Set<string>;
@@ -19,6 +28,8 @@ export interface WebPromptSessionSnapshot {
   lastSelectedSkillsDigest?: string;
   lastCollaborationMode?: "default" | "plan";
   pendingSchemaError?: PendingSchemaErrorState;
+  sessionContextTokens?: number;
+  activeTaskUsage?: TaskUsageAccumulator;
   updatedAt: number;
 }
 
@@ -215,6 +226,10 @@ export class WebPromptSessionStore {
       availableSkillsDigest?: string;
       selectedSkillsDigest?: string;
     },
+    usageSnapshot?: {
+      sessionContextTokens?: number;
+      activeTaskUsage?: TaskUsageAccumulator;
+    },
   ): void {
     if (!sessionKey) return;
     this.pruneExpired();
@@ -254,8 +269,71 @@ export class WebPromptSessionStore {
           : existing?.lastSelectedSkillsDigest,
       lastCollaborationMode: normalized.collaborationMode,
       pendingSchemaError: undefined,
+      sessionContextTokens:
+        usageSnapshot?.sessionContextTokens !== undefined
+          ? usageSnapshot.sessionContextTokens
+          : existing?.sessionContextTokens,
+      activeTaskUsage:
+        usageSnapshot?.activeTaskUsage !== undefined
+          ? usageSnapshot.activeTaskUsage
+          : existing?.activeTaskUsage,
       updatedAt: Date.now(),
     });
+  }
+
+  public previewTaskUsage(
+    sessionKey: string | undefined,
+    normalized: NormalizedCodexRequest,
+    turnUsage: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      contextTokens?: number;
+      turnStartedAt: number;
+    },
+  ): {
+    sessionContextTokens: number;
+    taskUsage: TaskUsageAccumulator;
+  } {
+    const existing = sessionKey ? this.get(sessionKey) : undefined;
+    const currentUserDigest = normalized.latestUserInstruction
+      ? sha256(normalized.latestUserInstruction)
+      : undefined;
+    const hasToolResults = normalized.trailingToolResults.length > 0;
+
+    const prevTask = existing?.activeTaskUsage;
+    const isSameTask =
+      Boolean(prevTask) &&
+      hasToolResults &&
+      (!currentUserDigest ||
+        !prevTask?.userInstructionDigest ||
+        prevTask.userInstructionDigest === currentUserDigest);
+
+    const taskUsage: TaskUsageAccumulator = isSameTask && prevTask
+      ? {
+          userInstructionDigest: currentUserDigest ?? prevTask.userInstructionDigest,
+          stepsCount: prevTask.stepsCount + 1,
+          inputTokens: prevTask.inputTokens + turnUsage.inputTokens,
+          outputTokens: prevTask.outputTokens + turnUsage.outputTokens,
+          totalTokens: prevTask.totalTokens + turnUsage.totalTokens,
+          startedAt: prevTask.startedAt,
+        }
+      : {
+          userInstructionDigest: currentUserDigest,
+          stepsCount: 1,
+          inputTokens: turnUsage.inputTokens,
+          outputTokens: turnUsage.outputTokens,
+          totalTokens: turnUsage.totalTokens,
+          startedAt: turnUsage.turnStartedAt,
+        };
+
+    const prevContext = existing?.sessionContextTokens ?? 0;
+    const sessionContextTokens =
+      typeof turnUsage.contextTokens === "number" && turnUsage.contextTokens > 0
+        ? turnUsage.contextTokens
+        : prevContext + turnUsage.totalTokens;
+
+    return { sessionContextTokens, taskUsage };
   }
 
   recordValidationFailure(

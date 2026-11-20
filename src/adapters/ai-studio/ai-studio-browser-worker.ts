@@ -4,8 +4,10 @@ import {
   BrowserHardTimeoutError,
   BrowserIdleTimeoutError,
   type BaseBrowserRunOptions,
+  type BaseBrowserTurnResult,
   type BrowserCompletionContext,
 } from "../web/browser";
+import type { ProviderReportedTokens } from "../../usage/types";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import {
   normalizeCopiedAiStudioCodeSnippet,
@@ -45,6 +47,24 @@ export interface AiStudioBrowserRunOptions extends BaseBrowserRunOptions {
 export interface AiStudioTurnResult {
   rawResponse: string;
   conversationId?: string;
+  providerReportedTokens?: ProviderReportedTokens;
+}
+
+const TOKEN_COUNT_SELECTORS = [
+  "ms-token-count .v3-token-count-value",
+  "ms-token-count",
+] as const;
+
+export function parseAiStudioTokenCountText(rawText: string): number | undefined {
+  if (!rawText) return undefined;
+  const primarySegment = rawText.split("/")[0] ?? rawText;
+  const match = primarySegment.match(/(\d[\d,\s]*(?:\.\d+)?)\s*([kKmM])?/);
+  if (!match) return undefined;
+  const numeric = Number(match[1].replace(/[,\s]/g, ""));
+  if (!Number.isFinite(numeric) || numeric < 0) return undefined;
+  const suffix = match[2]?.toLowerCase();
+  const multiplier = suffix === "m" ? 1_000_000 : suffix === "k" ? 1_000 : 1;
+  return Math.round(numeric * multiplier);
 }
 
 const THINKING_LEVEL_SELECT =
@@ -118,6 +138,10 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   private readonly retainedConversationIds = new WeakMap<Page, string>();
   private readonly botGuardSettledPages = new WeakSet<Page>();
   private readonly networkTrackers = new WeakMap<Page, NetworkTracker>();
+  private readonly domTokenSnapshots = new WeakMap<
+    AiStudioBrowserRunOptions,
+    { beforeContextTokens?: number; afterContextTokens?: number }
+  >();
 
   protected override async initializeTurnState(
     page: Page,
@@ -342,7 +366,10 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
   protected override async captureResponseBaseline(
     page: Page,
+    options: AiStudioBrowserRunOptions,
   ): Promise<AiStudioResponseBaseline> {
+    const beforeContextTokens = await this.readDomTokenCount(page);
+    this.domTokenSnapshots.set(options, { beforeContextTokens });
     return await this.domObserver.captureBaseline(page);
   }
 
@@ -640,7 +667,72 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       throw new DOMException("AI Studio turn aborted", "AbortError");
     }
 
+    const tokenSnapshot = this.domTokenSnapshots.get(options) ?? {};
+    const beforeTokens = tokenSnapshot.beforeContextTokens;
+    let afterTokens = await this.readDomTokenCount(page);
+    for (let retry = 0; retry < 2; retry += 1) {
+      if (
+        afterTokens !== undefined &&
+        afterTokens > 0 &&
+        (beforeTokens === undefined || afterTokens > beforeTokens)
+      ) {
+        break;
+      }
+      await page.waitForTimeout(250);
+      afterTokens = await this.readDomTokenCount(page);
+    }
+    this.domTokenSnapshots.set(options, {
+      ...tokenSnapshot,
+      afterContextTokens: afterTokens,
+    });
+
     return rawResponse;
+  }
+
+  protected override createResult(
+    result: BaseBrowserTurnResult,
+    options?: AiStudioBrowserRunOptions,
+  ): AiStudioTurnResult {
+    const tokenSnapshot = options ? this.domTokenSnapshots.get(options) : undefined;
+    const afterTokens = tokenSnapshot?.afterContextTokens;
+    const beforeTokens = tokenSnapshot?.beforeContextTokens;
+    if (afterTokens !== undefined && afterTokens > 0) {
+      const turnDeltaTokens =
+        beforeTokens !== undefined && afterTokens > beforeTokens
+          ? afterTokens - beforeTokens
+          : beforeTokens === undefined
+            ? afterTokens
+            : undefined;
+      return {
+        ...result,
+        providerReportedTokens: {
+          ...(beforeTokens !== undefined ? { beforeContextTokens: beforeTokens } : {}),
+          contextTokens: afterTokens,
+          ...(turnDeltaTokens !== undefined ? { turnDeltaTokens } : {}),
+          source: "ai-studio-dom",
+        },
+      };
+    }
+    return result as AiStudioTurnResult;
+  }
+
+  private async readDomTokenCount(page: Page): Promise<number | undefined> {
+    try {
+      for (const selector of TOKEN_COUNT_SELECTORS) {
+        const text = await page
+          .locator(selector)
+          .first()
+          .innerText({ timeout: 500 })
+          .catch(() => "");
+        const parsed = parseAiStudioTokenCountText(text);
+        if (parsed !== undefined) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Non-fatal: DOM token counter is best-effort
+    }
+    return undefined;
   }
 
   private async tryExtractMarkdownViaClipboard(

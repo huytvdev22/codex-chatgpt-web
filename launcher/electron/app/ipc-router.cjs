@@ -61,6 +61,7 @@ class IpcRouter {
       stateStore,
       personalizationStore,
       skillsStore,
+      usageStore,
       launcherProfile,
       isDevProfile,
       coreHome,
@@ -390,6 +391,22 @@ class IpcRouter {
       const saved = skillsStore.save(value);
       send("launcher:skills-changed", saved);
       return saved;
+    });
+    handle("launcher:usage-get", (_event, range) => {
+      if (!usageStore) throw new Error("Usage store is unavailable");
+      return usageStore.read(typeof range === "string" ? range : "today");
+    });
+    handle("launcher:usage-save-settings", (_event, value, range) => {
+      if (!usageStore) throw new Error("Usage store is unavailable");
+      const saved = usageStore.saveSettings(value, typeof range === "string" ? range : "today");
+      send("launcher:usage-changed", saved);
+      return saved;
+    });
+    handle("launcher:usage-clear", (_event, range) => {
+      if (!usageStore) throw new Error("Usage store is unavailable");
+      const cleared = usageStore.clearHistory(typeof range === "string" ? range : "today");
+      send("launcher:usage-changed", cleared);
+      return cleared;
     });
     handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
     handle("launcher:update-install", async () => {

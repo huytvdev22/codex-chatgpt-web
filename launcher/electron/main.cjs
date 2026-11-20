@@ -41,6 +41,7 @@ const {
 } = require("./infra/state-store.cjs");
 const { createPersonalizationStore } = require("./infra/personalization-store.cjs");
 const { createSkillsStore } = require("./infra/skills-store.cjs");
+const { createUsageStore } = require("./infra/usage-store.cjs");
 const { runtimeBundlePaths } = require("./runtime/runtime-command.cjs");
 const { RuntimeHost } = require("./runtime/runtime-host.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime/runtime-install.cjs");
@@ -423,6 +424,10 @@ async function start() {
     skillsStore: createSkillsStore(
       path.join(CORE_HOME, "skills.json"),
       path.join(CORE_HOME, "discovered-skills.json"),
+    ),
+    usageStore: createUsageStore(
+      path.join(CORE_HOME, "usage-settings.json"),
+      path.join(CORE_HOME, "usage-history.jsonl"),
     ),
     launcherProfile: LAUNCHER_PROFILE,
     isDevProfile: IS_DEV_PROFILE,

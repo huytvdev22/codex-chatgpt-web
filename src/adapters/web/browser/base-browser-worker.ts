@@ -1,4 +1,5 @@
 import type { Page } from "playwright-core";
+import type { ProviderReportedTokens } from "../../../usage/types";
 
 export interface BaseBrowserRunOptions {
   prompt: string;
@@ -17,6 +18,7 @@ export interface BaseBrowserRunOptions {
 export interface BaseBrowserTurnResult {
   rawResponse: string;
   conversationId?: string;
+  providerReportedTokens?: ProviderReportedTokens;
 }
 
 export interface BrowserObservation {

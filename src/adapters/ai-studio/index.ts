@@ -7,6 +7,7 @@ import {
   type SpeechTurnResult,
 } from "../base";
 import type { CodexParsedRequest } from "../../types";
+import { computeAccurateTurnUsage } from "../../usage";
 import { CodexRawPayload } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
@@ -210,15 +211,18 @@ export class AiStudioAdapter extends WebProviderAdapter {
         includeDetailedDoneEvent: true,
         toolCallStopReason: "tool_use",
         toolCallEndTurn: false,
-        computeUsage: ({ totalPromptChars, lastRaw }) => {
-          const inputTokens = Math.ceil(totalPromptChars / 4);
-          const outputTokens = Math.ceil((lastRaw.length || 10) / 4);
-          return {
-            inputTokens,
-            outputTokens,
-            totalTokens: inputTokens + outputTokens,
-          };
-        },
+        computeUsage: ({
+          initialPrompt,
+          lastRaw,
+          prompts,
+          rawOutputs,
+          providerReportedTokens,
+        }) =>
+          computeAccurateTurnUsage({
+            prompts: prompts ?? [initialPrompt],
+            rawOutputs: rawOutputs ?? [lastRaw],
+            providerReportedTokens,
+          }).usage,
       },
     });
     this.worker = worker;

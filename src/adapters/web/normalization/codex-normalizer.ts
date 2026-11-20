@@ -22,6 +22,7 @@ import {
 } from "./instruction-sanitizer";
 import { CodexSkillParser } from "../../../skills/codex-skill-parser";
 import type { HostSkillEntry, SelectedSkillEntry } from "../../../skills/types";
+import { UsageFooterFormatter } from "../../../usage/usage-footer-formatter";
 
 export interface CodexNormalizeOptions {
   /** Giới hạn tối đa số lượng ảnh giữ lại trong 1 lượt (mặc định 3). */
@@ -43,7 +44,7 @@ export class CodexPayloadNormalizer {
       return content
         .map(b => {
           if (!b || typeof b !== "object") return "";
-          if (b.type === "input_text" || b.type === "text") return (b as any).text || "";
+          if (b.type === "input_text" || b.type === "output_text" || b.type === "text") return (b as any).text || "";
           if (b.type === "input_image") return "[Image]";
           if (b.type === "input_file") return `[File: ${(b as any).filename || (b as any).file_id || ""}]`;
           return "";
@@ -795,11 +796,13 @@ export class CodexPayloadNormalizer {
       }
 
       if (item.type === "message" || (!item.type && (item.role === "user" || item.role === "assistant"))) {
-        if (text.trim()) {
+        const cleanedTurnText =
+          item.role === "assistant" ? UsageFooterFormatter.stripFooter(text) : text;
+        if (cleanedTurnText.trim()) {
           priorHistory.push({
             id: (item as any).id ? String((item as any).id) : undefined,
             role: (item.role || "user") as any,
-            content: text.trim(),
+            content: cleanedTurnText.trim(),
             isUserText: item.role === "user",
           });
         }

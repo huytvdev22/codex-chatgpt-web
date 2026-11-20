@@ -1,6 +1,7 @@
 import type { Page } from "playwright-core";
 import type { IncomingMeta } from "../base";
 import type { AdapterEvent, CodexParsedRequest, CodexUsage } from "../../types";
+import type { ProviderReportedTokens } from "../../usage/types";
 import type { LauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 import type {
   NormalizedCodexRequest,
@@ -102,6 +103,7 @@ export interface WebBrowserTurnExecutionInput {
 export interface WebBrowserTurnExecutionOutput {
   rawResponse: string;
   conversationId?: string;
+  providerReportedTokens?: ProviderReportedTokens;
 }
 
 export interface WebBrowserDriver {
@@ -136,6 +138,9 @@ export interface WebResponseDriver {
     initialPrompt: string;
     totalPromptChars: number;
     lastRaw: string;
+    prompts?: readonly string[];
+    rawOutputs?: readonly string[];
+    providerReportedTokens?: ProviderReportedTokens;
   }): CodexUsage | undefined;
 }
 
