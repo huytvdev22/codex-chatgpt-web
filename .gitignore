@@ -26,3 +26,6 @@ scratch/
 codex-extension/
 
 .agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/e2e-codex-cli-test/

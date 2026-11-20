@@ -10,6 +10,7 @@
    - **Tổ chức file:** Mỗi class nghiệp vụ/service/provider nằm trong 1 file riêng, đặt tên file khớp với tên class (`kebab-case`). Các file `types.ts`, constants, entrypoint (`main`/`preload`), cấu hình hoặc pure helper nhỏ không cần ép bọc thành class.
    - **Dùng `abstract class` đúng chỗ:** Ưu tiên dùng `abstract class` + Template Method/Strategy (tương tự `BaseModelProvider`) khi có nhiều implementation chia sẻ khung xử lý chung, đóng gói rõ `private`/`protected`/`public`.
    - **Tránh OOP cực đoan:** Không tạo `abstract class`, interface 1-1 hay pattern cầu kỳ khi chỉ có 1 implementation duy nhất hoặc khi một function/type đơn giản giải quyết gọn hơn.
+8. **Kiểm thử E2E bằng Codex CLI:** Khi cần tự kiểm thử luồng chạy thực tế (Launcher + Turn Trace + Codex CLI), đọc và thực hiện theo [.agents/skills/e2e-codex-cli-test/SKILL.md](.agents/skills/e2e-codex-cli-test/SKILL.md).
 
 ## Electron Development Guidelines
 
