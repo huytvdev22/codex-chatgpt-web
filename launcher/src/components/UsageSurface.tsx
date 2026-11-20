@@ -50,18 +50,6 @@ function formatProviderName(providerId: string): string {
   return providerId;
 }
 
-function formatTurnTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
 export function UsageSurface({
   api,
   copy,
@@ -296,54 +284,6 @@ export function UsageSurface({
               <span>{copy.usageSectionByModel}</span>
             </div>
             {renderGroupList(summary.byModel, false)}
-
-            <div className="section-heading is-spaced">
-              <span>{copy.usageSectionRecentTurns}</span>
-              <small>{summary.recentTurns.length}</small>
-            </div>
-            {summary.recentTurns.length === 0 ? (
-              <div className="personalization-empty">{copy.usageEmpty}</div>
-            ) : (
-              <div className="usage-recent-list">
-                {summary.recentTurns.map((turn) => (
-                  <div className="usage-recent-row" key={turn.id + turn.timestamp}>
-                    <div className="usage-recent-head">
-                      <div className="usage-group-title">
-                        <strong>{turn.modelId}</strong>
-                        <span className="skills-source-tag">
-                          {turn.tokenSource === "ai-studio-dom"
-                            ? copy.usageSourceDom
-                            : copy.usageSourceTiktoken}
-                        </span>
-                        {turn.scenario ? <small>{turn.scenario}</small> : null}
-                      </div>
-                      <small>{formatTurnTime(turn.timestamp)}</small>
-                    </div>
-                    <div className="usage-recent-stats">
-                      <span>
-                        <strong>{formatNum(turn.totalTokens)} tok</strong> (in{" "}
-                        {formatNum(turn.inputTokens)} / out {formatNum(turn.outputTokens)})
-                      </span>
-                      <span>
-                        {typeof turn.contextTokens === "number" && turn.contextTokens > 0
-                          ? `ctx ${formatNum(turn.contextTokens)} tok · `
-                          : ""}
-                        {formatDuration(turn.durationMs)}
-                      </span>
-                    </div>
-                    {turn.breakdown ? (
-                      <small className="usage-breakdown">
-                        Tools {formatNum(turn.breakdown.toolDeclarationChars)}ch · Dev{" "}
-                        {formatNum(turn.breakdown.developerChars)}ch · History{" "}
-                        {formatNum(turn.breakdown.historyChars)}ch · Results{" "}
-                        {formatNum(turn.breakdown.toolResultsChars)}ch · User{" "}
-                        {formatNum(turn.breakdown.userRequestChars)}ch
-                      </small>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
           </>
         )}
       </div>

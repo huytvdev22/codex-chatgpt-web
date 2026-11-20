@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { AdapterRegistry } from "../src/adapters/adapter-registry";
+import { BaseWebBrowserWorker } from "../src/adapters/web/browser";
 import { WebProviderAdapter } from "../src/adapters/web/web-provider-adapter";
+import { isTransientAiStudioWebError } from "../src/adapters/ai-studio/ai-studio-browser-worker";
 import {
   AI_STUDIO_NEW_CHAT_URL,
   AiStudioAdapter,
@@ -866,5 +868,117 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     expect(lifecycleCalls[1]?.body.status).toBe("completed");
     expect(lifecycleCalls[3]?.body.retain).toBe(false);
     expect(lifecycleCalls[3]?.body.status).toBe("failed");
+  });
+
+  test("isTransientAiStudioWebError nhận diện đúng lỗi permission denied tạm thời", () => {
+    expect(
+      isTransientAiStudioWebError(
+        new Error(
+          "[AI Studio Web Error] error Failed to generate content: permission denied. Please try again. close",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isTransientAiStudioWebError("permission denied when calling GenerateContent"),
+    ).toBe(true);
+    expect(isTransientAiStudioWebError(new Error("Quota exceeded for model"))).toBe(
+      false,
+    );
+    expect(isTransientAiStudioWebError(new Error("The operation was aborted"))).toBe(
+      false,
+    );
+  });
+
+  test("AiStudioBrowserWorker.executeTurn tự phục hồi (reload & retry) khi gặp AI Studio permission denied", async () => {
+    const worker = new AiStudioBrowserWorker();
+    let reloadCount = 0;
+    let heartbeatCount = 0;
+    const seenExistingIds: Array<string | undefined> = [];
+
+    const fakePage = {
+      url: () => "https://aistudio.google.com/prompts/prompt-abc-123",
+      waitForTimeout: async () => {},
+      evaluate: async () => {},
+      reload: async () => {
+        reloadCount += 1;
+      },
+    } as never;
+
+    const spy = spyOn(BaseWebBrowserWorker.prototype, "executeTurn").mockImplementation(
+      async (_page: unknown, options: { existingConversationId?: string }) => {
+        seenExistingIds.push(options.existingConversationId);
+        if (seenExistingIds.length === 1) {
+          throw new Error(
+            "[AI Studio Web Error] error Failed to generate content: permission denied. Please try again. close",
+          );
+        }
+        return {
+          rawResponse: "Recovered reply",
+          conversationId: "prompt-abc-123",
+        };
+      },
+    );
+
+    try {
+      const result = await worker.executeTurn(fakePage, {
+        prompt: "xin chao",
+        modelSlug: "gemini-4-hydrogen",
+        heartbeat: async () => {
+          heartbeatCount += 1;
+        },
+      });
+      expect(result.rawResponse).toBe("Recovered reply");
+      expect(seenExistingIds).toEqual([undefined, "prompt-abc-123"]);
+      expect(reloadCount).toBe(1);
+      expect(heartbeatCount).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("AiStudioBrowserWorker.waitForVisibleComposer ưu tiên locator visible=true và reload khi bị hidden", async () => {
+    const worker = new AiStudioBrowserWorker();
+    let reloadCount = 0;
+    let visibleWaitCalls = 0;
+    let usedVisibleSubLocator = false;
+
+    const fakePage = {
+      waitForTimeout: async () => {},
+      evaluate: async () => {},
+      reload: async () => {
+        reloadCount += 1;
+      },
+      locator: () => {
+        const subLoc = {
+          first: () => subLoc,
+          waitFor: async () => {
+            visibleWaitCalls += 1;
+            if (visibleWaitCalls <= 2) {
+              throw new Error("locator resolved to hidden <textarea>");
+            }
+          },
+        };
+        return {
+          first: () => {
+            throw new Error("should use locator('visible=true') instead of root first()");
+          },
+          locator: (sel: string) => {
+            if (sel === "visible=true") {
+              usedVisibleSubLocator = true;
+            }
+            return subLoc;
+          },
+        };
+      },
+    } as never;
+
+    const helper = worker as unknown as {
+      waitForVisibleComposer: (p: unknown, timeoutMs?: number) => Promise<void>;
+    };
+    await helper.waitForVisibleComposer(fakePage, 500);
+
+    expect(usedVisibleSubLocator).toBe(true);
+    expect(reloadCount).toBe(1);
+    expect(visibleWaitCalls).toBe(3);
   });
 });

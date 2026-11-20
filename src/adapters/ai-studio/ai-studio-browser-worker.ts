@@ -108,6 +108,19 @@ export function isAiStudioGenerationRequest(url: string, method: string): boolea
   return /GenerateContent|StreamGenerate/i.test(url);
 }
 
+const MAX_TRANSIENT_WEB_RETRIES = 2;
+
+export function isTransientAiStudioWebError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (!message) return false;
+  if (/quota exceeded/i.test(message) || /AbortError/i.test(message)) {
+    return false;
+  }
+  return /permission denied|failed to generate content|service unavailable/i.test(
+    message,
+  );
+}
+
 interface NetworkTracker {
   inFlight: Set<Request>;
   seenGenerationRequest: boolean;
@@ -142,6 +155,116 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     AiStudioBrowserRunOptions,
     { beforeContextTokens?: number; afterContextTokens?: number }
   >();
+
+  public override async executeTurn(
+    page: Page,
+    options: AiStudioBrowserRunOptions,
+  ): Promise<AiStudioTurnResult> {
+    let currentOptions = options;
+    for (let attemptIdx = 0; ; attemptIdx += 1) {
+      try {
+        return await super.executeTurn(page, currentOptions);
+      } catch (error) {
+        if (
+          attemptIdx >= MAX_TRANSIENT_WEB_RETRIES ||
+          options.signal?.aborted ||
+          !isTransientAiStudioWebError(error)
+        ) {
+          throw error;
+        }
+        const errMsg = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[ai-studio-worker] Gặp lỗi tạm thời từ AI Studio (${errMsg}), tự phục hồi và thử lại (${attemptIdx + 1}/${MAX_TRANSIENT_WEB_RETRIES})...`,
+        );
+        await options.heartbeat?.().catch(() => {});
+        await this.dismissErrorToasts(page);
+        await humanPause(page, 1_400, 2_200);
+        if (options.signal?.aborted) throw error;
+
+        const currentUrl = typeof page.url === "function" ? page.url() : "";
+        const liveConversationId = parseAiStudioConversationId(currentUrl);
+        this.botGuardSettledPages.delete(page);
+        await page
+          .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
+          .catch(() => {});
+
+        if (liveConversationId && !currentOptions.existingConversationId) {
+          currentOptions = {
+            ...currentOptions,
+            existingConversationId: liveConversationId,
+            launcherReused: true,
+          };
+        }
+      }
+    }
+  }
+
+  private getVisibleComposerLocator(page: Page): Locator {
+    const base = page.locator(AI_STUDIO_DOM_SELECTORS.composer);
+    const maybeSubLocator = (
+      base as unknown as { locator?: (sel: string) => Locator }
+    ).locator;
+    if (typeof maybeSubLocator === "function") {
+      return maybeSubLocator.call(base, "visible=true").first();
+    }
+    return base.first();
+  }
+
+  private async waitForVisibleComposer(
+    page: Page,
+    timeoutMs = 20_000,
+  ): Promise<void> {
+    if (typeof (page as { locator?: unknown }).locator !== "function") {
+      await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, {
+        state: "visible",
+        timeout: timeoutMs,
+      });
+      return;
+    }
+    const composer = this.getVisibleComposerLocator(page);
+    try {
+      await composer.waitFor({ state: "visible", timeout: Math.min(timeoutMs, 12_000) });
+      return;
+    } catch {
+      await page
+        .evaluate(() => {
+          window.dispatchEvent(new Event("resize"));
+        })
+        .catch(() => {});
+      await this.dismissObstructingNudges(page);
+      try {
+        await composer.waitFor({ state: "visible", timeout: 3_000 });
+        return;
+      } catch {
+        console.warn(
+          "[ai-studio-worker] Ô nhập liệu AI Studio đang bị ẩn (hidden), thử tải lại trang để phục hồi layout...",
+        );
+        this.botGuardSettledPages.delete(page);
+        await page
+          .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
+          .catch(() => {});
+        await this.dismissObstructingNudges(page);
+        await composer.waitFor({ state: "visible", timeout: timeoutMs });
+      }
+    }
+  }
+
+  private async dismissErrorToasts(page: Page): Promise<void> {
+    try {
+      await page
+        .evaluate(() => {
+          const btns = document.querySelectorAll<HTMLElement>(
+            'mat-snack-bar-container button, simple-snack-bar button, [role="alert"] button',
+          );
+          for (const btn of btns) {
+            btn.click();
+          }
+        })
+        .catch(() => {});
+    } catch {
+      // Non-fatal
+    }
+  }
 
   protected override async initializeTurnState(
     page: Page,
@@ -219,7 +342,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         });
       }
 
-      await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 });
+      await this.waitForVisibleComposer(page, 20_000);
       await page
         .waitForSelector(".chat-session-content ms-chat-turn", { timeout: 15_000 })
         .catch(() => {});
@@ -235,7 +358,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         Boolean(currentConversationId) ||
         initialUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
       if (onAiStudioChatPage) {
-        await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 });
+        await this.waitForVisibleComposer(page, 20_000);
         return;
       }
     }
@@ -244,9 +367,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const targetNewChatUrl = buildAiStudioNewChatUrl(modelName);
     const isOnNewChatUrl = initialUrl.startsWith(`${AI_STUDIO_ORIGIN}/prompts/new_chat`);
     if (isOnNewChatUrl) {
-      await page
-        .waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 })
-        .catch(() => {});
+      await this.waitForVisibleComposer(page, 12_000).catch(() => {});
     }
 
     const isCleanBlankNewChat = isOnNewChatUrl
@@ -255,10 +376,22 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
             ({ expectedModel }) => {
               const turns = document.querySelectorAll(".chat-session-content ms-chat-turn");
               if (turns.length > 0) return false;
-              const composer = document.querySelector(
-                'textarea[aria-label="Enter a prompt"]',
-              ) as HTMLTextAreaElement | null;
-              if (!composer) return false;
+              const composers = Array.from(
+                document.querySelectorAll<HTMLTextAreaElement>(
+                  'textarea[aria-label="Enter a prompt"]',
+                ),
+              );
+              const visibleComposer = composers.find((el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return (
+                  rect.width > 0 &&
+                  rect.height > 0 &&
+                  style.display !== "none" &&
+                  style.visibility !== "hidden"
+                );
+              });
+              if (!visibleComposer) return false;
               try {
                 const current = new URL(location.href);
                 const modelParam = current.searchParams.get("model");
@@ -281,14 +414,14 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       });
     }
 
-    await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 20_000 });
+    await this.waitForVisibleComposer(page, 20_000);
   }
 
   protected override async prepareProvider(
     page: Page,
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
-    await page.waitForSelector(AI_STUDIO_DOM_SELECTORS.composer, { timeout: 15_000 });
+    await this.waitForVisibleComposer(page, 15_000);
     await this.dismissObstructingNudges(page);
 
     const targetLevel = AiStudioModelProvider.getInstance().resolveThinkingLevel(
@@ -388,7 +521,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       );
     }
 
-    const composer = page.locator(AI_STUDIO_DOM_SELECTORS.composer).first();
+    const composer = this.getVisibleComposerLocator(page);
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
     await composer.hover({ timeout: 1_000 }).catch(() => {});
@@ -403,7 +536,20 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     if (!currentValue || currentValue.length < Math.min(promptText.length, 32)) {
       await page.evaluate(
         ({ selector, value }) => {
-          const el = document.querySelector<HTMLTextAreaElement>(selector);
+          const candidates = Array.from(
+            document.querySelectorAll<HTMLTextAreaElement>(selector),
+          );
+          const el =
+            candidates.find((node) => {
+              const rect = node.getBoundingClientRect();
+              const style = window.getComputedStyle(node);
+              return (
+                rect.width > 0 &&
+                rect.height > 0 &&
+                style.display !== "none" &&
+                style.visibility !== "hidden"
+              );
+            }) ?? candidates[0];
           if (!el) return;
           el.scrollIntoView({ block: "center" });
           el.focus();
@@ -463,7 +609,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     options: AiStudioBrowserRunOptions,
   ): Promise<void> {
     const runBtn = page.locator(AI_STUDIO_DOM_SELECTORS.runOrStopButton).first();
-    const composer = page.locator(AI_STUDIO_DOM_SELECTORS.composer).first();
+    const composer = this.getVisibleComposerLocator(page);
 
     const tracker = this.networkTrackers.get(page);
     if (tracker) {

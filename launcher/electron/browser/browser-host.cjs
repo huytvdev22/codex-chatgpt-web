@@ -762,8 +762,8 @@ class BrowserHost {
 
   hiddenTurnBounds() {
     const [contentWidth, contentHeight] = this.window.getContentSize();
-    const width = Math.max(800, Math.round(contentWidth || 0));
-    const height = Math.max(600, Math.round(contentHeight || 0));
+    const width = Math.max(1024, Math.round(contentWidth || 0));
+    const height = Math.max(720, Math.round(contentHeight || 0));
     return {
       x: Math.max(width, Math.round(contentWidth || 0)) + 1,
       y: Math.max(height, Math.round(contentHeight || 0)) + 1,
