@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **091** | Cấu hình AI Studio 1M Token, Khớp Context Window Codex & Fix Treo Abort/Network Khi Tab Ẩn | `ai-studio`, `model-catalog`, `codex-usage`, `web-turn-engine` | ⏳ Chờ User Test & Confirm | [091-ai-studio-1m-context-window-and-abort-hang-fix.md](./091-ai-studio-1m-context-window-and-abort-hang-fix.md) |
 | **090** | Giảm tải Main Thread UI trong `AiStudioDomObserver` & Smart Auto-Scroll | `ai-studio`, `playwright`, `performance` | ⏳ Chờ User Test & Confirm | [090-ai-studio-dom-polling-reflow-and-smart-autoscroll.md](./090-ai-studio-dom-polling-reflow-and-smart-autoscroll.md) |
 | **089** | Tự phục hồi AI Studio `permission denied` & `hidden <textarea>` + Bỏ `Recent Turns` | `ai-studio`, `electron`, `launcher`, `usage` | ✅ Đã Confirm | [089-ai-studio-hidden-composer-and-permission-denied-recovery.md](./089-ai-studio-hidden-composer-and-permission-denied-recovery.md) |
 | **088** | Theo dõi Token Usage (AI Studio DOM `ms-token-count` + `tiktoken`, Tab `Usage` & Chat Footer) | `usage`, `ai-studio`, `m365-copilot`, `launcher` | ✅ Đã Confirm | [088-token-usage-tracking-and-ai-studio-dom.md](./088-token-usage-tracking-and-ai-studio-dom.md) |

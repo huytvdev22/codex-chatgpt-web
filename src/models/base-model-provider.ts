@@ -169,6 +169,14 @@ export abstract class BaseModelProvider<
     return this.routes.every(route => {
       const model = visibleModels.find(entry => entry.slug === route.slug);
       if (!model || !Array.isArray(model.input_modalities)) return false;
+      if (
+        model.context_window !== route.contextWindow ||
+        model.max_context_window !== route.contextWindow ||
+        model.effective_context_window_percent !== route.effectiveContextWindowPercent ||
+        model.auto_compact_token_limit !== route.autoCompactTokenLimit
+      ) {
+        return false;
+      }
       const modalities = model.input_modalities;
       return route.inputModalities.every(modality => modalities.includes(modality));
     });

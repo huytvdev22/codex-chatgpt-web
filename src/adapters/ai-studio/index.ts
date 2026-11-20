@@ -99,7 +99,7 @@ export class AiStudioAdapter extends WebProviderAdapter {
         errorMessagePrefix: "[AI Studio]",
         rethrowError: false,
         abortedTurnMessage: "AI Studio turn aborted",
-        maxPromptChars: 95_000,
+        maxPromptChars: 350_000,
       },
       conversation: {
         resolveConversationKey: ({ parsed, incoming, turnTraceId }) => {

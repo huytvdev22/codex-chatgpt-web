@@ -1549,4 +1549,59 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       stubborn.turn2Events.some(e => e.type === "done" && e.endTurn === true),
     ).toBe(true);
   });
+
+  test("27. WebTurnEngine báo đúng tổng sessionContextTokens (DOM AI Studio) cho Codex Context Window trong event done", async () => {
+    const events: AdapterEvent[] = [];
+    const engine = new WebTurnEngine({
+      id: "ai-studio",
+      assistantName: "Gemini",
+      logPrefix: "ai-studio-adapter",
+      policies: {
+        manageLauncherLeaseInEngine: false,
+      },
+      conversation: {
+        resolveConversationKey: () => `ctx-window-${Date.now()}`,
+        resolveState: () => ({
+          existingConversationId: "conv-ctx-1",
+          isNewConversation: false,
+        }),
+      },
+      browser: {
+        launcherProviderId: "ai-studio",
+        executeTurn: async () => ({
+          rawResponse: "````markdown\n<webResponse>\nDone\n</webResponse>\n````",
+          conversationId: "conv-ctx-1",
+          providerReportedTokens: {
+            beforeContextTokens: 21_832,
+            contextTokens: 24_832,
+            turnDeltaTokens: 3_000,
+            source: "ai-studio-dom",
+          },
+        }),
+      },
+      response: {
+        includeDetailedDoneEvent: true,
+        computeUsage: () => ({
+          inputTokens: 2_800,
+          outputTokens: 200,
+          totalTokens: 3_000,
+        }),
+      },
+    });
+
+    await engine.runTurn(
+      createParsedRequest(),
+      { headers: new Headers() },
+      ev => events.push(ev),
+    );
+
+    const doneEvent = events.find(
+      (ev): ev is Extract<AdapterEvent, { type: "done" }> => ev.type === "done",
+    );
+    expect(doneEvent?.usage).toEqual({
+      inputTokens: 24_632,
+      outputTokens: 200,
+      totalTokens: 24_832,
+    });
+  });
 });

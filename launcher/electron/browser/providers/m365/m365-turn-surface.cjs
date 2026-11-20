@@ -54,7 +54,10 @@ function bindM365TurnContents(host, tab) {
     if (!mainFrame) return;
     tab.url = url;
     tab.loading = true;
-    if (!inPlace) tab.rendererReady = false;
+    if (!inPlace) {
+      tab.rendererReady = false;
+      tab.deviceEmulationDirty = true;
+    }
     if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-start-loading", () => {

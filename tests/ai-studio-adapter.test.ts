@@ -1151,4 +1151,65 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     }
     expect(scrollCalls).toBe(1);
   });
+
+  test("AiStudioModelProvider cấu hình 1M contextWindow và staleNetworkSettled thoát kẹt networkInFlight sau 20 nhịp ổn định", async () => {
+    const route = AiStudioModelProvider.getInstance().requireRoute("ai-studio/gemini-4-hydrogen");
+    expect(route.contextWindow).toBe(1_000_000);
+    expect(route.autoCompactTokenLimit).toBe(900_000);
+    expect(route.effectiveContextWindowPercent).toBe(90);
+
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+    for (let cycle = 0; cycle < 20; cycle += 1) {
+      const obs = observer.applyStatus(
+        state,
+        {
+          isGenerating: false,
+          responseReadyLive: true,
+          hasNewAnswerTurn: true,
+          hasTurnFooter: true,
+          thoughtsCount: 1,
+          thoughtTextLength: 100,
+          rawHtml: "<p>Final plan ready</p>",
+          rawText: "Final plan ready",
+          hasContent: true,
+        },
+        true,
+      );
+      expect(obs.isCompleted).toBe(false);
+    }
+
+    const recovered = observer.applyStatus(
+      state,
+      {
+        isGenerating: false,
+        responseReadyLive: true,
+        hasNewAnswerTurn: true,
+        hasTurnFooter: true,
+        thoughtsCount: 1,
+        thoughtTextLength: 100,
+        rawHtml: "<p>Final plan ready</p>",
+        rawText: "Final plan ready",
+        hasContent: true,
+      },
+      true,
+    );
+    expect(recovered.isCompleted).toBe(true);
+    expect(recovered.networkInFlight).toBe(false);
+
+    const worker = new AiStudioBrowserWorker();
+    const stopHelper = worker as unknown as {
+      stopGeneration: (p: unknown) => Promise<boolean>;
+    };
+    const emptyPage = {
+      locator: () => {
+        const loc = {
+          first: () => loc,
+          count: async () => 0,
+        };
+        return loc;
+      },
+    } as never;
+    expect(await stopHelper.stopGeneration(emptyPage)).toBe(false);
+  });
 });

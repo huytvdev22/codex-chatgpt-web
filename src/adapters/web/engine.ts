@@ -763,6 +763,19 @@ export class WebTurnEngine {
               taskUsage: undefined,
             };
 
+        const codexWindowUsage = usage
+          ? (!structuredOutputFormat && sessionContextTokens > totalTokensForRecord
+              ? {
+                  inputTokens: Math.max(
+                    trackedUsage.inputTokens,
+                    sessionContextTokens - trackedUsage.outputTokens,
+                  ),
+                  outputTokens: trackedUsage.outputTokens,
+                  totalTokens: Math.max(totalTokensForRecord, sessionContextTokens),
+                }
+              : usage)
+          : undefined;
+
         const recordTurnUsage = () => {
           usageHistoryStore.append({
             id: turnTraceId,
@@ -804,7 +817,7 @@ export class WebTurnEngine {
             conversationKey,
             logPrefix: this.definition.logPrefix,
             emit,
-            usage,
+            usage: codexWindowUsage,
             previousToolFailed,
             nudgedRepeatedFailure: didRepeatedFailedToolNudge,
           })
@@ -860,7 +873,7 @@ export class WebTurnEngine {
             this.definition.response?.createCallId ??
             (() =>
               `call_${this.definition.browser.launcherProviderId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
-          usage,
+          usage: codexWindowUsage,
           includeDetailedDoneEvent:
             this.definition.response?.includeDetailedDoneEvent,
           toolCallStopReason: this.definition.response?.toolCallStopReason,

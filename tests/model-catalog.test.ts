@@ -170,4 +170,34 @@ describe("model catalog chỉ xuất các model từ adapter qua BaseModelProvid
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("isCatalogSynced phát hiện sai lệch context_window / auto_compact_token_limit để tự đồng bộ catalog cũ", () => {
+    const dir = mkdtempSync(join(tmpdir(), "catalog-context-sync-"));
+    try {
+      const catalogPath = join(dir, "catalog.json");
+      const oldCatalog = catalog.buildCatalog(nativeConfig);
+      for (const model of oldCatalog.models) {
+        if (model.slug === "ai-studio/gemini-4-hydrogen") {
+          model.context_window = 100_000;
+          model.max_context_window = 100_000;
+          model.auto_compact_token_limit = 90_000;
+        }
+      }
+      writeFileSync(catalogPath, JSON.stringify(oldCatalog));
+
+      catalog.ensureManagedCatalogFile(nativeConfig, catalogPath, false);
+      const refreshed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+        models: JsonObject[];
+      };
+      const aiStudioModel = refreshed.models.find(
+        model => model.slug === "ai-studio/gemini-4-hydrogen",
+      );
+      expect(aiStudioModel?.context_window).toBe(1_000_000);
+      expect(aiStudioModel?.max_context_window).toBe(1_000_000);
+      expect(aiStudioModel?.auto_compact_token_limit).toBe(900_000);
+      expect(aiStudioModel?.effective_context_window_percent).toBe(90);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

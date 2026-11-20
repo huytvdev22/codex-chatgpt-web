@@ -184,16 +184,28 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         const currentUrl = typeof page.url === "function" ? page.url() : "";
         const liveConversationId = parseAiStudioConversationId(currentUrl);
         this.botGuardSettledPages.delete(page);
-        await page
-          .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
-          .catch(() => { });
-
-        if (liveConversationId && !currentOptions.existingConversationId) {
-          currentOptions = {
-            ...currentOptions,
-            existingConversationId: liveConversationId,
-            launcherReused: true,
-          };
+        if (liveConversationId) {
+          await page
+            .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
+            .catch(() => { });
+          if (!currentOptions.existingConversationId) {
+            currentOptions = {
+              ...currentOptions,
+              existingConversationId: liveConversationId,
+              launcherReused: true,
+            };
+          }
+        } else {
+          const targetNewUrl = buildAiStudioNewChatUrl(
+            this.extractTargetModelSlug(currentOptions.modelSlug),
+          );
+          await page
+            .goto(targetNewUrl, { waitUntil: "domcontentloaded", timeout: 25_000 })
+            .catch(async () => {
+              await page
+                .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
+                .catch(() => { });
+            });
         }
       }
     }
@@ -968,7 +980,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       if (count <= baselineAnswerCount) return null;
 
       const targetTurn = answerTurns.nth(count - 1);
-      await targetTurn.scrollIntoViewIfNeeded().catch(() => { });
+      await targetTurn.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => { });
       await targetTurn.hover({ position: { x: 24, y: 24 }, timeout: 2_000 }).catch(() => { });
 
       const openOptionsBtn = targetTurn.locator(OPEN_OPTIONS_BUTTON_SELECTOR).first();
@@ -1076,9 +1088,10 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         .first(),
     ];
     for (const btn of candidates) {
+      if ((await btn.count().catch(() => 0)) === 0) continue;
       const label = (
-        (await btn.innerText().catch(() => "")) ||
-        (await btn.getAttribute("aria-label").catch(() => "")) ||
+        (await btn.getAttribute("aria-label", { timeout: 600 }).catch(() => "")) ||
+        (await btn.textContent({ timeout: 600 }).catch(() => "")) ||
         ""
       ).toLowerCase();
       if (!label.includes("stop") && !label.includes("cancel")) continue;
@@ -1124,7 +1137,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         (await page
           .locator(AI_STUDIO_DOM_SELECTORS.runOrStopButton)
           .first()
-          .innerText()
+          .innerText({ timeout: 600 })
           .catch(() => "")) || ""
       )
         .trim()

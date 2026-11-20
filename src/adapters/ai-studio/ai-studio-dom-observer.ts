@@ -345,20 +345,31 @@ export class AiStudioDomObserver {
       normalizedText.includes("<webResponse>") &&
       !normalizedText.includes("</webResponse>");
 
+    const staleNetworkSettled =
+      !status.isGenerating &&
+      status.hasNewAnswerTurn &&
+      status.hasContent &&
+      status.hasTurnFooter &&
+      !hasUnclosedWebEnvelope &&
+      state.stableCycles >= 20;
+
+    const effectiveNetworkInFlight = networkInFlight && !staleNetworkSettled;
+
     const isCompleted = Boolean(
       !status.isGenerating &&
-        !networkInFlight &&
         status.hasNewAnswerTurn &&
         status.hasContent &&
-        ((status.hasTurnFooter && state.stableCycles >= 1) ||
-          (status.responseReadyLive &&
-            !hasUnclosedWebEnvelope &&
-            state.stableCycles >= 4) ||
-          state.stableCycles >= 24),
+        ((!effectiveNetworkInFlight &&
+          ((status.hasTurnFooter && state.stableCycles >= 1) ||
+            (status.responseReadyLive &&
+              !hasUnclosedWebEnvelope &&
+              state.stableCycles >= 4) ||
+            state.stableCycles >= 24)) ||
+          staleNetworkSettled),
     );
 
     const phase =
-      status.isGenerating || networkInFlight
+      status.isGenerating || effectiveNetworkInFlight
         ? status.hasContent
           ? "answering"
           : `thinking:${status.thoughtsCount}`
@@ -371,9 +382,9 @@ export class AiStudioDomObserver {
 
     return {
       text: normalizedText,
-      isGenerating: status.isGenerating || networkInFlight,
+      isGenerating: status.isGenerating || effectiveNetworkInFlight,
       isCompleted,
-      networkInFlight,
+      networkInFlight: effectiveNetworkInFlight,
       activityKey: `${phase}:${status.thoughtsCount}:${status.thoughtTextLength}:${answerLength}:${status.hasTurnFooter ? "footer" : "stream"}`,
       status,
       timedOut: false,
