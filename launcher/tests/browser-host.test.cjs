@@ -1531,15 +1531,15 @@ test("a required retained conversation fails before creating a browser tab", asy
   assert.equal(created, false);
 });
 
-test("five browser tabs are a hard account-safety limit", async () => {
-  const turnTabs = new Map(Array.from({ length: 5 }, (_unused, index) => [
+test("ten browser tabs are a hard account-safety limit", async () => {
+  const turnTabs = new Map(Array.from({ length: 10 }, (_unused, index) => [
     `tab-${index + 1}`,
     { ordinal: index + 1 },
   ]));
 
   await assert.rejects(
-    BrowserHost.prototype.createTurnTab.call({ turnTabs }, "trace_six", 444),
-    /already has 5 browser tabs.*avoid excessive parallel traffic/,
+    BrowserHost.prototype.createTurnTab.call({ turnTabs }, "trace_eleven", 444),
+    /already has 10 browser tabs.*avoid excessive parallel traffic/,
   );
 });
 
@@ -1567,6 +1567,35 @@ test("a full browser host evicts only its oldest ready tab", () => {
   assert.equal(BrowserHost.prototype.evictOldestRetainedTurnTab.call(fixture), true);
   assert.deepEqual(removed, [["oldest", false]]);
   assert.equal(fixture.turnTabs.has("running-3"), true);
+});
+
+test("evictOldestRetainedTurnTab prefers evicting a ready tab with persisted conversationId before an unsaved tab", () => {
+  const unsavedOlder = {
+    id: "unsaved-older",
+    ordinal: 1,
+    status: "ready",
+    conversationId: null,
+    lastHeartbeatAt: 10,
+  };
+  const savedNewer = {
+    id: "saved-newer",
+    ordinal: 2,
+    status: "ready",
+    conversationId: "1ixE9s7OO0kkXxdXYIAxTprFXkvVKN8jI",
+    lastHeartbeatAt: 200,
+  };
+  const removed = [];
+  const fixture = {
+    turnTabs: new Map([unsavedOlder, savedNewer].map(tab => [tab.id, tab])),
+    removeTurnTab(tab, abortRunning) {
+      removed.push([tab.id, abortRunning]);
+      this.turnTabs.delete(tab.id);
+    },
+  };
+
+  assert.equal(BrowserHost.prototype.evictOldestRetainedTurnTab.call(fixture), true);
+  assert.deepEqual(removed, [["saved-newer", false]]);
+  assert.equal(fixture.turnTabs.has("unsaved-older"), true);
 });
 
 test("ending one browser turn does not stop another running tab", async () => {

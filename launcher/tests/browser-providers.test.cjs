@@ -324,5 +324,118 @@ test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-prov
   const devRegistry = createDefaultProviderRegistry({ profile: "development" });
   assert.equal(devRegistry.get("m365").partition, "persist:codex-web-gpt-dev-m365");
   assert.equal(devRegistry.get("ai-studio").partition, "persist:codex-web-gpt-dev-ai-studio");
+  assert.equal(provider.maxSurfaces, 8);
+});
+
+test("BaseBrowserProvider.prepareAllocation ưu tiên evict tab đã có conversationId trước tab chưa có ID", () => {
+  const DummyProvider = makeDummyProviderClass();
+  const provider = new DummyProvider({ maxSurfaces: 2 });
+  const keyA = "a".repeat(64);
+  const keyB = "b".repeat(64);
+  const keyC = "c".repeat(64);
+
+  const tabs = new Map([
+    ["unsaved-old", { id: "unsaved-old", provider: "dummy", status: "ready", conversationKey: keyA, conversationId: null, lastHeartbeatAt: 10 }],
+    ["saved-new", { id: "saved-new", provider: "dummy", status: "ready", conversationKey: keyB, conversationId: "chat-99", lastHeartbeatAt: 500 }],
+  ]);
+  const removed = [];
+  provider.prepareAllocation(tabs, keyC, (tab) => {
+    removed.push(tab.id);
+    tabs.delete(tab.id);
+  });
+  assert.deepEqual(removed, ["saved-new"]);
+  assert.equal(tabs.has("unsaved-old"), true);
+});
+
+test("bindAiStudioTurnContents tự động bind conversationId xuống disk khi did-navigate-in-page đổi sang /prompts/{id}", () => {
+  const {
+    AiStudioBrowserProvider,
+  } = require("../electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs");
+  const {
+    bindAiStudioTurnContents,
+  } = require("../electron/browser/providers/ai-studio/ai-studio-turn-surface.cjs");
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-studio-bind-"));
+  try {
+    const provider = new AiStudioBrowserProvider({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+    });
+    const listeners = new Map();
+    let currentUrl = "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen";
+    const fakeContents = {
+      setWindowOpenHandler() {},
+      on(event, handler) {
+        listeners.set(event, handler);
+      },
+      getURL: () => currentUrl,
+      isDestroyed: () => false,
+    };
+    const conversationKey = "e".repeat(64);
+    const tab = {
+      id: "tab-1",
+      traceId: "trace-1",
+      provider: "ai-studio",
+      profileId: "default",
+      conversationKey,
+      conversationId: null,
+      connectorBound: false,
+      url: currentUrl,
+      view: { webContents: fakeContents },
+    };
+    const host = {
+      providerRegistry: new Map([["ai-studio", provider]]),
+      window: { isVisible: () => false },
+      snapshot: () => ({}),
+      publishState() {},
+      syncViewVisibility() {},
+      syncPowerSaveBlocker() {},
+      removeTurnTab() {},
+      logger: { info() {}, warn() {}, error() {} },
+    };
+
+    bindAiStudioTurnContents(host, tab);
+
+    const lateId = "1ixE9s7OO0kkXxdXYIAxTprFXkvVKN8jI";
+    currentUrl = `https://aistudio.google.com/prompts/${lateId}`;
+    listeners.get("did-navigate-in-page")({}, currentUrl, true);
+
+    assert.equal(tab.conversationId, lateId);
+    assert.equal(tab.connectorBound, true);
+    assert.equal(provider.conversationId(conversationKey, "default"), lateId);
+
+    const { resolveTurnTabBootstrapUrl } = require("../electron/browser/turn-tab-manager.cjs");
+    // Khi conversationKey đã có ID lưu trên disk nhưng initialUrl chỉ là new_chat -> mở thẳng /prompts/{id}
+    const resumed = resolveTurnTabBootstrapUrl(
+      provider,
+      conversationKey,
+      "default",
+      "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+    );
+    assert.equal(resumed.conversationId, lateId);
+    assert.equal(resumed.bootstrapUrl, `https://aistudio.google.com/prompts/${lateId}`);
+
+    // Khi initialUrl chỉ định tường minh một conversationId khác (/v2/responses) -> giữ nguyên initialUrl
+    const explicitId = "2abCDefGH1234567890xyzABC";
+    const explicit = resolveTurnTabBootstrapUrl(
+      provider,
+      conversationKey,
+      "default",
+      `https://aistudio.google.com/prompts/${explicitId}`,
+    );
+    assert.equal(explicit.bootstrapUrl, `https://aistudio.google.com/prompts/${explicitId}`);
+
+    // Khi conversationKey chưa có ID trên disk -> giữ nguyên new_chat?model=...
+    const freshKey = "f".repeat(64);
+    const fresh = resolveTurnTabBootstrapUrl(
+      provider,
+      freshKey,
+      "default",
+      "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+    );
+    assert.equal(fresh.conversationId, null);
+    assert.equal(fresh.bootstrapUrl, "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 

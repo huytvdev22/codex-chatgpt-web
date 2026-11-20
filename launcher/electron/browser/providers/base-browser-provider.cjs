@@ -252,7 +252,12 @@ class BaseBrowserProvider {
     while (tabs.length >= limit) {
       const reclaimable = tabs
         .filter(tab => tab.status === "ready")
-        .sort((left, right) => (left.lastHeartbeatAt || 0) - (right.lastHeartbeatAt || 0))[0];
+        .sort((left, right) => {
+          const leftHasId = Boolean(left.conversationId);
+          const rightHasId = Boolean(right.conversationId);
+          if (leftHasId !== rightHasId) return leftHasId ? -1 : 1;
+          return (left.lastHeartbeatAt || 0) - (right.lastHeartbeatAt || 0);
+        })[0];
       if (!reclaimable) {
         throw new Error(`${this.displayName} already has ${limit} active conversation surfaces`);
       }

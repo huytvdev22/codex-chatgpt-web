@@ -3,6 +3,7 @@ import type { Page } from "playwright-core";
 export const AI_STUDIO_ORIGIN = "https://aistudio.google.com";
 export const AI_STUDIO_DEFAULT_MODEL_SLUG = "gemini-4-hydrogen";
 export const AI_STUDIO_NEW_CHAT_URL = `${AI_STUDIO_ORIGIN}/prompts/new_chat?model=${AI_STUDIO_DEFAULT_MODEL_SLUG}`;
+export const AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS = 20_000;
 
 const AI_STUDIO_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -52,19 +53,50 @@ export function parseAiStudioConversationId(rawUrl: string): string | undefined 
   return normalizeAiStudioConversationId(match?.[1]);
 }
 
+async function waitPollIntervalWithAbort(
+  page: Page,
+  delayMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (delayMs <= 0 || signal?.aborted) return;
+  if (!signal) {
+    await page.waitForTimeout(delayMs);
+    return;
+  }
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<void>((resolve) => {
+    onAbort = () => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([
+      page.waitForTimeout(delayMs).catch(() => {}),
+      abortPromise,
+    ]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
 /**
  * Chờ URL chuyển từ `/prompts/new_chat` sang `/prompts/<id>` sau khi
  * `MakerSuiteService/CreatePrompt` lưu hội thoại mới bất đồng bộ.
+ * Thoát ngay lập tức khi URL có ID hoặc khi `signal` bị hủy.
  */
 export async function waitForAiStudioConversationId(
   page: Page,
-  timeoutMs = 12_000,
+  timeoutMs = AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   const deadline = Date.now() + timeoutMs;
-  do {
+  while (true) {
     const conversationId = parseAiStudioConversationId(page.url());
     if (conversationId) return conversationId;
-    await page.waitForTimeout(150);
-  } while (Date.now() < deadline);
-  return undefined;
+    if (signal?.aborted) return undefined;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return undefined;
+    await waitPollIntervalWithAbort(page, Math.min(150, remainingMs), signal);
+  }
 }

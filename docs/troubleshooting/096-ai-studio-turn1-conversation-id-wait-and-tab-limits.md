@@ -1,0 +1,18 @@
+# 096: Google AI Studio Turn 1 thiếu `/prompts/{id}` và bị evict tab làm Turn sau mở đoạn chat mới
+
+> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Providers:** `ai-studio`, `web`, `launcher`, `electron`  
+> **Keywords:** `waitForAiStudioConversationId`, `AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS`, `did-navigate-in-page`, `MAX_AI_STUDIO_SURFACES`, `MAX_BROWSER_TABS`, `resolveTurnTabBootstrapUrl`, `AbortSignal`
+
+## ⚡ TL;DR
+1. **Triệu chứng:** Ở cả `/v1/responses` và `/v2/responses`, nhiều lượt Turn 1 trên Google AI Studio kết thúc khi URL chưa kịp chuyển sang `/prompts/{id}` (vẫn là `/prompts/new_chat`), khiến `conversation_id` không được lưu xuống disk; khi tab bị evict (trần 3 tab AI Studio / 5 tab tổng) hoặc mở lại tab mới, tin nhắn tiếp theo bị gửi vào một đoạn chat mới và mất hết ngữ cảnh.
+2. **Nguyên nhân gốc rễ:** (a) `AiStudioBrowserWorker.resolveConversationId` chỉ chờ `3_000ms` (quá ngắn so với độ trễ lưu Google Drive của AI Studio ở Turn 1) và `waitForAiStudioConversationId` chưa hỗ trợ `AbortSignal`; (b) `bindAiStudioTurnContents` trên Launcher không parse/bind `conversationId` khi `did-navigate-in-page` đổi sang `/prompts/{id}` muộn; (c) giới hạn `MAX_AI_STUDIO_SURFACES = 3` / `MAX_BROWSER_TABS = 5` chật và evict không phân biệt tab đã có hay chưa có `conversationId`; (d) `createTurnTab` tải `new_chat` trước khi đã có `conversationId` trên disk thay vì mở thẳng `/prompts/{id}`.
+3. **Cách sửa:** Tăng thời gian chờ URL Turn 1 lên `20_000ms` (thoát ngay khi có ID hoặc `AbortSignal`, `0ms` ở Turn 2+ và không chờ ở lượt ephemeral `retain: false`); tự động `bind()` thụ động trong `ai-studio-turn-surface.cjs` khi URL đổi sang `/prompts/{id}`; ưu tiên mở thẳng `conversationUrl(conversationId)` trong `createTurnTab` khi disk đã có ID; nâng giới hạn tab lên `MAX_AI_STUDIO_SURFACES = 8` / `MAX_BROWSER_TABS = 10` và ưu tiên evict tab `ready` đã có `conversationId` trước tab chưa lưu ID.
+
+## Thay đổi
+- [src/adapters/ai-studio/conversation-url.ts](../../src/adapters/ai-studio/conversation-url.ts): Export `AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS = 20_000` và bổ sung `signal?: AbortSignal` cho `waitForAiStudioConversationId`.
+- [src/adapters/ai-studio/ai-studio-browser-worker.ts](../../src/adapters/ai-studio/ai-studio-browser-worker.ts): Cập nhật `resolveConversationId` chờ tới `20_000ms` với `options.signal` ở Turn 1 chưa có ID và cache vào `retainedConversationIds`.
+- [launcher/electron/browser/providers/ai-studio/ai-studio-turn-surface.cjs](../../launcher/electron/browser/providers/ai-studio/ai-studio-turn-surface.cjs): Bổ sung `syncAiStudioConversationBinding` tự `bind()` xuống disk khi `did-navigate-in-page` / `did-finish-load` / `did-stop-loading` nhận URL `/prompts/{id}`.
+- [launcher/electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs](../../launcher/electron/browser/providers/ai-studio/ai-studio-browser-provider.cjs): Nâng `MAX_AI_STUDIO_SURFACES` từ `3` lên `8`.
+- [launcher/electron/browser/providers/base-browser-provider.cjs](../../launcher/electron/browser/providers/base-browser-provider.cjs) & [launcher/electron/browser/turn-tab-manager.cjs](../../launcher/electron/browser/turn-tab-manager.cjs): Nâng `MAX_BROWSER_TABS` từ `5` lên `10`, thêm `resolveTurnTabBootstrapUrl` mở thẳng `/prompts/{id}` từ disk, và ưu tiên evict tab `ready` đã có `conversationId` trước.
+- [tests/ai-studio-adapter.test.ts](../../tests/ai-studio-adapter.test.ts), [launcher/tests/browser-host.test.cjs](../../launcher/tests/browser-host.test.cjs), [launcher/tests/browser-providers.test.cjs](../../launcher/tests/browser-providers.test.cjs): Cập nhật và bổ sung unit tests cho toàn bộ luồng trên.

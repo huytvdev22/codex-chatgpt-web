@@ -49,6 +49,7 @@ export {
 } from "./model-provider";
 export { aiStudioConversationKey } from "./conversation-key";
 export {
+  AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS,
   AI_STUDIO_DEFAULT_MODEL_SLUG,
   AI_STUDIO_NEW_CHAT_URL,
   AI_STUDIO_ORIGIN,

@@ -26,6 +26,7 @@ import {
   waitForBotGuardReady,
 } from "./ai-studio-human-timing";
 import {
+  AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS,
   AI_STUDIO_DEFAULT_MODEL_SLUG,
   AI_STUDIO_ORIGIN,
   buildAiStudioConversationUrl,
@@ -1056,23 +1057,30 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     options: AiStudioBrowserRunOptions,
   ): Promise<string | undefined> {
     const currentUrl = page.url();
+    const immediateId = parseAiStudioConversationId(currentUrl);
     if (options.retain === false) {
       return (
-        parseAiStudioConversationId(currentUrl) ||
+        immediateId ||
         this.retainedConversationIds.get(page) ||
         options.existingConversationId
       );
     }
 
-    const conversationId =
-      parseAiStudioConversationId(currentUrl) ||
-      (await waitForAiStudioConversationId(page, 3_000));
-
-    const resolved =
-      conversationId ||
+    const knownId =
+      immediateId ||
       this.retainedConversationIds.get(page) ||
       options.existingConversationId;
-    if (!resolved) {
+    const resolved =
+      knownId ||
+      (await waitForAiStudioConversationId(
+        page,
+        AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS,
+        options.signal,
+      ));
+
+    if (resolved) {
+      this.retainedConversationIds.set(page, resolved);
+    } else {
       console.warn(
         "[ai-studio-worker] AI Studio did not expose /prompts/{id} URL yet; keeping launcher tab retained in-session.",
       );

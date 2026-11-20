@@ -4,6 +4,7 @@ import { BaseWebBrowserWorker } from "../src/adapters/web/browser";
 import { WebProviderAdapter } from "../src/adapters/web/web-provider-adapter";
 import { isTransientAiStudioWebError } from "../src/adapters/ai-studio/ai-studio-browser-worker";
 import {
+  AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS,
   AI_STUDIO_NEW_CHAT_URL,
   AiStudioAdapter,
   AiStudioBrowserWorker,
@@ -16,6 +17,7 @@ import {
   normalizeAiStudioConversationId,
   parseAiStudioConversationId,
   selectPreferredAiStudioResponse,
+  waitForAiStudioConversationId,
 } from "../src/adapters/ai-studio";
 import {
   AI_STUDIO_DOM_SELECTORS,
@@ -1211,5 +1213,92 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
       },
     } as never;
     expect(await stopHelper.stopGeneration(emptyPage)).toBe(false);
+  });
+
+  test("waitForAiStudioConversationId và resolveConversationId chờ đủ lâu (20s), thoát ngay khi có URL hoặc AbortSignal và không chờ ở lượt ephemeral/Turn 2+", async () => {
+    expect(AI_STUDIO_CONVERSATION_ID_WAIT_TIMEOUT_MS).toBe(20_000);
+
+    const sampleId = "1ixE9s7OO0kkXxdXYIAxTprFXkvVKN8jI";
+    let polls = 0;
+    const delayedPage = {
+      url: () =>
+        polls >= 3
+          ? `https://aistudio.google.com/prompts/${sampleId}`
+          : "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+      waitForTimeout: async () => {
+        polls += 1;
+      },
+    } as never;
+
+    const resolvedEarly = await waitForAiStudioConversationId(delayedPage, 20_000);
+    expect(resolvedEarly).toBe(sampleId);
+    expect(polls).toBe(3);
+
+    const abortController = new AbortController();
+    let abortedPolls = 0;
+    const slowPage = {
+      url: () => "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+      waitForTimeout: async (ms: number) => {
+        abortedPolls += 1;
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      },
+    } as never;
+    const startedAt = Date.now();
+    setTimeout(() => abortController.abort(), 30);
+    const abortedResult = await waitForAiStudioConversationId(
+      slowPage,
+      20_000,
+      abortController.signal,
+    );
+    expect(abortedResult).toBeUndefined();
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(abortedPolls).toBeGreaterThanOrEqual(1);
+
+    const worker = new AiStudioBrowserWorker();
+    const resolveHelper = worker as unknown as {
+      resolveConversationId: (p: unknown, o: Record<string, unknown>) => Promise<string | undefined>;
+      retainedConversationIds: WeakMap<object, string>;
+    };
+
+    // Turn 1 (retain !== false): đợi URL đổi và cache vào retainedConversationIds
+    polls = 0;
+    const turn1Id = await resolveHelper.resolveConversationId(delayedPage, {
+      prompt: "xin chào",
+      retain: true,
+    });
+    expect(turn1Id).toBe(sampleId);
+    expect(resolveHelper.retainedConversationIds.get(delayedPage as object)).toBe(sampleId);
+
+    // Ephemeral (retain === false): không chờ
+    let ephemeralWaits = 0;
+    const ephemeralPage = {
+      url: () => "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen",
+      waitForTimeout: async () => {
+        ephemeralWaits += 1;
+      },
+    } as never;
+    expect(
+      await resolveHelper.resolveConversationId(ephemeralPage, {
+        prompt: "json",
+        retain: false,
+      }),
+    ).toBeUndefined();
+    expect(ephemeralWaits).toBe(0);
+
+    // Turn 2+ đã có URL ID sẵn: không chờ
+    let turn2Waits = 0;
+    const turn2Page = {
+      url: () => `https://aistudio.google.com/prompts/${sampleId}`,
+      waitForTimeout: async () => {
+        turn2Waits += 1;
+      },
+    } as never;
+    expect(
+      await resolveHelper.resolveConversationId(turn2Page, {
+        prompt: "tiếp tục",
+        retain: true,
+      }),
+    ).toBe(sampleId);
+    expect(turn2Waits).toBe(0);
   });
 });

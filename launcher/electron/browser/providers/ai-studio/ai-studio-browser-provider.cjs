@@ -11,7 +11,7 @@ const AI_STUDIO_ORIGIN = "https://aistudio.google.com";
 const AI_STUDIO_CHAT_URL = `${AI_STUDIO_ORIGIN}/prompts/new_chat?model=gemini-4-hydrogen`;
 const AI_STUDIO_PARTITION = "persist:codex-web-aistudio";
 const AI_STUDIO_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
-const MAX_AI_STUDIO_SURFACES = 3;
+const MAX_AI_STUDIO_SURFACES = 8;
 const MAX_PERSISTED_AI_STUDIO_BINDINGS = 256;
 
 const AI_STUDIO_AUTH_HOSTS = new Set([

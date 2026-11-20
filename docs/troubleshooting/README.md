@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **096** | Google AI Studio Turn 1 thiếu `/prompts/{id}` và bị evict tab làm Turn sau mở đoạn chat mới | `ai-studio`, `web`, `launcher`, `electron` | ⏳ Chờ User Test & Confirm | [096-ai-studio-turn1-conversation-id-wait-and-tab-limits.md](./096-ai-studio-turn1-conversation-id-wait-and-tab-limits.md) |
 | **095** | Cấu hình Thư mục Skills, Tự Quét Đĩa (`~/.codex/skills`) & Tự Nạp `$skill` cho Custom Folder | `web`, `skills`, `launcher`, `electron`, `all-providers` | ✅ Đã Confirm | [095-configurable-skill-directories-and-mention-loading.md](./095-configurable-skill-directories-and-mention-loading.md) |
 | **094** | Profile đã đăng nhập (`Default`) vẫn bị kẹt màn `Sign in with Chrome` & Setup lệch trạng thái | `ai-studio`, `electron`, `launcher`, `profiles` | ✅ Đã Confirm | [094-ai-studio-profile-auth-state-desync.md](./094-ai-studio-profile-auth-state-desync.md) |
 | **093** | Google Sign-In báo "Couldn't sign you in" ở Embedded Electron -> Bổ sung Sign in with Chrome & Import Cookie | `ai-studio`, `electron`, `launcher`, `chrome-login` | ✅ Đã Confirm | [093-google-signin-rejected-automation-controlled.md](./093-google-signin-rejected-automation-controlled.md) |

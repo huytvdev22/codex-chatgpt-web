@@ -28,6 +28,29 @@ async function markAiStudioTurnSurface(tab) {
   })()`, true);
 }
 
+function syncAiStudioConversationBinding(host, tab, url) {
+  if (!tab?.conversationKey || typeof url !== "string") return;
+  const providerObj = host?.providerRegistry?.get?.(tab.provider || "ai-studio");
+  if (
+    !providerObj
+    || typeof providerObj.parseConversationId !== "function"
+    || typeof providerObj.bind !== "function"
+  ) {
+    return;
+  }
+  const parsedId = providerObj.parseConversationId(url);
+  if (!parsedId || tab.conversationId === parsedId) return;
+  const boundId = providerObj.bind(
+    tab.conversationKey,
+    parsedId,
+    tab.profileId || "default",
+  );
+  if (boundId) {
+    tab.conversationId = boundId;
+    tab.connectorBound = true;
+  }
+}
+
 function bindAiStudioTurnContents(host, tab) {
   const contents = tab.view.webContents;
   const shouldPublishUiState = () => host.window?.isVisible?.() !== false;
@@ -62,10 +85,12 @@ function bindAiStudioTurnContents(host, tab) {
   contents.on("did-stop-loading", () => {
     tab.loading = false;
     tab.url = contents.getURL();
+    syncAiStudioConversationBinding(host, tab, tab.url);
     if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-finish-load", () => {
     tab.url = contents.getURL();
+    syncAiStudioConversationBinding(host, tab, tab.url);
     tab.loading = false;
     tab.rendererReady = true;
     tab.bootstrapReady = allowedAiStudioNavigation(tab.url);
@@ -99,7 +124,10 @@ function bindAiStudioTurnContents(host, tab) {
     if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
-    if (mainFrame) tab.url = url;
+    if (mainFrame) {
+      tab.url = url;
+      syncAiStudioConversationBinding(host, tab, url);
+    }
     if (shouldPublishUiState()) host.publishState?.(host.snapshot());
   });
   contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {

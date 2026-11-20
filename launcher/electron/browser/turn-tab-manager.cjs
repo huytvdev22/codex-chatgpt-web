@@ -12,7 +12,7 @@ const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Ch
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const TURN_TAB_INITIAL_LOAD_TIMEOUT_MS = 20_000;
 const TURN_TAB_RETRY_LOAD_TIMEOUT_MS = 30_000;
-const MAX_BROWSER_TABS = 5;
+const MAX_BROWSER_TABS = 10;
 const MAX_CANCELLED_TURN_TRACES = 256;
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 1024, height: 720 });
 const TURN_HEARTBEAT_SWEEP_MS = 5_000;
@@ -58,6 +58,17 @@ function resolveProviderFromHost(host, providerId = host?.provider || "m365") {
     return host._fallbackM365Provider;
   }
   throw new Error(`Unknown browser provider: ${id}`);
+}
+
+function resolveTurnTabBootstrapUrl(providerObj, conversationKey, activeProfileId, resolvedInitialUrl) {
+  const conversationId = providerObj.conversationId?.(conversationKey, activeProfileId) || null;
+  const initialUrlConversationId = resolvedInitialUrl && typeof providerObj.parseConversationId === "function"
+    ? providerObj.parseConversationId(resolvedInitialUrl)
+    : null;
+  const bootstrapUrl = (!initialUrlConversationId && conversationId && typeof providerObj.conversationUrl === "function")
+    ? providerObj.conversationUrl(conversationId)
+    : (resolvedInitialUrl || providerObj.initialUrl?.(conversationKey, activeProfileId) || providerObj.homeUrl);
+  return { bootstrapUrl, conversationId };
 }
 
 class BrowserTurnCancelledError extends Error {
@@ -215,7 +226,12 @@ class TurnTabManager {
   evictOldestRetainedTurnTab() {
     const retained = [...this.turnTabs.values()]
       .filter(tab => tab.status === "ready")
-      .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0))[0];
+      .sort((left, right) => {
+        const leftHasId = Boolean(left.conversationId);
+        const rightHasId = Boolean(right.conversationId);
+        if (leftHasId !== rightHasId) return leftHasId ? -1 : 1;
+        return (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0);
+      })[0];
     if (!retained) return false;
     (this.host.removeTurnTab || this.removeTurnTab).call(this.host, retained, false);
     return true;
@@ -276,8 +292,12 @@ class TurnTabManager {
     const targetPartition = typeof providerObj.partitionForProfile === "function"
       ? providerObj.partitionForProfile(activeProfileId)
       : providerObj.partition;
-    const bootstrapUrl = resolvedInitialUrl || providerObj.initialUrl?.(conversationKey, activeProfileId) || providerObj.homeUrl;
-    const conversationId = providerObj.conversationId?.(conversationKey, activeProfileId) || null;
+    const { bootstrapUrl, conversationId } = resolveTurnTabBootstrapUrl(
+      providerObj,
+      conversationKey,
+      activeProfileId,
+      resolvedInitialUrl,
+    );
     const view = new WebContentsView({
       webPreferences: {
         partition: targetPartition,
@@ -865,4 +885,5 @@ module.exports = {
   hasProviderOnHost,
   loadCommittedBrowserSurface,
   resolveProviderFromHost,
+  resolveTurnTabBootstrapUrl,
 };
