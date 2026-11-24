@@ -34,9 +34,9 @@ Luôn snapshot theo 2 bước để tránh timeout `3000ms` mặc định của 
 2. Lấy `ref_id` của `Codex Web GPT` (`root`) hoặc `WebContentsView`, sau đó gọi `desktop_snapshot({ root: "<ref>", compact: true, timeout_ms: 10000 })` (hoặc `desktop_find({ root: "<ref>", name: "Enter a prompt", timeout_ms: 10000 })`).
 
 ## 3. Kịch bản kiểm chứng nhanh (Multi-Profile & Chrome Sign-In)
-1. **Setup sync:** Mở tab **Setup** -> kiểm tra mục `Sign in to Google AI Studio` (`Signed in` vs `Sign in with Chrome`) và từng dòng profile (`Default`, `Account 2`, `Account 3`) có nút **`Open`** (đã auth) hay **`Sign in with Chrome`** (chưa auth).
-2. **Switch / Open profile đã đăng nhập:** Bấm **`Use`** hoặc **`Open`** trên profile đã auth -> xác nhận `NO_CHROME_RUNNING` qua `pgrep`, toolbar đổi đúng tên profile (`<Name> ●`), URL lên `aistudio.google.com/...`, và tìm thấy ô `Enter a prompt` trong `webarea` Google AI Studio.
-3. **Profile chưa đăng nhập:** Bấm `+` tạo profile mới hoặc chọn profile chưa auth -> xác nhận UI hiện màn `Sign in with Chrome` thay vì trang lỗi Google nhúng.
+1. **Setup sync:** Mở tab **Setup** -> kiểm tra mục `Sign in to Google AI Studio` và `Sign in to ChatGPT` (`Signed in` vs `Sign in with Chrome`) và từng dòng profile (`Default`, `Account 2`, ...) có nút **`Open`** (đã auth) hay **`Sign in with Chrome`** (chưa auth).
+2. **Switch / Open profile đã đăng nhập:** Chuyển provider (`M365 Copilot` / `Google AI Studio` / `ChatGPT`) rồi bấm **`Use`** hoặc **`Open`** trên profile đã auth -> xác nhận `NO_CHROME_RUNNING` qua `pgrep`, toolbar đổi đúng tên profile (`<Name> ●`), URL lên `aistudio.google.com/...` hoặc `chatgpt.com/`, và tìm thấy ô `Enter a prompt` / `Ask ChatGPT` trong `WebContentsView`.
+3. **Profile chưa đăng nhập:** Bấm `+` tạo profile mới hoặc chọn profile chưa auth -> xác nhận UI hiện màn `Sign in with Chrome` theo đúng provider đang chọn thay vì trang lỗi OAuth/Cloudflare nhúng.
 
 ## 4. Lưu ý giữ nguyên trạng thái cho user
 - `desktop_click` (`AXPress`) chạy nền không cướp focus hay giật chuột, nhưng **làm thay đổi state thật** trên app Launcher đang mở (đổi tab/profile hiện tại).

@@ -170,6 +170,7 @@ export interface BrowserProviderInfo {
   active: boolean;
   authenticated: boolean;
   supportsProfiles?: boolean;
+  usesExternalChromeLogin?: boolean;
   activeProfileId?: string;
   profiles?: BrowserProfileInfo[];
 }
@@ -209,6 +210,7 @@ export interface ExternalLoginState {
   active: boolean;
   status: "waiting" | "importing";
   providerId: string;
+  providerDisplayName?: string;
   profileId: string;
   profileName: string;
 }

@@ -59,7 +59,14 @@ Chạy với `--sandbox read-only` cho các bài test không cần ghi file:
    ```
    - Kỳ vọng: exit code `0`, output có `PONG`.
 
-4. **Test ghi/sửa file (chỉ chạy khi cần kiểm chứng `apply_patch` / edit):**
+4. **Test adapter ChatGPT Web (`chatgpt/gpt-6.2`, `chatgpt/gpt-6`, `chatgpt/gpt-5.6-sol`) & Reasoning Effort:**
+   ```sh
+   codex exec --sandbox read-only -m chatgpt/gpt-6.2 "Reply with exact word: PONG"
+   codex exec --sandbox read-only -m chatgpt/gpt-6 -c model_reasoning_effort="low" "Reply with exact word: PONG"
+   ```
+   - Kỳ vọng: exit code `0`, output có `PONG`, tự chọn đúng model & mức Thinking effort trên popover `Select ChatGPT model`, và Turn 2 giữ đúng URL `/c/<uuid>`.
+
+5. **Test ghi/sửa file (chỉ chạy khi cần kiểm chứng `apply_patch` / edit):**
    - Dùng `--sandbox workspace-write` trên một file tạm trong `/tmp` hoặc xóa/revert sạch file test ngay sau khi hoàn tất.
 
 > **Lưu ý log bình thường của Codex CLI (`v0.171.0`):**

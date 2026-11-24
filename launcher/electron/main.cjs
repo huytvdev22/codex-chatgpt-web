@@ -302,7 +302,7 @@ async function requestQuit() {
   }
 }
 
-function runChromeSessionExtractor({ profileDir, chromeExecutablePath, targetUrl }) {
+function runChromeSessionExtractor({ providerId, profileDir, chromeExecutablePath, targetUrl }) {
   return new Promise((resolve, reject) => {
     const invocation = embeddedRuntimeInvocation({
       app,
@@ -314,6 +314,7 @@ function runChromeSessionExtractor({ profileDir, chromeExecutablePath, targetUrl
         profileDir,
         "--target-url",
         targetUrl,
+        ...(providerId ? ["--provider", providerId] : []),
         ...(chromeExecutablePath ? ["--chrome", chromeExecutablePath] : []),
         "--json",
       ],

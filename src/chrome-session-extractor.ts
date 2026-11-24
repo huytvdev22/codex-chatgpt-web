@@ -33,6 +33,25 @@ export const DEFAULT_CHROME_COOKIE_ROOT_DOMAINS = [
   "youtube.com",
 ] as const;
 
+export const CHROME_COOKIE_ROOT_DOMAINS_BY_PROVIDER: Record<string, readonly string[]> = {
+  "ai-studio": DEFAULT_CHROME_COOKIE_ROOT_DOMAINS,
+  chatgpt: [
+    "chatgpt.com",
+    "openai.com",
+    "oaistatic.com",
+    "oaiusercontent.com",
+  ],
+};
+
+export function resolveChromeCookieRootDomains(providerId?: string): readonly string[] {
+  const normalized = providerId?.trim().toLowerCase() || "ai-studio";
+  const domains = CHROME_COOKIE_ROOT_DOMAINS_BY_PROVIDER[normalized];
+  if (!domains) {
+    throw new Error(`Unsupported external Chrome login provider: ${normalized}`);
+  }
+  return domains;
+}
+
 const SESSION_ARTIFACT_FILES = [
   "Current Session",
   "Current Tabs",
@@ -111,6 +130,7 @@ export function filterExtractedStorageState(
 export async function extractChromeProfileSession(options: {
   profileDir: string;
   targetUrl: string;
+  providerId?: string;
   chromeExecutablePath?: string;
   timeoutMs?: number;
 }): Promise<ChromeSessionExtractionResult> {
@@ -118,8 +138,9 @@ export async function extractChromeProfileSession(options: {
   if (!profileDir || !existsSync(profileDir) || !statSync(profileDir).isDirectory()) {
     throw new Error(`Chrome login profile directory does not exist: ${profileDir}`);
   }
+  const allowedRootDomains = resolveChromeCookieRootDomains(options.providerId);
   const targetParsed = new URL(options.targetUrl);
-  if (targetParsed.protocol !== "https:" || !isAllowedChromeSessionHost(targetParsed.hostname)) {
+  if (targetParsed.protocol !== "https:" || !isAllowedChromeSessionHost(targetParsed.hostname, allowedRootDomains)) {
     throw new Error(`Unsupported external login target origin: ${targetParsed.origin}`);
   }
 
@@ -156,7 +177,7 @@ export async function extractChromeProfileSession(options: {
     });
     await context.setOffline(true);
     const storageState = await context.storageState();
-    return filterExtractedStorageState(storageState, targetParsed.origin);
+    return filterExtractedStorageState(storageState, targetParsed.origin, allowedRootDomains);
   } finally {
     if (context) {
       await context.close().catch(() => {});

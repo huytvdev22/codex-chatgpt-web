@@ -14,6 +14,9 @@ const {
   AiStudioBrowserProvider,
 } = require("./providers/ai-studio/ai-studio-browser-provider.cjs");
 const {
+  ChatGptBrowserProvider,
+} = require("./providers/chatgpt/chatgpt-browser-provider.cjs");
+const {
   BrowserTurnCancelledError,
   IDLE_BROWSER_URL,
   MAX_BROWSER_TABS,
@@ -82,6 +85,10 @@ function createDefaultProviderRegistry({ descriptorPath = null, profile = "produ
     descriptorPath,
     partition: profile === "development" ? "persist:codex-web-gpt-dev-ai-studio" : undefined,
   }));
+  registry.register(new ChatGptBrowserProvider({
+    descriptorPath,
+    partition: profile === "development" ? "persist:codex-web-gpt-dev-chatgpt" : undefined,
+  }));
   return registry;
 }
 
@@ -99,14 +106,17 @@ function surfaceIdForHost(host, providerId) {
 }
 
 function usesExternalChromeLogin(host, providerObj) {
-  return Boolean(host?.externalChromeLogin && providerObj?.id === "ai-studio");
+  return Boolean(host?.externalChromeLogin && providerObj?.supportsExternalChromeLogin?.());
 }
 
 function shouldMaskPrimaryViewForExternalLogin(host) {
+  const providerObj = host?.providerRegistry?.has?.(host.provider)
+    ? host.providerRegistry.get(host.provider)
+    : null;
   return Boolean(
     host?.externalChromeLogin
-    && host.provider === "ai-studio"
-    && !host.authenticatedByProvider?.["ai-studio"]
+    && providerObj?.supportsExternalChromeLogin?.()
+    && !host.authenticatedByProvider?.[host.provider]
     && host.manualOperation !== "session refresh"
     && !host.loginOperation,
   );
@@ -132,7 +142,7 @@ async function syncPrimaryViewAfterSwitch(host, providerObj, cachedAuth, logEven
 
   if (usesExternalChromeLogin(host, providerObj) && !effectiveAuth) {
     const currentUrl = host.view.webContents.getURL() || "";
-    if (currentUrl && currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank") {
+    if (!currentUrl || (currentUrl !== IDLE_BROWSER_URL && currentUrl !== "about:blank")) {
       await host.view.webContents.loadURL(IDLE_BROWSER_URL).catch(() => {});
     }
     host.setState({
@@ -353,6 +363,7 @@ class BrowserHost {
       active: providerObj.id === this.provider,
       authenticated: Boolean(this.authenticatedByProvider?.[providerObj.id]),
       supportsProfiles: Boolean(providerObj.isProfileSupported?.()),
+      usesExternalChromeLogin: Boolean(providerObj.supportsExternalChromeLogin?.()),
       activeProfileId: providerObj.getActiveProfileId?.() || "default",
       profiles: providerObj.getProfiles?.() || [],
     }));
@@ -1536,9 +1547,13 @@ class BrowserHost {
 
     this.externalChromeLogin.start({
       providerId: providerObj.id,
+      providerDisplayName: providerObj.displayName,
       profileId: activeProfileId,
       profileName,
       targetUrl: providerObj.homeUrl,
+      validateCookies: typeof providerObj.hasExternalAuthSessionCookies === "function"
+        ? (cookies) => providerObj.hasExternalAuthSessionCookies(cookies)
+        : undefined,
     });
     this.homeSurfaceOpen = true;
     this.activateHomeSurface();

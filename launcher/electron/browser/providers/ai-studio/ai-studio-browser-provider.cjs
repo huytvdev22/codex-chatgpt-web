@@ -1,5 +1,8 @@
 const { BaseBrowserProvider, sanitizeChromeUserAgent } = require("../base-browser-provider.cjs");
-const { GOOGLE_AUTH_COOKIE_NAMES } = require("../../external-chrome-login-service.cjs");
+const {
+  GOOGLE_AUTH_COOKIE_NAMES,
+  hasGoogleAuthSessionCookies,
+} = require("../../external-chrome-login-service.cjs");
 const {
   allowedAiStudioNavigation,
   bindAiStudioTurnContents,
@@ -93,6 +96,7 @@ class AiStudioBrowserProvider extends BaseBrowserProvider {
       smokeTitle: "Google AI Studio",
       descriptorPath,
       supportsProfiles: true,
+      usesExternalChromeLogin: true,
     });
     this.smokeTester = smokeTester;
   }
@@ -140,6 +144,10 @@ class AiStudioBrowserProvider extends BaseBrowserProvider {
   isAuthCookieDomain(domain) {
     if (typeof domain !== "string") return false;
     return domain.includes("google.com") || domain.includes("aistudio.google.com");
+  }
+
+  hasExternalAuthSessionCookies(cookies) {
+    return hasGoogleAuthSessionCookies(cookies);
   }
 
   isAuthOrAppUrl(value) {

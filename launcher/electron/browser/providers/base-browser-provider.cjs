@@ -23,6 +23,7 @@ class BaseBrowserProvider {
     smokeTitle = null,
     descriptorPath = null,
     supportsProfiles = false,
+    usesExternalChromeLogin = false,
   } = {}) {
     if (new.target === BaseBrowserProvider) {
       throw new Error("BaseBrowserProvider is abstract and cannot be instantiated directly");
@@ -53,6 +54,7 @@ class BaseBrowserProvider {
     this.smokeTitle = smokeTitle || displayName;
     this.descriptorPath = descriptorPath || null;
     this.supportsProfiles = supportsProfiles === true;
+    this.usesExternalChromeLogin = usesExternalChromeLogin === true;
     this.activeProfileId = DEFAULT_PROFILE_ID;
     this.profiles = [{ id: DEFAULT_PROFILE_ID, name: "Default", authenticated: false }];
     this.store = null;
@@ -64,6 +66,14 @@ class BaseBrowserProvider {
 
   isProfileSupported() {
     return this.supportsProfiles === true;
+  }
+
+  supportsExternalChromeLogin() {
+    return this.usesExternalChromeLogin === true;
+  }
+
+  hasExternalAuthSessionCookies(_cookies) {
+    return false;
   }
 
   getActiveProfileId() {

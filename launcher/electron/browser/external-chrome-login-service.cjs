@@ -177,6 +177,7 @@ class ExternalChromeLoginService {
       active: true,
       status: this.activeSession.status,
       providerId: this.activeSession.providerId,
+      providerDisplayName: this.activeSession.providerDisplayName,
       profileId: this.activeSession.profileId,
       profileName: this.activeSession.profileName,
     };
@@ -197,7 +198,14 @@ class ExternalChromeLoginService {
     }
   }
 
-  start({ providerId, profileId, profileName, targetUrl }) {
+  start({
+    providerId,
+    providerDisplayName,
+    profileId,
+    profileName,
+    targetUrl,
+    validateCookies,
+  }) {
     if (this.activeSession) {
       throw new Error("A Chrome sign-in window is already open. Import or cancel it first.");
     }
@@ -226,9 +234,11 @@ class ExternalChromeLoginService {
 
     const sessionRecord = {
       providerId,
+      providerDisplayName: providerDisplayName || providerId || "provider",
       profileId,
       profileName,
       targetUrl,
+      validateCookies: typeof validateCookies === "function" ? validateCookies : hasGoogleAuthSessionCookies,
       chromeExecutablePath,
       profileDir,
       child,
@@ -292,6 +302,7 @@ class ExternalChromeLoginService {
         throw new Error("Chrome sign-in was cancelled.");
       }
       const extracted = await this.runExtractor({
+        providerId: sessionRecord.providerId,
         profileDir: sessionRecord.profileDir,
         chromeExecutablePath: sessionRecord.chromeExecutablePath,
         targetUrl: sessionRecord.targetUrl,
@@ -300,9 +311,10 @@ class ExternalChromeLoginService {
         throw new Error("Chrome sign-in was cancelled.");
       }
       const cookies = Array.isArray(extracted?.cookies) ? extracted.cookies : [];
-      if (!hasGoogleAuthSessionCookies(cookies)) {
+      const hasSessionCookies = sessionRecord.validateCookies || hasGoogleAuthSessionCookies;
+      if (!hasSessionCookies(cookies)) {
         throw new Error(
-          "No signed-in Google session was found in Chrome. Finish signing in to Google AI Studio before clicking Import session.",
+          `No signed-in ${sessionRecord.providerDisplayName} session was found in Chrome. Finish signing in to ${sessionRecord.providerDisplayName} before clicking Import session.`,
         );
       }
       const electronCookies = cookies.map(toElectronCookieDetails).filter(Boolean);

@@ -670,7 +670,7 @@ function BrowserSurface({
   const activeProfile = profiles.find((item) => item.id === activeProfileId);
   const activeTabId = browser?.activeTabId || "home";
   const profileControlLocked = switchingProvider || switchingProfile || navigationLocked || externalLoginActive;
-  const showExternalChromeCard = activeProviderId === "ai-studio"
+  const showExternalChromeCard = (activeProvider?.usesExternalChromeLogin === true || activeProviderId === "ai-studio")
     && (externalLoginActive || (!browser?.authenticated && (!visible || activeTabId === "home")));
   const switchProvider = async (providerId: string) => {
     if (switchingProvider || navigationLocked || providerId === activeProviderId) return;
@@ -869,7 +869,7 @@ function BrowserSurface({
               className="profile-switcher-select"
               disabled={profileControlLocked}
               onChange={(event) => void switchProfile(event.target.value)}
-              title="Switch Google account profile"
+              title="Switch account profile"
               value={activeProfileId}
             >
               {profiles.map((profile) => (
@@ -921,8 +921,8 @@ function BrowserSurface({
                 <h1>Chrome opened for {externalLogin.profileName}</h1>
                 <p>
                   {externalLogin.status === "importing"
-                    ? `Importing your signed-in Google AI Studio session into ${externalLogin.profileName}…`
-                    : "Sign in to Google AI Studio in the Google Chrome window, then click Import session."}
+                    ? `Importing your signed-in ${externalLogin.providerDisplayName || providerLabel} session into ${externalLogin.profileName}…`
+                    : `Sign in to ${externalLogin.providerDisplayName || providerLabel} in the Google Chrome window, then click Import session.`}
                 </p>
                 <div className="browser-empty-actions">
                   <PrimaryButton
@@ -942,7 +942,7 @@ function BrowserSurface({
             ) : (
               <>
                 <h1>Sign in to {providerLabel} ({activeProfile?.name || "Default"})</h1>
-                <p>Google AI Studio signs in through your system Google Chrome window and keeps each profile isolated.</p>
+                <p>{providerLabel} signs in through your system Google Chrome window and keeps each profile isolated.</p>
                 <div className="browser-empty-actions">
                   <PrimaryButton
                     disabled={externalLoginBusy || navigationLocked}
@@ -1002,8 +1002,8 @@ function SetupSurface({
   updateState: (state: LauncherState) => void;
 }) {
   const [localBusy, setLocalBusy] = useState(false);
-  const [newProfileName, setNewProfileName] = useState("");
-  const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
+  const [newProfileNameByProvider, setNewProfileNameByProvider] = useState<Record<string, string>>({});
+  const [renamingTarget, setRenamingTarget] = useState<{ providerId: string; profileId: string } | null>(null);
   const [renamingDraft, setRenamingDraft] = useState("");
 
   useEffect(() => {
@@ -1067,6 +1067,9 @@ function SetupSurface({
         const signInIndex = providerIndex * 2 + 1;
         const smokeIndex = providerIndex * 2 + 2;
 
+        const isExternalChromeProvider = provider.usesExternalChromeLogin === true || provider.id === "ai-studio";
+        const newProfileName = newProfileNameByProvider[provider.id] || "";
+
         return (
           <div className="setup-provider-group" key={provider.id}>
             <SectionHeading label={`${provider.displayName} Setup`} spaced={providerIndex > 0} />
@@ -1076,9 +1079,9 @@ function SetupSurface({
                   ? copy.signedIn
                   : browser?.status === "loading" && isActiveProvider
                     ? copy.checkingSignIn
-                    : (provider.id === "ai-studio" ? "Sign in with Chrome" : copy.signIn)}
+                    : (isExternalChromeProvider ? "Sign in with Chrome" : copy.signIn)}
                 complete={isAuthed}
-                description={provider.id === "ai-studio"
+                description={isExternalChromeProvider
                   ? `Sign in through your system Google Chrome browser. Session stays isolated per ${provider.displayName} profile.`
                   : `Sign in directly in the embedded ${provider.displayName} browser. Login stays in this launcher's private profile.`}
                 disabled={globalActionDisabled}
@@ -1121,7 +1124,10 @@ function SetupSurface({
                         className="profile-name-input"
                         disabled={globalActionDisabled}
                         maxLength={40}
-                        onChange={(event) => setNewProfileName(event.target.value)}
+                        onChange={(event) => setNewProfileNameByProvider((prev) => ({
+                          ...prev,
+                          [provider.id]: event.target.value,
+                        }))}
                         placeholder="Account name (optional)"
                         type="text"
                         value={newProfileName}
@@ -1130,7 +1136,7 @@ function SetupSurface({
                         disabled={globalActionDisabled}
                         onClick={() => void run(async () => {
                           const created = await api!.createProviderProfile(provider.id, newProfileName.trim());
-                          setNewProfileName("");
+                          setNewProfileNameByProvider((prev) => ({ ...prev, [provider.id]: "" }));
                           await activateBrowser();
                           await api!.openLogin(provider.id, created.profile.id);
                         })}
@@ -1142,7 +1148,9 @@ function SetupSurface({
                   <div className="profile-manager-list">
                     {providerProfiles.map((profile) => {
                       const isCurrentProfile = profile.id === currentProfileId;
-                      const isEditing = renamingProfileId === profile.id;
+                      const isEditing =
+                        renamingTarget?.providerId === provider.id
+                        && renamingTarget?.profileId === profile.id;
                       return (
                         <div className={`profile-row${isCurrentProfile ? " is-active" : ""}`} key={profile.id}>
                           <div className="profile-row-info">
@@ -1155,12 +1163,14 @@ function SetupSurface({
                                 onChange={(event) => setRenamingDraft(event.target.value)}
                                 onKeyDown={(event) => {
                                   if (event.key === "Enter") {
+                                    if (event.nativeEvent.isComposing) return;
+                                    event.preventDefault();
                                     void run(async () => {
                                       await api!.renameProviderProfile(provider.id, profile.id, renamingDraft);
-                                      setRenamingProfileId(null);
+                                      setRenamingTarget(null);
                                     });
                                   } else if (event.key === "Escape") {
-                                    setRenamingProfileId(null);
+                                    setRenamingTarget(null);
                                   }
                                 }}
                                 type="text"
@@ -1180,13 +1190,13 @@ function SetupSurface({
                                   disabled={globalActionDisabled || !renamingDraft.trim()}
                                   onClick={() => void run(async () => {
                                     await api!.renameProviderProfile(provider.id, profile.id, renamingDraft);
-                                    setRenamingProfileId(null);
+                                    setRenamingTarget(null);
                                   })}
                                 >
                                   Save
                                 </SecondaryButton>
                                 <SecondaryButton
-                                  onClick={() => setRenamingProfileId(null)}
+                                  onClick={() => setRenamingTarget(null)}
                                 >
                                   Cancel
                                 </SecondaryButton>
@@ -1212,12 +1222,12 @@ function SetupSurface({
                                     await api!.openLogin(provider.id, profile.id);
                                   })}
                                 >
-                                  {profile.authenticated ? "Open" : (provider.id === "ai-studio" ? "Sign in with Chrome" : "Sign in")}
+                                  {profile.authenticated ? "Open" : (isExternalChromeProvider ? "Sign in with Chrome" : "Sign in")}
                                 </SecondaryButton>
                                 <SecondaryButton
                                   disabled={globalActionDisabled}
                                   onClick={() => {
-                                    setRenamingProfileId(profile.id);
+                                    setRenamingTarget({ providerId: provider.id, profileId: profile.id });
                                     setRenamingDraft(profile.name);
                                   }}
                                 >

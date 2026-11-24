@@ -338,6 +338,7 @@ async function main(): Promise<void> {
     if (action === "extract-chrome-session") {
       const profileDir = takeOption(args, "--profile-dir");
       const targetUrl = takeOption(args, "--target-url");
+      const providerId = takeOption(args, "--provider");
       const chromePath = takeOption(args, "--chrome");
       takeFlag(args, "--json");
       assertNoArgs(args);
@@ -347,6 +348,7 @@ async function main(): Promise<void> {
       const extracted = await extractChromeProfileSession({
         profileDir,
         targetUrl,
+        ...(providerId ? { providerId } : {}),
         ...(chromePath ? { chromeExecutablePath: chromePath } : {}),
       });
       stdout.write(`${JSON.stringify(extracted)}\n`);

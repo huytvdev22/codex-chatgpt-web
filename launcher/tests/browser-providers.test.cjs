@@ -276,7 +276,7 @@ test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-prov
   const { createDefaultProviderRegistry } = require("../electron/browser/browser-host.cjs");
 
   const registry = createDefaultProviderRegistry();
-  assert.deepEqual(registry.listIds(), ["m365", "ai-studio"]);
+  assert.deepEqual(registry.listIds(), ["m365", "ai-studio", "chatgpt"]);
 
   const provider = new AiStudioBrowserProvider();
   const sampleId = "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
@@ -324,7 +324,9 @@ test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-prov
   const devRegistry = createDefaultProviderRegistry({ profile: "development" });
   assert.equal(devRegistry.get("m365").partition, "persist:codex-web-gpt-dev-m365");
   assert.equal(devRegistry.get("ai-studio").partition, "persist:codex-web-gpt-dev-ai-studio");
+  assert.equal(devRegistry.get("chatgpt").partition, "persist:codex-web-gpt-dev-chatgpt");
   assert.equal(provider.maxSurfaces, 8);
+  assert.equal(provider.supportsExternalChromeLogin(), true);
 });
 
 test("BaseBrowserProvider.prepareAllocation ưu tiên evict tab đã có conversationId trước tab chưa có ID", () => {
@@ -434,6 +436,126 @@ test("bindAiStudioTurnContents tự động bind conversationId xuống disk khi
     );
     assert.equal(fresh.conversationId, null);
     assert.equal(fresh.bootstrapUrl, "https://aistudio.google.com/prompts/new_chat?model=gemini-4-hydrogen");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ChatGptBrowserProvider supports external Chrome login, multi-profile partitions, auth cookies, and turn surface binding", async () => {
+  const {
+    CHATGPT_CHAT_URL,
+    CHATGPT_ORIGIN,
+    CHATGPT_PARTITION,
+    ChatGptBrowserProvider,
+    hasChatGptAuthSessionCookies,
+  } = require("../electron/browser/providers/chatgpt/chatgpt-browser-provider.cjs");
+  const {
+    bindChatGptTurnContents,
+  } = require("../electron/browser/providers/chatgpt/chatgpt-turn-surface.cjs");
+
+  const provider = new ChatGptBrowserProvider();
+  const sampleId = "6afae1f3-e4f0-83ec-8aca-7c8649cfde1c";
+  assert.equal(provider.id, "chatgpt");
+  assert.equal(provider.homeUrl, CHATGPT_CHAT_URL);
+  assert.equal(provider.origin, CHATGPT_ORIGIN);
+  assert.equal(provider.partition, CHATGPT_PARTITION);
+  assert.equal(provider.isProfileSupported(), true);
+  assert.equal(provider.supportsExternalChromeLogin(), true);
+  assert.equal(provider.partitionForProfile("default"), CHATGPT_PARTITION);
+  assert.equal(provider.partitionForProfile("p2"), `${CHATGPT_PARTITION}-p2`);
+
+  assert.equal(provider.normalizeConversationId(sampleId), sampleId);
+  assert.equal(provider.normalizeConversationId("new"), null);
+  assert.equal(provider.parseConversationId(`https://chatgpt.com/c/${sampleId}`), sampleId);
+  assert.equal(provider.conversationUrl(sampleId), `https://chatgpt.com/c/${sampleId}`);
+  assert.equal(provider.isAllowedNavigation(`https://chatgpt.com/c/${sampleId}`), true);
+  assert.equal(provider.isAllowedNavigation("https://evil.example.com"), false);
+  assert.equal(provider.allowedAuthUrl("https://auth.openai.com/authorize"), true);
+  assert.equal(provider.allowedAuthUrl("https://accounts.google.com/o/oauth2"), true);
+
+  assert.equal(hasChatGptAuthSessionCookies([{ name: "oai-did", value: "abc" }]), false);
+  assert.equal(hasChatGptAuthSessionCookies([{ name: "__Secure-next-auth.session-token", value: "tok" }]), true);
+  assert.equal(hasChatGptAuthSessionCookies([{ name: "__Secure-next-auth.session-token.0", value: "chunk0" }]), true);
+  assert.equal(provider.hasExternalAuthSessionCookies([{ name: "__Secure-next-auth.session-token.1", value: "chunk1" }]), true);
+
+  const liveCookiesResult = await provider.hasAuthCookies({
+    cookies: {
+      get: async () => [
+        {
+          name: "__Secure-next-auth.session-token.0",
+          value: "live",
+          domain: "chatgpt.com",
+        },
+      ],
+    },
+  });
+  assert.equal(liveCookiesResult, true);
+
+  const authed = await provider.probeAuthentication({
+    executeJavaScript: async () => ({
+      url: CHATGPT_CHAT_URL,
+      composer: true,
+      profileMenu: true,
+      loginControl: false,
+      authenticated: true,
+      readyState: "complete",
+    }),
+    getURL: () => CHATGPT_CHAT_URL,
+  });
+  assert.equal(authed.authenticated, true);
+
+  const signedOut = await provider.probeAuthentication({
+    executeJavaScript: async () => Promise.reject(new Error("renderer busy")),
+    getURL: () => "https://auth.openai.com/u/login",
+  });
+  assert.equal(signedOut.authenticated, false);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-bind-"));
+  try {
+    const storeProvider = new ChatGptBrowserProvider({
+      descriptorPath: path.join(root, "launcher-browser.json"),
+    });
+    const listeners = new Map();
+    let currentUrl = CHATGPT_CHAT_URL;
+    const fakeContents = {
+      setWindowOpenHandler() {},
+      on(event, handler) {
+        listeners.set(event, handler);
+      },
+      getURL: () => currentUrl,
+      isDestroyed: () => false,
+    };
+    const conversationKey = "c".repeat(64);
+    const tab = {
+      id: "tab-chatgpt-1",
+      traceId: "trace-chatgpt-1",
+      provider: "chatgpt",
+      profileId: "default",
+      conversationKey,
+      conversationId: null,
+      connectorBound: false,
+      url: currentUrl,
+      view: { webContents: fakeContents },
+    };
+    const host = {
+      providerRegistry: new Map([["chatgpt", storeProvider]]),
+      window: { isVisible: () => false },
+      snapshot: () => ({}),
+      publishState() {},
+      syncViewVisibility() {},
+      syncPowerSaveBlocker() {},
+      removeTurnTab() {},
+      logger: { info() {}, warn() {}, error() {} },
+    };
+
+    bindChatGptTurnContents(host, tab);
+
+    currentUrl = `https://chatgpt.com/c/${sampleId}`;
+    listeners.get("did-navigate-in-page")({}, currentUrl, true);
+
+    assert.equal(tab.conversationId, sampleId);
+    assert.equal(tab.connectorBound, true);
+    assert.equal(storeProvider.conversationId(conversationKey, "default"), sampleId);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

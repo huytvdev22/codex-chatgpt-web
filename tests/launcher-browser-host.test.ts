@@ -533,6 +533,10 @@ test("readLauncherBrowserHostDescriptor chấp nhận partition đa profile cho 
   for (const [profileKind, partition] of [
     ["production", "persist:codex-web-aistudio-p2"],
     ["development", "persist:codex-web-gpt-dev-ai-studio-p2"],
+    ["production", "persist:codex-web-chatgpt"],
+    ["production", "persist:codex-web-chatgpt-p2"],
+    ["development", "persist:codex-web-gpt-dev-chatgpt"],
+    ["development", "persist:codex-web-gpt-dev-chatgpt-p2"],
   ] as const) {
     const descPath = join(dir, `desc-${profileKind}.json`);
     writeFileSync(

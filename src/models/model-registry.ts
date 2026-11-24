@@ -6,6 +6,7 @@ import type {
 } from "./types";
 import { M365ModelProvider } from "../adapters/m365-copilot/model-provider";
 import { AiStudioModelProvider } from "../adapters/ai-studio/model-provider";
+import { ChatGptModelProvider } from "../adapters/chatgpt/model-provider";
 
 /**
  * Registry trung tâm (Singleton + hỗ trợ DI khi test) quản lý toàn bộ `BaseModelProvider` đã đăng ký.
@@ -19,6 +20,7 @@ export class ModelRegistry {
   private static readonly defaultInstance = new ModelRegistry([
     M365ModelProvider.getInstance(),
     AiStudioModelProvider.getInstance(),
+    ChatGptModelProvider.getInstance(),
   ]);
 
   private readonly providers: BaseModelProvider[];

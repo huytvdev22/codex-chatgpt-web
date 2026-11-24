@@ -2833,3 +2833,184 @@ test("AiStudio probeAuthentication preserves authenticated flag during transient
   assert.equal(signedOutSnap.authenticated, false);
   assert.equal(provider.getProfiles()[0].authenticated, false);
 });
+
+test("ExternalChromeLoginService and BrowserHost validate ChatGPT cookies dynamically via provider hooks", async () => {
+  const { ExternalChromeLoginService } = require("../electron/browser/external-chrome-login-service.cjs");
+  const { ChatGptBrowserProvider } = require("../electron/browser/providers/chatgpt/chatgpt-browser-provider.cjs");
+  const { EventEmitter } = require("node:events");
+  const nodePath = require("node:path");
+  const nodeOs = require("node:os");
+  const tempRoot = fs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "ext-chatgpt-login-"));
+
+  class FakeChild extends EventEmitter {
+    constructor() {
+      super();
+      this.exitCode = null;
+      this.signalCode = null;
+    }
+    kill() {
+      this.exitCode = 0;
+      this.emit("exit", 0, null);
+      return true;
+    }
+  }
+
+  try {
+    const chatgpt = new ChatGptBrowserProvider();
+    let extractorCookies = [];
+    const seenProviders = [];
+    const service = new ExternalChromeLoginService({
+      tempRoot,
+      resolveChromePath: () => "/fake/Google Chrome",
+      spawnFn: () => new FakeChild(),
+      runExtractor: async ({ providerId }) => {
+        seenProviders.push(providerId);
+        return {
+          origin: "https://chatgpt.com",
+          cookies: extractorCookies,
+          localStorage: [],
+        };
+      },
+    });
+
+    service.start({
+      providerId: chatgpt.id,
+      providerDisplayName: chatgpt.displayName,
+      profileId: "default",
+      profileName: "Default",
+      targetUrl: chatgpt.homeUrl,
+      validateCookies: (cookies) => chatgpt.hasExternalAuthSessionCookies(cookies),
+    });
+    assert.equal(service.getState().providerDisplayName, "ChatGPT");
+
+    await assert.rejects(
+      () => service.complete(),
+      /No signed-in ChatGPT session was found in Chrome/,
+    );
+    assert.deepEqual(seenProviders, ["chatgpt"]);
+
+    extractorCookies = [
+      {
+        name: "__Secure-next-auth.session-token.0",
+        value: "chunk0",
+        domain: "chatgpt.com",
+        path: "/",
+        expires: -1,
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax",
+      },
+    ];
+    service.start({
+      providerId: chatgpt.id,
+      providerDisplayName: chatgpt.displayName,
+      profileId: "default",
+      profileName: "Default",
+      targetUrl: chatgpt.homeUrl,
+      validateCookies: (cookies) => chatgpt.hasExternalAuthSessionCookies(cookies),
+    });
+    const completed = await service.complete();
+    assert.equal(completed.providerId, "chatgpt");
+    assert.equal(completed.cookies[0].name, "__Secure-next-auth.session-token.0");
+
+    // BrowserHost.openLogin delegates unauthenticated ChatGPT profile to startExternalLogin
+    const started = [];
+    const fakeHost = {
+      provider: "chatgpt",
+      providerRegistry: {
+        has: (id) => id === "chatgpt",
+        get: (id) => (id === "chatgpt" ? chatgpt : null),
+        list: () => [chatgpt],
+        listIds: () => ["chatgpt"],
+      },
+      turnTabs: new Map(),
+      activeTraceId: null,
+      authenticatedByProvider: { chatgpt: false },
+      view: { webContents: { isDestroyed: () => false, getURL: () => "about:blank", session: { cookies: { get: async () => [] } } } },
+      externalChromeLogin: {
+        getState: () => null,
+        start: (payload) => started.push(payload),
+      },
+      startExternalLogin: BrowserHost.prototype.startExternalLogin,
+      activateHomeSurface: () => {},
+      show: () => {},
+      snapshot: () => ({ ok: true }),
+    };
+
+    await BrowserHost.prototype.openLogin.call(fakeHost, "chatgpt", "default");
+    assert.equal(started.length, 1);
+    assert.equal(started[0].providerId, "chatgpt");
+    assert.equal(started[0].providerDisplayName, "ChatGPT");
+    assert.equal(typeof started[0].validateCookies, "function");
+    assert.equal(started[0].validateCookies(extractorCookies), true);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("BrowserHost.switchProvider nạp IDLE_BROWSER_URL cho WebContentsView rỗng của external Chrome provider để tránh treo connectOverCDP", async () => {
+  const { BrowserHost, IDLE_BROWSER_URL } = require("../electron/browser/browser-host.cjs");
+  const { ChatGptBrowserProvider } = require("../electron/browser/providers/chatgpt/chatgpt-browser-provider.cjs");
+  const { BrowserProviderRegistry } = require("../electron/browser/providers/browser-provider-registry.cjs");
+
+  const chatgpt = new ChatGptBrowserProvider();
+  const registry = new BrowserProviderRegistry();
+  registry.register(chatgpt);
+
+  const loadedUrls = [];
+  const blankPrimaryView = {
+    webContents: {
+      isDestroyed: () => false,
+      getURL: () => "",
+      setZoomFactor() {},
+      setBackgroundThrottling() {},
+      on() {},
+      off() {},
+      once() {},
+      setWindowOpenHandler() {},
+      loadURL: async (url) => {
+        loadedUrls.push(url);
+      },
+      session: { cookies: { on() {}, off() {}, get: async () => [] }, clearStorageData: async () => {} },
+    },
+    setBounds() {},
+    setVisible() {},
+  };
+
+  const fakeHost = {
+    provider: "m365",
+    providerRegistry: registry,
+    turnTabs: new Map(),
+    activeTraceId: null,
+    authenticatedByProvider: { chatgpt: false },
+    externalChromeLogin: { getState: () => null },
+    view: blankPrimaryView,
+    primaryViewManager: {
+      has: () => false,
+      get: () => blankPrimaryView,
+      destroy() {},
+      ensure: () => blankPrimaryView,
+      activate() {},
+    },
+    providerViews: new Map(),
+    shellZoomShortcutBindings: new Map(),
+    surfaceIds: new Map(),
+    state: { zoomFactor: 1 },
+    homeSurfaceOpen: true,
+    boundsReady: true,
+    bounds: { x: 0, y: 0, width: 1024, height: 720 },
+    bindShellZoomShortcuts() {},
+    bindWebContents() {},
+    bindAuthenticationChanges() {},
+    setState() {},
+    releaseInactivePrimaryViews() {},
+    hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1024, height: 720 }),
+    syncViewVisibility() {},
+    writeDescriptor() {},
+    snapshot: () => ({ provider: "chatgpt", authenticated: false }),
+    publishState() {},
+  };
+
+  await BrowserHost.prototype.switchProvider.call(fakeHost, "chatgpt");
+  assert.deepEqual(loadedUrls, [IDLE_BROWSER_URL]);
+});

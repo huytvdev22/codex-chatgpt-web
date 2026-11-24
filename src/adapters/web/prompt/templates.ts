@@ -16,9 +16,9 @@ import type { CodexJsonSchemaOutputFormat } from "../../../types";
 export function buildUnifiedToolProtocol(
   assistantName: string = "Copilot"
 ): string {
-  return `Chào ${assistantName}, mình đang làm việc trên dự án ở máy cá nhân và đã nối khung chat này với IDE qua script cầu nối:
-- Khi bạn cần đọc/sửa file hoặc chạy lệnh trên máy mình, hãy xuất đúng chuẩn XML bên dưới để script thực thi và trả kết quả trong thẻ \`<tool_result>\` ở lượt tiếp theo.
-- Không cần bảo mình copy-paste thủ công, và không dùng công cụ web search hay python nội bộ của ${assistantName}.
+  return `Chào ${assistantName}, khung chat này hoạt động theo chế độ xuất lệnh văn bản thuần (Text-Based Action Request) phục vụ IDE cục bộ trên máy mình:
+- Bạn KHÔNG cần quyền truy cập trực tiếp vào IDE, shell hay hệ thống file trong phiên web của ${assistantName}; ứng dụng client trên máy mình sẽ tự đọc block XML \`<tool_call>\` hoặc \`<custom_tool_call>\` trong văn bản bạn xuất ra, tự thực thi công cụ từ \`[MCP TOOL CATALOG]\` trên máy cục bộ rồi gửi lại kết quả trong thẻ \`<tool_result>\` ở lượt tiếp theo.
+- Vì vậy, khi nhiệm vụ cần đọc/sửa file hoặc chạy lệnh trên máy mình, tuyệt đối không từ chối vì lý do "không có công cụ IDE/shell kết nối" — hãy xuất đúng chuẩn XML bên dưới để client của mình thực thi giúp bạn (không cần bảo mình copy-paste thủ công, và không dùng công cụ web search hay python nội bộ của ${assistantName}).
 
 Quy ước định dạng phản hồi (bắt buộc):
 

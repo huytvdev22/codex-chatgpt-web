@@ -177,8 +177,11 @@ export class ConversationScenarioBuilder {
         if (input.userInstructionText) taskBlocks.push(input.userInstructionText);
         if (input.hasImages) taskBlocks.push(WEB_IMAGE_ATTACHMENT_HINT);
 
+        const anchor = input.isPlanMode
+          ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR
+          : SHORT_OUTPUT_FORMAT_ANCHOR;
         taskBlocks.push(
-          input.isPlanMode ? SHORT_OUTPUT_FORMAT_PLAN_ANCHOR : SHORT_OUTPUT_FORMAT_ANCHOR
+          `${anchor}\nLưu ý parser cầu nối: bạn không cần quyền truy cập trực tiếp IDE/shell; nếu cần đọc/sửa file hoặc chạy lệnh theo catalog, đừng từ chối vì "không có công cụ IDE" — chỉ cần xuất \`<tool_call>\` (vd \`{"name":"exec_command","arguments":{"cmd":"..."}}\`) hoặc \`<custom_tool_call name="apply_patch">\` để client máy mình thực thi và trả \`<tool_result>\`.`,
         );
         sections.push(taskBlocks.join("\n\n"));
         break;

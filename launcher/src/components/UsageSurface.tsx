@@ -47,6 +47,7 @@ function formatDuration(ms: number): string {
 function formatProviderName(providerId: string): string {
   if (providerId === "m365-copilot") return "M365 Copilot";
   if (providerId === "ai-studio") return "Google AI Studio";
+  if (providerId === "chatgpt") return "ChatGPT";
   return providerId;
 }
 
