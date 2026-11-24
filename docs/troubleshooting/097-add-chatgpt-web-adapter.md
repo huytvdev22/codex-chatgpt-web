@@ -1,6 +1,6 @@
 # 097: Tích hợp Adapter ChatGPT Web (`chatgpt`) theo kiến trúc đa provider + Sign in with Chrome
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm
 > **Providers:** `chatgpt`, `web`, `launcher`, `electron`, `chrome-login`, `profiles`  
 > **Keywords:** `ChatGptAdapter`, `ChatGptModelProvider`, `ChatGptBrowserWorker`, `ChatGptCapabilityPicker`, `ChatGptBrowserProvider`, `supportsExternalChromeLogin`, `__Secure-next-auth.session-token`, `data-talvt-turn-state`, `data-selected-reasoning-effort`
 

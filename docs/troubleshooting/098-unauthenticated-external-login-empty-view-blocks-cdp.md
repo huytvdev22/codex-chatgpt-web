@@ -1,6 +1,6 @@
 # 098: Treo `connectOverCDP: Timeout 20000ms exceeded` khi bật hoặc chuyển sang provider `Sign in with Chrome` chưa đăng nhập
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm
 > **Providers:** `chatgpt`, `ai-studio`, `m365-copilot`, `launcher`, `electron`, `playwright`  
 > **Keywords:** `connectOverCDP`, `Timeout 20000ms exceeded`, `syncPrimaryViewAfterSwitch`, `IDLE_BROWSER_URL`, `WebContentsView`, `usesExternalChromeLogin`
 

@@ -1,6 +1,6 @@
 # 099: Treo 20s `waitForSelector` ở Turn 2 ChatGPT Plus (2 ProseMirror) & Turndown escape `\<webResponse>`
 
-> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Trạng thái:** ✅ Đã Confirm
 > **Providers:** `chatgpt`, `web`, `playwright`  
 > **Keywords:** `waitForSelector`, `ProseMirror`, `resolved to 2 elements`, `waitForVisibleComposer`, `normalizeCopiedChatGptSnippet`, `Turndown`, `MISSING_RESPONSE_ENVELOPE`
 
