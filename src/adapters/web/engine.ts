@@ -6,6 +6,7 @@ import {
   type RawTurnResult,
 } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import type { DiscoveredModelEntry } from "../../models/types";
 import { adapterFailureFromMessage } from "../../lib/errors";
 import {
   personalizationPromptBuilder,
@@ -73,6 +74,22 @@ import {
 } from "./runtime-lifecycle";
 
 const MAX_TOOL_DESCRIBE_ROUNDS = 2;
+const inFlightDiscoveries = new Set<string>();
+
+/**
+ * Lỗi đánh dấu provider đang bận chạy turn hoặc đang refresh danh mục model.
+ */
+export class ProviderBusyError extends Error {
+  public readonly statusCode = 409;
+
+  constructor(
+    public readonly providerId: string,
+    message = `Provider '${providerId}' is currently busy. Wait for the active turn to finish before refreshing models.`,
+  ) {
+    super(message);
+    this.name = "ProviderBusyError";
+  }
+}
 
 function extractRequestedToolNames(calls: StrictWebToolCall[]): string[] {
   const names: string[] = [];
@@ -191,6 +208,7 @@ export class WebTurnEngine {
     const turnRegistration = activeWebTurnRegistry.register(
       turnTraceId,
       incoming.abortSignal,
+      this.definition.id,
     );
     const turnIncoming: IncomingMeta = {
       ...incoming,
@@ -1008,6 +1026,7 @@ export class WebTurnEngine {
     const turnRegistration = activeWebTurnRegistry.register(
       turnTraceId,
       incoming.abortSignal,
+      this.definition.id,
     );
     const turnIncoming: IncomingMeta = {
       ...incoming,
@@ -1155,6 +1174,7 @@ export class WebTurnEngine {
     const turnRegistration = activeWebTurnRegistry.register(
       turnTraceId,
       incoming.abortSignal,
+      this.definition.id,
     );
     const turnSignal = turnRegistration.signal;
 
@@ -1204,6 +1224,47 @@ export class WebTurnEngine {
       }
     } finally {
       turnRegistration.finish();
+    }
+  }
+
+  /**
+   * Quét danh sách model khả dụng trực tiếp trên Web UI của provider thông qua một tab Launcher tạm,
+   * đảm bảo không chen ngang lượt đang chạy (`ProviderBusyError`) và tự đóng tab sau khi quét xong.
+   */
+  async discoverModels(
+    incoming: IncomingMeta = { headers: new Headers() },
+  ): Promise<DiscoveredModelEntry[]> {
+    const discover = this.definition.browser.discoverModels;
+    if (typeof discover !== "function") {
+      throw new Error(
+        `[${this.definition.logPrefix}] Provider '${this.definition.id}' chưa cài đặt logic quét model.`,
+      );
+    }
+
+    if (
+      activeWebTurnRegistry.hasActiveTurnForProvider(this.definition.id) ||
+      inFlightDiscoveries.has(this.definition.id)
+    ) {
+      throw new ProviderBusyError(this.definition.id);
+    }
+
+    inFlightDiscoveries.add(this.definition.id);
+    try {
+      const initialUrl = this.definition.browser.resolveInitialUrl?.({ modelId: "" });
+      return await this.runEphemeralSurfaceTask(
+        incoming,
+        async ({ page, signal, heartbeat }) => {
+          await heartbeat?.().catch(() => {});
+          return await discover({ page, abortSignal: signal });
+        },
+        {
+          ...(initialUrl ? { initialUrl } : {}),
+          retainOnCompleted: false,
+          omitConnectorIdentity: true,
+        },
+      );
+    } finally {
+      inFlightDiscoveries.delete(this.definition.id);
     }
   }
 }

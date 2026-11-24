@@ -61,6 +61,7 @@ export class WebTurnCancellationRegistry {
   private readonly active = new Map<
     string,
     {
+      providerId?: string;
       abortController: AbortController;
       done: Promise<void>;
       finish: () => void;
@@ -70,6 +71,7 @@ export class WebTurnCancellationRegistry {
   register(
     traceId: string,
     externalSignal?: AbortSignal,
+    providerId?: string,
   ): ActiveWebTurnRegistration {
     const abortController = new AbortController();
     let cleanupExternalAbort: (() => void) | undefined;
@@ -95,6 +97,7 @@ export class WebTurnCancellationRegistry {
 
     let finished = false;
     const entry = {
+      providerId,
       abortController,
       done,
       finish: () => {
@@ -125,6 +128,18 @@ export class WebTurnCancellationRegistry {
 
   activeCount(): number {
     return this.active.size;
+  }
+
+  activeCountForProvider(providerId: string): number {
+    let count = 0;
+    for (const entry of this.active.values()) {
+      if (entry.providerId === providerId) count += 1;
+    }
+    return count;
+  }
+
+  hasActiveTurnForProvider(providerId: string): boolean {
+    return this.activeCountForProvider(providerId) > 0;
   }
 
   cancelByTraceId(traceId: string, reason?: unknown): number {

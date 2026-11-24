@@ -1,5 +1,9 @@
 import { BaseModelProvider } from "../../models/base-model-provider";
-import type { ModelRouteDefinition } from "../../models/types";
+import { ModelConfigStore } from "../../models/model-config-store";
+import type {
+  DiscoveredModelEntry,
+  ModelRouteDefinition,
+} from "../../models/types";
 
 export type ChatGptThinkingEffort = "none" | "medium" | "high";
 
@@ -86,6 +90,31 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
     return ChatGptModelProvider.instance;
   }
 
+  public override buildRouteFromDiscovered(
+    entry: DiscoveredModelEntry,
+  ): ChatGptModelRouteDefinition | undefined {
+    const uiLabel = (entry.uiLabel || entry.displayName.replace(/^ChatGPT\s*-\s*/i, "")).trim();
+    if (!uiLabel) return undefined;
+
+    const contextWindow = entry.contextWindow ?? 128_000;
+    const effectiveContextWindowPercent = 90;
+    return {
+      slug: entry.slug.startsWith("chatgpt/") ? entry.slug : `chatgpt/${entry.slug}`,
+      uiLabel,
+      ...(entry.shortUiVersion ? { shortUiVersion: entry.shortUiVersion } : {}),
+      ...(entry.isAccountDefault !== undefined ? { isAccountDefault: entry.isAccountDefault } : {}),
+      ...(entry.remoteModelId ? { remoteModelId: entry.remoteModelId } : {}),
+      displayName: entry.displayName,
+      description: entry.description || `${uiLabel} qua ChatGPT Web`,
+      contextWindow,
+      autoCompactTokenLimit: Math.round(contextWindow * (effectiveContextWindowPercent / 100)),
+      effectiveContextWindowPercent,
+      inputModalities: entry.inputModalities ?? ["text", "image"],
+      defaultReasoningLevel: entry.defaultReasoningLevel ?? "medium",
+      reasoningLevels: CHATGPT_REASONING_LEVELS,
+    };
+  }
+
   public override findRoute(
     modelId: string,
   ): ChatGptModelRouteDefinition | undefined {
@@ -97,23 +126,32 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
     return undefined;
   }
 
+  private resolveManagedRoute(modelId: string): ChatGptModelRouteDefinition {
+    const resolved = ModelConfigStore.getInstance().findResolvedRoute(this, modelId) as
+      | ChatGptModelRouteDefinition
+      | undefined;
+    return resolved ?? this.findRoute(modelId) ?? this.routes[0]!;
+  }
+
   public resolveThinkingEffort(
     modelId = CHATGPT_DEFAULT_MODEL_SLUG,
     requestedEffort?: string,
   ): ChatGptThinkingEffort {
-    return this.resolveReasoningMode(modelId, requestedEffort) ?? "medium";
+    const route = this.resolveManagedRoute(modelId);
+    return this.resolveReasoning(route, requestedEffort).mode ?? "medium";
   }
 
   public resolveCapabilityTarget(
     modelId = CHATGPT_DEFAULT_MODEL_SLUG,
     requestedEffort?: string,
   ): ChatGptCapabilityTarget {
-    const route = this.findRoute(modelId) ?? this.routes[0]!;
+    const route = this.resolveManagedRoute(modelId);
     const thinkingEffort =
       this.resolveReasoning(route, requestedEffort).mode ?? "medium";
+    const uiLabel = route.uiLabel || route.displayName.replace(/^ChatGPT\s*-\s*/i, "");
     return {
       modelSlug: route.slug,
-      modelLabel: route.uiLabel,
+      modelLabel: uiLabel,
       shortUiVersion: route.shortUiVersion,
       isAccountDefault: route.isAccountDefault,
       thinkingEffort,

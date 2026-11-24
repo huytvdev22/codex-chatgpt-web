@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config";
 import type {
+  DiscoveredModelEntry,
   JsonObject,
   ModelProviderDefinition,
   ModelProviderId,
@@ -12,10 +13,10 @@ import type {
  *
  * Trách nhiệm:
  * - Cố định khung xử lý chung: chuẩn hóa field JSON của Codex, khớp slug, phân giải reasoning,
- *   dựng catalog item và kiểm tra đồng bộ file `catalog.json`.
+ *   dựng catalog item, dựng route từ auto-discovery và kiểm tra đồng bộ file `catalog.json`.
  * - Khi thêm adapter mới, chỉ cần tạo `<adapter>/model-provider.ts` kế thừa `BaseModelProvider`,
  *   khai báo 4 thuộc tính abstract (`id`, `exactSlugs`, `slugPrefixes`, `routes`) và chỉ `override`
- *   các hook `protected` khi thực sự có hành vi khác biệt.
+ *   các hook `protected`/`public` khi thực sự có hành vi khác biệt.
  */
 export abstract class BaseModelProvider<
   TRoute extends ModelRouteDefinition = ModelRouteDefinition,
@@ -66,7 +67,7 @@ export abstract class BaseModelProvider<
   public abstract readonly exactSlugs: readonly string[];
   /** Danh sách prefix slug thuộc provider (ví dụ: `["m365-copilot/"]`). */
   public abstract readonly slugPrefixes: readonly string[];
-  /** Danh sách toàn bộ route model mà provider cung cấp cho Codex. */
+  /** Danh sách toàn bộ route model built-in mặc định mà provider cung cấp cho Codex. */
   public abstract readonly routes: readonly TRoute[];
 
   /**
@@ -78,10 +79,18 @@ export abstract class BaseModelProvider<
   }
 
   /**
-   * Tìm route khớp chính xác với `modelId`.
+   * Tìm route khớp chính xác với `modelId` trên tập built-in mặc định.
    */
   public findRoute(modelId: string): TRoute | undefined {
     return this.routes.find(route => route.slug === modelId);
+  }
+
+  /**
+   * Dựng một route hoàn chỉnh từ kết quả auto-discovery của adapter.
+   * Subclass override hook này để hỗ trợ thêm các model mới quét được từ Web UI.
+   */
+  public buildRouteFromDiscovered(_entry: DiscoveredModelEntry): TRoute | undefined {
+    return undefined;
   }
 
   /**
@@ -147,17 +156,24 @@ export abstract class BaseModelProvider<
   }
 
   /**
-   * [Template Method] Kiểm tra các entry của provider trong `catalog.json` đã khớp với `routes` hiện tại chưa.
-   * Subclass có thể override nếu muốn kiểm tra thêm điều kiện đặc thù của adapter.
+   * [Template Method] Kiểm tra các entry của provider trong `catalog.json` đã khớp với
+   * danh sách route kỳ vọng (mặc định là `this.routes`, hoặc danh sách route đang bật) chưa.
    */
-  public isCatalogSynced(storedProviderModels: readonly JsonObject[]): boolean {
-    if (storedProviderModels.length === 0) return false;
-
+  public isCatalogSynced(
+    storedProviderModels: readonly JsonObject[],
+    expectedRoutes: readonly TRoute[] = this.routes,
+  ): boolean {
     const visibleModels = storedProviderModels.filter(
       model => model.visibility !== "hide" && typeof model.slug === "string",
     );
+
+    if (expectedRoutes.length === 0) {
+      return visibleModels.length === 0;
+    }
+    if (visibleModels.length === 0) return false;
+
     const visibleSlugs = visibleModels.map(model => model.slug as string).sort();
-    const expectedSlugs = this.routes.map(route => route.slug).sort();
+    const expectedSlugs = expectedRoutes.map(route => route.slug).sort();
 
     if (
       visibleSlugs.length !== expectedSlugs.length
@@ -166,10 +182,12 @@ export abstract class BaseModelProvider<
       return false;
     }
 
-    return this.routes.every(route => {
+    return expectedRoutes.every(route => {
       const model = visibleModels.find(entry => entry.slug === route.slug);
       if (!model || !Array.isArray(model.input_modalities)) return false;
       if (
+        model.display_name !== route.displayName ||
+        model.default_reasoning_level !== route.defaultReasoningLevel ||
         model.context_window !== route.contextWindow ||
         model.max_context_window !== route.contextWindow ||
         model.effective_context_window_percent !== route.effectiveContextWindowPercent ||
@@ -178,7 +196,10 @@ export abstract class BaseModelProvider<
         return false;
       }
       const modalities = model.input_modalities;
-      return route.inputModalities.every(modality => modalities.includes(modality));
+      return (
+        modalities.length === route.inputModalities.length &&
+        route.inputModalities.every(modality => modalities.includes(modality))
+      );
     });
   }
 

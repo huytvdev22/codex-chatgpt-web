@@ -2,7 +2,7 @@ import languages from "../electron/languages.json";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
-export type Surface = "browser" | "setup" | "settings" | "personalization" | "skills" | "usage";
+export type Surface = "browser" | "setup" | "models" | "settings" | "personalization" | "skills" | "usage";
 
 export type UsageRange = "today" | "7d" | "30d" | "all";
 export type TokenSourceKind = "ai-studio-dom" | "tiktoken";
@@ -66,6 +66,76 @@ export interface UsageSummary {
   byProvider: UsageGroupSummary[];
   byModel: UsageGroupSummary[];
   recentTurns: UsageTurnRecord[];
+}
+
+export type ModelReasoningEffort = "low" | "medium" | "high";
+export type ModelInputModality = "text" | "image";
+
+export interface ManagedModelDefaults {
+  enabled: boolean;
+  displayName: string;
+  description: string;
+  contextWindow: number;
+  autoCompactTokenLimit: number;
+  effectiveContextWindowPercent: number;
+  inputModalities: ModelInputModality[];
+  defaultReasoningLevel: ModelReasoningEffort;
+}
+
+export interface ManagedModelView {
+  slug: string;
+  providerId: string;
+  source: "builtin" | "discovered";
+  available: boolean;
+  enabled: boolean;
+  effectiveEnabled: boolean;
+  customized: boolean;
+  displayName: string;
+  description: string;
+  contextWindow: number;
+  autoCompactTokenLimit: number;
+  effectiveContextWindowPercent: number;
+  inputModalities: ModelInputModality[];
+  defaultReasoningLevel: ModelReasoningEffort;
+  supportedReasoningLevels: ModelReasoningEffort[];
+  defaults: ManagedModelDefaults;
+}
+
+export interface ManagedProviderGroupView {
+  providerId: string;
+  lastRefreshedAt: string | null;
+  lastError: string | null;
+  enabledCount: number;
+  availableCount: number;
+  totalCount: number;
+  models: ManagedModelView[];
+}
+
+export interface ManagedModelsSnapshot {
+  version: 1;
+  updatedAt: string | null;
+  configPath: string;
+  totalEnabledCount: number;
+  providers: ManagedProviderGroupView[];
+}
+
+export interface ProviderRefreshResult {
+  providerId: string;
+  status: "ok" | "busy" | "error";
+  addedCount: number;
+  updatedCount: number;
+  unavailableCount: number;
+  discoveredCount: number;
+  autoEnabledSlug?: string;
+  message?: string;
+}
+
+export interface ModelOverridePatch {
+  enabled?: boolean;
+  displayName?: string;
+  contextWindow?: number;
+  inputModalities?: ModelInputModality[];
+  defaultReasoningLevel?: ModelReasoningEffort;
 }
 
 export interface UsageStatePayload {
@@ -355,6 +425,12 @@ export interface LauncherApi {
   getUsage(range?: UsageRange): Promise<UsageStatePayload>;
   saveUsageSettings(settings: UsageSettings, range?: UsageRange): Promise<UsageStatePayload>;
   clearUsageHistory(range?: UsageRange): Promise<UsageStatePayload>;
+  getModels(): Promise<ManagedModelsSnapshot>;
+  updateModelOverride(slug: string, patch: ModelOverridePatch): Promise<ManagedModelsSnapshot>;
+  toggleProviderModels(providerId: string, enabled: boolean): Promise<ManagedModelsSnapshot>;
+  refreshModels(providerId?: string): Promise<{ snapshot: ManagedModelsSnapshot; results: ProviderRefreshResult[] }>;
+  resetModels(slug?: string): Promise<ManagedModelsSnapshot>;
+  openModelsConfig(): Promise<{ ok: boolean; path: string }>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
@@ -365,6 +441,7 @@ export interface LauncherApi {
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
+  onModelsChanged(listener: (snapshot: ManagedModelsSnapshot) => void): () => void;
 }
 
 declare global {

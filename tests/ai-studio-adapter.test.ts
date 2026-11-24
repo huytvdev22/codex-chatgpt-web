@@ -63,7 +63,7 @@ function makeParsedRequest(overrides: Partial<CodexParsedRequest> = {}): CodexPa
 }
 
 describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
-  test("ModelRegistry & AdapterRegistry đăng ký duy nhất model ai-studio/gemini-4-hydrogen", () => {
+  test("ModelRegistry & AdapterRegistry đăng ký model mặc định ai-studio/gemini-4-hydrogen và hỗ trợ prefix ai-studio/ cho auto-discovery", () => {
     const modelProvider = AiStudioModelProvider.getInstance();
     expect(modelProvider.id).toBe("ai-studio");
     expect(modelProvider.routes.map((route) => route.slug)).toEqual([
@@ -71,13 +71,15 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     ]);
     expect(modelProvider.matchModelSlug("ai-studio/gemini-4-hydrogen")).toBe(true);
     expect(modelProvider.matchModelSlug("ai-studio-pw/gemini-4-hydrogen")).toBe(false);
-    expect(modelProvider.matchModelSlug("ai-studio/gemini-4-carbon")).toBe(false);
+    expect(modelProvider.matchModelSlug("ai-studio/gemini-4-carbon")).toBe(true);
 
     expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-hydrogen")?.id).toBe(
       "ai-studio",
     );
     expect(ModelRegistry.getInstance().findProvider("ai-studio-pw/gemini-4-hydrogen")).toBeUndefined();
-    expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-carbon")).toBeUndefined();
+    expect(ModelRegistry.getInstance().findProvider("ai-studio/gemini-4-carbon")?.id).toBe(
+      "ai-studio",
+    );
 
     expect(modelProvider.resolveThinkingLevel("ai-studio/gemini-4-hydrogen", "low")).toBe("Low");
     expect(modelProvider.resolveThinkingLevel("ai-studio/gemini-4-hydrogen", "medium")).toBe("Medium");

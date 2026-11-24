@@ -5,6 +5,7 @@ import { computeAccurateTurnUsage } from "../../usage";
 import { CodexRawPayload, CodexPayloadNormalizer } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { M365BrowserWorker } from "./m365-browser-worker";
+import { M365ModelDiscovery } from "./model-discovery";
 import { m365ConversationKey } from "./conversation-key";
 import { type ToolValidationFailure } from "../web/tools";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
@@ -32,6 +33,10 @@ export {
   M365ModelProvider,
   type M365ModelRouteDefinition,
 } from "./model-provider";
+export {
+  buildM365DiscoveredModels,
+  M365ModelDiscovery,
+} from "./model-discovery";
 export {
   attachFilesViaPlusMenu,
   m365ImageFilePayloads,
@@ -89,6 +94,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
 
   constructor() {
     const worker = new M365BrowserWorker();
+    const modelDiscovery = new M365ModelDiscovery();
     super({
       id: "m365-copilot",
       assistantName: "M365",
@@ -209,6 +215,7 @@ export class M365CopilotAdapter extends WebProviderAdapter {
             images: attachments,
           });
         },
+        discoverModels: async ({ page }) => await modelDiscovery.discoverModels(page),
       },
       response: {
         classifyValidationFailure: (failure: ToolValidationFailure) => {

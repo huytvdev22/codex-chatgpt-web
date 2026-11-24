@@ -53,6 +53,12 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   getUsage: (range) => ipcRenderer.invoke("launcher:usage-get", range),
   saveUsageSettings: (settings, range) => ipcRenderer.invoke("launcher:usage-save-settings", settings, range),
   clearUsageHistory: (range) => ipcRenderer.invoke("launcher:usage-clear", range),
+  getModels: () => ipcRenderer.invoke("launcher:models-get"),
+  updateModelOverride: (slug, patch) => ipcRenderer.invoke("launcher:models-update-override", slug, patch),
+  toggleProviderModels: (providerId, enabled) => ipcRenderer.invoke("launcher:models-toggle-provider", providerId, enabled),
+  refreshModels: (providerId) => ipcRenderer.invoke("launcher:models-refresh", providerId),
+  resetModels: (slug) => ipcRenderer.invoke("launcher:models-reset", slug),
+  openModelsConfig: () => ipcRenderer.invoke("launcher:models-open-config"),
   setSidebarState: (state) => ipcRenderer.invoke("launcher:sidebar-state", state),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
   windowState: () => ipcRenderer.invoke("launcher:window-state"),
@@ -63,4 +69,5 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   onBrowserState: (listener) => subscription("launcher:browser-state", listener),
   onOperation: (listener) => subscription("launcher:operation", listener),
   onUpdateState: (listener) => subscription("launcher:update-state", listener),
+  onModelsChanged: (listener) => subscription("launcher:models-changed", listener),
 });

@@ -1,7 +1,11 @@
 
 import type { Page } from "playwright-core";
-import { M365ModelProvider, type M365CapabilityMode } from "./model-provider";
-export type { M365CapabilityMode };
+import {
+  M365ModelProvider,
+  type M365CapabilityMode,
+  type M365ResolvedCapabilityTarget,
+} from "./model-provider";
+export type { M365CapabilityMode, M365ResolvedCapabilityTarget };
 
 export function resolveM365CapabilityMode(
   modelId?: string,
@@ -11,7 +15,7 @@ export function resolveM365CapabilityMode(
 }
 
 export interface M365CapabilitySpec {
-  readonly mode: M365CapabilityMode;
+  readonly mode: string;
   readonly label: string;
   readonly aliases?: readonly string[];
   readonly itemTestId?: string;
@@ -81,6 +85,14 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
       console.warn(`[m365-capability] Unknown capability mode: ${targetMode}, skipping switch.`);
       return false;
     }
+    return this.ensureSpec(page, spec);
+  }
+
+  /**
+   * Đảm bảo một capability spec bất kỳ (built-in hoặc auto-discovered) được chọn trên giao diện M365 Copilot.
+   */
+  async ensureSpec(page: Page, spec: M365CapabilitySpec): Promise<boolean> {
+    const targetMode = spec.mode;
 
     try {
       // 1. Kiểm tra nhanh xem nút switcher ngoài giao diện (#gptModeSwitcher) đã hiển thị đúng mode chưa
@@ -116,7 +128,8 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
           return (combined.includes("think") || combined.includes("reasoning")) && (combined.includes("5.6") || combined.includes("gpt"));
         }
 
-        return false;
+        const expectedLabel = s.label.trim().toLowerCase();
+        return Boolean(expectedLabel) && combined.includes(expectedLabel);
       }, spec).catch(() => false);
 
       if (isAlreadyActive) {
@@ -362,4 +375,31 @@ export const defaultCapabilityPicker = new M365CapabilityPicker();
  */
 export async function ensureM365CapabilityMode(page: Page, targetMode: M365CapabilityMode): Promise<boolean> {
   return defaultCapabilityPicker.ensureMode(page, targetMode);
+}
+
+/**
+ * Kích hoạt chế độ cho cả model built-in lẫn model M365 được phát hiện động từ Refresh.
+ */
+export async function ensureM365CapabilityTarget(
+  page: Page,
+  target: M365ResolvedCapabilityTarget,
+): Promise<boolean> {
+  if (!target.spec) {
+    return defaultCapabilityPicker.ensureMode(page, target.mode as M365CapabilityMode);
+  }
+  const meta = target.spec;
+  const isThink = meta.isQuickThink === "think";
+  const label = (isThink ? meta.thinkLabel : meta.quickLabel) ?? meta.label;
+  const itemTestId = (isThink ? meta.thinkItemTestId : meta.quickItemTestId) ?? meta.itemTestId;
+  const iconTestId = (isThink ? meta.thinkIconTestId : meta.quickIconTestId) ?? meta.iconTestId ?? "";
+  return defaultCapabilityPicker.ensureSpec(page, {
+    mode: target.mode,
+    label,
+    aliases: meta.aliases,
+    itemTestId,
+    iconTestId,
+    isSubmenu: meta.isSubmenu,
+    parentMenuTestId: meta.parentMenuTestId,
+    parentLabel: meta.parentLabel,
+  });
 }

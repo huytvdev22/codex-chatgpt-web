@@ -92,25 +92,15 @@ export class ResponsesService {
   ) {}
 
   /**
-   * Tìm `BaseModelProvider` sở hữu `requestedModel`; trả thông báo lỗi động theo các provider đang bật.
+   * Tìm `BaseModelProvider` sở hữu `requestedModel` và kiểm tra trạng thái ON/OFF trong `ModelRegistry`.
    */
   public resolveProvider(requestedModel: unknown): ProviderResolutionResult {
-    if (typeof requestedModel !== "string" || requestedModel.trim().length === 0) {
-      return { ok: false, message: "Missing or invalid model parameter" };
-    }
-
-    const provider = this.modelRegistry.findProvider(requestedModel);
-    if (provider) {
-      return { ok: true, provider, requestedModel };
-    }
-
-    const enabledProviders = this.modelRegistry.listProviders().map(item => item.id);
-    const suffix = enabledProviders.length > 0
-      ? `Enabled providers: ${enabledProviders.join(", ")}.`
-      : "No model providers are enabled.";
+    const access = this.modelRegistry.resolveProviderAccess(requestedModel);
+    if (!access.ok) return access;
     return {
-      ok: false,
-      message: `Unsupported model '${requestedModel}'. ${suffix}`,
+      ok: true,
+      provider: access.provider,
+      requestedModel: access.requestedModel,
     };
   }
 
@@ -356,7 +346,7 @@ export class ResponsesService {
       return { modelId: requestedModel, providerId };
     }
 
-    const catalogDefaultModel = this.modelRegistry.listRoutes()[0]?.slug;
+    const catalogDefaultModel = this.modelRegistry.listEnabledRoutes()[0]?.slug;
     if (!catalogDefaultModel || requestedModel !== catalogDefaultModel) {
       return { modelId: requestedModel, providerId };
     }
@@ -371,7 +361,11 @@ export class ResponsesService {
       return { modelId: requestedModel, providerId };
     }
 
-    const targetProvider = this.modelRegistry.findProvider(preferredModel);
+    const preferredStatus = this.modelRegistry.getModelStatus(preferredModel);
+    if (preferredStatus.status !== "enabled" || !preferredStatus.providerId) {
+      return { modelId: requestedModel, providerId };
+    }
+    const targetProvider = this.modelRegistry.getProvider(preferredStatus.providerId);
     if (!targetProvider) {
       return { modelId: requestedModel, providerId };
     }

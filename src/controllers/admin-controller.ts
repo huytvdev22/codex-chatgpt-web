@@ -1,7 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { activeWebTurnRegistry } from "../adapters/web";
+import { activeWebTurnRegistry, ProviderBusyError } from "../adapters/web";
+import { readCodexSubagentProtocol } from "../codex-integration";
 import type { AppConfig } from "../config";
+import { ModelConfigError, type ModelOverridePatch } from "../models/model-config-store";
+import { ModelManagementService } from "../services/model-management-service";
 import { VERSION } from "../version";
 import type { HttpTurnCounter, NativeCodexTurnIdentity } from "./http-turn-counter";
 import type { ModelsMetricsSnapshot } from "./models-controller";
@@ -15,15 +18,21 @@ export interface AdminControllerOptions {
   isDraining: () => boolean;
   setDraining: (next: boolean) => void;
   shutdown: () => void;
+  modelManagementService?: ModelManagementService;
 }
 
 /**
  * Controller xử lý các endpoint vận hành, chẩn đoán và điều khiển vòng đời server:
  * `/docs`, `/swagger`, `/healthz`, `/admin/drain`, `/admin/resume`, `/admin/cancel-turn`,
- * `/admin/interrupt-turn`, `/admin/cancel-turns`, `/admin/shutdown`.
+ * `/admin/interrupt-turn`, `/admin/cancel-turns`, `/admin/shutdown`, `/admin/models/*`.
  */
 export class AdminController {
-  constructor(private readonly options: AdminControllerOptions) {}
+  private readonly modelManagementService: ModelManagementService;
+
+  constructor(private readonly options: AdminControllerOptions) {
+    this.modelManagementService =
+      options.modelManagementService ?? new ModelManagementService();
+  }
 
   private isAuthorized(req: Request): boolean {
     const header = req.headers.get("authorization") ?? "";
@@ -200,6 +209,189 @@ export class AdminController {
       accepting_turns: false,
       ...current,
     });
+  }
+
+  private resolveCatalogConfig(): AppConfig {
+    try {
+      return {
+        ...this.options.config,
+        subagentProtocol: readCodexSubagentProtocol(this.options.config.subagentProtocol),
+      };
+    } catch {
+      return this.options.config;
+    }
+  }
+
+  private handleModelError(error: unknown): Response {
+    if (error instanceof ProviderBusyError) {
+      return Response.json(
+        {
+          status: "error",
+          code: "PROVIDER_BUSY",
+          providerId: error.providerId,
+          error: error.message,
+        },
+        { status: 409 },
+      );
+    }
+    if (error instanceof ModelConfigError) {
+      return Response.json(
+        {
+          status: "error",
+          code: error.code,
+          error: error.message,
+        },
+        { status: error.statusCode },
+      );
+    }
+    return Response.json(
+      {
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
+  }
+
+  /** Lấy snapshot danh mục model & trạng thái ON/OFF (`GET /admin/models`). */
+  public handleGetModels(req: Request): Response {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    return Response.json({
+      status: "ok",
+      snapshot: this.modelManagementService.getSnapshot(),
+    });
+  }
+
+  /** Cập nhật bật/tắt hoặc override metadata của một model (`PUT /admin/models/override`). */
+  public async handleUpdateModelOverride(req: Request): Promise<Response> {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    let slug = "";
+    let patch: ModelOverridePatch = {};
+    try {
+      const body = await req.json() as { slug?: unknown; patch?: unknown };
+      slug = typeof body?.slug === "string" ? body.slug.trim() : "";
+      if (!slug) throw new Error("'slug' is required");
+      if (!body?.patch || typeof body.patch !== "object" || Array.isArray(body.patch)) {
+        throw new Error("'patch' must be a JSON object");
+      }
+      patch = body.patch as ModelOverridePatch;
+    } catch (error) {
+      return Response.json(
+        { status: "error", error: error instanceof Error ? error.message : String(error) },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const snapshot = this.modelManagementService.updateOverride(
+        slug,
+        patch,
+        this.resolveCatalogConfig(),
+      );
+      return Response.json({ status: "ok", snapshot });
+    } catch (error) {
+      return this.handleModelError(error);
+    }
+  }
+
+  /** Bật/tắt toàn bộ model khả dụng của một provider (`PUT /admin/models/provider-toggle`). */
+  public async handleToggleProviderModels(req: Request): Promise<Response> {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    let providerId = "";
+    let enabled = true;
+    try {
+      const body = await req.json() as { providerId?: unknown; enabled?: unknown };
+      providerId = typeof body?.providerId === "string" ? body.providerId.trim() : "";
+      if (!providerId) throw new Error("'providerId' is required");
+      if (typeof body?.enabled !== "boolean") throw new Error("'enabled' must be a boolean");
+      enabled = body.enabled;
+    } catch (error) {
+      return Response.json(
+        { status: "error", error: error instanceof Error ? error.message : String(error) },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const snapshot = this.modelManagementService.toggleProvider(
+        providerId,
+        enabled,
+        this.resolveCatalogConfig(),
+      );
+      return Response.json({ status: "ok", snapshot });
+    } catch (error) {
+      return this.handleModelError(error);
+    }
+  }
+
+  /** Khôi phục 1 model hoặc toàn bộ danh mục về mặc định (`POST /admin/models/reset`). */
+  public async handleResetModels(req: Request): Promise<Response> {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    let slug: string | undefined;
+    try {
+      const text = await req.text();
+      if (text.trim()) {
+        const body = JSON.parse(text) as { slug?: unknown };
+        if (body.slug !== undefined) {
+          if (typeof body.slug !== "string" || !body.slug.trim()) {
+            throw new Error("'slug' must be a non-empty string when provided");
+          }
+          slug = body.slug.trim();
+        }
+      }
+    } catch (error) {
+      return Response.json(
+        { status: "error", error: error instanceof Error ? error.message : String(error) },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const config = this.resolveCatalogConfig();
+      const snapshot = slug
+        ? this.modelManagementService.resetModel(slug, config)
+        : this.modelManagementService.resetAll(config);
+      return Response.json({ status: "ok", snapshot });
+    } catch (error) {
+      return this.handleModelError(error);
+    }
+  }
+
+  /** Kích hoạt Auto-Discovery quét model sống cho 1 hoặc tất cả provider (`POST /admin/models/refresh`). */
+  public async handleRefreshModels(req: Request): Promise<Response> {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    let providerId: string | undefined;
+    try {
+      const text = await req.text();
+      if (text.trim()) {
+        const body = JSON.parse(text) as { providerId?: unknown };
+        if (body.providerId !== undefined) {
+          if (typeof body.providerId !== "string" || !body.providerId.trim()) {
+            throw new Error("'providerId' must be a non-empty string when provided");
+          }
+          providerId = body.providerId.trim();
+        }
+      }
+    } catch (error) {
+      return Response.json(
+        { status: "error", error: error instanceof Error ? error.message : String(error) },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const outcome = await this.modelManagementService.refreshModels(
+        providerId,
+        this.resolveCatalogConfig(),
+        req.signal,
+      );
+      return Response.json({
+        status: "ok",
+        ...outcome,
+      });
+    } catch (error) {
+      return this.handleModelError(error);
+    }
   }
 }
 

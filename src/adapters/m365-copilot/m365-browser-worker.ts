@@ -7,9 +7,9 @@ import {
   type BrowserCompletionContext,
 } from "../web/browser";
 import {
-  ensureM365CapabilityMode,
-  resolveM365CapabilityMode,
+  ensureM365CapabilityTarget,
 } from "./capability-picker";
+import { M365ModelProvider } from "./model-provider";
 import { attachFilesViaPlusMenu, m365ImageFilePayloads } from "./attachments";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import {
@@ -686,13 +686,13 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
     });
 
     if (options.modelSlug) {
-      const targetMode = resolveM365CapabilityMode(
+      const target = M365ModelProvider.getInstance().resolveCapabilityTarget(
         options.modelSlug,
         options.reasoning,
       );
-      await ensureM365CapabilityMode(page, targetMode).catch(error => {
+      await ensureM365CapabilityTarget(page, target).catch(error => {
         console.warn(
-          `[m365-worker] Warning: Failed to ensure capability mode '${targetMode}':`,
+          `[m365-worker] Warning: Failed to ensure capability mode '${target.mode}':`,
           error,
         );
       });

@@ -11,6 +11,7 @@ import { computeAccurateTurnUsage } from "../../usage";
 import { CodexRawPayload } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
+import { AiStudioModelDiscovery } from "./model-discovery";
 import { AiStudioBrowserWorker } from "./ai-studio-browser-worker";
 import {
   AI_STUDIO_DEFAULT_TTS_MODEL,
@@ -59,6 +60,12 @@ export {
   parseAiStudioConversationId,
   waitForAiStudioConversationId,
 } from "./conversation-url";
+export {
+  AiStudioModelDiscovery,
+  buildAiStudioDiscoveredModels,
+  normalizeAiStudioRemoteModelId,
+  parseAiStudioContextWindow,
+} from "./model-discovery";
 
 function isEphemeralStructuredTurn(
   parsed?: CodexParsedRequest,
@@ -87,6 +94,7 @@ export class AiStudioAdapter extends WebProviderAdapter {
 
   constructor() {
     const worker = new AiStudioBrowserWorker();
+    const modelDiscovery = new AiStudioModelDiscovery();
     super({
       id: "ai-studio",
       assistantName: "Gemini",
@@ -206,6 +214,7 @@ export class AiStudioAdapter extends WebProviderAdapter {
             images: attachments,
           });
         },
+        discoverModels: async ({ page }) => await modelDiscovery.discoverModels(page),
       },
       response: {
         createCallId: () => `call_aistudio_${Math.random().toString(36).slice(2, 10)}`,

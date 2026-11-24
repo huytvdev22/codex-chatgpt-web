@@ -40,6 +40,7 @@ import {
   parseChatGptConversationId,
   waitForChatGptConversationId,
 } from "./conversation-url";
+import { ChatGptModelDiscovery } from "./model-discovery";
 import {
   CHATGPT_DEFAULT_MODEL_SLUG,
   ChatGptModelProvider,
@@ -92,6 +93,12 @@ export {
   type ChatGptThinkingEffort,
 };
 export { CHATGPT_SELECTORS };
+export {
+  buildChatGptDiscoveredModels,
+  ChatGptModelDiscovery,
+  inferChatGptShortUiVersion,
+  normalizeChatGptSlugFromLabel,
+} from "./model-discovery";
 
 function isEphemeralStructuredTurn(
   parsed?: CodexParsedRequest,
@@ -119,6 +126,7 @@ export class ChatGptAdapter extends WebProviderAdapter {
 
   constructor() {
     const worker = new ChatGptBrowserWorker();
+    const modelDiscovery = new ChatGptModelDiscovery();
     super({
       id: "chatgpt",
       assistantName: "ChatGPT",
@@ -255,6 +263,7 @@ export class ChatGptAdapter extends WebProviderAdapter {
             images: attachments,
           });
         },
+        discoverModels: async ({ page }) => await modelDiscovery.discoverModels(page),
       },
       response: {
         createCallId: () =>

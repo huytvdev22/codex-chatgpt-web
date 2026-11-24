@@ -62,6 +62,7 @@ class IpcRouter {
       personalizationStore,
       skillsStore,
       usageStore,
+      modelsStore,
       launcherProfile,
       isDevProfile,
       coreHome,
@@ -90,7 +91,7 @@ class IpcRouter {
       "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
       "launcher:use-saved-chats",
       "launcher:connector-name", "launcher:doctor", "launcher:open-swagger", "launcher:cancel-turns",
-      "launcher:browser-smoke",
+      "launcher:browser-smoke", "launcher:models-refresh",
       "launcher:update-install", "launcher:complete-onboarding",
     ]);
     const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
@@ -468,6 +469,49 @@ class IpcRouter {
       const cleared = usageStore.clearHistory(typeof range === "string" ? range : "today");
       send("launcher:usage-changed", cleared);
       return cleared;
+    });
+    handle("launcher:models-get", async () => {
+      if (!modelsStore) throw new Error("Models store is unavailable");
+      return await modelsStore.getSnapshot();
+    });
+    handle("launcher:models-update-override", async (_event, slug, patch) => {
+      if (!modelsStore) throw new Error("Models store is unavailable");
+      if (typeof slug !== "string" || !slug.trim()) throw new Error("Model slug is required");
+      const snapshot = await modelsStore.updateOverride(slug.trim(), patch && typeof patch === "object" ? patch : {});
+      send("launcher:models-changed", snapshot);
+      return snapshot;
+    });
+    handle("launcher:models-toggle-provider", async (_event, providerId, enabled) => {
+      if (!modelsStore) throw new Error("Models store is unavailable");
+      if (typeof providerId !== "string" || !providerId.trim()) throw new Error("Provider id is required");
+      const snapshot = await modelsStore.toggleProvider(providerId.trim(), enabled === true);
+      send("launcher:models-changed", snapshot);
+      return snapshot;
+    });
+    handle("launcher:models-reset", async (_event, slug) => {
+      if (!modelsStore) throw new Error("Models store is unavailable");
+      const cleanSlug = typeof slug === "string" && slug.trim() ? slug.trim() : undefined;
+      const snapshot = await modelsStore.resetModels(cleanSlug);
+      send("launcher:models-changed", snapshot);
+      return snapshot;
+    });
+    handle("launcher:models-refresh", async (_event, providerId) => {
+      if (!modelsStore) throw new Error("Models store is unavailable");
+      const cleanProvider = typeof providerId === "string" && providerId.trim() ? providerId.trim() : undefined;
+      const outcome = await modelsStore.refreshModels(cleanProvider);
+      if (outcome?.snapshot) {
+        send("launcher:models-changed", outcome.snapshot);
+      }
+      return outcome;
+    });
+    handle("launcher:models-open-config", async () => {
+      if (!modelsStore) throw new Error("Models store is unavailable");
+      const configPath = modelsStore.ensureConfigFileExists();
+      const errorMessage = await shell.openPath(configPath);
+      if (errorMessage) {
+        throw new Error(errorMessage);
+      }
+      return { ok: true, path: configPath };
     });
     handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
     handle("launcher:update-install", async () => {

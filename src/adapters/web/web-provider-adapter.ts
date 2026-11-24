@@ -4,6 +4,7 @@ import type {
   RawTurnRequest,
   RawTurnResult,
 } from "../base";
+import type { DiscoveredModelEntry } from "../../models/types";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { LocalBrowserRuntime } from "./local-browser-runtime";
 import type { WebProviderDefinition } from "./definition";
@@ -38,6 +39,10 @@ export class WebProviderAdapter implements ProviderAdapter {
     incoming: IncomingMeta,
   ): Promise<RawTurnResult> {
     return await this.engine.runRawTurn(request, incoming);
+  }
+
+  async discoverModels(incoming?: IncomingMeta): Promise<DiscoveredModelEntry[]> {
+    return await this.engine.discoverModels(incoming);
   }
 
   async close(): Promise<void> {

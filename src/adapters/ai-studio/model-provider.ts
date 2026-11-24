@@ -1,9 +1,19 @@
 import { BaseModelProvider } from "../../models/base-model-provider";
-import type { ModelRouteDefinition } from "../../models/types";
+import { ModelConfigStore } from "../../models/model-config-store";
+import type {
+  DiscoveredModelEntry,
+  ModelRouteDefinition,
+} from "../../models/types";
 
 export type AiStudioThinkingLevel = "Low" | "Medium" | "High";
 
 export type AiStudioModelRouteDefinition = ModelRouteDefinition<AiStudioThinkingLevel>;
+
+const AI_STUDIO_REASONING_LEVELS: AiStudioModelRouteDefinition["reasoningLevels"] = [
+  { effort: "low", description: "Low thinking", mode: "Low" },
+  { effort: "medium", description: "Medium thinking", mode: "Medium" },
+  { effort: "high", description: "High thinking", mode: "High" },
+];
 
 /**
  * Danh mục model và ánh xạ Thinking Level cho Google AI Studio Web (`aistudio.google.com`).
@@ -13,7 +23,7 @@ export class AiStudioModelProvider extends BaseModelProvider<AiStudioModelRouteD
 
   public readonly id = "ai-studio";
   public readonly exactSlugs = ["ai-studio/gemini-4-hydrogen"] as const;
-  public readonly slugPrefixes = [] as const;
+  public readonly slugPrefixes = ["ai-studio/"] as const;
   public readonly routes: readonly AiStudioModelRouteDefinition[] = [
     {
       slug: "ai-studio/gemini-4-hydrogen",
@@ -24,11 +34,7 @@ export class AiStudioModelProvider extends BaseModelProvider<AiStudioModelRouteD
       effectiveContextWindowPercent: 90,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "high",
-      reasoningLevels: [
-        { effort: "low", description: "Low thinking", mode: "Low" },
-        { effort: "medium", description: "Medium thinking", mode: "Medium" },
-        { effort: "high", description: "High thinking", mode: "High" },
-      ],
+      reasoningLevels: AI_STUDIO_REASONING_LEVELS,
     },
   ];
 
@@ -36,11 +42,38 @@ export class AiStudioModelProvider extends BaseModelProvider<AiStudioModelRouteD
     return AiStudioModelProvider.instance;
   }
 
+  public override buildRouteFromDiscovered(
+    entry: DiscoveredModelEntry,
+  ): AiStudioModelRouteDefinition | undefined {
+    const cleanRemoteId =
+      entry.remoteModelId?.trim() ||
+      entry.slug.replace(/^ai-studio\//i, "").trim();
+    if (!cleanRemoteId) return undefined;
+
+    const contextWindow = entry.contextWindow ?? 1_000_000;
+    const effectiveContextWindowPercent = 90;
+    return {
+      slug: entry.slug.startsWith("ai-studio/") ? entry.slug : `ai-studio/${cleanRemoteId}`,
+      remoteModelId: cleanRemoteId,
+      displayName: entry.displayName,
+      description: entry.description || `${entry.displayName} qua Google AI Studio`,
+      contextWindow,
+      autoCompactTokenLimit: Math.round(contextWindow * (effectiveContextWindowPercent / 100)),
+      effectiveContextWindowPercent,
+      inputModalities: entry.inputModalities ?? ["text", "image"],
+      defaultReasoningLevel: entry.defaultReasoningLevel ?? "high",
+      reasoningLevels: AI_STUDIO_REASONING_LEVELS,
+    };
+  }
+
   public resolveThinkingLevel(
     modelId = "ai-studio/gemini-4-hydrogen",
     requestedEffort?: string,
   ): AiStudioThinkingLevel {
-    return this.resolveReasoningMode(modelId, requestedEffort) ?? "High";
+    const resolved =
+      (ModelConfigStore.getInstance().findResolvedRoute(this, modelId) as AiStudioModelRouteDefinition | undefined) ??
+      this.findRoute(modelId) ??
+      this.routes[0]!;
+    return this.resolveReasoning(resolved, requestedEffort).mode ?? "High";
   }
 }
-

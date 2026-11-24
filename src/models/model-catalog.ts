@@ -12,7 +12,7 @@ import type { JsonObject, ModelRouteDefinition } from "./types";
  *
  * Nguyên tắc hoạt động:
  * - **Adapter-only (không có native fallback):** Chỉ expose các model đến từ adapter đã đăng ký
- *   trong `ModelRegistry` (không trộn model gốc của OpenAI hay đọc `~/.codex/models_cache.json`).
+ *   trong `ModelRegistry` và đang bật/khả dụng theo `ModelConfigStore` (`models.json`).
  * - Giao toàn bộ phần dựng entry cho `provider.buildCatalogModel()` và phần kiểm tra đồng bộ
  *   cho `provider.isCatalogSynced()` (Template Method trên `BaseModelProvider`).
  */
@@ -47,12 +47,12 @@ export class ModelCatalog {
     return provider.buildCatalogModel(route, config);
   }
 
-  /** Tổng hợp toàn bộ `{ models }` từ mọi provider đang đăng ký trong `ModelRegistry`. */
+  /** Tổng hợp toàn bộ `{ models }` từ các route đang bật của mọi provider trong `ModelRegistry`. */
   public buildCatalog(config: AppConfig): { models: JsonObject[] } {
     const seen = new Set<string>();
     const models: JsonObject[] = [];
     for (const provider of this.registry.listProviders()) {
-      for (const route of provider.routes) {
+      for (const route of this.registry.listEnabledRoutes(provider.id)) {
         if (seen.has(route.slug)) continue;
         seen.add(route.slug);
         models.push(provider.buildCatalogModel(route, config));
@@ -83,7 +83,7 @@ export class ModelCatalog {
     return catalog;
   }
 
-  /** Đảm bảo file `catalog.json` tồn tại và đồng bộ với các provider hiện tại (tự rebuild nếu bị cũ hoặc lẫn model lạ). */
+  /** Đảm bảo file `catalog.json` tồn tại và đồng bộ với cấu hình model hiện tại. */
   public ensureManagedCatalogFile(
     config: AppConfig,
     catalogPath = this.getManagedCatalogPath(),
@@ -99,7 +99,7 @@ export class ModelCatalog {
     return catalogPath;
   }
 
-  /** Xác minh file `catalog.json` hiện có không chứa model lạ ngoài registry và đạt chuẩn `isCatalogSynced` của từng provider. */
+  /** Xác minh file `catalog.json` hiện có khớp chính xác với danh sách model đang bật từng provider. */
   private hasSyncedProviderSurfaces(catalogPath: string): boolean {
     try {
       const raw: unknown = JSON.parse(readFileSync(catalogPath, "utf8"));
@@ -116,7 +116,10 @@ export class ModelCatalog {
       }
 
       return this.registry.listProviders().every(provider =>
-        provider.isCatalogSynced(groupedByProvider.get(provider.id) ?? []),
+        provider.isCatalogSynced(
+          groupedByProvider.get(provider.id) ?? [],
+          this.registry.listEnabledRoutes(provider.id),
+        ),
       );
     } catch {
       return false;

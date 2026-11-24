@@ -45,6 +45,7 @@ describe("Web Adapter Architecture Integrity & CI Gate", () => {
           "m365-browser-worker.ts",
           "m365-clipboard-salvage.ts",
           "m365-dom-observer.ts",
+          "model-discovery.ts",
           "model-provider.ts",
         ]);
       }

@@ -148,18 +148,12 @@ export class RawResponsesService {
       };
     }
 
-    if (typeof body.model !== "string" || body.model.trim().length === 0) {
-      return { ok: false, message: "Missing or invalid 'model' parameter" };
+    const access = this.modelRegistry.resolveProviderAccess(body.model);
+    if (!access.ok) {
+      return { ok: false, message: access.message };
     }
-    const requestedModel = body.model.trim();
-    const provider = this.modelRegistry.findProvider(requestedModel);
-    if (!provider) {
-      const enabledProviders = this.modelRegistry.listProviders().map(item => item.id);
-      const suffix = enabledProviders.length > 0
-        ? `Enabled providers: ${enabledProviders.join(", ")}.`
-        : "No model providers are enabled.";
-      return { ok: false, message: `Unsupported model '${requestedModel}'. ${suffix}` };
-    }
+    const requestedModel = access.requestedModel;
+    const provider = access.provider;
 
     if (typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
       return { ok: false, message: "Missing or invalid 'prompt' parameter (must be a non-empty string)" };

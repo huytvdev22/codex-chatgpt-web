@@ -131,6 +131,21 @@ export function startServer(
     if (req.method === "POST" && url.pathname === "/admin/shutdown") {
       return adminController.handleShutdown(req);
     }
+    if (req.method === "GET" && url.pathname === "/admin/models") {
+      return adminController.handleGetModels(req);
+    }
+    if (req.method === "PUT" && url.pathname === "/admin/models/override") {
+      return await adminController.handleUpdateModelOverride(req);
+    }
+    if (req.method === "PUT" && url.pathname === "/admin/models/provider-toggle") {
+      return await adminController.handleToggleProviderModels(req);
+    }
+    if (req.method === "POST" && url.pathname === "/admin/models/reset") {
+      return await adminController.handleResetModels(req);
+    }
+    if (req.method === "POST" && url.pathname === "/admin/models/refresh") {
+      return await adminController.handleRefreshModels(req);
+    }
     if (req.method === "GET" && url.pathname === "/v1/models") {
       return await modelsController.handleRoute(req, config, httpTurns, draining);
     }

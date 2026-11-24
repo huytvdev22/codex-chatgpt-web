@@ -1,3 +1,4 @@
+import type { DiscoveredModelEntry } from "../models/types";
 import type { AdapterEvent, CodexParsedRequest } from "../types";
 
 /** Metadata about the caller's incoming request, for auth-forwarding adapters. */
@@ -59,6 +60,7 @@ export interface ProviderAdapter {
     request: SpeechTurnRequest,
     incoming: IncomingMeta,
   ): Promise<SpeechTurnResult>;
+  discoverModels?(incoming?: IncomingMeta): Promise<DiscoveredModelEntry[]>;
 }
 
 /**
