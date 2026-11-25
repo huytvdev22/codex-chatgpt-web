@@ -276,7 +276,7 @@ test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-prov
   const { createDefaultProviderRegistry } = require("../electron/browser/browser-host.cjs");
 
   const registry = createDefaultProviderRegistry();
-  assert.deepEqual(registry.listIds(), ["m365", "ai-studio", "chatgpt"]);
+  assert.deepEqual(registry.listIds(), ["m365", "ai-studio", "gemini", "chatgpt"]);
 
   const provider = new AiStudioBrowserProvider();
   const sampleId = "1f4VKkbKG5PxctRMKVZN4bR3TRBcc1ROb";
@@ -324,9 +324,50 @@ test("AiStudioBrowserProvider & createDefaultProviderRegistry support multi-prov
   const devRegistry = createDefaultProviderRegistry({ profile: "development" });
   assert.equal(devRegistry.get("m365").partition, "persist:codex-web-gpt-dev-m365");
   assert.equal(devRegistry.get("ai-studio").partition, "persist:codex-web-gpt-dev-ai-studio");
+  assert.equal(devRegistry.get("gemini").partition, "persist:codex-web-gpt-dev-gemini");
   assert.equal(devRegistry.get("chatgpt").partition, "persist:codex-web-gpt-dev-chatgpt");
   assert.equal(provider.maxSurfaces, 8);
   assert.equal(provider.supportsExternalChromeLogin(), true);
+});
+
+test("GeminiBrowserProvider hỗ trợ partition đa profile, /u/{n}/app/{id} và bỏ qua SignOutOptions khi probe auth", async () => {
+  const {
+    GEMINI_CHAT_URL,
+    GEMINI_ORIGIN,
+    GEMINI_PARTITION,
+    GeminiBrowserProvider,
+  } = require("../electron/browser/providers/gemini/gemini-browser-provider.cjs");
+  const provider = new GeminiBrowserProvider();
+  const sampleId = "722895cc1dfdbb27";
+
+  assert.equal(provider.id, "gemini");
+  assert.equal(provider.homeUrl, GEMINI_CHAT_URL);
+  assert.equal(provider.origin, GEMINI_ORIGIN);
+  assert.equal(provider.partition, GEMINI_PARTITION);
+  assert.equal(provider.partitionForProfile("default"), GEMINI_PARTITION);
+  assert.equal(provider.partitionForProfile("p2"), `${GEMINI_PARTITION}-p2`);
+  assert.equal(provider.normalizeConversationId(sampleId), sampleId);
+  assert.equal(provider.normalizeConversationId("gems"), null);
+  assert.equal(provider.parseConversationId(`https://gemini.google.com/app/${sampleId}`), sampleId);
+  assert.equal(provider.parseConversationId(`https://gemini.google.com/u/0/app/${sampleId}`), sampleId);
+  assert.equal(provider.conversationUrl(sampleId), `https://gemini.google.com/app/${sampleId}`);
+  assert.equal(provider.isAllowedNavigation(`https://gemini.google.com/app/${sampleId}`), true);
+  assert.equal(provider.isAllowedNavigation("https://evil.example.com"), false);
+  assert.equal(provider.allowedAuthUrl("https://accounts.google.com/signin"), true);
+  assert.equal(provider.supportsExternalChromeLogin(), true);
+
+  const authed = await provider.probeAuthentication({
+    executeJavaScript: async () => ({
+      url: GEMINI_CHAT_URL,
+      composer: true,
+      signInButton: false,
+      accountControl: true,
+      authenticated: true,
+      readyState: "complete",
+    }),
+    getURL: () => GEMINI_CHAT_URL,
+  });
+  assert.equal(authed.authenticated, true);
 });
 
 test("BaseBrowserProvider.prepareAllocation ưu tiên evict tab đã có conversationId trước tab chưa có ID", () => {

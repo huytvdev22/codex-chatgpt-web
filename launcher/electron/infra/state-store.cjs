@@ -35,6 +35,10 @@ function cloneDefaultProviderProfiles() {
       activeProfileId: DEFAULT_PROVIDER_PROFILE_ID,
       profiles: [{ id: DEFAULT_PROVIDER_PROFILE_ID, name: "Default", authenticated: false }],
     },
+    gemini: {
+      activeProfileId: DEFAULT_PROVIDER_PROFILE_ID,
+      profiles: [{ id: DEFAULT_PROVIDER_PROFILE_ID, name: "Default", authenticated: false }],
+    },
     chatgpt: {
       activeProfileId: DEFAULT_PROVIDER_PROFILE_ID,
       profiles: [{ id: DEFAULT_PROVIDER_PROFILE_ID, name: "Default", authenticated: false }],

@@ -14,7 +14,7 @@ test("launcher models store manages models.json offline and prevents disabling t
   try {
     const store = createModelsStore(file, () => null);
     const initial = await store.getSnapshot();
-    assert.equal(initial.totalEnabledCount, 6);
+    assert.equal(initial.totalEnabledCount, 7);
 
     const afterEdit = await store.updateOverride("chatgpt/gpt-6", {
       displayName: "GPT-6 Offline Custom",
@@ -33,6 +33,7 @@ test("launcher models store manages models.json offline and prevents disabling t
 
     await store.toggleProvider("m365-copilot", false);
     await store.toggleProvider("ai-studio", false);
+    await store.toggleProvider("gemini", false);
     await store.updateOverride("chatgpt/gpt-6", { enabled: false });
     await store.updateOverride("chatgpt/gpt-5.6-sol", { enabled: false });
 

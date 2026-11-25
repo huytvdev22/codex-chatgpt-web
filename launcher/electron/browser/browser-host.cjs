@@ -14,6 +14,9 @@ const {
   AiStudioBrowserProvider,
 } = require("./providers/ai-studio/ai-studio-browser-provider.cjs");
 const {
+  GeminiBrowserProvider,
+} = require("./providers/gemini/gemini-browser-provider.cjs");
+const {
   ChatGptBrowserProvider,
 } = require("./providers/chatgpt/chatgpt-browser-provider.cjs");
 const {
@@ -84,6 +87,10 @@ function createDefaultProviderRegistry({ descriptorPath = null, profile = "produ
   registry.register(new AiStudioBrowserProvider({
     descriptorPath,
     partition: profile === "development" ? "persist:codex-web-gpt-dev-ai-studio" : undefined,
+  }));
+  registry.register(new GeminiBrowserProvider({
+    descriptorPath,
+    partition: profile === "development" ? "persist:codex-web-gpt-dev-gemini" : undefined,
   }));
   registry.register(new ChatGptBrowserProvider({
     descriptorPath,

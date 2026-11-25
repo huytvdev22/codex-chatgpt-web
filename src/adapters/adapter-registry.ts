@@ -1,6 +1,7 @@
 import type { ProviderAdapter } from "./base";
 import { createAiStudioAdapter } from "./ai-studio";
 import { createChatGptAdapter } from "./chatgpt";
+import { createGeminiAdapter } from "./gemini";
 import { createM365CopilotAdapter } from "./m365-copilot";
 
 export type ProviderAdapterFactory = () => ProviderAdapter;
@@ -16,6 +17,7 @@ export class AdapterRegistry {
   private static readonly defaultInstance = new AdapterRegistry([
     ["m365-copilot", createM365CopilotAdapter],
     ["ai-studio", createAiStudioAdapter],
+    ["gemini", createGeminiAdapter],
     ["chatgpt", createChatGptAdapter],
   ]);
 

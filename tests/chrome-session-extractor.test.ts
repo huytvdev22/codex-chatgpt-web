@@ -162,4 +162,11 @@ describe("chrome-session-extractor", () => {
     ]);
     expect(filtered.localStorage).toEqual([{ name: "oai/apps/lastModel", value: "gpt-6.2" }]);
   });
+
+  test("hỗ trợ allowlist domain cho Gemini", () => {
+    const geminiDomains = resolveChromeCookieRootDomains("gemini");
+    expect(isAllowedChromeSessionHost("gemini.google.com", geminiDomains)).toBe(true);
+    expect(isAllowedChromeSessionHost(".google.com", geminiDomains)).toBe(true);
+    expect(isAllowedChromeSessionHost("chatgpt.com", geminiDomains)).toBe(false);
+  });
 });

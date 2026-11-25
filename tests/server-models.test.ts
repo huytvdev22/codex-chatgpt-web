@@ -46,6 +46,7 @@ test("returns only registered adapter models locally without native fallback", a
     "m365-copilot/gpt-5.6",
     "m365-copilot",
     "ai-studio/gemini-4-hydrogen",
+    "gemini",
     "chatgpt/gpt-6.2",
     "chatgpt/gpt-6",
     "chatgpt/gpt-5.6-sol",

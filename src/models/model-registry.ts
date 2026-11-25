@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { M365ModelProvider } from "../adapters/m365-copilot/model-provider";
 import { AiStudioModelProvider } from "../adapters/ai-studio/model-provider";
+import { GeminiModelProvider } from "../adapters/gemini/model-provider";
 import { ChatGptModelProvider } from "../adapters/chatgpt/model-provider";
 
 /**
@@ -20,6 +21,7 @@ export class ModelRegistry {
   private static readonly defaultInstance = new ModelRegistry([
     M365ModelProvider.getInstance(),
     AiStudioModelProvider.getInstance(),
+    GeminiModelProvider.getInstance(),
     ChatGptModelProvider.getInstance(),
   ]);
 

@@ -28,6 +28,7 @@ function messageOf(cause: unknown): string {
 function providerDisplayName(providerId: string): string {
   if (providerId === "m365-copilot") return "M365 Copilot";
   if (providerId === "ai-studio") return "Google AI Studio";
+  if (providerId === "gemini") return "Gemini Web";
   if (providerId === "chatgpt") return "ChatGPT Web";
   return providerId;
 }

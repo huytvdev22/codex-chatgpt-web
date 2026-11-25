@@ -4,6 +4,7 @@ import {
   buildChatGptDiscoveredModels,
   normalizeChatGptSlugFromLabel,
 } from "../src/adapters/chatgpt";
+import { buildGeminiDiscoveredModels } from "../src/adapters/gemini";
 import {
   buildM365DiscoveredModels,
   M365ModelProvider,
@@ -140,5 +141,41 @@ describe("Adapter Model Discovery Parsers", () => {
 
     const route = M365ModelProvider.getInstance().buildRouteFromDiscovered(discoveredGpt62);
     expect(route?.capabilityMeta?.thinkIconTestId).toBe("checkmark-Gpt_6_2_Reasoning");
+  });
+
+  test("Gemini: chuẩn hóa Mode Picker (Auto / 4 Hydrogen / 4 Neon) và mode cổ điển (Fast / Thinking / Pro)", () => {
+    const newUiModels = buildGeminiDiscoveredModels(
+      [
+        { label: "Auto", sublabel: "Adapts to your needs", modeId: "8c46e95b1a07cecc", isChecked: false },
+        { label: "Everyday help", sublabel: "4 Hydrogen", modeId: "56fdd199312815e2", isChecked: true },
+        { label: "Deeper analysis", sublabel: "4 Neon New", modeId: "e6fa609c3fa255c0", isChecked: false },
+      ],
+      true,
+    );
+    expect(newUiModels.map(m => m.slug)).toEqual([
+      "gemini/auto",
+      "gemini",
+      "gemini/4-neon",
+    ]);
+    expect(newUiModels[1]).toMatchObject({
+      slug: "gemini",
+      remoteModelId: "56fdd199312815e2",
+      isAccountDefault: true,
+    });
+    expect(newUiModels[2]).toMatchObject({
+      slug: "gemini/4-neon",
+      remoteModelId: "e6fa609c3fa255c0",
+      isAccountDefault: false,
+    });
+
+    const legacyUiModels = buildGeminiDiscoveredModels(
+      [
+        { label: "Fast", modeId: "fast" },
+        { label: "Thinking", modeId: "thinking", isChecked: true },
+        { label: "Pro", modeId: "pro" },
+      ],
+      false,
+    );
+    expect(legacyUiModels.map(m => m.slug)).toEqual(["gemini"]);
   });
 });

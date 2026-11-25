@@ -54,6 +54,22 @@ const BUILTIN_PROVIDERS = Object.freeze([
     ],
   },
   {
+    providerId: "gemini",
+    routes: [
+      {
+        slug: "gemini",
+        displayName: "Gemini Web",
+        description: "Gemini Web qua gemini.google.com",
+        contextWindow: 1_000_000,
+        autoCompactTokenLimit: 900_000,
+        effectiveContextWindowPercent: 90,
+        inputModalities: ["text", "image"],
+        defaultReasoningLevel: "medium",
+        supportedReasoningLevels: ["low", "medium", "high"],
+      },
+    ],
+  },
+  {
     providerId: "chatgpt",
     routes: [
       {

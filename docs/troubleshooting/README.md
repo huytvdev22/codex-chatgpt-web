@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **101** | Tích hợp Adapter Gemini Web (`gemini`) đa profile, Mode Picker, Auto-Discovery và Sign in with Chrome | `gemini`, `web`, `launcher`, `electron`, `chrome-login`, `profiles` | ⏳ Chờ User Test & Confirm | [101-add-gemini-web-adapter.md](./101-add-gemini-web-adapter.md) |
 | **100** | Menu quản lý Model, lưu trữ Overlay `models.json` và Auto-Discovery theo từng Adapter | `m365-copilot`, `ai-studio`, `chatgpt`, `web`, `server`, `launcher` | ✅ Đã Confirm | [100-model-catalog-management-and-auto-discovery.md](./100-model-catalog-management-and-auto-discovery.md) |
 | **099** | Treo 20s `waitForSelector` ở Turn 2 ChatGPT Plus (2 `ProseMirror`) & Turndown escape `\<webResponse>` | `chatgpt`, `web`, `playwright` | ✅ Đã Confirm | [099-chatgpt-plus-multi-composer-and-turndown-escape.md](./099-chatgpt-plus-multi-composer-and-turndown-escape.md) |
 | **098** | Treo `connectOverCDP` 20s khi đang ở provider Chrome Login chưa đăng nhập (`url: ""`) | `chatgpt`, `ai-studio`, `launcher`, `playwright` | ✅ Đã Confirm | [098-unauthenticated-external-login-empty-view-blocks-cdp.md](./098-unauthenticated-external-login-empty-view-blocks-cdp.md) |

@@ -35,6 +35,13 @@ export const DEFAULT_CHROME_COOKIE_ROOT_DOMAINS = [
 
 export const CHROME_COOKIE_ROOT_DOMAINS_BY_PROVIDER: Record<string, readonly string[]> = {
   "ai-studio": DEFAULT_CHROME_COOKIE_ROOT_DOMAINS,
+  gemini: [
+    "google.com",
+    "gemini.google.com",
+    "googleusercontent.com",
+    "gstatic.com",
+    "youtube.com",
+  ],
   chatgpt: [
     "chatgpt.com",
     "openai.com",

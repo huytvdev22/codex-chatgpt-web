@@ -6,6 +6,7 @@ import { AdapterRegistry } from "../src/adapters/adapter-registry";
 import { AiStudioModelProvider } from "../src/adapters/ai-studio/model-provider";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { ChatGptModelProvider } from "../src/adapters/chatgpt/model-provider";
+import { GeminiModelProvider } from "../src/adapters/gemini/model-provider";
 import { M365ModelProvider } from "../src/adapters/m365-copilot/model-provider";
 import { activeWebTurnRegistry } from "../src/adapters/web";
 import { defaultConfig } from "../src/config";
@@ -34,6 +35,7 @@ function createTestRuntime() {
     [
       M365ModelProvider.getInstance(),
       AiStudioModelProvider.getInstance(),
+      GeminiModelProvider.getInstance(),
       ChatGptModelProvider.getInstance(),
     ],
     store,
@@ -298,12 +300,12 @@ describe("Model Management Control Plane & /v1 + /v2 Enforcement", () => {
       );
       expect(resetRes.status).toBe(200);
       const resetJson = (await resetRes.json()) as { snapshot: { totalEnabledCount: number } };
-      expect(resetJson.snapshot.totalEnabledCount).toBe(6);
+      expect(resetJson.snapshot.totalEnabledCount).toBe(7);
 
       // Nếu catalogPath được tạo trong dir tạm, kiểm tra readFileSync không lỗi
       const savedPath = rt.modelCatalog.getManagedCatalogPath(rt.dir);
       rt.modelCatalog.buildAndSyncCatalog(rt.config, { catalogPath: savedPath });
-      expect(JSON.parse(readFileSync(savedPath, "utf8")).models).toHaveLength(6);
+      expect(JSON.parse(readFileSync(savedPath, "utf8")).models).toHaveLength(7);
     } finally {
       rt.cleanup();
     }
