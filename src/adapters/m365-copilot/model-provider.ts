@@ -36,8 +36,8 @@ export class M365ModelProvider extends BaseModelProvider<M365ModelRouteDefinitio
       slug: "m365-copilot/gpt-5.6",
       displayName: "M365 - GPT 5.6",
       description: "GPT 5.6 qua Microsoft 365 Copilot Web",
-      contextWindow: 100_000,
-      autoCompactTokenLimit: 90_000,
+      contextWindow: 1_000_000,
+      autoCompactTokenLimit: 900_000,
       effectiveContextWindowPercent: 90,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "low",
@@ -50,8 +50,8 @@ export class M365ModelProvider extends BaseModelProvider<M365ModelRouteDefinitio
       slug: "m365-copilot",
       displayName: "M365 Copilot",
       description: "Microsoft 365 Copilot Web",
-      contextWindow: 100_000,
-      autoCompactTokenLimit: 90_000,
+      contextWindow: 1_000_000,
+      autoCompactTokenLimit: 900_000,
       effectiveContextWindowPercent: 90,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "low",
@@ -71,7 +71,7 @@ export class M365ModelProvider extends BaseModelProvider<M365ModelRouteDefinitio
   ): M365ModelRouteDefinition | undefined {
     const slug = entry.slug.trim();
     if (!slug) return undefined;
-    const contextWindow = entry.contextWindow ?? 100_000;
+    const contextWindow = entry.contextWindow ?? 1_000_000;
     const effectiveContextWindowPercent = 90;
     return {
       slug,

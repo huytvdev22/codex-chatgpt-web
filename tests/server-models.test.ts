@@ -57,8 +57,8 @@ test("returns only registered adapter models locally without native fallback", a
 
   const m365Default = body.models.find(model => model.slug === "m365-copilot");
   expect(m365Default).toBeDefined();
-  expect(m365Default!.context_window).toBe(100_000);
-  expect(m365Default!.max_context_window).toBe(100_000);
+  expect(m365Default!.context_window).toBe(1_000_000);
+  expect(m365Default!.max_context_window).toBe(1_000_000);
 });
 
 test("M365 model catalog does not expose chatgpt-web routes even if legacy flags exist in loaded JSON", async () => {

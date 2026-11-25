@@ -75,7 +75,7 @@ export function buildChatGptDiscoveredModels(
       ...(shortUiVersion ? { shortUiVersion } : {}),
       ...(item.isAccountDefault !== undefined ? { isAccountDefault: item.isAccountDefault } : {}),
       ...(item.remoteModelId?.trim() ? { remoteModelId: item.remoteModelId.trim() } : {}),
-      contextWindow: 128_000,
+      contextWindow: 1_000_000,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "medium",
     });

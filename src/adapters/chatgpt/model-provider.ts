@@ -51,8 +51,8 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
       isAccountDefault: true,
       displayName: "ChatGPT - GPT-6.2",
       description: "GPT-6.2 qua ChatGPT Web",
-      contextWindow: 128_000,
-      autoCompactTokenLimit: 115_000,
+      contextWindow: 1_000_000,
+      autoCompactTokenLimit: 900_000,
       effectiveContextWindowPercent: 90,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "medium",
@@ -64,8 +64,8 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
       shortUiVersion: "6",
       displayName: "ChatGPT - GPT-6",
       description: "GPT-6 qua ChatGPT Web",
-      contextWindow: 128_000,
-      autoCompactTokenLimit: 115_000,
+      contextWindow: 1_000_000,
+      autoCompactTokenLimit: 900_000,
       effectiveContextWindowPercent: 90,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "medium",
@@ -77,8 +77,8 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
       shortUiVersion: "5.6",
       displayName: "ChatGPT - GPT-5.6 Sol",
       description: "GPT-5.6 Sol qua ChatGPT Web",
-      contextWindow: 128_000,
-      autoCompactTokenLimit: 115_000,
+      contextWindow: 1_000_000,
+      autoCompactTokenLimit: 900_000,
       effectiveContextWindowPercent: 90,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "medium",
@@ -96,7 +96,7 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
     const uiLabel = (entry.uiLabel || entry.displayName.replace(/^ChatGPT\s*-\s*/i, "")).trim();
     if (!uiLabel) return undefined;
 
-    const contextWindow = entry.contextWindow ?? 128_000;
+    const contextWindow = entry.contextWindow ?? 1_000_000;
     const effectiveContextWindowPercent = 90;
     return {
       slug: entry.slug.startsWith("chatgpt/") ? entry.slug : `chatgpt/${entry.slug}`,

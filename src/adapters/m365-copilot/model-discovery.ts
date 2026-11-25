@@ -121,7 +121,7 @@ export function buildM365DiscoveredModels(
       displayName: group.displayName,
       description: `${group.displayName} qua Microsoft 365 Copilot Web`,
       capabilityMeta,
-      contextWindow: 100_000,
+      contextWindow: 1_000_000,
       inputModalities: ["text", "image"],
       defaultReasoningLevel: "low",
     });
