@@ -14,7 +14,7 @@ test("launcher models store manages models.json offline and prevents disabling t
   try {
     const store = createModelsStore(file, () => null);
     const initial = await store.getSnapshot();
-    assert.equal(initial.totalEnabledCount, 7);
+    assert.equal(initial.totalEnabledCount, 8);
 
     const afterEdit = await store.updateOverride("chatgpt/gpt-6", {
       displayName: "GPT-6 Offline Custom",

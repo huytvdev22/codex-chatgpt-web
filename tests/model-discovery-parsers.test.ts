@@ -154,16 +154,18 @@ describe("Adapter Model Discovery Parsers", () => {
     );
     expect(newUiModels.map(m => m.slug)).toEqual([
       "gemini/auto",
-      "gemini",
+      "gemini/4-hydrogen",
       "gemini/4-neon",
     ]);
     expect(newUiModels[1]).toMatchObject({
-      slug: "gemini",
+      slug: "gemini/4-hydrogen",
+      uiLabel: "4 Hydrogen",
       remoteModelId: "56fdd199312815e2",
       isAccountDefault: true,
     });
     expect(newUiModels[2]).toMatchObject({
       slug: "gemini/4-neon",
+      uiLabel: "4 Neon",
       remoteModelId: "e6fa609c3fa255c0",
       isAccountDefault: false,
     });
@@ -176,6 +178,6 @@ describe("Adapter Model Discovery Parsers", () => {
       ],
       false,
     );
-    expect(legacyUiModels.map(m => m.slug)).toEqual(["gemini"]);
+    expect(legacyUiModels.map(m => m.slug)).toEqual(["gemini/4-hydrogen"]);
   });
 });

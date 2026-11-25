@@ -41,12 +41,13 @@ describe("ModelConfigStore overlay, auto-discovery merge & constraints", () => {
     const h = createIsolatedHarness();
     try {
       const snap = h.registry.getManagedSnapshot();
-      expect(snap.totalEnabledCount).toBe(7);
+      expect(snap.totalEnabledCount).toBe(8);
       expect(h.registry.listEnabledRoutes().map(r => r.slug)).toEqual([
         "m365-copilot/gpt-5.6",
         "m365-copilot",
         "ai-studio/gemini-4-hydrogen",
-        "gemini",
+        "gemini/4-hydrogen",
+        "gemini/4-neon",
         "chatgpt/gpt-6.2",
         "chatgpt/gpt-6",
         "chatgpt/gpt-5.6-sol",
@@ -207,7 +208,7 @@ describe("ModelConfigStore overlay, auto-discovery merge & constraints", () => {
 
       const catalogPath = join(h.dir, "catalog.json");
       h.catalog.ensureManagedCatalogFile(nativeConfig, catalogPath);
-      expect(JSON.parse(readFileSync(catalogPath, "utf8")).models).toHaveLength(6);
+      expect(JSON.parse(readFileSync(catalogPath, "utf8")).models).toHaveLength(7);
 
       // Sửa tay models.json trực tiếp trên đĩa để bật lại chatgpt/gpt-6
       const filePath = h.store.getConfigPath();
@@ -217,7 +218,7 @@ describe("ModelConfigStore overlay, auto-discovery merge & constraints", () => {
 
       expect(h.registry.getModelStatus("chatgpt/gpt-6").status).toBe("enabled");
       h.catalog.ensureManagedCatalogFile(nativeConfig, catalogPath);
-      expect(JSON.parse(readFileSync(catalogPath, "utf8")).models).toHaveLength(7);
+      expect(JSON.parse(readFileSync(catalogPath, "utf8")).models).toHaveLength(8);
     } finally {
       h.cleanup();
     }

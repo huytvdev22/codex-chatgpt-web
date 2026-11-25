@@ -9,41 +9,58 @@ export type GeminiThinkingEffort = "low" | "medium" | "high";
 
 export interface GeminiModelRouteDefinition
   extends ModelRouteDefinition<GeminiThinkingEffort> {
-  readonly uiLabel?: string;
+  readonly uiLabel: string;
   readonly isAccountDefault?: boolean;
 }
 
 export interface GeminiCapabilityTarget {
   readonly modelSlug: string;
-  readonly modelLabel?: string;
+  readonly modelLabel: string;
   readonly remoteModelId?: string;
   readonly isAccountDefault?: boolean;
   readonly thinkingEffort: GeminiThinkingEffort;
 }
 
-export const GEMINI_DEFAULT_MODEL_SLUG = "gemini";
+export const GEMINI_DEFAULT_MODEL_SLUG = "gemini/4-hydrogen";
 
 const GEMINI_REASONING_LEVELS: GeminiModelRouteDefinition["reasoningLevels"] = [
-  { effort: "low", description: "Fast / Low thinking", mode: "low" },
-  { effort: "medium", description: "Thinking / Balanced depth", mode: "medium" },
-  { effort: "high", description: "Pro / Extra thorough", mode: "high" },
+  { effort: "low", description: "Low thinking (Fast and efficient)", mode: "low" },
+  { effort: "medium", description: "Medium thinking (Balanced depth)", mode: "medium" },
+  { effort: "high", description: "High thinking (Extra thorough)", mode: "high" },
 ];
 
 /**
- * Danh mục model và ánh xạ Thinking/Mode cho Gemini Web (`gemini.google.com`).
+ * Danh mục model và ánh xạ Thinking Level cho Gemini Web (`gemini.google.com`).
  */
 export class GeminiModelProvider extends BaseModelProvider<GeminiModelRouteDefinition> {
   private static readonly instance = new GeminiModelProvider();
 
   public readonly id = "gemini";
-  public readonly exactSlugs = ["gemini"] as const;
+  public readonly exactSlugs = [
+    "gemini",
+    "gemini/4-hydrogen",
+    "gemini/4-neon",
+  ] as const;
   public readonly slugPrefixes = ["gemini/"] as const;
   public readonly routes: readonly GeminiModelRouteDefinition[] = [
     {
-      slug: "gemini",
+      slug: "gemini/4-hydrogen",
+      uiLabel: "4 Hydrogen",
       isAccountDefault: true,
-      displayName: "Gemini Web",
-      description: "Gemini Web qua gemini.google.com",
+      displayName: "Gemini Web - 4 Hydrogen",
+      description: "Everyday help — 4 Hydrogen qua Gemini Web",
+      contextWindow: 1_000_000,
+      autoCompactTokenLimit: 900_000,
+      effectiveContextWindowPercent: 90,
+      inputModalities: ["text", "image"],
+      defaultReasoningLevel: "medium",
+      reasoningLevels: GEMINI_REASONING_LEVELS,
+    },
+    {
+      slug: "gemini/4-neon",
+      uiLabel: "4 Neon",
+      displayName: "Gemini Web - 4 Neon",
+      description: "Deeper analysis — 4 Neon qua Gemini Web",
       contextWindow: 1_000_000,
       autoCompactTokenLimit: 900_000,
       effectiveContextWindowPercent: 90,
@@ -63,26 +80,30 @@ export class GeminiModelProvider extends BaseModelProvider<GeminiModelRouteDefin
     const cleanSlug = entry.slug.trim();
     if (!cleanSlug) return undefined;
     const normalizedSlug =
-      cleanSlug === "gemini" || cleanSlug.startsWith("gemini/")
-        ? cleanSlug
-        : `gemini/${cleanSlug}`;
+      cleanSlug === "gemini"
+        ? GEMINI_DEFAULT_MODEL_SLUG
+        : cleanSlug.startsWith("gemini/")
+          ? cleanSlug
+          : `gemini/${cleanSlug}`;
 
     const uiLabel = (
       entry.uiLabel ||
-      entry.displayName.replace(/^Gemini\s*-\s*/i, "")
+      entry.displayName.replace(/^Gemini(?:\s+Web)?\s*-\s*/i, "")
     ).trim();
+    if (!uiLabel) return undefined;
+
     const contextWindow = entry.contextWindow ?? 1_000_000;
     const effectiveContextWindowPercent = 90;
 
     return {
       slug: normalizedSlug,
-      ...(uiLabel ? { uiLabel } : {}),
+      uiLabel,
       ...(entry.isAccountDefault !== undefined
         ? { isAccountDefault: entry.isAccountDefault }
         : {}),
       ...(entry.remoteModelId ? { remoteModelId: entry.remoteModelId } : {}),
       displayName: entry.displayName,
-      description: entry.description || `${entry.displayName} qua Gemini Web`,
+      description: entry.description || `${uiLabel} qua Gemini Web`,
       contextWindow,
       autoCompactTokenLimit: Math.round(
         contextWindow * (effectiveContextWindowPercent / 100),
@@ -128,9 +149,12 @@ export class GeminiModelProvider extends BaseModelProvider<GeminiModelRouteDefin
     const route = this.resolveManagedRoute(modelId);
     const thinkingEffort =
       this.resolveReasoning(route, requestedEffort).mode ?? "medium";
+    const uiLabel =
+      route.uiLabel ||
+      route.displayName.replace(/^Gemini(?:\s+Web)?\s*-\s*/i, "");
     return {
       modelSlug: route.slug,
-      ...(route.uiLabel ? { modelLabel: route.uiLabel } : {}),
+      modelLabel: uiLabel,
       ...(route.remoteModelId ? { remoteModelId: route.remoteModelId } : {}),
       ...(route.isAccountDefault !== undefined
         ? { isAccountDefault: route.isAccountDefault }

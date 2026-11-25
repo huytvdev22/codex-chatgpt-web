@@ -57,9 +57,20 @@ const BUILTIN_PROVIDERS = Object.freeze([
     providerId: "gemini",
     routes: [
       {
-        slug: "gemini",
-        displayName: "Gemini Web",
-        description: "Gemini Web qua gemini.google.com",
+        slug: "gemini/4-hydrogen",
+        displayName: "Gemini Web - 4 Hydrogen",
+        description: "Everyday help — 4 Hydrogen qua Gemini Web",
+        contextWindow: 1_000_000,
+        autoCompactTokenLimit: 900_000,
+        effectiveContextWindowPercent: 90,
+        inputModalities: ["text", "image"],
+        defaultReasoningLevel: "medium",
+        supportedReasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        slug: "gemini/4-neon",
+        displayName: "Gemini Web - 4 Neon",
+        description: "Deeper analysis — 4 Neon qua Gemini Web",
         contextWindow: 1_000_000,
         autoCompactTokenLimit: 900_000,
         effectiveContextWindowPercent: 90,

@@ -300,12 +300,12 @@ describe("Model Management Control Plane & /v1 + /v2 Enforcement", () => {
       );
       expect(resetRes.status).toBe(200);
       const resetJson = (await resetRes.json()) as { snapshot: { totalEnabledCount: number } };
-      expect(resetJson.snapshot.totalEnabledCount).toBe(7);
+      expect(resetJson.snapshot.totalEnabledCount).toBe(8);
 
       // Nếu catalogPath được tạo trong dir tạm, kiểm tra readFileSync không lỗi
       const savedPath = rt.modelCatalog.getManagedCatalogPath(rt.dir);
       rt.modelCatalog.buildAndSyncCatalog(rt.config, { catalogPath: savedPath });
-      expect(JSON.parse(readFileSync(savedPath, "utf8")).models).toHaveLength(7);
+      expect(JSON.parse(readFileSync(savedPath, "utf8")).models).toHaveLength(8);
     } finally {
       rt.cleanup();
     }

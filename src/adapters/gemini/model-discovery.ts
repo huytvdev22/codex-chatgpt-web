@@ -20,11 +20,7 @@ function cleanGeminiUiLabel(raw: RawGeminiDomModeItem): string {
   return lbl;
 }
 
-export function normalizeGeminiSlugFromLabel(
-  uiLabel: string,
-  isPrimaryDefault = false,
-): string {
-  if (isPrimaryDefault) return "gemini";
+export function normalizeGeminiSlugFromLabel(uiLabel: string): string {
   const slugPart = uiLabel
     .toLowerCase()
     .replace(/[^a-z0-9.]+/g, "-")
@@ -35,9 +31,10 @@ export function normalizeGeminiSlugFromLabel(
 /**
  * Chuẩn hóa danh sách mục đọc được từ Mode Picker của `gemini.google.com`
  * thành `DiscoveredModelEntry[]`:
- * - Nếu UI dùng 3 mode cổ điển (Fast / Thinking / Pro), gom thành 1 slug chính `gemini`.
- * - Nếu UI dùng danh sách model (Auto, Everyday help / 4 Hydrogen, Deeper analysis / 4 Neon...),
- *   ánh xạ model mặc định sang `gemini` và các model bổ sung sang `gemini/<slug>`.
+ * - Giao diện mới (`Auto`, `Everyday help / 4 Hydrogen`, `Deeper analysis / 4 Neon`, ...):
+ *   chuẩn hóa từng mục sang `gemini/auto`, `gemini/4-hydrogen`, `gemini/4-neon`...
+ * - Giao diện cổ điển không có submenu Thinking level (`Fast`, `Thinking`, `Pro`):
+ *   gom về model mặc định `gemini/4-hydrogen`.
  */
 export function buildGeminiDiscoveredModels(
   rawItems: readonly RawGeminiDomModeItem[],
@@ -54,10 +51,11 @@ export function buildGeminiDiscoveredModels(
   if (cleaned.length === 0) {
     return [
       {
-        slug: "gemini",
+        slug: "gemini/4-hydrogen",
         providerId: "gemini",
-        displayName: "Gemini Web",
-        description: "Gemini Web qua gemini.google.com",
+        displayName: "Gemini Web - 4 Hydrogen",
+        description: "Everyday help — 4 Hydrogen qua Gemini Web",
+        uiLabel: "4 Hydrogen",
         isAccountDefault: true,
         contextWindow: 1_000_000,
         inputModalities: ["text", "image"],
@@ -75,10 +73,11 @@ export function buildGeminiDiscoveredModels(
     const modeNames = cleaned.map((item) => item.uiLabel).join(" / ");
     return [
       {
-        slug: "gemini",
+        slug: "gemini/4-hydrogen",
         providerId: "gemini",
-        displayName: "Gemini Web",
+        displayName: "Gemini Web - 4 Hydrogen",
         description: `Gemini Web (${modeNames})`,
+        uiLabel: "4 Hydrogen",
         isAccountDefault: true,
         contextWindow: 1_000_000,
         inputModalities: ["text", "image"],
@@ -98,13 +97,11 @@ export function buildGeminiDiscoveredModels(
 
   for (const item of cleaned) {
     const isPrimary = item === defaultItem;
-    const slug = normalizeGeminiSlugFromLabel(item.uiLabel, isPrimary);
+    const slug = normalizeGeminiSlugFromLabel(item.uiLabel);
     if (seen.has(slug)) continue;
     seen.add(slug);
 
-    const displayName = isPrimary
-      ? `Gemini Web (${item.uiLabel})`
-      : `Gemini - ${item.uiLabel}`;
+    const displayName = `Gemini Web - ${item.uiLabel}`;
     const descParts = [item.label, item.sublabel]
       .map((part) => part?.trim())
       .filter(Boolean);
