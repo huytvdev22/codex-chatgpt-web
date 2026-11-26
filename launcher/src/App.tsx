@@ -18,6 +18,7 @@ import { PersonalizationSurface } from "./components/PersonalizationSurface";
 import { ModelsSurface } from "./components/ModelsSurface";
 import { SkillsSurface } from "./components/SkillsSurface";
 import { UsageSurface } from "./components/UsageSurface";
+import { AppUpdaterSection } from "./components/AppUpdaterSection";
 import type {
   BrowserProviderInfo,
   BrowserState,
@@ -30,6 +31,7 @@ import type {
   ProfileLimitEntry,
   ProviderLimitsSnapshot,
   Surface,
+  UpdaterSettings,
 } from "./types";
 
 function runtimeProviderIdFor(providerId: string): string {
@@ -119,6 +121,9 @@ export function App() {
     const unsubscribeUpdate = api.onUpdateState((update) => {
       setSnapshot((current) => current ? { ...current, update } : current);
     });
+    const unsubscribeUpdaterSettings = api.onUpdaterSettingsChanged((updaterSettings) => {
+      setSnapshot((current) => current ? { ...current, updaterSettings } : current);
+    });
     return () => {
       cancelled = true;
       unsubscribeState();
@@ -126,7 +131,12 @@ export function App() {
       unsubscribeBrowser();
       unsubscribeOperation();
       unsubscribeUpdate();
+      unsubscribeUpdaterSettings();
     };
+  }, []);
+
+  const updateUpdaterSettings = useCallback((updaterSettings: UpdaterSettings) => {
+    setSnapshot((current) => current ? { ...current, updaterSettings } : current);
   }, []);
 
   const updateState = useCallback((state: LauncherState) => {
@@ -176,6 +186,7 @@ export function App() {
             setError={setError}
             snapshot={snapshot}
             updateState={updateState}
+            updateUpdaterSettings={updateUpdaterSettings}
           />
         )}
       </AnimatePresence>
@@ -299,6 +310,7 @@ function LauncherShell({
   setError,
   snapshot,
   updateState,
+  updateUpdaterSettings,
 }: {
   browser: BrowserState | null;
   copy: Copy;
@@ -307,12 +319,14 @@ function LauncherShell({
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
+  updateUpdaterSettings: (settings: UpdaterSettings) => void;
 }) {
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
     && snapshot.state.codexCatalogVerified === true;
   const [surface, setSurface] = useState<Surface>(
     interactionSetupComplete ? "browser" : "setup",
   );
+  const [focusUpdaterNonce, setFocusUpdaterNonce] = useState(0);
   const devProfile = snapshot.profile === "development";
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
@@ -365,9 +379,16 @@ function LauncherShell({
     || Object.values(browser?.authenticatedByProvider ?? {}).some(Boolean);
   const needsBrowser = browser?.authenticated !== true && !anyProviderAuthenticated;
   const needsSetup = !needsBrowser && !interactionSetupComplete;
-  const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
-  const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
-  const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
+  const updateVisible = ["available", "downloading", "downloaded", "installing"].includes(snapshot.update.status);
+  const updateVersion = snapshot.update.version ?? snapshot.update.availableRelease?.version ?? null;
+  const installBlocked = operation?.status === "running" || browser?.status === "running";
+  const updateSidebarLabel = snapshot.update.status === "downloading"
+    ? `${copy.updateDownloadingShort} ${snapshot.update.progress?.percent ?? 0}%`
+    : snapshot.update.status === "downloaded"
+      ? `${copy.updateReadyShort} v${updateVersion ?? ""}`
+      : snapshot.update.status === "installing"
+        ? copy.updating
+        : `${copy.updateAvailable} v${updateVersion ?? ""}`;
 
   useLayoutEffect(() => {
     let cancelled = false;
@@ -432,19 +453,26 @@ function LauncherShell({
     setSidebarOpen(next);
   };
 
-  const navigateSurface = (next: Surface) => {
+  const navigateSurface = useCallback((next: Surface) => {
     setSurface(next);
     if (compactSidebar) setSidebarOpen(false);
-  };
+  }, [compactSidebar]);
 
-  const installUpdate = async () => {
-    setError(null);
-    try {
-      await api!.installUpdate();
-    } catch (cause) {
-      setError(messageOf(cause));
-    }
-  };
+  const openUpdaterSettings = useCallback(() => {
+    navigateSurface("settings");
+    setFocusUpdaterNonce((count) => count + 1);
+  }, [navigateSurface]);
+
+  useEffect(() => {
+    if (!api?.onNavigateSurface) return;
+    return api.onNavigateSurface((target) => {
+      if (target?.surface === "settings" && target.section === "updates") {
+        openUpdaterSettings();
+      } else if (target?.surface) {
+        navigateSurface(target.surface);
+      }
+    });
+  }, [navigateSurface, openUpdaterSettings]);
 
   return (
     <motion.main
@@ -549,11 +577,10 @@ function LauncherShell({
             <div className="sidebar-footer">
               {updateVisible ? (
                 <SidebarItem
-                  active={false}
-                  disabled={updateBusy || operation?.status === "running" || browser?.status === "running"}
+                  active={surface === "settings" && focusUpdaterNonce > 0}
                   icon="update"
-                  label={updateBusy ? copy.updating : `${copy.updateAvailable} v${updateVersion}`}
-                  onClick={() => void installUpdate()}
+                  label={updateSidebarLabel}
+                  onClick={openUpdaterSettings}
                   tone="update"
                 />
               ) : null}
@@ -635,7 +662,10 @@ function LauncherShell({
               <SettingsSurface
                 copy={copy}
                 devProfile={devProfile}
+                focusUpdaterNonce={focusUpdaterNonce}
+                installBlocked={installBlocked}
                 language={language}
+                onUpdaterSettingsChanged={updateUpdaterSettings}
                 setError={setError}
                 snapshot={snapshot}
                 updateState={updateState}
@@ -1404,14 +1434,20 @@ function SetupSurface({
 function SettingsSurface({
   copy,
   devProfile,
+  focusUpdaterNonce = 0,
+  installBlocked = false,
   language,
+  onUpdaterSettingsChanged,
   setError,
   snapshot,
   updateState,
 }: {
   copy: Copy;
   devProfile: boolean;
+  focusUpdaterNonce?: number;
+  installBlocked?: boolean;
   language: Language;
+  onUpdaterSettingsChanged?: (settings: UpdaterSettings) => void;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
@@ -1420,6 +1456,16 @@ function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [updaterHighlighted, setUpdaterHighlighted] = useState(false);
+  const updaterSectionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (focusUpdaterNonce <= 0) return;
+    updaterSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setUpdaterHighlighted(true);
+    const timer = setTimeout(() => setUpdaterHighlighted(false), 1800);
+    return () => clearTimeout(timer);
+  }, [focusUpdaterNonce]);
 
   const updateLanguage = async (next: Language) => {
     try {
@@ -1543,6 +1589,25 @@ function SettingsSurface({
         <NoticeRow icon="alert" tone="warning">
           {copy.restartCodex}
         </NoticeRow>
+      ) : null}
+
+      {!devProfile && snapshot.update && snapshot.update.status !== "disabled" ? (
+        <div ref={updaterSectionRef}>
+          <SectionHeading label={copy.updaterSectionHeading} spaced />
+          <AppUpdaterSection
+            api={api!}
+            arch={snapshot.update.arch}
+            copy={copy}
+            currentVersion={snapshot.version}
+            highlighted={updaterHighlighted}
+            installBlocked={installBlocked}
+            onUpdaterSettingsChanged={(next) => onUpdaterSettingsChanged?.(next)}
+            platformLabelText={platformLabel(snapshot.platform)}
+            setError={setError}
+            update={snapshot.update}
+            updaterSettings={snapshot.updaterSettings ?? null}
+          />
+        </div>
       ) : null}
 
       <SectionHeading label={copy.diagnostics} spaced />

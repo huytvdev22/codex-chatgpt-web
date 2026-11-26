@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -9,10 +10,14 @@ const {
   compareVersions,
   createUpdateController,
   expectedChecksum,
+  findMacApplication,
+  isMacAppTranslocated,
   macApplicationPath,
   releaseAssetName,
+  resolveMacAppExecutableName,
   validateReleaseAssetUrl,
 } = require("../electron/app/update-controller.cjs");
+const { UpdaterSettingsStore } = require("../electron/app/updater-settings-store.cjs");
 
 test("Linux auto-update fails closed without the stable installer wrapper", () => {
   const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
@@ -72,7 +77,8 @@ test("unsupported Linux launches reject updates before downloading or changing s
       await assert.rejects(controller.beginInstall(), /install-launcher\.sh/);
       assert.deepEqual(calls, []);
       assert.deepEqual(states, ["checking", "available"]);
-      assert.deepEqual(controller.getState(), { status: "available", version: "1.2.0" });
+      assert.equal(controller.getState().status, "available");
+      assert.equal(controller.getState().version, "1.2.0");
     }
   } finally {
     for (const key of keys) {
@@ -114,49 +120,114 @@ test("checksums and release URLs bind the exact expected asset", () => {
   );
 });
 
-test("macOS bundle resolution never guesses outside Contents/MacOS", () => {
+test("macOS bundle resolution resolves CFBundleExecutable dynamically without hardcoding Codex Web GPT", () => {
   assert.equal(
-    macApplicationPath("/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT"),
-    "/Applications/Codex Web GPT.app",
+    macApplicationPath("/Applications/Codex M365 Copilot.app/Contents/MacOS/Codex M365 Copilot"),
+    "/Applications/Codex M365 Copilot.app",
   );
-  assert.throws(() => macApplicationPath("/tmp/Codex Web GPT"), /Could not resolve/);
+  assert.throws(() => macApplicationPath("/tmp/Codex M365 Copilot"), /Could not resolve/);
+  assert.equal(
+    isMacAppTranslocated("/private/var/folders/xx/AppTranslocation/1234/d/Codex M365 Copilot.app"),
+    true,
+  );
+  assert.equal(isMacAppTranslocated("/Applications/Codex M365 Copilot.app"), false);
+
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "codex-mac-bundle-test-"));
+  try {
+    const appDir = path.join(stage, "Codex M365 Copilot.app");
+    const macOsDir = path.join(appDir, "Contents", "MacOS");
+    fs.mkdirSync(macOsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(appDir, "Contents", "Info.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Codex M365 Copilot</string></dict></plist>`,
+    );
+    fs.writeFileSync(path.join(macOsDir, "Codex M365 Copilot"), "binary");
+    assert.equal(resolveMacAppExecutableName(appDir), "Codex M365 Copilot");
+    assert.equal(findMacApplication(stage), appDir);
+
+    const job = buildJob({
+      version: "6.14.0",
+      platform: "darwin",
+      executablePath: "/Applications/Codex M365 Copilot.app/Contents/MacOS/Codex M365 Copilot",
+      assetPath: "/tmp/update.zip",
+      stagingRoot: stage,
+      tempRoot: "/tmp/update-temp",
+      logPath: "/tmp/update.log",
+    });
+    assert.equal(job.executableName, "Codex M365 Copilot");
+    assert.equal(job.target, "/Applications/Codex M365 Copilot.app");
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
 });
 
-test("startup check runs once and exposes only a newer complete release", async () => {
-  let calls = 0;
-  const published = [];
-  const controller = createUpdateController({
+test("startup check runs once, exposes release notes, and respects disabled/autoCheckOnStartup", async () => {
+  const disabledController = createUpdateController({
     currentVersion: "1.1.4",
     platform: "linux",
     arch: "x64",
-    packaged: true,
-    executablePath: "/tmp/launcher",
-    runtimeExecutable: "/tmp/bun",
-    logsDirectory: "/tmp/logs",
-    publish: (state) => published.push(state),
+    packaged: false,
     dependencies: {
-      fetchRelease: async () => {
-        calls += 1;
-        return {
-          tag_name: "v1.2.0",
-          assets: [
-            {
-              name: "codex-m365-copilot-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-linux-x64.AppImage",
-            },
-            {
-              name: "checksums.txt",
-              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
-            },
-          ],
-        };
-      },
+      fetchRelease: async () => { throw new Error("Should not fetch in dev mode"); },
     },
   });
-  assert.deepEqual(await controller.checkOnce(), { status: "available", version: "1.2.0" });
-  assert.deepEqual(await controller.checkOnce(), { status: "available", version: "1.2.0" });
-  assert.equal(calls, 1);
-  assert.deepEqual(published.map((state) => state.status), ["checking", "available"]);
+  assert.equal((await disabledController.checkOnce()).status, "disabled");
+  assert.equal((await disabledController.checkForUpdates({ manual: true })).status, "disabled");
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-updater-settings-"));
+  try {
+    const settingsStore = new UpdaterSettingsStore(root);
+    let calls = 0;
+    const notifications = [];
+    const published = [];
+    const controller = createUpdateController({
+      currentVersion: "1.1.4",
+      platform: "linux",
+      arch: "x64",
+      packaged: true,
+      executablePath: "/tmp/launcher",
+      runtimeExecutable: "/tmp/bun",
+      logsDirectory: path.join(root, "logs"),
+      updatesDirectory: path.join(root, "updates"),
+      settingsStore,
+      publish: (state) => published.push(state),
+      onNotify: (event) => notifications.push(event),
+      dependencies: {
+        fetchRelease: async () => {
+          calls += 1;
+          return {
+            tag_name: "v1.2.0",
+            name: "Release v1.2.0",
+            body: "## What's New\n- Faster bridge",
+            published_at: "2026-11-26T10:00:00Z",
+            html_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/tag/v1.2.0",
+            assets: [
+              {
+                name: "codex-m365-copilot-1.2.0-linux-x64.AppImage",
+                size: 123456,
+                browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-linux-x64.AppImage",
+              },
+              {
+                name: "checksums.txt",
+                browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              },
+            ],
+          };
+        },
+      },
+    });
+    const first = await controller.checkOnce();
+    assert.equal(first.status, "available");
+    assert.equal(first.version, "1.2.0");
+    assert.equal(first.availableRelease.notes, "## What's New\n- Faster bridge");
+    assert.equal(first.availableRelease.assetSize, 123456);
+    assert.equal((await controller.checkOnce()).status, "available");
+    assert.equal(calls, 1);
+    assert.deepEqual(published.map((state) => state.status), ["checking", "available"]);
+    assert.deepEqual(notifications, [{ kind: "available", version: "1.2.0", currentVersion: "1.1.4" }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("preview and draft releases stay hidden until promoted, regardless of the version suffix", async () => {
@@ -175,11 +246,187 @@ test("preview and draft releases stay hidden until promoted, regardless of the v
         },
       });
       const hidden = flags.prerelease || flags.draft;
-      assert.deepEqual(await controller.checkOnce(), hidden
-        ? { status: "up-to-date" }
-        : { status: "available", version: tag });
-      if (hidden) await assert.rejects(controller.beginInstall(), /No launcher update/);
+      const state = await controller.checkOnce();
+      if (hidden) {
+        assert.equal(state.status, "up-to-date");
+        await assert.rejects(controller.beginInstall(), /No launcher update/);
+      } else {
+        assert.equal(state.status, "available");
+        assert.equal(state.version, tag);
+      }
     }
+  }
+});
+
+test("two-step download verifies SHA-256, emits progress, supports cancel, and supports ignore version", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-two-step-update-"));
+  const settingsStore = new UpdaterSettingsStore(root);
+  const assetBody = Buffer.from("verified-release-payload");
+  const expectedHash = crypto.createHash("sha256").update(assetBody).digest("hex");
+  const notifications = [];
+  const statuses = [];
+  let failChecksum = false;
+
+  try {
+    const controller = createUpdateController({
+      currentVersion: "1.1.4",
+      platform: "win32",
+      arch: "x64",
+      packaged: true,
+      executablePath: "C:\\Users\\test\\AppData\\Local\\Programs\\Codex M365 Copilot.exe",
+      runtimeExecutable: "C:\\bun.exe",
+      logsDirectory: path.join(root, "logs"),
+      updatesDirectory: path.join(root, "updates"),
+      settingsStore,
+      publish: (state) => statuses.push({ status: state.status, percent: state.progress?.percent ?? null }),
+      onNotify: (event) => notifications.push(event),
+      dependencies: {
+        fetchRelease: async () => ({
+          tag_name: "v1.2.0",
+          body: "Release notes",
+          assets: [
+            {
+              name: "codex-m365-copilot-1.2.0-win-x64.exe",
+              size: assetBody.length,
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-win-x64.exe",
+            },
+            {
+              name: "checksums.txt",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+            },
+          ],
+        }),
+        downloadText: async () => `${failChecksum ? "0".repeat(64) : expectedHash}  codex-m365-copilot-1.2.0-win-x64.exe\n`,
+        downloadFile: async (_url, destination, options = {}) => {
+          options.onProgress?.({ percent: 50, bytesDownloaded: 12, totalBytes: assetBody.length, speedBytesPerSec: 1200 });
+          fs.writeFileSync(destination, assetBody);
+          return { sha256: expectedHash, bytesDownloaded: assetBody.length, totalBytes: assetBody.length };
+        },
+        sha256: (filePath) => crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
+      },
+    });
+
+    await controller.checkForUpdates({ manual: true });
+    assert.equal(controller.getState().status, "available");
+
+    // 1. Test ignore version skips auto-check, but manual check shows it again.
+    const ignoredState = controller.ignoreCurrentUpdate();
+    assert.equal(ignoredState.status, "up-to-date");
+    assert.equal(settingsStore.getSettings().ignoredVersion, "1.2.0");
+    assert.equal((await controller.checkForUpdates({ manual: false })).status, "up-to-date");
+    assert.equal((await controller.checkForUpdates({ manual: true })).status, "available");
+
+    // 2. Test SHA-256 mismatch cleans up partial file and enters error state.
+    failChecksum = true;
+    const failedDownload = await controller.downloadUpdate();
+    assert.equal(failedDownload.status, "error");
+    assert.match(failedDownload.message, /SHA-256 verification failed/);
+    assert.equal(fs.existsSync(path.join(root, "updates", "1.2.0", "codex-m365-copilot-1.2.0-win-x64.exe")), false);
+
+    // 3. Test successful download transitions to downloaded with verifiedSha256 and notifies.
+    failChecksum = false;
+    const done = await controller.downloadUpdate();
+    assert.equal(done.status, "downloaded");
+    assert.equal(done.verifiedSha256, expectedHash);
+    assert.equal(fs.existsSync(done.downloadedFilePath), true);
+    assert.ok(statuses.some((entry) => entry.status === "downloading" && entry.percent === 50));
+    assert.ok(notifications.some((entry) => entry.kind === "downloaded" && entry.version === "1.2.0"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("download cancellation aborts active transfer and reverts state to available", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-cancel-download-"));
+  try {
+    let releaseDownload;
+    const controller = createUpdateController({
+      currentVersion: "1.1.4",
+      platform: "win32",
+      arch: "x64",
+      packaged: true,
+      updatesDirectory: path.join(root, "updates"),
+      dependencies: {
+        fetchRelease: async () => ({
+          tag_name: "v1.2.0",
+          assets: [
+            {
+              name: "codex-m365-copilot-1.2.0-win-x64.exe",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-win-x64.exe",
+            },
+            {
+              name: "checksums.txt",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+            },
+          ],
+        }),
+        downloadText: async () => `${"b".repeat(64)}  codex-m365-copilot-1.2.0-win-x64.exe\n`,
+        downloadFile: (_url, _dest, { signal }) => new Promise((resolve, reject) => {
+          releaseDownload = resolve;
+          signal.addEventListener("abort", () => {
+            const err = new Error("Aborted");
+            err.name = "AbortError";
+            reject(err);
+          }, { once: true });
+        }),
+      },
+    });
+    await controller.checkOnce();
+    const downloading = controller.downloadUpdate();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(controller.getState().status, "downloading");
+    assert.deepEqual(controller.cancelDownload(), { cancelled: true });
+    const reverted = await downloading;
+    assert.equal(reverted.status, "available");
+    releaseDownload?.();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("macOS falls back to opening the verified package when current app cannot be overwritten", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-mac-fallback-"));
+  const opened = [];
+  const assetBody = Buffer.from("mac-zip-bytes");
+  const hash = crypto.createHash("sha256").update(assetBody).digest("hex");
+  try {
+    const controller = createUpdateController({
+      currentVersion: "1.1.4",
+      platform: "darwin",
+      arch: "arm64",
+      packaged: true,
+      executablePath: "/private/var/folders/AppTranslocation/xyz/Codex M365 Copilot.app/Contents/MacOS/Codex M365 Copilot",
+      updatesDirectory: path.join(root, "updates"),
+      shell: {
+        openPath: async (filePath) => { opened.push(filePath); return ""; },
+      },
+      dependencies: {
+        fetchRelease: async () => ({
+          tag_name: "v1.2.0",
+          assets: [
+            {
+              name: "codex-m365-copilot-1.2.0-mac-arm64.zip",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/codex-m365-copilot-1.2.0-mac-arm64.zip",
+            },
+            {
+              name: "checksums.txt",
+              browser_download_url: "https://github.com/huytvdev22/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+            },
+          ],
+        }),
+        downloadText: async () => `${hash}  codex-m365-copilot-1.2.0-mac-arm64.zip\n`,
+        downloadFile: async (_url, dest) => fs.writeFileSync(dest, assetBody),
+        sha256: (filePath) => crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
+      },
+    });
+    await controller.checkOnce();
+    await controller.downloadUpdate();
+    const res = await controller.beginInstall();
+    assert.equal(res.installed, false);
+    assert.equal(res.mode, "mac-opened-file");
+    assert.equal(opened.length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -193,7 +440,7 @@ for (const arch of ["x64", "arm64"]) {
     fs.writeFileSync(oldAppImage, "old");
     fs.writeFileSync(wrapper, "old wrapper");
     const assetBody = Buffer.from("new appimage");
-    const hash = require("node:crypto").createHash("sha256").update(assetBody).digest("hex");
+    const hash = crypto.createHash("sha256").update(assetBody).digest("hex");
     let spawned = null;
     const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
     const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
@@ -208,6 +455,7 @@ for (const arch of ["x64", "arm64"]) {
         executablePath: "/tmp/launcher",
         runtimeExecutable: "/durable/bun",
         logsDirectory: path.join(root, "logs"),
+        updatesDirectory: path.join(root, "updates"),
         dependencies: {
           fetchRelease: async () => ({
             tag_name: "v1.2.0",
@@ -224,7 +472,7 @@ for (const arch of ["x64", "arm64"]) {
           }),
           downloadText: async () => `${hash}  codex-m365-copilot-1.2.0-linux-${arch}.AppImage\n`,
           downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
-          sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
+          sha256: (filePath) => crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
           spawnWorker: (runtime, worker, job) => {
             spawned = { runtime, worker, job, data: JSON.parse(fs.readFileSync(job, "utf8")) };
             return { pid: 123, unref() {}, kill() {} };
@@ -242,7 +490,8 @@ for (const arch of ["x64", "arm64"]) {
       assert.equal(controller.getState().status, "installing");
       controller.cancelInstall(launch);
       assert.equal(fs.existsSync(launch.tempRoot), false);
-      assert.deepEqual(controller.getState(), { status: "available", version: "1.2.0" });
+      assert.equal(controller.getState().status, "downloaded");
+      assert.equal(controller.getState().version, "1.2.0");
     } finally {
       if (previousAppImage === undefined) delete process.env.CODEX_WEB_GPT_APPIMAGE;
       else process.env.CODEX_WEB_GPT_APPIMAGE = previousAppImage;
@@ -305,4 +554,15 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("detached worker launches Windows installer GUI without silent /S flag", () => {
+  const workerSource = fs.readFileSync(path.join(__dirname, "..", "electron", "app", "update-worker.cjs"), "utf8");
+  const fnSlice = workerSource.slice(
+    workerSource.indexOf("function updateWindows("),
+    workerSource.indexOf("function shellQuote("),
+  );
+  assert.doesNotMatch(fnSlice, /"\/S"|'\/S'/);
+  assert.match(fnSlice, /windowsHide:\s*false/);
+  assert.match(fnSlice, /launch\(job\.source,\s*\[\],\s*\{\s*windowsHide:\s*false\s*\}\)/);
 });

@@ -399,10 +399,57 @@ export interface OperationState {
   message: string;
 }
 
-export type UpdateState =
-  | { status: "disabled" | "idle" | "checking" | "up-to-date" }
-  | { status: "available" | "downloading" | "installing"; version: string }
-  | { status: "error"; message: string };
+export interface UpdateProgress {
+  percent: number;
+  bytesDownloaded: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+}
+
+export interface AvailableUpdateRelease {
+  version: string;
+  tagName: string;
+  name: string;
+  notes: string;
+  publishedAt: string | null;
+  htmlUrl: string | null;
+  assetName: string;
+  assetSize: number;
+  assetUrl: string;
+  checksumsUrl: string;
+}
+
+export interface UpdaterSettings {
+  version: 1;
+  autoCheckOnStartup: boolean;
+  ignoredVersion: string | null;
+  lastCheckedAt: string | null;
+}
+
+export type UpdaterSettingsPatch = Partial<Pick<UpdaterSettings, "autoCheckOnStartup" | "ignoredVersion">>;
+
+export interface UpdateState {
+  status: "disabled" | "idle" | "checking" | "up-to-date" | "available" | "downloading" | "downloaded" | "installing" | "error";
+  version?: string;
+  currentVersion?: string;
+  platform?: string;
+  arch?: string;
+  packaged?: boolean;
+  availableRelease?: AvailableUpdateRelease | null;
+  progress?: UpdateProgress | null;
+  downloadedFilePath?: string | null;
+  verifiedSha256?: string | null;
+  lastCheckedAt?: string | null;
+  message?: string;
+}
+
+export interface UpdateInstallResult {
+  installed: boolean;
+  mode?: string;
+  filePath?: string;
+  version?: string | null;
+  message?: string;
+}
 
 export interface LauncherSnapshot {
   profile: LauncherProfile;
@@ -426,6 +473,7 @@ export interface LauncherSnapshot {
   smokePassedByProvider?: Record<string, ProviderSmokeStatus>;
   operation: OperationState | null;
   update: UpdateState;
+  updaterSettings?: UpdaterSettings | null;
 }
 
 export interface LauncherApi {
@@ -500,7 +548,14 @@ export interface LauncherApi {
     profileId?: string,
   ): Promise<{ snapshot: ProviderLimitsSnapshot; results: LimitRefreshTargetResult[] }>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
-  installUpdate(): Promise<boolean>;
+  checkForUpdates(options?: { manual?: boolean }): Promise<UpdateState>;
+  downloadUpdate(): Promise<UpdateState>;
+  cancelUpdateDownload(): Promise<{ cancelled: boolean }>;
+  openUpdateFolder(): Promise<{ opened: boolean; filePath: string | null }>;
+  ignoreUpdateVersion(): Promise<UpdateState>;
+  getUpdaterSettings(): Promise<UpdaterSettings | null>;
+  saveUpdaterSettings(patch: UpdaterSettingsPatch): Promise<UpdaterSettings>;
+  installUpdate(): Promise<UpdateInstallResult | boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
   windowControl(action: "close" | "minimize" | "zoom"): void;
   onWindowStateChanged(listener: (state: { fullScreen: boolean; maximized: boolean }) => void): () => void;
@@ -509,6 +564,8 @@ export interface LauncherApi {
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
+  onUpdaterSettingsChanged(listener: (settings: UpdaterSettings) => void): () => void;
+  onNavigateSurface(listener: (target: { surface: Surface; section?: string }) => void): () => void;
   onModelsChanged(listener: (snapshot: ManagedModelsSnapshot) => void): () => void;
   onLimitsChanged(listener: (snapshot: ProviderLimitsSnapshot) => void): () => void;
 }

@@ -26,8 +26,8 @@ async function waitForParent(pid, timeoutMs = 120_000) {
   }
 }
 
-function launch(bin, args = []) {
-  const child = spawn(bin, args, { detached: true, stdio: "ignore", windowsHide: true });
+function launch(bin, args = [], { windowsHide = true } = {}) {
+  const child = spawn(bin, args, { detached: true, stdio: "ignore", windowsHide });
   child.unref();
 }
 
@@ -37,17 +37,49 @@ function requireFile(filePath, label) {
   }
 }
 
+function resolveMacExecutableName(appBundlePath, preferredName = null) {
+  if (preferredName && typeof preferredName === "string") {
+    const candidate = path.join(appBundlePath, "Contents", "MacOS", preferredName);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return preferredName;
+    }
+  }
+  const plistPath = path.join(appBundlePath, "Contents", "Info.plist");
+  if (fs.existsSync(plistPath)) {
+    try {
+      const raw = fs.readFileSync(plistPath, "utf8");
+      const match = /<key>\s*CFBundleExecutable\s*<\/key>\s*<string>([^<]+)<\/string>/i.exec(raw);
+      if (match?.[1]?.trim()) {
+        return match[1].trim();
+      }
+    } catch {}
+  }
+  const macOsDir = path.join(appBundlePath, "Contents", "MacOS");
+  if (fs.existsSync(macOsDir)) {
+    const entries = fs.readdirSync(macOsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile());
+    if (entries.length > 0) return entries[0].name;
+  }
+  return null;
+}
+
 function updateMac(job) {
-  const sourceExecutable = path.join(job.source, "Contents", "MacOS", "Codex Web GPT");
+  const executableName = resolveMacExecutableName(job.source, job.executableName);
+  if (!executableName) {
+    throw new Error("Staged macOS launcher executable could not be resolved");
+  }
+  const sourceExecutable = path.join(job.source, "Contents", "MacOS", executableName);
   requireFile(sourceExecutable, "Staged macOS launcher");
+
   const next = `${job.target}.updating-${process.pid}`;
   const previous = `${job.target}.swap-${process.pid}`;
   fs.rmSync(next, { recursive: true, force: true });
   fs.rmSync(previous, { recursive: true, force: true });
+
   const copied = spawnSync("/usr/bin/ditto", [job.source, next], { encoding: "utf8", timeout: 180_000 });
   if (copied.error) throw copied.error;
   if (copied.status !== 0) throw new Error(`Could not stage the macOS application: ${copied.stderr.trim()}`);
-  requireFile(path.join(next, "Contents", "MacOS", "Codex Web GPT"), "Copied macOS launcher");
+  requireFile(path.join(next, "Contents", "MacOS", executableName), "Copied macOS launcher");
 
   fs.renameSync(job.target, previous);
   try {
@@ -57,16 +89,16 @@ function updateMac(job) {
     throw error;
   }
   fs.rmSync(previous, { recursive: true, force: true });
+  if (process.platform === "darwin") {
+    spawnSync("/usr/bin/xattr", ["-cr", job.target], { encoding: "utf8", timeout: 30_000 });
+  }
   launch("/usr/bin/open", [job.target]);
 }
 
 function updateWindows(job) {
   requireFile(job.source, "Windows installer");
-  const result = spawnSync(job.source, ["/S"], { encoding: "utf8", timeout: 15 * 60_000, windowsHide: true });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`Windows installer exited with code ${result.status}`);
-  requireFile(job.target, "Installed Windows launcher");
-  launch(job.target);
+  // Mở trình cài đặt GUI (.exe) để người dùng chủ động bấm Next như daily-podcast-studio.
+  launch(job.source, [], { windowsHide: false });
 }
 
 function shellQuote(value) {

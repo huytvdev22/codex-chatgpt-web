@@ -538,9 +538,11 @@ test("Settings surface removes the plugin name editor while keeping other settin
       const index = cursor++; if (!(index in hooks)) hooks[index] = initial;
       return [hooks[index], value => { hooks[index] = value; }];
     },
+    useEffect: () => {},
+    useRef: initial => ({ current: initial }),
     messageOf: String, platformLabel: String, api: {},
   };
-  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "SettingRow", "PrimaryButton", "SecondaryButton", "Switch", "LanguageMenu", "NoticeRow", "Icon", "DoctorSummary", "BrandMark", "AppUpdaterSection"]) sandbox[name] = name;
   const settings = appSource.slice(appSource.indexOf("function SettingsSurface("), appSource.indexOf("function ContentSurface("));
   vm.runInNewContext(transpile(settings, "settings.tsx") + "\nrender = SettingsSurface;", sandbox);
   const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
@@ -751,4 +753,45 @@ test("external Chrome login IPC, preload and UI Chrome sign-in view wiring are c
   assert.match(appSource, /api!\.startExternalLogin\(/);
   assert.match(appSource, /api!\.completeExternalLogin\(/);
   assert.match(appSource, /api!\.cancelExternalLogin\(/);
+});
+
+test("app updater IPC, preload, Settings section and Sidebar navigation are wired end-to-end", () => {
+  const updaterSection = fs.readFileSync(
+    path.join(launcherRoot, "src", "components", "AppUpdaterSection.tsx"),
+    "utf8",
+  );
+  for (const method of [
+    "checkForUpdates",
+    "downloadUpdate",
+    "cancelUpdateDownload",
+    "openUpdateFolder",
+    "ignoreUpdateVersion",
+    "getUpdaterSettings",
+    "saveUpdaterSettings",
+    "installUpdate",
+    "onUpdateState",
+    "onUpdaterSettingsChanged",
+    "onNavigateSurface",
+  ]) {
+    assert.match(preloadSource, new RegExp(`${method}:`));
+  }
+  for (const channel of [
+    "launcher:update-check",
+    "launcher:update-download",
+    "launcher:update-cancel-download",
+    "launcher:update-open-folder",
+    "launcher:update-ignore",
+    "launcher:update-get-settings",
+    "launcher:update-save-settings",
+    "launcher:update-install",
+  ]) {
+    assert.match(ipcRouterSource, new RegExp(channel));
+  }
+  assert.match(appSource, /AppUpdaterSection/);
+  assert.match(appSource, /openUpdaterSettings/);
+  assert.match(updaterSection, /api\.checkForUpdates/);
+  assert.match(updaterSection, /api\.downloadUpdate/);
+  assert.match(updaterSection, /api\.cancelUpdateDownload/);
+  assert.match(updaterSection, /api\.installUpdate/);
+  assert.match(updaterSection, /api\.ignoreUpdateVersion/);
 });

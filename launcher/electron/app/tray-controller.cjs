@@ -16,6 +16,10 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "Retry starts the launcher again without changing your saved settings or ChatGPT profile.",
     startupCleanupFailed: "Startup cleanup failed",
     catalogFailure: "Codex reached the launcher, but loading its model catalog failed (HTTP {status}; {reason}). Restart the launcher and review the local launcher log if the problem persists.",
+    updateAvailableTitle: "Update available: v{version}",
+    updateAvailableBody: "Current version is v{currentVersion}. Open Settings to review release notes and download.",
+    updateDownloadedTitle: "Update v{version} ready to install",
+    updateDownloadedBody: "SHA-256 verified. Open Settings to install and restart.",
   }),
   "zh-CN": Object.freeze({
     openLauncher: "打开 Codex Web GPT",
@@ -31,6 +35,10 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "重试会重新启动应用，不会更改已保存的设置或 ChatGPT 登录配置。",
     startupCleanupFailed: "启动清理失败",
     catalogFailure: "Codex 已连接到启动器，但模型列表加载失败（HTTP {status}；{reason}）。请查看“活动”了解详情；若问题持续，请导出安全日志。",
+    updateAvailableTitle: "发现新版本：v{version}",
+    updateAvailableBody: "当前版本为 v{currentVersion}。打开设置查看更新说明并下载。",
+    updateDownloadedTitle: "v{version} 更新已就绪",
+    updateDownloadedBody: "已完成 SHA-256 校验。打开设置即可安装并重启。",
   }),
   "zh-TW": Object.freeze({
     openLauncher: "開啟 Codex Web GPT",
@@ -46,6 +54,10 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "重試會重新啟動應用程式，不會變更已儲存的設定或 ChatGPT 登入設定檔。",
     startupCleanupFailed: "啟動清理失敗",
     catalogFailure: "Codex 已連線到啟動器，但模型清單載入失敗（HTTP {status}；{reason}）。請查看「活動」了解詳情；若問題持續，請匯出安全日誌。",
+    updateAvailableTitle: "發現新版本：v{version}",
+    updateAvailableBody: "目前版本為 v{currentVersion}。開啟設定查看更新說明並下載。",
+    updateDownloadedTitle: "v{version} 更新已就緒",
+    updateDownloadedBody: "已完成 SHA-256 驗證。開啟設定即可安裝並重新啟動。",
   }),
   "ja": Object.freeze({
     openLauncher: "Codex Web GPT を開く",
@@ -61,6 +73,10 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "保存済みの設定と ChatGPT プロファイルを変更せずに、ランチャーを再起動します。",
     startupCleanupFailed: "起動後のクリーンアップに失敗しました",
     catalogFailure: "Codex はランチャーに接続しましたが、モデル一覧を読み込めませんでした（HTTP {status}、{reason}）。「アクティビティ」で詳細を確認し、問題が続く場合は安全なログをエクスポートしてください。",
+    updateAvailableTitle: "新しいアップデート v{version}",
+    updateAvailableBody: "現在のバージョンは v{currentVersion} です。設定を開いて変更内容を確認し、ダウンロードしてください。",
+    updateDownloadedTitle: "v{version} のインストール準備完了",
+    updateDownloadedBody: "SHA-256 の検証が完了しました。設定からインストールして再起動できます。",
   }),
   "ko": Object.freeze({
     openLauncher: "Codex Web GPT 열기",
@@ -76,6 +92,10 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "저장된 설정이나 ChatGPT 프로필을 변경하지 않고 런처를 다시 시작합니다.",
     startupCleanupFailed: "시작 정리에 실패했습니다",
     catalogFailure: "Codex가 런처에 연결했지만 모델 목록을 불러오지 못했습니다(HTTP {status}; {reason}). 활동에서 세부 정보를 확인하고 문제가 계속되면 안전한 로그를 내보내 주세요.",
+    updateAvailableTitle: "새 업데이트 v{version}",
+    updateAvailableBody: "현재 버전은 v{currentVersion}입니다. 설정에서 변경 사항을 확인하고 다운로드하세요.",
+    updateDownloadedTitle: "v{version} 설치 준비 완료",
+    updateDownloadedBody: "SHA-256 검증이 완료되었습니다. 설정에서 설치하고 다시 시작하세요.",
   }),
 });
 

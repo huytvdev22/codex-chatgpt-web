@@ -10,6 +10,7 @@ const {
   BrowserWindow,
   dialog,
   nativeTheme,
+  Notification,
   screen,
   shell,
 } = require("electron");
@@ -26,6 +27,7 @@ const { CatalogMonitor } = require("./app/catalog-monitor.cjs");
 const { IpcRouter, syncFreshConversationPreference, windowStateSnapshot } = require("./app/ipc-router.cjs");
 const { TrayController, nativeCopyFor } = require("./app/tray-controller.cjs");
 const { createUpdateController } = require("./app/update-controller.cjs");
+const { UpdaterSettingsStore } = require("./app/updater-settings-store.cjs");
 const {
   MIN_WINDOW_BOUNDS,
   readWindowState,
@@ -632,6 +634,9 @@ async function start() {
   });
   await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();
+  const updaterSettingsStore = app.isPackaged && !IS_DEV_PROFILE
+    ? new UpdaterSettingsStore(app.getPath("userData"))
+    : null;
   updateController = createUpdateController({
     currentVersion: app.getVersion(),
     platform: process.platform,
@@ -642,7 +647,39 @@ async function start() {
       ? runtimeBundlePaths(updaterRuntimeRoot, process.platform).executable
       : null,
     logsDirectory: app.getPath("logs"),
+    updatesDirectory: path.join(app.getPath("userData"), "updates"),
+    settingsStore: updaterSettingsStore,
+    shell,
     publish: (state) => send("launcher:update-state", state),
+    onSettingsChanged: (settings) => send("launcher:updater-settings-changed", settings),
+    onNotify: ({ kind, version, currentVersion }) => {
+      if (launcherSmokeTest || !Notification?.isSupported?.()) return;
+      try {
+        const copy = nativeCopyFor(stateStore.read().language);
+        const titleTemplate = kind === "downloaded"
+          ? copy.updateDownloadedTitle
+          : copy.updateAvailableTitle;
+        const bodyTemplate = kind === "downloaded"
+          ? copy.updateDownloadedBody
+          : copy.updateAvailableBody;
+        const notification = new Notification({
+          title: String(titleTemplate).replace("{version}", () => version),
+          body: String(bodyTemplate)
+            .replace("{version}", () => version)
+            .replace("{currentVersion}", () => currentVersion || app.getVersion()),
+          icon: APP_ICON_PATH,
+        });
+        notification.on("click", () => {
+          showMainWindow();
+          send("launcher:navigate-surface", { surface: "settings", section: "updates" });
+        });
+        notification.show();
+      } catch (error) {
+        logger.warn("launcher.update_notification_failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
     logger,
   });
   send("launcher:connector-name-changed", runtimeHost.browserConnectorName());

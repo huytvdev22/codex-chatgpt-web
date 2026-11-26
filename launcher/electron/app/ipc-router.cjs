@@ -131,6 +131,7 @@ class IpcRouter {
         smokePassedByProvider: state.smokePassedByProvider || {},
         operation: getLastOperation(),
         update: updateController?.getState() ?? { status: "disabled" },
+        updaterSettings: updateController?.getSettings?.() ?? null,
       };
     });
 
@@ -532,16 +533,53 @@ class IpcRouter {
       return outcome;
     });
     handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
+    handle("launcher:update-check", async (_event, options = {}) => {
+      const updateController = getUpdateController();
+      if (!updateController) return { status: "disabled" };
+      return updateController.checkForUpdates({ manual: options?.manual !== false });
+    });
+    handle("launcher:update-download", async () => {
+      const updateController = getUpdateController();
+      if (!updateController) throw new Error("Launcher updates are unavailable");
+      return updateController.downloadUpdate();
+    });
+    handle("launcher:update-cancel-download", () => {
+      const updateController = getUpdateController();
+      if (!updateController) return { cancelled: false };
+      return updateController.cancelDownload();
+    });
+    handle("launcher:update-open-folder", () => {
+      const updateController = getUpdateController();
+      if (!updateController) return { opened: false, filePath: null };
+      return updateController.openDownloadedFolder();
+    });
+    handle("launcher:update-ignore", () => {
+      const updateController = getUpdateController();
+      if (!updateController) return { status: "disabled" };
+      return updateController.ignoreCurrentUpdate();
+    });
+    handle("launcher:update-get-settings", () => {
+      const updateController = getUpdateController();
+      return updateController?.getSettings?.() ?? null;
+    });
+    handle("launcher:update-save-settings", (_event, patch = {}) => {
+      const updateController = getUpdateController();
+      if (!updateController) throw new Error("Launcher updates are unavailable");
+      return updateController.saveSettings(patch && typeof patch === "object" ? patch : {});
+    });
     handle("launcher:update-install", async () => {
       const updateController = getUpdateController();
       if (!updateController) throw new Error("Launcher updates are unavailable");
       const launch = await updateController.beginInstall();
+      if (launch && launch.installed === false) {
+        return launch;
+      }
       const result = await requestQuit();
       if (!result.ok) {
         updateController.cancelInstall(launch);
         throw new Error(result.message);
       }
-      return true;
+      return { installed: true, version: launch?.version ?? null };
     });
     handle("launcher:window-state", (event) => {
       const window = BrowserWindow.fromWebContents(event.sender);
