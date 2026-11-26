@@ -40,6 +40,7 @@ export class GeminiAttachments {
     const isMenuOpen = (await menuOverlay.count().catch(() => 0)) > 0;
     if (!isMenuOpen) {
       const uploadBtn = page.locator(GEMINI_SELECTORS.uploadAndToolsButton).first();
+      await uploadBtn.waitFor({ state: "visible", timeout: 4_000 }).catch(() => {});
       if (!(await uploadBtn.isVisible().catch(() => false))) {
         throw new Error(
           "[gemini-attachments] Không tìm thấy nút Upload & tools trên Gemini.",

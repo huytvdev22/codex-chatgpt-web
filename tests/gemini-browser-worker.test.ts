@@ -8,6 +8,7 @@ import {
   type GeminiResponseBaseline,
 } from "../src/adapters/gemini";
 import { BaseWebBrowserWorker } from "../src/adapters/web/browser";
+import { focusGeminiComposer } from "../src/adapters/gemini/composer-input";
 
 class TestableGeminiWorker extends GeminiBrowserWorker {
   public async callNavigate(
@@ -140,5 +141,33 @@ describe("GeminiBrowserWorker, DomObserver & ClipboardSalvage", () => {
       retain: false,
     });
     expect(ephemeralId).toBeUndefined();
+  });
+
+  test("focusGeminiComposer thoát .cdk-overlay-container bằng Escape và focus lại khi click thường bị che", async () => {
+    const events: string[] = [];
+    const fakePage = {
+      keyboard: {
+        press: async (key: string) => {
+          events.push(`key:${key}`);
+        },
+      },
+      waitForTimeout: async () => {},
+    } as unknown as Page;
+    let clickCount = 0;
+    const fakeComposer = {
+      click: async (opts?: { force?: boolean }) => {
+        clickCount += 1;
+        events.push(`click:${opts?.force ? "force" : "normal"}#${clickCount}`);
+        if (clickCount === 1) {
+          throw new Error("cdk-overlay-container subtree intercepts pointer events");
+        }
+      },
+      focus: async () => {
+        events.push("focus");
+      },
+    } as unknown as Parameters<typeof focusGeminiComposer>[1];
+
+    await focusGeminiComposer(fakePage, fakeComposer);
+    expect(events).toEqual(["click:normal#1", "key:Escape", "click:normal#2", "focus"]);
   });
 });

@@ -10,6 +10,7 @@ import {
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import { GeminiAttachments } from "./attachments";
 import { GeminiCapabilityPicker } from "./capability-picker";
+import { focusGeminiComposer } from "./composer-input";
 import {
   GeminiClipboardSalvage,
   selectPreferredGeminiResponse,
@@ -242,8 +243,7 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
       );
     }
 
-    await composerLocator.click({ timeout: 3_000 });
-    await composerLocator.focus({ timeout: 2_000 }).catch(() => {});
+    await focusGeminiComposer(page, composerLocator, options.signal);
 
     const selectAllKey = process.platform === "darwin" ? "Meta+a" : "Control+a";
     await page.keyboard.press(selectAllKey);

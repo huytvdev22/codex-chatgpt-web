@@ -53,7 +53,12 @@ export const GEMINI_SELECTORS = {
   tempChatOffButton: 'button[aria-label="Turn off temporary chat"]',
 
   /** Nút mở menu Upload & tools và thẻ input file ảnh ẩn */
-  uploadAndToolsButton: 'button[aria-label="Upload & tools"]',
+  uploadAndToolsButton: [
+    'button[aria-label="Upload & tools"]',
+    'button[aria-label="Upload and tools"]',
+    'button[aria-label*="Upload" i][aria-haspopup="menu"]',
+    'gem-icon-button.gem-menu-button button[aria-haspopup="menu"]',
+  ].join(", "),
   imageFileInput:
     'input[type="file"][accept*="image/"], input[type="file"][accept*="image"]',
   attachmentPreview: "uploader-file-preview, gem-media-attachment",

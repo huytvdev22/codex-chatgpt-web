@@ -7,6 +7,7 @@ import type {
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import { GeminiAttachments } from "./attachments";
 import { GeminiCapabilityPicker } from "./capability-picker";
+import { focusGeminiComposer } from "./composer-input";
 import {
   buildGeminiConversationUrl,
   GEMINI_HOME_URL,
@@ -191,6 +192,7 @@ export class GeminiImageWorker {
     if (alreadyActive) return;
 
     const uploadBtn = page.locator(GEMINI_SELECTORS.uploadAndToolsButton).first();
+    await uploadBtn.waitFor({ state: "visible", timeout: 4_000 }).catch(() => {});
     if (!(await uploadBtn.isVisible().catch(() => false))) {
       throw new Error(
         "[gemini-image-worker] Không tìm thấy nút Upload & tools để bật chế độ tạo ảnh.",
@@ -365,8 +367,7 @@ export class GeminiImageWorker {
       );
     }
 
-    await composerLocator.click({ timeout: 3_000 });
-    await composerLocator.focus({ timeout: 2_000 }).catch(() => {});
+    await focusGeminiComposer(page, composerLocator, signal);
 
     const selectAllKey = process.platform === "darwin" ? "Meta+a" : "Control+a";
     await page.keyboard.press(selectAllKey);
