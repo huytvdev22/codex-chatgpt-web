@@ -57,6 +57,7 @@ export interface ImageTurnRequest {
   outputFormat?: "png" | "jpeg" | "webp";
   conversationKey?: string;
   existingConversationId?: string;
+  conversationUrl?: string;
 }
 
 export interface ImageTurnResult {
@@ -64,6 +65,7 @@ export interface ImageTurnResult {
   mimeType: string;
   revisedPrompt?: string;
   conversationId?: string;
+  conversationUrl?: string;
 }
 
 export interface UsageLimitCheckRequest {

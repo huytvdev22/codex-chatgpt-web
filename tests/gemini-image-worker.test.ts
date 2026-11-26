@@ -299,5 +299,23 @@ describe("GeminiImageWorker", () => {
     const state = getState();
     expect(state.gotoUrls).toEqual(["https://gemini.google.com/app/abc123456789"]);
     expect(result.conversationId).toBe("abc123456789");
+    expect(result.conversationUrl).toBe("https://gemini.google.com/app/abc123456789");
+  });
+
+  test("ưu tiên điều hướng tới conversationUrl được truyền tường minh (kể cả prefix /u/1/app)", async () => {
+    const { page, getState } = createMockGeminiImagePage({
+      initialUrl: GEMINI_HOME_URL,
+    });
+    const worker = new GeminiImageWorker();
+
+    const result = await worker.executeImageTurn(page, {
+      prompt: "Đổi màu nền sang tím neon",
+      conversationUrl: "https://gemini.google.com/u/1/app/xyz987654321?usp=sharing",
+    });
+
+    const state = getState();
+    expect(state.gotoUrls).toEqual(["https://gemini.google.com/u/1/app/xyz987654321"]);
+    expect(result.conversationId).toBe("xyz987654321");
+    expect(result.conversationUrl).toBe("https://gemini.google.com/u/1/app/xyz987654321");
   });
 });

@@ -39,6 +39,29 @@ export function buildGeminiConversationUrl(conversationId: string): string {
   return `${GEMINI_ORIGIN}/app/${normalized}`;
 }
 
+export function normalizeGeminiConversationUrl(
+  rawUrl: unknown,
+): string | undefined {
+  if (typeof rawUrl !== "string") return undefined;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (parsed.origin !== GEMINI_ORIGIN || parsed.username || parsed.password) {
+    return undefined;
+  }
+  const conversationId = parseGeminiConversationId(parsed.toString());
+  if (!conversationId) return undefined;
+  // Giữ nguyên prefix /u/<index>/ nếu có, chuẩn hóa sạch không kèm query/hash
+  const userPrefixMatch = /^(\/u\/\d+\/)app\//i.exec(parsed.pathname);
+  const prefix = userPrefixMatch ? userPrefixMatch[1] : "/";
+  return `${GEMINI_ORIGIN}${prefix}app/${conversationId}`;
+}
+
 export function parseGeminiConversationId(rawUrl: string): string | undefined {
   let url: URL;
   try {

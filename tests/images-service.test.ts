@@ -369,4 +369,60 @@ describe("ImagesService & /v1/images/* HTTP routes", () => {
     expect(swaggerHtml).toContain('"/v1/images/edits"');
     expect(swaggerHtml).toContain('"Gemini Images"');
   });
+
+  test("trả về conversation_id + conversation_url và cho phép nối tiếp trực tiếp qua conversation_url bất kể thread_id", async () => {
+    const captured: ImageTurnRequest[] = [];
+    const adapterFactory = () =>
+      ({
+        name: "gemini",
+        runTurn: async () => {},
+        runImageTurn: async (request: ImageTurnRequest) => {
+          captured.push(request);
+          return {
+            imageBase64: ONE_BY_ONE_PNG_B64,
+            mimeType: "image/png",
+            conversationId: "gemconv998877",
+            conversationUrl: "https://gemini.google.com/app/gemconv998877",
+          };
+        },
+      }) as ProviderAdapter;
+
+    const responsesService = new ResponsesService(undefined, undefined, () => "gemini/4-hydrogen");
+    const service = new ImagesService(responsesService, undefined, undefined, () => "gemini/4-hydrogen");
+    const firstParsed = service.validateGenerationJson({
+      model: "gemini/4-hydrogen",
+      prompt: "Tạo thumbnail podcast",
+    });
+    expect(firstParsed.ok).toBe(true);
+    if (!firstParsed.ok) return;
+
+    const firstRes = await service.executeImageTurn({
+      req: new Request("http://127.0.0.1/v1/images/generations", { method: "POST" }),
+      parsed: firstParsed.parsed,
+      adapterFactory,
+    });
+    expect(firstRes.status).toBe(200);
+    const firstJson = (await firstRes.json()) as Record<string, unknown>;
+    expect(firstJson.conversation_id).toBe("gemconv998877");
+    expect(firstJson.conversation_url).toBe("https://gemini.google.com/app/gemconv998877");
+
+    // Gửi tiếp qua conversation_url + model gemini khác (4-neon) mà không cần x-codex-turn-metadata
+    const followParsed = service.validateGenerationJson({
+      model: "gemini/4-neon",
+      prompt: "Đổi chữ sang màu vàng",
+      conversation_url: "https://gemini.google.com/app/gemconv998877",
+    });
+    expect(followParsed.ok).toBe(true);
+    if (!followParsed.ok) return;
+
+    const followRes = await service.executeImageTurn({
+      req: new Request("http://127.0.0.1/v1/images/generations", { method: "POST" }),
+      parsed: followParsed.parsed,
+      adapterFactory,
+    });
+    expect(followRes.status).toBe(200);
+    expect(captured[1]?.conversationUrl).toBe("https://gemini.google.com/app/gemconv998877");
+    expect(captured[1]?.existingConversationId).toBe("gemconv998877");
+    expect(captured[1]?.modelId).toBe("gemini/4-neon");
+  });
 });

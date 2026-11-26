@@ -13,6 +13,7 @@ import {
   GEMINI_HOME_URL,
   GEMINI_ORIGIN,
   isGeminiAuthUrl,
+  normalizeGeminiConversationUrl,
   parseGeminiConversationId,
   waitForGeminiConversationId,
 } from "./conversation-url";
@@ -30,6 +31,7 @@ export interface GeminiImageRunOptions {
   images?: RawTurnImageInput[];
   outputFormat?: "png" | "jpeg" | "webp";
   existingConversationId?: string;
+  conversationUrl?: string;
   signal?: AbortSignal;
   heartbeat?: () => Promise<void>;
   hardTimeoutMs?: number;
@@ -100,17 +102,31 @@ export class GeminiImageWorker {
     const currentUrl = page.url();
     this.assertNotAuthRedirect(currentUrl);
     const currentConversationId = parseGeminiConversationId(currentUrl);
+    const normalizedRequestedUrl = normalizeGeminiConversationUrl(
+      options.conversationUrl,
+    );
+    const requestedConversationId =
+      options.existingConversationId ||
+      (normalizedRequestedUrl
+        ? parseGeminiConversationId(normalizedRequestedUrl)
+        : undefined);
+    const targetConversationUrl =
+      normalizedRequestedUrl ||
+      (requestedConversationId
+        ? buildGeminiConversationUrl(requestedConversationId)
+        : undefined);
 
-    if (options.existingConversationId) {
-      if (currentConversationId !== options.existingConversationId) {
+    if (targetConversationUrl) {
+      const normalizedCurrentUrl = normalizeGeminiConversationUrl(currentUrl);
+      if (
+        normalizedCurrentUrl !== targetConversationUrl &&
+        (!requestedConversationId || currentConversationId !== requestedConversationId)
+      ) {
         this.capabilityPicker.clearCache(page);
-        await page.goto(
-          buildGeminiConversationUrl(options.existingConversationId),
-          {
-            waitUntil: "domcontentloaded",
-            timeout: 30_000,
-          },
-        );
+        await page.goto(targetConversationUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
       }
     } else if (!currentUrl.startsWith(GEMINI_ORIGIN) || currentConversationId) {
       this.capabilityPicker.clearCache(page);
@@ -173,13 +189,20 @@ export class GeminiImageWorker {
       options,
     );
     const resolvedConversationId =
-      options.existingConversationId ||
+      requestedConversationId ||
       parseGeminiConversationId(page.url()) ||
       (await waitForGeminiConversationId(page, 6_000, options.signal));
+    const resolvedConversationUrl =
+      normalizeGeminiConversationUrl(page.url()) ||
+      targetConversationUrl ||
+      (resolvedConversationId
+        ? buildGeminiConversationUrl(resolvedConversationId)
+        : undefined);
 
     return {
       ...imageResult,
       ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
+      ...(resolvedConversationUrl ? { conversationUrl: resolvedConversationUrl } : {}),
     };
   }
 

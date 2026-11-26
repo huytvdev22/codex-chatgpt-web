@@ -1,5 +1,10 @@
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
 import type { ImageAspectRatio, RawTurnImageInput } from "../adapters/base";
+import {
+  normalizeGeminiConversationId,
+  normalizeGeminiConversationUrl,
+  parseGeminiConversationId,
+} from "../adapters/gemini/conversation-url";
 import { formatErrorResponse } from "../bridge";
 import { readCodexConfiguredModel } from "../codex-integration-document";
 import { ModelRegistry } from "../models/model-registry";
@@ -23,6 +28,8 @@ export interface ParsedImageRequest {
   aspectRatio?: ImageAspectRatio;
   outputFormat?: "png" | "jpeg" | "webp";
   images?: RawTurnImageInput[];
+  conversationId?: string;
+  conversationUrl?: string;
 }
 
 interface ParsedTurnMetadataHeader {
@@ -233,6 +240,10 @@ function parseCommonImageFields(
       : "gpt-image-2";
   const size = typeof fields.size === "string" ? fields.size.trim() : undefined;
   const aspectRatio = resolveRequestedAspectRatio(size, prompt);
+  const conversationUrl = normalizeGeminiConversationUrl(fields.conversation_url);
+  const conversationId =
+    normalizeGeminiConversationId(fields.conversation_id) ||
+    (conversationUrl ? parseGeminiConversationId(conversationUrl) : undefined);
 
   return {
     ok: true,
@@ -242,6 +253,8 @@ function parseCommonImageFields(
       ...(size ? { size } : {}),
       ...(aspectRatio ? { aspectRatio } : {}),
       ...(outputFormat ? { outputFormat } : {}),
+      ...(conversationId ? { conversationId } : {}),
+      ...(conversationUrl ? { conversationUrl } : {}),
     },
   };
 }
@@ -394,6 +407,8 @@ export class ImagesService {
       "transparent_background",
       "output_format",
       "gif",
+      "conversation_id",
+      "conversation_url",
     ]) {
       const value = form.get(key);
       if (typeof value === "string") {
@@ -592,10 +607,15 @@ export class ImagesService {
     }
 
     const headerMeta = parseTurnMetadataHeader(params.req.headers);
-    const existingConversationId = this.getThreadImageConversation(headerMeta.threadId);
+    const existingConversationId =
+      params.parsed.conversationId ||
+      this.getThreadImageConversation(headerMeta.threadId);
+    const existingConversationUrl = params.parsed.conversationUrl;
     const conversationKey = headerMeta.threadId
       ? `image:${headerMeta.threadId}`
-      : undefined;
+      : existingConversationId
+        ? `image-conv:${existingConversationId}`
+        : undefined;
 
     try {
       const adapter = params.adapterFactory
@@ -621,6 +641,9 @@ export class ImagesService {
           outputFormat: params.parsed.outputFormat ?? "png",
           ...(conversationKey ? { conversationKey } : {}),
           ...(existingConversationId ? { existingConversationId } : {}),
+          ...(existingConversationUrl
+            ? { conversationUrl: existingConversationUrl }
+            : {}),
         },
         {
           headers: params.req.headers,
@@ -630,7 +653,7 @@ export class ImagesService {
 
       this.rememberThreadImageConversation(
         headerMeta.threadId,
-        result.conversationId,
+        result.conversationId || existingConversationId,
       );
 
       const outputFormat =
@@ -642,6 +665,10 @@ export class ImagesService {
 
       return Response.json({
         created: Math.floor(Date.now() / 1000),
+        ...(result.conversationId ? { conversation_id: result.conversationId } : {}),
+        ...(result.conversationUrl
+          ? { conversation_url: result.conversationUrl }
+          : {}),
         data: [
           {
             b64_json: result.imageBase64,

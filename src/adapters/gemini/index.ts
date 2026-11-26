@@ -25,6 +25,7 @@ import {
   GEMINI_ORIGIN,
   isGeminiAuthUrl,
   normalizeGeminiConversationId,
+  normalizeGeminiConversationUrl,
   parseGeminiConversationId,
   waitForGeminiConversationId,
 } from "./conversation-url";
@@ -331,9 +332,15 @@ export class GeminiAdapter extends WebProviderAdapter {
     request: ImageTurnRequest,
     incoming: IncomingMeta,
   ): Promise<ImageTurnResult> {
-    const initialUrl = request.existingConversationId
-      ? buildGeminiConversationUrl(request.existingConversationId)
-      : GEMINI_HOME_URL;
+    const normalizedUrl = normalizeGeminiConversationUrl(
+      request.conversationUrl,
+    );
+    const resolvedId =
+      request.existingConversationId ||
+      (normalizedUrl ? parseGeminiConversationId(normalizedUrl) : undefined);
+    const initialUrl =
+      normalizedUrl ||
+      (resolvedId ? buildGeminiConversationUrl(resolvedId) : GEMINI_HOME_URL);
     return await this.engine.runEphemeralSurfaceTask(
       incoming,
       async ({ page, signal, heartbeat }) => {
@@ -344,7 +351,8 @@ export class GeminiAdapter extends WebProviderAdapter {
           aspectRatio: request.aspectRatio,
           images: request.images,
           outputFormat: request.outputFormat,
-          existingConversationId: request.existingConversationId,
+          existingConversationId: resolvedId,
+          conversationUrl: initialUrl !== GEMINI_HOME_URL ? initialUrl : undefined,
           signal,
           heartbeat,
         });
