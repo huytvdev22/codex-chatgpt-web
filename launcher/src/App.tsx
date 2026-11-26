@@ -776,6 +776,11 @@ function BrowserSurface({
   const profiles = activeProvider?.profiles ?? [];
   const activeProfileId = activeProvider?.activeProfileId || "default";
   const activeProfile = profiles.find((item) => item.id === activeProfileId);
+  const activeProviderLimitEntry = limitEntryByKey.get(
+    `${runtimeProviderIdFor(activeProviderId)}::${activeProfileId}`,
+  );
+  const activeProviderLimitTone = limitAlertTone(activeProviderLimitEntry?.status);
+  const activeProviderAlertLabel = limitAlertBadgeText(activeProviderLimitEntry);
   const activeTabId = browser?.activeTabId || "home";
   const profileControlLocked = switchingProvider || switchingProfile || navigationLocked || externalLoginActive;
   const showExternalChromeCard = (activeProvider?.usesExternalChromeLogin === true || activeProviderId === "ai-studio")
@@ -952,28 +957,35 @@ function BrowserSurface({
         </div>
         {providers.length > 1 ? (
           <div className="provider-switcher" role="group" aria-label="Web provider">
-            {providers.map((item) => {
-              const selected = item.id === activeProviderId;
-              const runtimeId = runtimeProviderIdFor(item.id);
-              const activeItemProfileId = item.activeProfileId || "default";
-              const limitEntry = limitEntryByKey.get(`${runtimeId}::${activeItemProfileId}`);
-              const tone = limitAlertTone(limitEntry?.status);
-              const alertLabel = limitAlertBadgeText(limitEntry);
-              return (
-                <button
-                  aria-disabled={switchingProvider || navigationLocked || undefined}
-                  aria-pressed={selected}
-                  className="provider-switcher-button"
-                  key={item.id}
-                  onClick={() => void switchProvider(item.id)}
-                  title={`${item.displayName}${item.authenticated ? ` (${copy.signedIn})` : ""}${alertLabel ? ` · ${alertLabel}` : ""}`}
-                  type="button"
-                >
-                  <span>{item.displayName}</span>
-                  {tone ? <i aria-hidden="true" className={`provider-limit-dot is-${tone}`} /> : null}
-                </button>
-              );
-            })}
+            <select
+              aria-label="Web provider"
+              className="provider-switcher-select"
+              disabled={switchingProvider || navigationLocked}
+              onChange={(event) => void switchProvider(event.target.value)}
+              title={`${providerLabel}${activeProvider?.authenticated ? ` (${copy.signedIn})` : ""}${activeProviderAlertLabel ? ` · ${activeProviderAlertLabel}` : ""}`}
+              value={activeProviderId}
+            >
+              {providers.map((item) => {
+                const runtimeId = runtimeProviderIdFor(item.id);
+                const activeItemProfileId = item.activeProfileId || "default";
+                const limitEntry = limitEntryByKey.get(`${runtimeId}::${activeItemProfileId}`);
+                const alertLabel = limitAlertBadgeText(limitEntry);
+                return (
+                  <option key={item.id} value={item.id}>
+                    {item.displayName}
+                    {item.authenticated ? " ●" : " ○"}
+                    {alertLabel ? ` (${alertLabel})` : ""}
+                  </option>
+                );
+              })}
+            </select>
+            {activeProviderLimitTone ? (
+              <i
+                aria-hidden="true"
+                className={`provider-limit-dot is-${activeProviderLimitTone}`}
+                title={activeProviderAlertLabel ?? undefined}
+              />
+            ) : null}
           </div>
         ) : null}
         {supportsProfiles && profiles.length > 0 ? (

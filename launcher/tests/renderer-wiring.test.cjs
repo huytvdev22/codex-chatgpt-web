@@ -621,8 +621,9 @@ test("multi-provider IPC channels and dynamic provider rendering stay wired clea
 
   const browserSlice = appSource.slice(appSource.indexOf("function BrowserSurface("), appSource.indexOf("function SetupSurface("));
   assert.match(browserSlice, /className="provider-switcher"/);
+  assert.match(browserSlice, /className="provider-switcher-select"/);
   assert.match(browserSlice, /api!\.switchProvider\(providerId\)/);
-  assert.match(browserSlice, /switchProvider\(item\.id\)/);
+  assert.match(browserSlice, /switchProvider\(event\.target\.value\)/);
 });
 
 test("settings opens Swagger UI for production runtime when server is healthy", async () => {
