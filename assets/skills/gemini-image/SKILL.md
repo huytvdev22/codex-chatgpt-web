@@ -26,6 +26,7 @@ CLI commands (resolve `<skill_dir>` from the skill root shown in the prompt, def
 
 Rules:
 - If `image_gen` is unavailable in the active tool catalog, switch straight to `scripts/gemini-image.mjs` without asking the user for permission or an API key.
+- **Sandbox & timeout requirement for `exec_command` (Path B):** Codex's default `workspace-write` sandbox blocks loopback network calls to `127.0.0.1` (`EPERM`). Always invoke `scripts/gemini-image.mjs` with `sandbox_permissions: "require_escalated"`, `justification: "Call local codex-chatgpt-web image bridge on 127.0.0.1"`, and `yield_time_ms: 60000` (image generation takes ~25–45s). If you ever see `EPERM` or `fetch failed`, immediately retry with `sandbox_permissions: "require_escalated"` instead of running `lsof`/`ps` inside the sandbox or stopping to ask the user.
 - After `scripts/gemini-image.mjs` outputs `{ ok, path, width, height, ... }`, **always call `view_image`** on `path` so you inspect the generated/edited image directly before responding.
 - Gemini Web constraints (fail-fast `400` if violated):
   - Supported aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`.

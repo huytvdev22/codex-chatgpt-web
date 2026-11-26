@@ -242,11 +242,29 @@ async function main() {
     });
   }
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
+    const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
+    const detail = error instanceof Error ? error.message : String(error);
+    if (code === "EPERM" || code === "EACCES") {
+      throw new Error(
+        `SANDBOX_BLOCKED (${code}): Sandbox hiện tại chặn kết nối tới ${endpoint}. Hãy chạy lại exec_command với sandbox_permissions: "require_escalated" (hoặc bật network_access = true trong [sandbox_workspace_write]).`,
+      );
+    }
+    if (code === "ECONNREFUSED") {
+      throw new Error(
+        `BRIDGE_UNREACHABLE (${code}): Không kết nối được bridge tại ${endpoint}. Hãy kiểm tra ứng dụng codex-chatgpt-web đã bật chưa.`,
+      );
+    }
+    throw new Error(`Không gọi được ${endpoint}${code ? ` (${code})` : ""}: ${detail}`);
+  }
 
   const rawText = await response.text();
   let json;
