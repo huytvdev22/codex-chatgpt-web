@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **103** | Tích hợp tạo & chỉnh sửa ảnh Gemini Web cho skill `Image Gen` của Codex (`/v1/images/generations`, `/v1/images/edits`) | `gemini`, `server`, `web`, `codex` | ⏳ Chờ User Test & Confirm | [103-gemini-web-image-generation-for-codex.md](./103-gemini-web-image-generation-for-codex.md) |
 | **102** | Workflow Release fail job macOS ARM64 do runner `macos-14` đã bị GitHub Actions ngừng hỗ trợ | `ci/cd`, `macos`, `release` | ⏳ Chờ User Test & Confirm | [102-release-macos-14-runner-retired.md](./102-release-macos-14-runner-retired.md) |
 | **101** | Tích hợp Adapter Gemini Web (`gemini`) đa profile, Mode Picker, Auto-Discovery và Sign in with Chrome | `gemini`, `web`, `launcher`, `electron`, `chrome-login`, `profiles` | ⏳ Chờ User Test & Confirm | [101-add-gemini-web-adapter.md](./101-add-gemini-web-adapter.md) |
 | **100** | Menu quản lý Model, lưu trữ Overlay `models.json` và Auto-Discovery theo từng Adapter | `m365-copilot`, `ai-studio`, `chatgpt`, `web`, `server`, `launcher` | ✅ Đã Confirm | [100-model-catalog-management-and-auto-discovery.md](./100-model-catalog-management-and-auto-discovery.md) |

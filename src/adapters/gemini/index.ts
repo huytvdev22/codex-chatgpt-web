@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { hasActualPriorAssistantReply, type ProviderAdapter } from "../base";
+import {
+  hasActualPriorAssistantReply,
+  type ImageTurnRequest,
+  type ImageTurnResult,
+  type IncomingMeta,
+  type ProviderAdapter,
+} from "../base";
 import type { CodexParsedRequest } from "../../types";
 import { computeAccurateTurnUsage } from "../../usage";
 import { CodexPayloadNormalizer, CodexRawPayload } from "../web/normalization";
@@ -27,6 +33,11 @@ import {
   type GeminiBrowserRunOptions,
   type GeminiTurnResult,
 } from "./gemini-browser-worker";
+import {
+  GeminiImageRefusalError,
+  GeminiImageWorker,
+  type GeminiImageRunOptions,
+} from "./gemini-image-worker";
 import {
   GeminiClipboardSalvage,
   normalizeCopiedGeminiSnippet,
@@ -57,6 +68,11 @@ export {
   GeminiBrowserWorker,
   type GeminiBrowserRunOptions,
   type GeminiTurnResult,
+};
+export {
+  GeminiImageRefusalError,
+  GeminiImageWorker,
+  type GeminiImageRunOptions,
 };
 export {
   GeminiClipboardSalvage,
@@ -124,6 +140,7 @@ function isEphemeralStructuredTurn(
 export class GeminiAdapter extends WebProviderAdapter {
   override readonly name = "gemini";
   private readonly worker: GeminiBrowserWorker;
+  private readonly imageWorker = new GeminiImageWorker();
 
   constructor() {
     const worker = new GeminiBrowserWorker();
@@ -287,6 +304,42 @@ export class GeminiAdapter extends WebProviderAdapter {
       },
     });
     this.worker = worker;
+  }
+
+  /**
+   * Thực thi tác vụ tạo hoặc chỉnh sửa ảnh trên tab Gemini Web tách riêng khỏi thread chat code
+   * (không bật Temporary Chat để lưu lịch sử; khi có `existingConversationId` sẽ nối tiếp cùng
+   * conversation ảnh của thread Codex đó).
+   */
+  async runImageTurn(
+    request: ImageTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<ImageTurnResult> {
+    const initialUrl = request.existingConversationId
+      ? buildGeminiConversationUrl(request.existingConversationId)
+      : GEMINI_HOME_URL;
+    return await this.engine.runEphemeralSurfaceTask(
+      incoming,
+      async ({ page, signal, heartbeat }) => {
+        return await this.imageWorker.executeImageTurn(page, {
+          modelSlug: request.modelId,
+          reasoning: request.reasoning,
+          prompt: request.prompt,
+          aspectRatio: request.aspectRatio,
+          images: request.images,
+          outputFormat: request.outputFormat,
+          existingConversationId: request.existingConversationId,
+          signal,
+          heartbeat,
+        });
+      },
+      {
+        initialUrl,
+        conversationKeySource: request.conversationKey || `image:${randomUUID()}`,
+        retainOnCompleted: false,
+        omitConnectorIdentity: true,
+      },
+    );
   }
 }
 

@@ -1,4 +1,4 @@
-export type HttpTrackedEndpoint = "models" | "responses" | "compact" | "unspecified";
+export type HttpTrackedEndpoint = "models" | "responses" | "compact" | "images" | "unspecified";
 
 export interface NativeCodexTurnIdentity {
   threadId: string;

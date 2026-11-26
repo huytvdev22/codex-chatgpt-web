@@ -81,4 +81,18 @@ export const GEMINI_SELECTORS = {
     "mat-snack-bar-container",
     "simple-snack-bar",
   ].join(", "),
+
+  /** Điều khiển chế độ tạo ảnh (Upload & tools -> Create image, Aspect ratio, Format) */
+  createImageMenuItem:
+    'gem-menu-item[role="menuitemcheckbox"], [role="menuitemcheckbox"]',
+  deselectImagesChip: 'button[aria-label="Deselect Images"]',
+  companionChipButtons: "input-companion-chip button, input-companion button",
+  aspectRatioChipButton: 'button[aria-label^="Aspect ratio,"]',
+  formatChipButton: 'button[aria-label^="Format,"]',
+  companionMenuRadioItem:
+    'input-companion-item[role="menuitemradio"], [role="menuitemradio"]',
+
+  /** Kết quả ảnh sinh ra trong model-response (scoped tách biệt khỏi Download code) */
+  generatedImageElement:
+    "model-response generated-image img, model-response single-image img, model-response img.image",
 } as const;

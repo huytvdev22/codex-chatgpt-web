@@ -6,12 +6,14 @@ import type { AppConfig } from "./config";
 import { AdminController } from "./controllers/admin-controller";
 import { GeminiSpeechController } from "./controllers/gemini-speech-controller";
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./controllers/http-turn-counter";
+import { ImagesController } from "./controllers/images-controller";
 import { ModelsController, type ModelCatalogFailure } from "./controllers/models-controller";
 import { ResponsesController } from "./controllers/responses-controller";
 import type { GeminiSpeechMethod } from "./services/gemini-speech-service";
 import { applyLoopbackCors, serveUniversal, type UniversalServer } from "./controllers/universal-http-server";
 import { ModelCatalog } from "./models/model-catalog";
 import { flushResponseState } from "./responses/state";
+import { ImagesService } from "./services/images-service";
 import { ResponsesService, type ResponseRequestOptions } from "./services/responses-service";
 
 export { HttpTurnCounter, type HttpStreamFailureEvidence, type NativeCodexTurnIdentity } from "./controllers/http-turn-counter";
@@ -77,7 +79,9 @@ export function startServer(
 
   const httpTurns = new HttpTurnCounter();
   const modelsController = new ModelsController();
-  const responsesController = new ResponsesController(new ResponsesService());
+  const responsesService = new ResponsesService();
+  const responsesController = new ResponsesController(responsesService);
+  const imagesController = new ImagesController(new ImagesService(responsesService));
   const geminiSpeechController = new GeminiSpeechController();
 
   let server!: UniversalServer;
@@ -194,6 +198,35 @@ export function startServer(
         req.signal,
         process.platform,
         "responses",
+      );
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/images/generations") {
+      if (draining) {
+        return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+      }
+      return httpTurns.track(
+        (signal) => imagesController.handleGenerations(
+          new Request(req, { signal }),
+          dependencies.adapterFactory,
+        ),
+        req.signal,
+        process.platform,
+        "images",
+      );
+    }
+    if (req.method === "POST" && url.pathname === "/v1/images/edits") {
+      if (draining) {
+        return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+      }
+      return httpTurns.track(
+        (signal) => imagesController.handleEdits(
+          new Request(req, { signal }),
+          dependencies.adapterFactory,
+        ),
+        req.signal,
+        process.platform,
+        "images",
       );
     }
 

@@ -24,7 +24,15 @@ export type ProviderResolutionResult =
   | { ok: true; provider: BaseModelProvider; requestedModel: string }
   | { ok: false; message: string };
 
+export interface ActiveTurnContext {
+  providerId: string;
+  modelId: string;
+  reasoning?: string;
+}
+
 const RECENT_PRIMARY_MODEL_TTL_MS = 60_000;
+const ACTIVE_TURN_CONTEXT_TTL_MS = 30 * 60_000;
+const MAX_ACTIVE_TURN_CONTEXTS = 256;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -84,12 +92,79 @@ export function isCodexThreadTitleRequest(raw: unknown): boolean {
  */
 export class ResponsesService {
   private recentPrimaryModel: { modelId: string; recordedAt: number } | null = null;
+  private recentPrimaryContext: (ActiveTurnContext & { recordedAt: number }) | null = null;
+  private readonly turnContextsByThread = new Map<string, ActiveTurnContext & { recordedAt: number }>();
 
   constructor(
     private readonly modelRegistry: ModelRegistry = ModelRegistry.getInstance(),
     private readonly adapterRegistry: AdapterRegistry = AdapterRegistry.getInstance(),
     private readonly readConfiguredModel: () => string | undefined = readCodexConfiguredModel,
   ) {}
+
+  private rememberActiveTurnContext(
+    threadId: string | undefined,
+    context: ActiveTurnContext,
+  ): void {
+    const entry = { ...context, recordedAt: Date.now() };
+    this.recentPrimaryContext = entry;
+    if (!threadId || threadId === "default") return;
+    this.turnContextsByThread.delete(threadId);
+    this.turnContextsByThread.set(threadId, entry);
+    while (this.turnContextsByThread.size > MAX_ACTIVE_TURN_CONTEXTS) {
+      const oldest = this.turnContextsByThread.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.turnContextsByThread.delete(oldest);
+    }
+  }
+
+  /**
+   * Tra cứu provider/model/reasoning đang hoạt động theo `threadId` hoặc turn chính gần nhất.
+   */
+  public resolveActiveTurnContext(identity?: {
+    threadId?: string;
+    turnId?: string;
+  }): ActiveTurnContext | undefined {
+    const now = Date.now();
+    const threadId = identity?.threadId?.trim();
+    if (threadId) {
+      const byThread = this.turnContextsByThread.get(threadId);
+      if (byThread && now - byThread.recordedAt <= ACTIVE_TURN_CONTEXT_TTL_MS) {
+        return {
+          providerId: byThread.providerId,
+          modelId: byThread.modelId,
+          ...(byThread.reasoning ? { reasoning: byThread.reasoning } : {}),
+        };
+      }
+    }
+
+    const recent = this.recentPrimaryContext;
+    if (recent && now - recent.recordedAt <= ACTIVE_TURN_CONTEXT_TTL_MS) {
+      return {
+        providerId: recent.providerId,
+        modelId: recent.modelId,
+        ...(recent.reasoning ? { reasoning: recent.reasoning } : {}),
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Tra cứu context chỉ khớp chính xác theo `threadId` (không fallback sang recentPrimaryContext).
+   */
+  public resolveThreadTurnContext(threadId?: string): ActiveTurnContext | undefined {
+    const cleanId = threadId?.trim();
+    if (!cleanId) return undefined;
+    const entry = this.turnContextsByThread.get(cleanId);
+    if (!entry || Date.now() - entry.recordedAt > ACTIVE_TURN_CONTEXT_TTL_MS) {
+      return undefined;
+    }
+    return {
+      providerId: entry.providerId,
+      modelId: entry.modelId,
+      ...(entry.reasoning ? { reasoning: entry.reasoning } : {}),
+    };
+  }
 
   /**
    * Tìm `BaseModelProvider` sở hữu `requestedModel` và kiểm tra trạng thái ON/OFF trong `ModelRegistry`.
@@ -227,6 +302,13 @@ export class ResponsesService {
 
     const identity = extractCodexTurnIdentityFromBody(expanded);
     const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
+    if (!isCodexThreadTitleRequest(raw)) {
+      this.rememberActiveTurnContext(identity.threadId, {
+        providerId: effectiveProviderId,
+        modelId: effectiveModel,
+        ...(parsed.options.reasoning ? { reasoning: parsed.options.reasoning } : {}),
+      });
+    }
     const turnTag = `[${effectiveProviderId}-turn]`;
     const streamTag = `[${effectiveProviderId}-stream]`;
 

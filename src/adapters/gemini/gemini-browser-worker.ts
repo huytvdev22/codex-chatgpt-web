@@ -222,11 +222,11 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
     options: GeminiBrowserRunOptions,
   ): Promise<void> {
     if (options.images && options.images.length > 0) {
-      await this.attachments
-        .attachImages(page, options.images.slice(0, 3), options.signal)
-        .catch((error) => {
-          console.warn("[gemini-worker] Lỗi khi đính kèm ảnh:", error);
-        });
+      await this.attachments.attachImages(
+        page,
+        options.images.slice(0, 3),
+        options.signal,
+      );
     }
 
     await this.waitForVisibleComposer(page, 15_000, options.signal);

@@ -45,6 +45,26 @@ export interface SpeechTurnResult {
   mimeType: string;
 }
 
+export type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+
+export interface ImageTurnRequest {
+  modelId: string;
+  reasoning?: string;
+  prompt: string;
+  aspectRatio?: ImageAspectRatio;
+  images?: RawTurnImageInput[];
+  outputFormat?: "png" | "jpeg" | "webp";
+  conversationKey?: string;
+  existingConversationId?: string;
+}
+
+export interface ImageTurnResult {
+  imageBase64: string;
+  mimeType: string;
+  revisedPrompt?: string;
+  conversationId?: string;
+}
+
 export interface ProviderAdapter {
   name: string;
   runTurn(
@@ -60,6 +80,10 @@ export interface ProviderAdapter {
     request: SpeechTurnRequest,
     incoming: IncomingMeta,
   ): Promise<SpeechTurnResult>;
+  runImageTurn?(
+    request: ImageTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<ImageTurnResult>;
   discoverModels?(incoming?: IncomingMeta): Promise<DiscoveredModelEntry[]>;
 }
 

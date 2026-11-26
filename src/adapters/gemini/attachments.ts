@@ -34,8 +34,11 @@ export class GeminiAttachments {
     }
 
     const payloads = geminiImageFilePayloads(images);
-    let imageInput = page.locator(GEMINI_SELECTORS.imageFileInput).first();
-    if ((await imageInput.count().catch(() => 0)) === 0) {
+    const menuOverlay = page.locator(
+      '.cdk-overlay-pane gem-menu, .cdk-overlay-pane [role="menu"]',
+    );
+    const isMenuOpen = (await menuOverlay.count().catch(() => 0)) > 0;
+    if (!isMenuOpen) {
       const uploadBtn = page.locator(GEMINI_SELECTORS.uploadAndToolsButton).first();
       if (!(await uploadBtn.isVisible().catch(() => false))) {
         throw new Error(
@@ -43,13 +46,19 @@ export class GeminiAttachments {
         );
       }
       await uploadBtn.click({ timeout: 3_000 });
-      await page.waitForTimeout(300);
-      imageInput = page.locator(GEMINI_SELECTORS.imageFileInput).first();
     }
+
+    const imageInput = page.locator(GEMINI_SELECTORS.imageFileInput).first();
+    await imageInput
+      .waitFor({ state: "attached", timeout: 3_000 })
+      .catch(() => {});
 
     if ((await imageInput.count().catch(() => 0)) > 0) {
       await imageInput.setInputFiles(payloads);
-      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(300);
+      if ((await menuOverlay.count().catch(() => 0)) > 0) {
+        await page.keyboard.press("Escape").catch(() => {});
+      }
       await this.waitForUploadSettlement(page, signal);
       return true;
     }
@@ -63,7 +72,10 @@ export class GeminiAttachments {
       uploadFilesItem.click({ timeout: 3_000 }),
     ]);
     await fileChooser.setFiles(payloads);
-    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(300);
+    if ((await menuOverlay.count().catch(() => 0)) > 0) {
+      await page.keyboard.press("Escape").catch(() => {});
+    }
     await this.waitForUploadSettlement(page, signal);
     return true;
   }
@@ -72,7 +84,7 @@ export class GeminiAttachments {
     page: Page,
     signal?: AbortSignal,
   ): Promise<void> {
-    await page.waitForTimeout(450);
+    await page.waitForTimeout(350);
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       if (signal?.aborted) {
@@ -94,9 +106,12 @@ export class GeminiAttachments {
             sendSel: GEMINI_SELECTORS.sendButton,
           },
         )
-        .catch(() => true);
+        .catch(() => false);
       if (settled) return;
       await page.waitForTimeout(250);
     }
+    throw new Error(
+      "[gemini-attachments] Không thấy preview ảnh đính kèm hoàn tất sau 15 giây.",
+    );
   }
 }

@@ -93,6 +93,7 @@ const CORE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
   "git_status",
   "git_diff",
   "view_image",
+  "image_gen.imagegen",
   "tool_search",
 ]);
 
