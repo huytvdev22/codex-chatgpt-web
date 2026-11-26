@@ -394,4 +394,9 @@ test("runtime bundle packages docs/swagger.html before manifest hashing", () => 
     builder.indexOf('join(output, "docs", "swagger.html")') < builder.indexOf("function runtimeManifestFiles()"),
     "docs/swagger.html must be copied before manifest hashing",
   );
+  assert.match(builder, /cpSync\(join\(root, "assets", "skills"\), join\(output, "assets", "skills"\)/);
+  assert.ok(
+    builder.indexOf('join(output, "assets", "skills")') < builder.indexOf("function runtimeManifestFiles()"),
+    "assets/skills must be copied before manifest hashing",
+  );
 });

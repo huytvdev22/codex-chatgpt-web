@@ -43,6 +43,7 @@ import {
 } from "./codex-integration-document";
 import { ModelCatalog } from "./models/model-catalog";
 import { ModelRegistry } from "./models/model-registry";
+import { syncBundledCodexSkills } from "./skills/bundled-skill-sync";
 import {
   assertBuiltinModelProvider,
   assertPreservedPreviousAssignments,
@@ -308,6 +309,11 @@ export function installCodexIntegration(
       ...(existing.format ? { format: existing.format } : {}),
     };
     writeIntegrationState(updated, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
+    try {
+      syncBundledCodexSkills();
+    } catch (error) {
+      console.warn(`[codex-chatgpt-web] could not sync bundled Codex skills: ${error instanceof Error ? error.message : String(error)}`);
+    }
     return updated;
   }
 
@@ -349,6 +355,11 @@ export function installCodexIntegration(
   };
   writeIntegrationState(journal, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
+  try {
+    syncBundledCodexSkills();
+  } catch (error) {
+    console.warn(`[codex-chatgpt-web] could not sync bundled Codex skills: ${error instanceof Error ? error.message : String(error)}`);
+  }
   return journal;
 }
 
@@ -635,4 +646,15 @@ export function reconcileCodexModelCatalogConfig(
     return removeCodexModelCatalogConfig(catalogPath);
   }
   return syncCodexModelCatalogConfig(catalogPath);
+}
+
+/** Chỉ đồng bộ các bundled skills (`gemini-image`) sang `~/.codex/skills` khi tích hợp Codex đang active. */
+export function reconcileBundledCodexSkills(): boolean {
+  const journal = readJournal();
+  if (!journal) return false;
+  if (journal.version !== 2 && !managedJournalIsActive(journal)) {
+    return false;
+  }
+  syncBundledCodexSkills();
+  return true;
 }

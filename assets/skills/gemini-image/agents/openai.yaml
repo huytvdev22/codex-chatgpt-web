@@ -1,0 +1,6 @@
+interface:
+  display_name: "Gemini Image"
+  short_description: "Generate or edit images via Gemini Web (Node.js bridge, works in apikey & chatgpt modes)"
+  icon_small: "./assets/imagegen-small.svg"
+  icon_large: "./assets/imagegen.png"
+  default_prompt: "Use $gemini-image to make or edit an image for this project."

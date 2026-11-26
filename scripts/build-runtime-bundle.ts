@@ -143,6 +143,8 @@ copyFileSync(join(root, "LICENSE"), join(output, "LICENSE"));
 cpSync(join(root, "LICENSES"), join(output, "LICENSES"), { recursive: true });
 mkdirSync(join(output, "docs"), { recursive: true });
 copyFileSync(join(root, "docs", "swagger.html"), join(output, "docs", "swagger.html"));
+mkdirSync(join(output, "assets"), { recursive: true });
+cpSync(join(root, "assets", "skills"), join(output, "assets", "skills"), { recursive: true });
 
 interface RuntimeManifestFile {
   path: string;

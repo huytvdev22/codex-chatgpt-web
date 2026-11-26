@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { ProviderAdapterFactory } from "./adapters/adapter-registry";
 import { formatErrorResponse } from "./bridge";
-import { reconcileCodexModelCatalogConfig, type CodexModelContextOverride } from "./codex-integration";
+import { reconcileBundledCodexSkills, reconcileCodexModelCatalogConfig, type CodexModelContextOverride } from "./codex-integration";
 import type { AppConfig } from "./config";
 import { AdminController } from "./controllers/admin-controller";
 import { GeminiSpeechController } from "./controllers/gemini-speech-controller";
@@ -69,6 +69,7 @@ export function startServer(
   try {
     ModelCatalog.getInstance().ensureManagedCatalogFile(config);
     reconcileCodexModelCatalogConfig();
+    reconcileBundledCodexSkills();
   } catch (error) {
     console.warn(`[codex-chatgpt-web] could not sync model catalog: ${error instanceof Error ? error.message : String(error)}`);
   }
