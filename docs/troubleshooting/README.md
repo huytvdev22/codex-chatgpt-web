@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **102** | Workflow Release fail job macOS ARM64 do runner `macos-14` đã bị GitHub Actions ngừng hỗ trợ | `ci/cd`, `macos`, `release` | ⏳ Chờ User Test & Confirm | [102-release-macos-14-runner-retired.md](./102-release-macos-14-runner-retired.md) |
 | **101** | Tích hợp Adapter Gemini Web (`gemini`) đa profile, Mode Picker, Auto-Discovery và Sign in with Chrome | `gemini`, `web`, `launcher`, `electron`, `chrome-login`, `profiles` | ⏳ Chờ User Test & Confirm | [101-add-gemini-web-adapter.md](./101-add-gemini-web-adapter.md) |
 | **100** | Menu quản lý Model, lưu trữ Overlay `models.json` và Auto-Discovery theo từng Adapter | `m365-copilot`, `ai-studio`, `chatgpt`, `web`, `server`, `launcher` | ✅ Đã Confirm | [100-model-catalog-management-and-auto-discovery.md](./100-model-catalog-management-and-auto-discovery.md) |
 | **099** | Treo 20s `waitForSelector` ở Turn 2 ChatGPT Plus (2 `ProseMirror`) & Turndown escape `\<webResponse>` | `chatgpt`, `web`, `playwright` | ✅ Đã Confirm | [099-chatgpt-plus-multi-composer-and-turndown-escape.md](./099-chatgpt-plus-multi-composer-and-turndown-escape.md) |
