@@ -14,7 +14,7 @@ interface MockImagePageOptions {
   initialUrl?: string;
   imagesModeAlreadyActive?: boolean;
   initialAspectLabel?: string;
-  pollMode?: "image" | "refusal";
+  pollMode?: "image" | "refusal" | "delayed_image_after_intro";
 }
 
 function createMockGeminiImagePage(opts: MockImagePageOptions = {}) {
@@ -171,16 +171,32 @@ function createMockGeminiImagePage(opts: MockImagePageOptions = {}) {
             hasNewResponse: true,
             isGenerating: false,
             detectedWebError: "",
+            hasPendingImage: false,
             hasReadyImage: false,
             imageSrc: "",
             hasCopyControl: true,
             responseText: "I cannot generate images of that subject.",
           };
         }
+        if (opts.pollMode === "delayed_image_after_intro") {
+          const isReady = pollStep >= 8;
+          return {
+            hasNewResponse: true,
+            isGenerating: false,
+            detectedWebError: "",
+            hasPendingImage: pollStep >= 5 && !isReady,
+            hasReadyImage: isReady,
+            imageSrc: isReady ? "blob:https://gemini.google.com/delayed-image" : "",
+            hasCopyControl: true,
+            responseText:
+              "Đây là ảnh thumbnail 16:9 được thiết kế cho tập podcast của bạn:",
+          };
+        }
         return {
           hasNewResponse: true,
           isGenerating: pollStep === 1,
           detectedWebError: "",
+          hasPendingImage: false,
           hasReadyImage: pollStep > 1,
           imageSrc: "blob:https://gemini.google.com/mock-image",
           hasCopyControl: pollStep > 1,
@@ -251,6 +267,22 @@ describe("GeminiImageWorker", () => {
         prompt: "restricted content",
       }),
     ).rejects.toBeInstanceOf(GeminiImageRefusalError);
+  });
+
+  test("đợi được ảnh tải trễ sau khi Gemini đã stream xong text dẫn và hiện hasCopyControl", async () => {
+    const { page } = createMockGeminiImagePage({
+      pollMode: "delayed_image_after_intro",
+    });
+    const worker = new GeminiImageWorker();
+
+    const result = await worker.executeImageTurn(page, {
+      prompt: "tạo 1 ảnh làm ảnh thumbnail cho tập podcast",
+      aspectRatio: "16:9",
+    });
+
+    expect(result.mimeType).toBe("image/png");
+    expect(result.imageBase64.length).toBeGreaterThan(20);
+    expect(result.revisedPrompt).toContain("Đây là ảnh thumbnail 16:9");
   });
 
   test("điều hướng tới đúng existingConversationId khi sửa ảnh cùng conversation", async () => {

@@ -48,6 +48,9 @@ export class GeminiImageRefusalError extends Error {
 const GEMINI_WEB_ERROR_REGEX =
   /something went wrong|you['’]ve reached.*limit|rate limit|too many requests|try again later|network error|session has expired|couldn['’]t generate|unavailable/i;
 
+const GEMINI_IMAGE_REFUSAL_REGEX =
+  /cannot\s+(?:generate|create|make)|can['’]t\s+(?:generate|create|make)|unable\s+to\s+(?:generate|create|make)|against\s+(?:my|our)\s+(?:policy|policies|guidelines)|safety\s+(?:policy|guidelines)|không\s+thể\s+(?:tạo|vẽ|sinh)\s+(?:hình|ảnh)|vi\s+phạm\s+chính\s+sách/i;
+
 /**
  * Worker Playwright điều khiển chế độ `Create image` trên Gemini Web (`gemini.google.com`)
  * thông qua tab Launcher độc lập: bật mode `Images`, chọn tỉ lệ khung hình, đính kèm ảnh sửa,
@@ -484,6 +487,7 @@ export class GeminiImageWorker {
     const deadline = Date.now() + hardTimeoutMs;
     let lastHeartbeatAt = Date.now();
     let seenGenerating = false;
+    let lastResponseText = "";
     let textOnlyStableCycles = 0;
 
     while (Date.now() < deadline) {
@@ -545,6 +549,7 @@ export class GeminiImageWorker {
               hasNewResponse: false,
               isGenerating: stopVisible,
               detectedWebError,
+              hasPendingImage: false,
               hasReadyImage: false,
               imageSrc: "",
               hasCopyControl: false,
@@ -562,18 +567,38 @@ export class GeminiImageWorker {
           const isBusy = panel.getAttribute("aria-busy") === "true";
           const isGenerating = stopVisible || isBusy;
 
-          const images = Array.from(
+          const scopedImages = Array.from(
             latest.querySelectorAll<HTMLImageElement>(
               "generated-image img, single-image img, img.image",
             ),
           );
-          const readyImg = images.find(
+          const fallbackImages =
+            scopedImages.length > 0
+              ? scopedImages
+              : Array.from(latest.querySelectorAll<HTMLImageElement>("img")).filter(
+                  (img) =>
+                    !img.closest(thinkingSel) &&
+                    !img.closest("button") &&
+                    ((!img.complete && Boolean(img.src)) ||
+                      (img.naturalWidth > 180 && img.naturalHeight > 180)),
+                );
+
+          const readyImg = fallbackImages.find(
             (img) =>
               Boolean(img.src) &&
               img.complete &&
               img.naturalWidth > 100 &&
               img.naturalHeight > 100,
           );
+
+          const hasPendingImage =
+            !readyImg &&
+            (Boolean(
+              latest.querySelector(
+                "generated-image, single-image, .generated-image-container, [data-test-id*='generated-image' i]",
+              ),
+            ) ||
+              fallbackImages.some((img) => !img.complete || img.naturalWidth === 0));
 
           const hasCopyControl = Boolean(
             latest.querySelector(copyBtnSel) ||
@@ -590,6 +615,7 @@ export class GeminiImageWorker {
             hasNewResponse: true,
             isGenerating,
             detectedWebError,
+            hasPendingImage,
             hasReadyImage: Boolean(readyImg),
             imageSrc: readyImg?.src || "",
             hasCopyControl,
@@ -625,7 +651,10 @@ export class GeminiImageWorker {
           snapshot.imageSrc,
         );
         if (extracted) {
-          return extracted;
+          return {
+            ...extracted,
+            ...(snapshot.responseText ? { revisedPrompt: snapshot.responseText } : {}),
+          };
         }
       }
 
@@ -633,18 +662,34 @@ export class GeminiImageWorker {
         snapshot.hasNewResponse &&
         !snapshot.isGenerating &&
         !snapshot.hasReadyImage &&
+        !snapshot.hasPendingImage &&
         snapshot.responseText
       ) {
-        textOnlyStableCycles += 1;
-        if (
-          snapshot.hasCopyControl ||
-          textOnlyStableCycles >= (seenGenerating ? 3 : 6)
-        ) {
+        if (snapshot.responseText !== lastResponseText) {
+          lastResponseText = snapshot.responseText;
+          textOnlyStableCycles = 0;
+        } else {
+          textOnlyStableCycles += 1;
+        }
+
+        const looksLikeExplicitRefusal = GEMINI_IMAGE_REFUSAL_REGEX.test(
+          snapshot.responseText,
+        );
+        const refusalThreshold = looksLikeExplicitRefusal
+          ? snapshot.hasCopyControl
+            ? 2
+            : seenGenerating
+              ? 4
+              : 8
+          : 50; // ~15s (50 * 300ms) chờ Gemini mount <generated-image> sau khi stream xong câu text mở đầu
+
+        if (textOnlyStableCycles >= refusalThreshold) {
           throw new GeminiImageRefusalError(
             `Gemini Web không trả về hình ảnh: ${snapshot.responseText.slice(0, 400)}`,
           );
         }
       } else {
+        lastResponseText = "";
         textOnlyStableCycles = 0;
       }
 
@@ -669,12 +714,22 @@ export class GeminiImageWorker {
           );
           if (responses.length <= baselineCount) return null;
           const latest = responses[responses.length - 1]!;
-          const images = Array.from(
+          const scopedImages = Array.from(
             latest.querySelectorAll<HTMLImageElement>(
               "generated-image img, single-image img, img.image",
             ),
           );
-          const readyImg = images.find(
+          const candidateImages =
+            scopedImages.length > 0
+              ? scopedImages
+              : Array.from(latest.querySelectorAll<HTMLImageElement>("img")).filter(
+                  (img) =>
+                    !img.closest("thinking-overlay, model-thoughts, .thoughts-container") &&
+                    !img.closest("button") &&
+                    img.naturalWidth > 180 &&
+                    img.naturalHeight > 180,
+                );
+          const readyImg = candidateImages.find(
             (img) =>
               Boolean(img.src) &&
               img.complete &&
