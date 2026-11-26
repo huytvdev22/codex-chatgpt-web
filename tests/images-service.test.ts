@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ProviderAdapter, ImageTurnRequest } from "../src/adapters/base";
 import { GeminiImageRefusalError } from "../src/adapters/gemini";
 import { defaultConfig } from "../src/config";
@@ -357,5 +359,12 @@ describe("ImagesService & /v1/images/* HTTP routes", () => {
     expect(captured[0]?.conversationKey).toBe("image:thread-same-1");
     expect(captured[1]?.existingConversationId).toBe("gem_img_conv_001");
     expect(captured[1]?.conversationKey).toBe("image:thread-same-1");
+  });
+
+  test("docs/swagger.html có tài liệu OpenAPI cho /v1/images/generations và /v1/images/edits", () => {
+    const swaggerHtml = readFileSync(join(process.cwd(), "docs", "swagger.html"), "utf8");
+    expect(swaggerHtml).toContain('"/v1/images/generations"');
+    expect(swaggerHtml).toContain('"/v1/images/edits"');
+    expect(swaggerHtml).toContain('"Gemini Images"');
   });
 });

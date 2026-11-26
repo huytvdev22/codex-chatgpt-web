@@ -420,6 +420,7 @@ Speaker 1: Right! So let's get right into it, because we have a lot to unpack to
         { name: "Health", description: "Kiểm tra trạng thái server" },
         { name: "Responses API", description: "Endpoint chuẩn OpenAI Responses API cho Microsoft 365 Copilot / AI Studio" },
         { name: "Responses v2 (Raw)", description: "Endpoint raw passthrough non-stream, không bọc prompt hệ thống và duy trì target conversation" },
+        { name: "Gemini Images", description: "Endpoint tạo và chỉnh sửa ảnh chuẩn OpenAI chạy qua Gemini Web UI (yêu cầu model gemini/*)" },
         { name: "Gemini Speech (TTS)", description: "Endpoint tương thích Gemini Text-to-Speech / Podcast chạy qua Google AI Studio UI" },
         { name: "Admin Control", description: "Endpoint điều khiển nội bộ (cần Control Bearer token)" }
       ],
@@ -658,6 +659,173 @@ Speaker 1: Right! So let's get right into it, because we have a lot to unpack to
               "400": { description: "Payload không hợp lệ hoặc truyền stream: true" },
               "409": { description: "Xung đột: đang có lượt chạy song song trên cùng conversation hoặc conversation_key không khớp conversation_id" },
               "502": { description: "Lỗi từ Web Adapter / Browser Worker" },
+              "503": { description: "Server đang draining" }
+            }
+          }
+        },
+        "/v1/images/generations": {
+          post: {
+            tags: ["Gemini Images"],
+            summary: "Tạo ảnh qua Gemini Web (tương thích OpenAI Images API)",
+            description:
+              "Chuyển yêu cầu tạo ảnh sang Gemini Web UI (`Create image`), tự động chọn tỉ lệ khung hình (`1:1`, `16:9`, `9:16`, `4:3`, `3:4`) và trích xuất PNG gốc dạng `b64_json`.\n\n"
+              + "- **Gọi từ API bên ngoài:** truyền rõ `model: \"gemini/4-hydrogen\"` (hoặc model `gemini/*` đang bật). Nếu bỏ trống hoặc dùng `gpt-image-2`, server chỉ cho phép khi active turn hoặc `~/.codex/config.toml` đang dùng Gemini.\n"
+              + "- **Nối tiếp tạo → sửa ảnh cùng conversation:** gửi kèm header `x-codex-turn-metadata: {\"thread_id\":\"...\"}` để các lượt sau dùng lại cùng đoạn chat ảnh trên Gemini Web.\n"
+              + "- **Fail-fast `400`:** từ chối `gif`, `output_format: \"gif\"`, `background: \"transparent\"`, `transparent_background: true`, và các provider khác Gemini.",
+            parameters: [
+              {
+                name: "x-codex-turn-metadata",
+                in: "header",
+                required: false,
+                schema: { type: "string" },
+                description: "JSON tùy chọn chứa thread_id để giữ chung 1 conversation ảnh trên Gemini Web (vd: {\"thread_id\":\"session-1\"})."
+              }
+            ],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["prompt"],
+                    properties: {
+                      model: { type: "string", example: "gemini/4-hydrogen", description: "Nên truyền `gemini/4-hydrogen` hoặc `gemini/4-neon` khi gọi từ bên ngoài." },
+                      prompt: { type: "string", example: "A cozy coffee cup on a wooden desk in warm morning sunlight, 16:9" },
+                      size: { type: "string", example: "2048x1152", description: "Kích thước WIDTHxHEIGHT (tự ánh xạ về 1:1, 16:9, 9:16, 4:3, 3:4) hoặc `auto`." },
+                      output_format: { type: "string", enum: ["png", "jpeg", "webp"], default: "png" }
+                    }
+                  },
+                  examples: {
+                    "Tạo ảnh 16:9 từ API ngoài": {
+                      value: {
+                        model: "gemini/4-hydrogen",
+                        prompt: "A minimalist studio podcast microphone on a warm oak table, cinematic lighting, 16:9",
+                        size: "2048x1152"
+                      }
+                    },
+                    "Tạo ảnh vuông 1:1": {
+                      value: {
+                        model: "gemini/4-hydrogen",
+                        prompt: "Cute orange cat sitting beside a notebook",
+                        size: "1024x1024"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": {
+                description: "JSON chuẩn OpenAI Images chứa `b64_json` PNG",
+                content: {
+                  "application/json": {
+                    example: {
+                      created: 1795659600,
+                      data: [
+                        {
+                          b64_json: "iVBORw0KGgoAAAANSUhEUgAA...",
+                          revised_prompt: "A minimalist studio podcast microphone on a warm oak table, cinematic lighting, 16:9"
+                        }
+                      ],
+                      output_format: "png"
+                    }
+                  }
+                }
+              },
+              "400": { description: "Payload không hợp lệ, dùng tùy chọn không hỗ trợ (GIF/transparent), hoặc không phải Gemini" },
+              "422": { description: "Gemini Web từ chối tạo ảnh (policy refusal)" },
+              "502": { description: "Lỗi từ Gemini Image Worker / Launcher CDP" },
+              "503": { description: "Server đang draining" }
+            }
+          }
+        },
+        "/v1/images/edits": {
+          post: {
+            tags: ["Gemini Images"],
+            summary: "Chỉnh sửa ảnh qua Gemini Web (hỗ trợ JSON data URL & multipart/form-data)",
+            description:
+              "Upload 1 hoặc nhiều ảnh nguồn lên Gemini Web và thực hiện chỉnh sửa bằng câu lệnh.\n\n"
+              + "- **JSON mode:** truyền `images: [{ \"image_url\": \"data:image/png;base64,...\" }]` (tương thích Codex `image_gen`) hoặc `image`.\n"
+              + "- **Multipart mode:** upload file ảnh qua field `image` / `image[]` / `images`.\n"
+              + "- **Fail-fast `400`:** không hỗ trợ `mask` bitmap, `gif`, hoặc nền `transparent`.",
+            parameters: [
+              {
+                name: "x-codex-turn-metadata",
+                in: "header",
+                required: false,
+                schema: { type: "string" },
+                description: "JSON tùy chọn chứa thread_id để sửa ảnh tiếp trên cùng conversation ảnh của thread đó."
+              }
+            ],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["prompt", "images"],
+                    properties: {
+                      model: { type: "string", example: "gemini/4-hydrogen" },
+                      prompt: { type: "string", example: "Change the background to a warm starry night scene" },
+                      size: { type: "string", example: "2048x1152" },
+                      images: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          required: ["image_url"],
+                          properties: {
+                            image_url: { type: "string", example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  example: {
+                    model: "gemini/4-hydrogen",
+                    prompt: "Change lighting to warm sunset glow while keeping the main subject unchanged",
+                    size: "2048x1152",
+                    images: [
+                      {
+                        image_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                      }
+                    ]
+                  }
+                },
+                "multipart/form-data": {
+                  schema: {
+                    type: "object",
+                    required: ["prompt", "image"],
+                    properties: {
+                      model: { type: "string", example: "gemini/4-hydrogen" },
+                      prompt: { type: "string", example: "Make the sky dramatic sunset orange" },
+                      size: { type: "string", example: "1536x1024" },
+                      image: { type: "string", format: "binary" }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": {
+                description: "JSON chuẩn OpenAI Images chứa ảnh sau chỉnh sửa (`b64_json` PNG)",
+                content: {
+                  "application/json": {
+                    example: {
+                      created: 1795659650,
+                      data: [
+                        {
+                          b64_json: "iVBORw0KGgoAAAANSUhEUgAA...",
+                          revised_prompt: "Change lighting to warm sunset glow while keeping the main subject unchanged"
+                        }
+                      ],
+                      output_format: "png"
+                    }
+                  }
+                }
+              },
+              "400": { description: "Payload không hợp lệ, gửi `mask`/`gif`/`transparent`, thiếu ảnh nguồn, hoặc không phải Gemini" },
+              "422": { description: "Gemini Web từ chối chỉnh sửa ảnh" },
+              "502": { description: "Lỗi từ Gemini Image Worker / Launcher CDP" },
               "503": { description: "Server đang draining" }
             }
           }
