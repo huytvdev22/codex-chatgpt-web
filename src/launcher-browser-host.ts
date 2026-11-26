@@ -22,6 +22,17 @@ export class LauncherRetainedConversationUnavailableError extends Error {
   }
 }
 
+export interface LauncherDescriptorProfileEntry {
+  id: string;
+  name: string;
+  authenticated: boolean;
+}
+
+export interface LauncherDescriptorProviderProfiles {
+  activeProfileId: string;
+  profiles: LauncherDescriptorProfileEntry[];
+}
+
 export interface LauncherBrowserHostDescriptor {
   version: 3;
   kind: typeof LAUNCHER_BROWSER_HOST_KIND;
@@ -42,6 +53,7 @@ export interface LauncherBrowserHostDescriptor {
   activeSurfaceId?: string;
   provider?: string;
   providerSurfaceIds?: Record<string, string>;
+  providerProfiles?: Record<string, LauncherDescriptorProviderProfiles>;
   surfaceTargets: Record<string, string>;
   createdAt: string;
 }
@@ -124,6 +136,41 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     }
     providerSurfaceIds = { ...descriptor.providerSurfaceIds };
   }
+  let providerProfiles: Record<string, LauncherDescriptorProviderProfiles> | undefined;
+  if (
+    descriptor.providerProfiles &&
+    typeof descriptor.providerProfiles === "object" &&
+    !Array.isArray(descriptor.providerProfiles)
+  ) {
+    const sanitizedGroups: Record<string, LauncherDescriptorProviderProfiles> = {};
+    for (const [providerKey, rawGroup] of Object.entries(descriptor.providerProfiles)) {
+      if (!/^[a-z0-9-]+$/.test(providerKey) || !rawGroup || typeof rawGroup !== "object") continue;
+      const rawList = Array.isArray(rawGroup.profiles) ? rawGroup.profiles : [];
+      const profiles: LauncherDescriptorProfileEntry[] = [];
+      for (const item of rawList) {
+        if (!item || typeof item !== "object") continue;
+        const id = typeof item.id === "string" ? item.id.trim().toLowerCase() : "";
+        if (!id || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) continue;
+        profiles.push({
+          id,
+          name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : id,
+          authenticated: item.authenticated === true,
+        });
+      }
+      if (profiles.length > 0) {
+        sanitizedGroups[providerKey] = {
+          activeProfileId:
+            typeof rawGroup.activeProfileId === "string" && rawGroup.activeProfileId.trim()
+              ? rawGroup.activeProfileId.trim().toLowerCase()
+              : profiles[0].id,
+          profiles,
+        };
+      }
+    }
+    if (Object.keys(sanitizedGroups).length > 0) {
+      providerProfiles = sanitizedGroups;
+    }
+  }
   const targets = descriptor.surfaceTargets;
   if (!targets || typeof targets !== "object" || Array.isArray(targets)
     || Object.entries(targets).some(([surface, target]) => !/^[A-Za-z0-9_-]{32}$/.test(surface)
@@ -148,6 +195,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     activeSurfaceId: descriptor.activeSurfaceId,
     provider: descriptor.provider,
     ...(providerSurfaceIds ? { providerSurfaceIds } : {}),
+    ...(providerProfiles ? { providerProfiles } : {}),
     surfaceTargets: targets,
     createdAt: descriptor.createdAt,
   };
@@ -379,6 +427,7 @@ export type LauncherTurnActivity =
       provider?: string;
       requireRetainedConversation?: boolean;
       initialUrl?: string;
+      profileId?: string;
     }
   | {
       phase: "heartbeat";

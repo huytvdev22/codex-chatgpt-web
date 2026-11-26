@@ -1,3 +1,4 @@
+import type { ProviderLimitCheckResult } from "../limits/types";
 import type { DiscoveredModelEntry } from "../models/types";
 import type { AdapterEvent, CodexParsedRequest } from "../types";
 
@@ -65,6 +66,10 @@ export interface ImageTurnResult {
   conversationId?: string;
 }
 
+export interface UsageLimitCheckRequest {
+  profileId?: string;
+}
+
 export interface ProviderAdapter {
   name: string;
   runTurn(
@@ -85,6 +90,10 @@ export interface ProviderAdapter {
     incoming: IncomingMeta,
   ): Promise<ImageTurnResult>;
   discoverModels?(incoming?: IncomingMeta): Promise<DiscoveredModelEntry[]>;
+  checkUsageLimit?(
+    request?: UsageLimitCheckRequest,
+    incoming?: IncomingMeta,
+  ): Promise<ProviderLimitCheckResult>;
 }
 
 /**

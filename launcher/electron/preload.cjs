@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   refreshModels: (providerId) => ipcRenderer.invoke("launcher:models-refresh", providerId),
   resetModels: (slug) => ipcRenderer.invoke("launcher:models-reset", slug),
   openModelsConfig: () => ipcRenderer.invoke("launcher:models-open-config"),
+  getLimits: () => ipcRenderer.invoke("launcher:limits-get"),
+  refreshLimits: (providerId, profileId) => ipcRenderer.invoke("launcher:limits-refresh", providerId, profileId),
   setSidebarState: (state) => ipcRenderer.invoke("launcher:sidebar-state", state),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
   windowState: () => ipcRenderer.invoke("launcher:window-state"),
@@ -70,4 +72,5 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   onOperation: (listener) => subscription("launcher:operation", listener),
   onUpdateState: (listener) => subscription("launcher:update-state", listener),
   onModelsChanged: (listener) => subscription("launcher:models-changed", listener),
+  onLimitsChanged: (listener) => subscription("launcher:limits-changed", listener),
 });

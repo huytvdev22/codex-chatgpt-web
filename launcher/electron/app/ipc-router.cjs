@@ -63,6 +63,7 @@ class IpcRouter {
       skillsStore,
       usageStore,
       modelsStore,
+      limitsStore,
       launcherProfile,
       isDevProfile,
       coreHome,
@@ -91,7 +92,7 @@ class IpcRouter {
       "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
       "launcher:use-saved-chats",
       "launcher:connector-name", "launcher:doctor", "launcher:open-swagger", "launcher:cancel-turns",
-      "launcher:browser-smoke", "launcher:models-refresh",
+      "launcher:browser-smoke", "launcher:models-refresh", "launcher:limits-refresh",
       "launcher:update-install", "launcher:complete-onboarding",
     ]);
     const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, async (...args) => {
@@ -512,6 +513,23 @@ class IpcRouter {
         throw new Error(errorMessage);
       }
       return { ok: true, path: configPath };
+    });
+    handle("launcher:limits-get", async () => {
+      if (!limitsStore) throw new Error("Limits store is unavailable");
+      return await limitsStore.getSnapshot();
+    });
+    handle("launcher:limits-refresh", async (_event, providerId, profileId) => {
+      if (!limitsStore) throw new Error("Limits store is unavailable");
+      const cleanProvider = typeof providerId === "string" && providerId.trim() ? providerId.trim() : undefined;
+      const cleanProfile = typeof profileId === "string" && profileId.trim() ? profileId.trim() : undefined;
+      const outcome = await limitsStore.refreshLimits({
+        providerId: cleanProvider,
+        profileId: cleanProfile,
+      });
+      if (outcome?.snapshot) {
+        send("launcher:limits-changed", outcome.snapshot);
+      }
+      return outcome;
     });
     handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
     handle("launcher:update-install", async () => {

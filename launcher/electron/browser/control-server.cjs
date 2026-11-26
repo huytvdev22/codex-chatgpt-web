@@ -195,6 +195,27 @@ class BrowserControlServer {
           throw new Error("initialUrl is not allowed for this provider");
         }
       }
+      if (body.profileId !== undefined) {
+        if (request.url !== "/v1/turn/start") {
+          throw new Error("profileId is only valid for a turn start");
+        }
+        if (typeof body.profileId !== "string" || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(body.profileId.trim().toLowerCase())) {
+          throw new Error("profileId is invalid");
+        }
+        const normalizedProfileId = body.profileId.trim().toLowerCase();
+        const targetProvider = typeof host?._resolveProvider === "function"
+          ? host._resolveProvider(body.provider)
+          : host?.providerRegistry?.get?.(body.provider || host?.provider || "m365");
+        if (targetProvider) {
+          if (!targetProvider.isProfileSupported?.()) {
+            if (normalizedProfileId !== "default") {
+              throw new Error("profileId is not supported for this provider");
+            }
+          } else if (!targetProvider.getProfiles?.().some((item) => item.id === normalizedProfileId)) {
+            throw new Error(`profileId '${normalizedProfileId}' does not exist for this provider`);
+          }
+        }
+      }
       if (request.url === "/v1/turn/start") {
         const acquisition = new AbortController();
         const onClose = () => {
@@ -212,7 +233,18 @@ class BrowserControlServer {
             body.connectorIdentity,
             body.requireRetainedConversation === true,
           ];
-          if (body.initialUrl !== undefined) {
+          const normalizedProfileId = typeof body.profileId === "string" && body.profileId.trim()
+            ? body.profileId.trim().toLowerCase()
+            : undefined;
+          if (normalizedProfileId !== undefined) {
+            lease = await host.beginTurn(
+              ...baseArguments,
+              body.provider,
+              acquisition.signal,
+              body.initialUrl ?? null,
+              normalizedProfileId,
+            );
+          } else if (body.initialUrl !== undefined) {
             lease = await host.beginTurn(
               ...baseArguments,
               body.provider,

@@ -257,7 +257,33 @@ class TurnTabManager {
       : this.evictOldestRetainedTurnTab();
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365", initialUrl = null) {
+  resolveTargetProfileId(providerObj, requestedProfileId = null) {
+    const activeProfileId = typeof providerObj.getActiveProfileId === "function"
+      ? providerObj.getActiveProfileId()
+      : "default";
+    if (requestedProfileId === null || requestedProfileId === undefined || requestedProfileId === "") {
+      return activeProfileId || "default";
+    }
+    const normalized = typeof requestedProfileId === "string"
+      ? requestedProfileId.trim().toLowerCase()
+      : "";
+    if (!normalized) {
+      throw new Error("profileId is invalid");
+    }
+    if (!providerObj.isProfileSupported?.()) {
+      if (normalized !== "default") {
+        throw new Error(`${providerObj.displayName} does not support multiple profiles`);
+      }
+      return "default";
+    }
+    const exists = providerObj.getProfiles?.().some((item) => item.id === normalized);
+    if (!exists) {
+      throw new Error(`Unknown profile '${normalized}' for ${providerObj.displayName}`);
+    }
+    return normalized;
+  }
+
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365", initialUrl = null, profileId = null) {
     signal?.throwIfAborted();
     if (providerId === "ai-studio" && this.aiStudioReopenCooldownMs > 0) {
       const lastClosedAt = this.lastClosedAtByProvider?.get("ai-studio") || 0;
@@ -286,9 +312,7 @@ class TurnTabManager {
     const resolvedInitialUrl = typeof initialUrl === "string" && initialUrl.trim() && providerObj.isAllowedNavigation(initialUrl)
       ? initialUrl.trim()
       : null;
-    const activeProfileId = typeof providerObj.getActiveProfileId === "function"
-      ? providerObj.getActiveProfileId()
-      : "default";
+    const activeProfileId = this.resolveTargetProfileId(providerObj, profileId);
     const targetPartition = typeof providerObj.partitionForProfile === "function"
       ? providerObj.partitionForProfile(activeProfileId)
       : providerObj.partition;
@@ -641,6 +665,7 @@ class TurnTabManager {
     providerOrSignal = "m365",
     acquisitionSignal,
     initialUrl = null,
+    profileId = null,
   ) {
     const providerId = typeof providerOrSignal === "string" ? providerOrSignal : "m365";
     const signal = typeof providerOrSignal === "string" ? acquisitionSignal : providerOrSignal;
@@ -661,9 +686,7 @@ class TurnTabManager {
       || (sameTrace.provider || "m365") !== providerId)) {
       throw new Error(`Browser turn ${traceId} conversation metadata does not match its owned tab`);
     }
-    const activeProfileId = typeof providerObj.getActiveProfileId === "function"
-      ? providerObj.getActiveProfileId()
-      : "default";
+    const activeProfileId = this.resolveTargetProfileId(providerObj, profileId);
     const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
       tab.status === "ready"
       && tab.conversationKey === conversationKey
@@ -751,7 +774,12 @@ class TurnTabManager {
       signal,
       providerId,
     ];
-    if (typeof initialUrl === "string" && initialUrl.trim()) {
+    if (typeof profileId === "string" && profileId.trim()) {
+      createTabArgs.push(
+        typeof initialUrl === "string" && initialUrl.trim() ? initialUrl : null,
+        profileId.trim().toLowerCase(),
+      );
+    } else if (typeof initialUrl === "string" && initialUrl.trim()) {
       createTabArgs.push(initialUrl);
     }
     const tab = await createTab.call(this.host, ...createTabArgs);

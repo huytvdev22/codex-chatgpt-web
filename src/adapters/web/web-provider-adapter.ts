@@ -3,7 +3,9 @@ import type {
   ProviderAdapter,
   RawTurnRequest,
   RawTurnResult,
+  UsageLimitCheckRequest,
 } from "../base";
+import type { ProviderLimitCheckResult } from "../../limits/types";
 import type { DiscoveredModelEntry } from "../../models/types";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { LocalBrowserRuntime } from "./local-browser-runtime";
@@ -43,6 +45,13 @@ export class WebProviderAdapter implements ProviderAdapter {
 
   async discoverModels(incoming?: IncomingMeta): Promise<DiscoveredModelEntry[]> {
     return await this.engine.discoverModels(incoming);
+  }
+
+  async checkUsageLimit(
+    request?: UsageLimitCheckRequest,
+    incoming?: IncomingMeta,
+  ): Promise<ProviderLimitCheckResult> {
+    return await this.engine.checkUsageLimit(request, incoming);
   }
 
   async close(): Promise<void> {

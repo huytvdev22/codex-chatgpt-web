@@ -119,6 +119,69 @@ export interface ManagedModelsSnapshot {
   providers: ManagedProviderGroupView[];
 }
 
+export type LimitSupportKind = "supported" | "unsupported";
+
+export type LimitStatusKind =
+  | "ok"
+  | "warning"
+  | "exhausted"
+  | "signed_out"
+  | "challenge"
+  | "busy"
+  | "error"
+  | "unsupported"
+  | "unchecked";
+
+export type LimitBucketSeverity = "ok" | "warning" | "exhausted" | "info";
+
+export type LimitSourceKind = "network-json" | "dom" | "dom-fallback";
+
+export interface ProviderLimitBucket {
+  id: string;
+  label: string;
+  percentUsed: number | null;
+  usedText?: string;
+  remainingText?: string;
+  resetAt?: string | null;
+  resetText?: string | null;
+  severity: LimitBucketSeverity;
+}
+
+export interface ProfileLimitEntry {
+  providerId: string;
+  profileId: string;
+  profileName: string;
+  isActive: boolean;
+  authenticated: boolean;
+  support: LimitSupportKind;
+  status: LimitStatusKind;
+  planName: string | null;
+  sourceUrl: string | null;
+  sourceKind: LimitSourceKind | null;
+  scopeNote: string | null;
+  providerUpdatedText: string | null;
+  buckets: ProviderLimitBucket[];
+  rawSummary: string | null;
+  checkedAt: string | null;
+  lastError: string | null;
+}
+
+export interface ProviderLimitsSnapshot {
+  version: 1;
+  updatedAt: string | null;
+  configPath: string;
+  warningThresholdPercent: number;
+  entries: ProfileLimitEntry[];
+}
+
+export interface LimitRefreshTargetResult {
+  providerId: string;
+  profileId: string;
+  profileName: string;
+  status: LimitStatusKind;
+  message?: string;
+}
+
 export interface ProviderRefreshResult {
   providerId: string;
   status: "ok" | "busy" | "error";
@@ -431,6 +494,11 @@ export interface LauncherApi {
   refreshModels(providerId?: string): Promise<{ snapshot: ManagedModelsSnapshot; results: ProviderRefreshResult[] }>;
   resetModels(slug?: string): Promise<ManagedModelsSnapshot>;
   openModelsConfig(): Promise<{ ok: boolean; path: string }>;
+  getLimits(): Promise<ProviderLimitsSnapshot>;
+  refreshLimits(
+    providerId?: string,
+    profileId?: string,
+  ): Promise<{ snapshot: ProviderLimitsSnapshot; results: LimitRefreshTargetResult[] }>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   installUpdate(): Promise<boolean>;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
@@ -442,6 +510,7 @@ export interface LauncherApi {
   onOperation(listener: (state: OperationState) => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   onModelsChanged(listener: (snapshot: ManagedModelsSnapshot) => void): () => void;
+  onLimitsChanged(listener: (snapshot: ProviderLimitsSnapshot) => void): () => void;
 }
 
 declare global {

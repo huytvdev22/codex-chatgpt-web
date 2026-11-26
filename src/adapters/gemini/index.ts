@@ -63,6 +63,10 @@ import {
   type GeminiThinkingEffort,
 } from "./model-provider";
 import { GEMINI_SELECTORS } from "./selectors";
+import {
+  GEMINI_USAGE_URL,
+  GeminiUsageLimitChecker,
+} from "./usage-limit-checker";
 
 export {
   GeminiBrowserWorker,
@@ -116,6 +120,14 @@ export {
   GeminiModelDiscovery,
   normalizeGeminiSlugFromLabel,
 };
+export {
+  formatGeminiPlanName,
+  GEMINI_USAGE_URL,
+  GeminiUsageLimitChecker,
+  parseGeminiUsageDomSnapshot,
+  type GeminiUsageDomBucketItem,
+  type GeminiUsageDomSnapshot,
+} from "./usage-limit-checker";
 
 function isEphemeralStructuredTurn(
   parsed?: CodexParsedRequest,
@@ -145,6 +157,7 @@ export class GeminiAdapter extends WebProviderAdapter {
   constructor() {
     const worker = new GeminiBrowserWorker();
     const modelDiscovery = new GeminiModelDiscovery();
+    const usageLimitChecker = new GeminiUsageLimitChecker();
     super({
       id: "gemini",
       assistantName: "Gemini",
@@ -282,6 +295,9 @@ export class GeminiAdapter extends WebProviderAdapter {
           });
         },
         discoverModels: async ({ page }) => await modelDiscovery.discoverModels(page),
+        usageLimitUrl: GEMINI_USAGE_URL,
+        checkUsageLimit: async ({ page, abortSignal }) =>
+          await usageLimitChecker.check(page, abortSignal),
       },
       response: {
         createCallId: () =>

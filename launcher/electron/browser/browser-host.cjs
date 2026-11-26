@@ -555,6 +555,7 @@ class BrowserHost {
     const providerObj = this._assertProfileMutationAllowed(providerId);
     const profile = providerObj.createProfile(name);
     this._persistProviderProfiles(providerObj);
+    this.writeDescriptor();
     const snap = this.snapshot();
     this.publishState?.(snap);
     return { snapshot: snap, profile };
@@ -567,6 +568,7 @@ class BrowserHost {
     const providerObj = resolveProviderFromHost(this, providerId);
     const profile = providerObj.renameProfile(profileId, name);
     this._persistProviderProfiles(providerObj);
+    this.writeDescriptor();
     const snap = this.snapshot();
     this.publishState?.(snap);
     return { snapshot: snap, profile };
@@ -652,6 +654,7 @@ class BrowserHost {
         };
       }
       this.publishState?.(this.snapshot());
+      this.writeDescriptor();
     }
     return anyChanged;
   }
@@ -686,8 +689,8 @@ class BrowserHost {
     return turnManagerFor(this).selectedTurnTab();
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider = "m365", initialUrl = null) {
-    return turnManagerFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider, initialUrl);
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider = "m365", initialUrl = null, profileId = null) {
+    return turnManagerFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, provider, initialUrl, profileId);
   }
 
   async initializeTurnTab(tab, signal) {
@@ -1432,6 +1435,7 @@ class BrowserHost {
     providerOrSignal = this.provider || "m365",
     acquisitionSignal,
     initialUrl,
+    profileId,
   ) {
     const args = [
       traceId,
@@ -1443,7 +1447,9 @@ class BrowserHost {
       providerOrSignal,
       acquisitionSignal,
     ];
-    if (initialUrl !== undefined) {
+    if (profileId !== undefined && profileId !== null) {
+      args.push(initialUrl ?? null, profileId);
+    } else if (initialUrl !== undefined) {
       args.push(initialUrl);
     }
     return turnManagerFor(this).beginTurn(...args);
@@ -1901,6 +1907,22 @@ class BrowserHost {
       if (Object.hasOwn(surfaceTargets, surfaceId)) continue;
       surfaceTargets[surfaceId] = contents.getOrCreateDevToolsTargetId();
     }
+    const providerProfiles = {};
+    if (this.providerRegistry && typeof this.providerRegistry.list === "function") {
+      for (const providerObj of this.providerRegistry.list()) {
+        if (!providerObj) continue;
+        providerProfiles[providerObj.id] = {
+          activeProfileId: providerObj.getActiveProfileId?.() || "default",
+          profiles: providerObj.isProfileSupported?.()
+            ? (providerObj.getProfiles?.() || [])
+            : [{
+                id: "default",
+                name: "Default",
+                authenticated: Boolean(this.authenticatedByProvider?.[providerObj.id]),
+              }],
+        };
+      }
+    }
     const descriptor = {
       version: 3,
       kind: "codex-web-gpt-launcher",
@@ -1914,6 +1936,7 @@ class BrowserHost {
       surfaceId: this.surfaceId,
       activeSurfaceId: this.surfaceId,
       providerSurfaceIds,
+      providerProfiles,
       surfaceTargets,
       provider: this.provider || this.providerRegistry?.defaultId?.() || "m365",
       createdAt: new Date().toISOString(),

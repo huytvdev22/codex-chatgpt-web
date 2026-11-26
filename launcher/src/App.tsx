@@ -25,9 +25,30 @@ import type {
   Language,
   LauncherSnapshot,
   LauncherState,
+  LimitStatusKind,
   OperationState,
+  ProfileLimitEntry,
+  ProviderLimitsSnapshot,
   Surface,
 } from "./types";
+
+function runtimeProviderIdFor(providerId: string): string {
+  return providerId === "m365" ? "m365-copilot" : providerId;
+}
+
+function limitAlertBadgeText(entry: ProfileLimitEntry | undefined): string | null {
+  if (!entry) return null;
+  if (entry.status === "exhausted") return "Limit reached";
+  if (entry.status === "warning") return "Near limit";
+  if (entry.status === "challenge") return "Verify";
+  return null;
+}
+
+function limitAlertTone(status: LimitStatusKind | undefined): "warning" | "exhausted" | null {
+  if (status === "exhausted" || status === "challenge") return "exhausted";
+  if (status === "warning") return "warning";
+  return null;
+}
 
 function resolveProviders(
   browser: BrowserState | null,
@@ -297,7 +318,43 @@ function LauncherShell({
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
+  const [limitsSnapshot, setLimitsSnapshot] = useState<ProviderLimitsSnapshot | null>(null);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    void api.getLimits().then((next) => {
+      if (!cancelled) setLimitsSnapshot(next);
+    }).catch(() => {});
+    const unsubscribeLimits = api.onLimitsChanged((next) => {
+      setLimitsSnapshot(next);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribeLimits();
+    };
+  }, []);
+
+  const limitEntryByKey = useMemo(() => {
+    const map = new Map<string, ProfileLimitEntry>();
+    for (const entry of limitsSnapshot?.entries ?? []) {
+      map.set(`${entry.providerId}::${entry.profileId}`, entry);
+    }
+    return map;
+  }, [limitsSnapshot]);
+
+  const hasActiveLimitAlert = useMemo(
+    () =>
+      (limitsSnapshot?.entries ?? []).some(
+        (entry) =>
+          entry.isActive &&
+          (entry.status === "warning" ||
+            entry.status === "exhausted" ||
+            entry.status === "challenge"),
+      ),
+    [limitsSnapshot],
+  );
+
   const startupLoadingOpen = operation?.status === "running"
     && (operation.name === "launcher-startup" || operation.name === "runtime-upgrade");
   const browserSurfaceActive = surface === "browser"
@@ -481,6 +538,7 @@ function LauncherShell({
                 />
                 <SidebarItem
                   active={surface === "usage"}
+                  badge={hasActiveLimitAlert ? <ActionDot tone="required" /> : null}
                   icon="activity"
                   label={copy.usage}
                   onClick={() => navigateSurface("usage")}
@@ -525,6 +583,7 @@ function LauncherShell({
                 browser={browser}
                 browserSlotRef={browserSlotRef}
                 copy={copy}
+                limitEntryByKey={limitEntryByKey}
                 providers={providers}
                 setError={setError}
               />
@@ -535,6 +594,7 @@ function LauncherShell({
                 browser={browser}
                 copy={copy}
                 devProfile={devProfile}
+                limitEntryByKey={limitEntryByKey}
                 operation={operation}
                 setError={setError}
                 snapshot={snapshot}
@@ -661,12 +721,14 @@ function BrowserSurface({
   browser,
   browserSlotRef,
   copy,
+  limitEntryByKey,
   providers,
   setError,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
+  limitEntryByKey: Map<string, ProfileLimitEntry>;
   providers: BrowserProviderInfo[];
   setError: (error: string | null) => void;
 }) {
@@ -862,6 +924,11 @@ function BrowserSurface({
           <div className="provider-switcher" role="group" aria-label="Web provider">
             {providers.map((item) => {
               const selected = item.id === activeProviderId;
+              const runtimeId = runtimeProviderIdFor(item.id);
+              const activeItemProfileId = item.activeProfileId || "default";
+              const limitEntry = limitEntryByKey.get(`${runtimeId}::${activeItemProfileId}`);
+              const tone = limitAlertTone(limitEntry?.status);
+              const alertLabel = limitAlertBadgeText(limitEntry);
               return (
                 <button
                   aria-disabled={switchingProvider || navigationLocked || undefined}
@@ -869,10 +936,11 @@ function BrowserSurface({
                   className="provider-switcher-button"
                   key={item.id}
                   onClick={() => void switchProvider(item.id)}
-                  title={`${item.displayName}${item.authenticated ? ` (${copy.signedIn})` : ""}`}
+                  title={`${item.displayName}${item.authenticated ? ` (${copy.signedIn})` : ""}${alertLabel ? ` · ${alertLabel}` : ""}`}
                   type="button"
                 >
-                  {item.displayName}
+                  <span>{item.displayName}</span>
+                  {tone ? <i aria-hidden="true" className={`provider-limit-dot is-${tone}`} /> : null}
                 </button>
               );
             })}
@@ -888,11 +956,19 @@ function BrowserSurface({
               title="Switch account profile"
               value={activeProfileId}
             >
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}{profile.authenticated ? " ●" : " ○"}
-                </option>
-              ))}
+              {profiles.map((profile) => {
+                const limitEntry = limitEntryByKey.get(
+                  `${runtimeProviderIdFor(activeProviderId)}::${profile.id}`,
+                );
+                const alertLabel = limitAlertBadgeText(limitEntry);
+                return (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                    {profile.authenticated ? " ●" : " ○"}
+                    {alertLabel ? ` (${alertLabel})` : ""}
+                  </option>
+                );
+              })}
             </select>
             <IconButton
               disabled={profileControlLocked}
@@ -1003,6 +1079,7 @@ function SetupSurface({
   browser,
   copy,
   devProfile,
+  limitEntryByKey,
   operation,
   setError,
   snapshot,
@@ -1012,6 +1089,7 @@ function SetupSurface({
   browser: BrowserState | null;
   copy: Copy;
   devProfile: boolean;
+  limitEntryByKey: Map<string, ProfileLimitEntry>;
   operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
@@ -1196,6 +1274,18 @@ function SetupSurface({
                               <>
                                 <strong className="profile-row-name">{profile.name}</strong>
                                 {isCurrentProfile ? <span className="profile-active-badge">Active</span> : null}
+                                {(() => {
+                                  const limitEntry = limitEntryByKey.get(
+                                    `${runtimeProviderIdFor(provider.id)}::${profile.id}`,
+                                  );
+                                  const alertLabel = limitAlertBadgeText(limitEntry);
+                                  const tone = limitAlertTone(limitEntry?.status);
+                                  return alertLabel && tone ? (
+                                    <span className={`profile-limit-pill is-${tone}`}>
+                                      {alertLabel}
+                                    </span>
+                                  ) : null;
+                                })()}
                               </>
                             )}
                           </div>

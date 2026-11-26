@@ -150,6 +150,15 @@ export function startServer(
     if (req.method === "POST" && url.pathname === "/admin/models/refresh") {
       return await adminController.handleRefreshModels(req);
     }
+    if (req.method === "GET" && url.pathname === "/admin/limits") {
+      return adminController.handleGetLimits(req);
+    }
+    if (req.method === "POST" && url.pathname === "/admin/limits/refresh") {
+      return await adminController.handleRefreshLimits(req);
+    }
+    if (req.method === "GET" && url.pathname === "/v1/limits") {
+      return adminController.handleGetPublicLimits();
+    }
     if (req.method === "GET" && url.pathname === "/v1/models") {
       return await modelsController.handleRoute(req, config, httpTurns, draining);
     }

@@ -42,6 +42,10 @@ import {
 } from "./conversation-url";
 import { ChatGptModelDiscovery } from "./model-discovery";
 import {
+  CHATGPT_USAGE_URL,
+  ChatGptUsageLimitChecker,
+} from "./usage-limit-checker";
+import {
   CHATGPT_DEFAULT_MODEL_SLUG,
   ChatGptModelProvider,
   type ChatGptCapabilityTarget,
@@ -99,6 +103,20 @@ export {
   inferChatGptShortUiVersion,
   normalizeChatGptSlugFromLabel,
 } from "./model-discovery";
+export {
+  CHATGPT_USAGE_SCOPE_NOTE,
+  CHATGPT_USAGE_URL,
+  ChatGptUsageLimitChecker,
+  formatChatGptPlanName,
+  formatDurationCompact,
+  parseChatGptUsageDomSnapshot,
+  parseChatGptWhamUsagePayload,
+  type ChatGptUsageDomProgressItem,
+  type ChatGptUsageDomSnapshot,
+  type ChatGptWhamRateLimit,
+  type ChatGptWhamRateWindow,
+  type ChatGptWhamUsagePayload,
+} from "./usage-limit-checker";
 
 function isEphemeralStructuredTurn(
   parsed?: CodexParsedRequest,
@@ -127,6 +145,7 @@ export class ChatGptAdapter extends WebProviderAdapter {
   constructor() {
     const worker = new ChatGptBrowserWorker();
     const modelDiscovery = new ChatGptModelDiscovery();
+    const usageLimitChecker = new ChatGptUsageLimitChecker();
     super({
       id: "chatgpt",
       assistantName: "ChatGPT",
@@ -264,6 +283,9 @@ export class ChatGptAdapter extends WebProviderAdapter {
           });
         },
         discoverModels: async ({ page }) => await modelDiscovery.discoverModels(page),
+        usageLimitUrl: CHATGPT_USAGE_URL,
+        checkUsageLimit: async ({ page, abortSignal }) =>
+          await usageLimitChecker.check(page, abortSignal),
       },
       response: {
         createCallId: () =>

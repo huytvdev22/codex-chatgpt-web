@@ -44,6 +44,7 @@ const { createPersonalizationStore } = require("./infra/personalization-store.cj
 const { createSkillsStore } = require("./infra/skills-store.cjs");
 const { createUsageStore } = require("./infra/usage-store.cjs");
 const { createModelsStore } = require("./infra/models-store.cjs");
+const { createLimitsStore } = require("./infra/limits-store.cjs");
 const { embeddedRuntimeInvocation, runtimeBundlePaths } = require("./runtime/runtime-command.cjs");
 const { RuntimeHost } = require("./runtime/runtime-host.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime/runtime-install.cjs");
@@ -486,6 +487,11 @@ async function start() {
     modelsStore: createModelsStore(
       path.join(CORE_HOME, "models.json"),
       () => runtimeHost?.runtimeConfigSnapshot?.()?.config ?? null,
+    ),
+    limitsStore: createLimitsStore(
+      path.join(CORE_HOME, "provider-limits.json"),
+      () => runtimeHost?.runtimeConfigSnapshot?.()?.config ?? null,
+      () => browserHost?.listProviders?.() ?? [],
     ),
     launcherProfile: LAUNCHER_PROFILE,
     isDevProfile: IS_DEV_PROFILE,

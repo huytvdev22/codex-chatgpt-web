@@ -4,6 +4,7 @@ import { activeWebTurnRegistry, ProviderBusyError } from "../adapters/web";
 import { readCodexSubagentProtocol } from "../codex-integration";
 import type { AppConfig } from "../config";
 import { ModelConfigError, type ModelOverridePatch } from "../models/model-config-store";
+import { LimitManagementService } from "../services/limit-management-service";
 import { ModelManagementService } from "../services/model-management-service";
 import { VERSION } from "../version";
 import type { HttpTurnCounter, NativeCodexTurnIdentity } from "./http-turn-counter";
@@ -19,19 +20,24 @@ export interface AdminControllerOptions {
   setDraining: (next: boolean) => void;
   shutdown: () => void;
   modelManagementService?: ModelManagementService;
+  limitManagementService?: LimitManagementService;
 }
 
 /**
  * Controller xử lý các endpoint vận hành, chẩn đoán và điều khiển vòng đời server:
  * `/docs`, `/swagger`, `/healthz`, `/admin/drain`, `/admin/resume`, `/admin/cancel-turn`,
- * `/admin/interrupt-turn`, `/admin/cancel-turns`, `/admin/shutdown`, `/admin/models/*`.
+ * `/admin/interrupt-turn`, `/admin/cancel-turns`, `/admin/shutdown`, `/admin/models/*`,
+ * `/admin/limits/*`, `/v1/limits`.
  */
 export class AdminController {
   private readonly modelManagementService: ModelManagementService;
+  private readonly limitManagementService: LimitManagementService;
 
   constructor(private readonly options: AdminControllerOptions) {
     this.modelManagementService =
       options.modelManagementService ?? new ModelManagementService();
+    this.limitManagementService =
+      options.limitManagementService ?? new LimitManagementService();
   }
 
   private isAuthorized(req: Request): boolean {
@@ -385,6 +391,71 @@ export class AdminController {
         this.resolveCatalogConfig(),
         req.signal,
       );
+      return Response.json({
+        status: "ok",
+        ...outcome,
+      });
+    } catch (error) {
+      return this.handleModelError(error);
+    }
+  }
+
+  /** Lấy cache hạn mức tài khoản theo từng provider & profile (`GET /admin/limits`). */
+  public handleGetLimits(req: Request): Response {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    return Response.json({
+      status: "ok",
+      snapshot: this.limitManagementService.getSnapshot(),
+    });
+  }
+
+  /** Tra cứu nhanh cache hạn mức tài khoản từ localhost (`GET /v1/limits`, không kích hoạt mở tab). */
+  public handleGetPublicLimits(): Response {
+    const snapshot = this.limitManagementService.getSnapshot();
+    return Response.json({
+      object: "list",
+      version: snapshot.version,
+      updatedAt: snapshot.updatedAt,
+      warningThresholdPercent: snapshot.warningThresholdPercent,
+      data: snapshot.entries,
+    });
+  }
+
+  /** Kích hoạt kiểm tra hạn mức trực tiếp cho 1 profile/provider hoặc tất cả (`POST /admin/limits/refresh`). */
+  public async handleRefreshLimits(req: Request): Promise<Response> {
+    if (!this.isAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+    let providerId: string | undefined;
+    let profileId: string | undefined;
+    try {
+      const text = await req.text();
+      if (text.trim()) {
+        const body = JSON.parse(text) as { providerId?: unknown; profileId?: unknown };
+        if (body.providerId !== undefined) {
+          if (typeof body.providerId !== "string" || !body.providerId.trim()) {
+            throw new Error("'providerId' must be a non-empty string when provided");
+          }
+          providerId = body.providerId.trim();
+        }
+        if (body.profileId !== undefined) {
+          if (typeof body.profileId !== "string" || !body.profileId.trim()) {
+            throw new Error("'profileId' must be a non-empty string when provided");
+          }
+          profileId = body.profileId.trim();
+        }
+      }
+    } catch (error) {
+      return Response.json(
+        { status: "error", error: error instanceof Error ? error.message : String(error) },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const outcome = await this.limitManagementService.refreshLimits({
+        providerId,
+        profileId,
+        abortSignal: req.signal,
+      });
       return Response.json({
         status: "ok",
         ...outcome,

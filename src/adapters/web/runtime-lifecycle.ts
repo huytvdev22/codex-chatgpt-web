@@ -48,6 +48,7 @@ export async function acquireWebTurnSurface(options: {
   conversationKey?: string;
   omitConnectorIdentity?: boolean;
   initialUrl?: string;
+  profileId?: string;
   abortSignal?: AbortSignal;
   ops?: Partial<WebRuntimeLifecycleOps>;
 }): Promise<AcquiredWebTurnSurface> {
@@ -58,6 +59,7 @@ export async function acquireWebTurnSurface(options: {
     conversationKey,
     omitConnectorIdentity,
     initialUrl,
+    profileId,
     abortSignal,
   } = options;
   const ops: WebRuntimeLifecycleOps = {
@@ -107,6 +109,7 @@ export async function acquireWebTurnSurface(options: {
           provider: definition.browser.launcherProviderId,
           requireRetainedConversation: false,
           ...(initialUrl ? { initialUrl } : {}),
+          ...(profileId ? { profileId } : {}),
         },
         signal: abortSignal,
         resolveSurfaceId: definition.browser.resolveSurfaceId,

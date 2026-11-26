@@ -4,8 +4,10 @@ import {
   type IncomingMeta,
   type RawTurnRequest,
   type RawTurnResult,
+  type UsageLimitCheckRequest,
 } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import type { ProviderLimitCheckResult } from "../../limits/types";
 import type { DiscoveredModelEntry } from "../../models/types";
 import { adapterFailureFromMessage } from "../../lib/errors";
 import {
@@ -75,6 +77,7 @@ import {
 
 const MAX_TOOL_DESCRIBE_ROUNDS = 2;
 const inFlightDiscoveries = new Set<string>();
+const inFlightLimitChecks = new Set<string>();
 
 /**
  * Lỗi đánh dấu provider đang bận chạy turn hoặc đang refresh danh mục model.
@@ -1148,6 +1151,7 @@ export class WebTurnEngine {
     }) => Promise<T>,
     options?: {
       initialUrl?: string;
+      profileId?: string;
       conversationKeySource?: string;
       retainOnCompleted?: boolean;
       omitConnectorIdentity?: boolean;
@@ -1186,6 +1190,7 @@ export class WebTurnEngine {
         conversationKey,
         omitConnectorIdentity: options?.omitConnectorIdentity,
         initialUrl: options?.initialUrl,
+        profileId: options?.profileId,
         abortSignal: turnSignal,
         ops: this.lifecycleOps,
       });
@@ -1265,6 +1270,53 @@ export class WebTurnEngine {
       );
     } finally {
       inFlightDiscoveries.delete(this.definition.id);
+    }
+  }
+
+  /**
+   * Kiểm tra hạn mức sử dụng trực tiếp trên Web UI / API nội bộ của provider cho một profile cụ thể
+   * thông qua tab Launcher tạm (không chen ngang lượt đang chạy, không đổi activeProfileId).
+   */
+  async checkUsageLimit(
+    request: UsageLimitCheckRequest = {},
+    incoming: IncomingMeta = { headers: new Headers() },
+  ): Promise<ProviderLimitCheckResult> {
+    const checker = this.definition.browser.checkUsageLimit;
+    if (typeof checker !== "function") {
+      throw new Error(
+        `[${this.definition.logPrefix}] Provider '${this.definition.id}' chưa hỗ trợ kiểm tra limit trực tiếp.`,
+      );
+    }
+
+    const profileId = request.profileId?.trim().toLowerCase() || "default";
+    const lockKey = `${this.definition.id}::${profileId}`;
+    if (
+      activeWebTurnRegistry.hasActiveTurnForProvider(this.definition.id) ||
+      inFlightLimitChecks.has(lockKey)
+    ) {
+      throw new ProviderBusyError(this.definition.id);
+    }
+
+    inFlightLimitChecks.add(lockKey);
+    try {
+      const initialUrl =
+        this.definition.browser.usageLimitUrl ??
+        this.definition.browser.resolveInitialUrl?.({ modelId: "" });
+      return await this.runEphemeralSurfaceTask(
+        incoming,
+        async ({ page, signal, heartbeat }) => {
+          await heartbeat?.().catch(() => {});
+          return await checker({ page, abortSignal: signal });
+        },
+        {
+          ...(initialUrl ? { initialUrl } : {}),
+          profileId,
+          retainOnCompleted: false,
+          omitConnectorIdentity: true,
+        },
+      );
+    } finally {
+      inFlightLimitChecks.delete(lockKey);
     }
   }
 }

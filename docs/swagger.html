@@ -468,6 +468,18 @@ Speaker 1: Right! So let's get right into it, because we have a lot to unpack to
             }
           }
         },
+        "/v1/limits": {
+          get: {
+            tags: ["Responses API"],
+            summary: "Tra cứu cache hạn mức tài khoản theo provider & profile (read-only, không mở tab trình duyệt)",
+            responses: {
+              "200": {
+                description: "Danh sách snapshot hạn mức mới nhất trong cache",
+                content: { "application/json": { schema: { type: "object" } } }
+              }
+            }
+          }
+        },
         "/v1/responses": {
           post: {
             tags: ["Responses API"],
@@ -785,6 +797,36 @@ Speaker 1: Right! So let's get right into it, because we have a lot to unpack to
             summary: "Tắt server an toàn (yêu cầu đã drain và không còn active turn)",
             security: [{ BearerAuth: [] }],
             responses: { "200": { description: "Shutting down" }, "401": { description: "Unauthorized" }, "409": { description: "Refused" } }
+          }
+        },
+        "/admin/limits": {
+          get: {
+            tags: ["Admin Control"],
+            summary: "Đọc snapshot hạn mức tài khoản theo từng provider & profile",
+            security: [{ BearerAuth: [] }],
+            responses: { "200": { description: "OK" }, "401": { description: "Unauthorized" } }
+          }
+        },
+        "/admin/limits/refresh": {
+          post: {
+            tags: ["Admin Control"],
+            summary: "Kích hoạt kiểm tra live limit cho 1 profile/provider hoặc tất cả",
+            security: [{ BearerAuth: [] }],
+            requestBody: {
+              required: false,
+              content: {
+                "application/json": {
+                  example: { providerId: "chatgpt", profileId: "default" }
+                }
+              }
+            },
+            responses: {
+              "200": { description: "Đã cập nhật snapshot" },
+              "400": { description: "Payload không hợp lệ" },
+              "401": { description: "Unauthorized" },
+              "404": { description: "Provider/profile không tồn tại" },
+              "409": { description: "Provider đang bận xử lý turn" }
+            }
           }
         }
       }

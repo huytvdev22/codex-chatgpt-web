@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import type { IncomingMeta } from "../base";
+import type { ProviderLimitCheckResult } from "../../limits/types";
 import type { DiscoveredModelEntry } from "../../models/types";
 import type { AdapterEvent, CodexParsedRequest, CodexUsage } from "../../types";
 import type { ProviderReportedTokens } from "../../usage/types";
@@ -127,6 +128,11 @@ export interface WebBrowserDriver {
     page: Page;
     abortSignal?: AbortSignal;
   }): Promise<DiscoveredModelEntry[]>;
+  usageLimitUrl?: string;
+  checkUsageLimit?(context: {
+    page: Page;
+    abortSignal?: AbortSignal;
+  }): Promise<ProviderLimitCheckResult>;
 }
 
 export interface WebResponseDriver {
