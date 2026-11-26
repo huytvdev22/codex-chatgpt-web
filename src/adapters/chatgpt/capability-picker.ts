@@ -11,6 +11,12 @@ const EFFORT_TO_SLIDER_STEP: Record<ChatGptThinkingEffort, number> = {
   high: 2,
 };
 
+export interface ChatGptCapabilityResult {
+  readonly modelSelected: boolean;
+  readonly effortAdjusted: boolean;
+  readonly reason?: string;
+}
+
 /**
  * Điều khiển popover Model Switcher & Power/Thinking Slider của ChatGPT Web (`chatgpt.com`).
  */
@@ -25,10 +31,26 @@ export class ChatGptCapabilityPicker {
     page: Page,
     target: ChatGptCapabilityTarget,
   ): Promise<boolean> {
+    const result = await this.ensureCapabilityDetailed(page, target);
+    return result.modelSelected && result.effortAdjusted;
+  }
+
+  public async ensureCapabilityDetailed(
+    page: Page,
+    target: ChatGptCapabilityTarget,
+  ): Promise<ChatGptCapabilityResult> {
     const trigger = page.locator(CHATGPT_SELECTORS.modelPickerTrigger).first();
     const triggerVisible = await trigger.isVisible().catch(() => false);
     if (!triggerVisible) {
-      return await this.ensureFreeThinkToggle(page, target.thinkingEffort);
+      if (!target.isAccountDefault) {
+        return {
+          modelSelected: false,
+          effortAdjusted: false,
+          reason: `Tài khoản ChatGPT hiện tại không hiển thị Model Switcher để chuyển sang '${target.modelLabel}'.`,
+        };
+      }
+      const effortAdjusted = await this.ensureFreeThinkToggle(page, target.thinkingEffort);
+      return { modelSelected: true, effortAdjusted };
     }
 
     const cacheKey = `${target.modelSlug}:${target.thinkingEffort}`;
@@ -43,7 +65,7 @@ export class ChatGptCapabilityPicker {
       this.appliedByPage.get(page) === cacheKey &&
       currentEffortAttr === target.thinkingEffort
     ) {
-      return true;
+      return { modelSelected: true, effortAdjusted: true };
     }
 
     try {
@@ -51,31 +73,50 @@ export class ChatGptCapabilityPicker {
       const menu = page.locator(CHATGPT_SELECTORS.openPickerMenu).last();
       await menu.waitFor({ state: "visible", timeout: 2_000 });
 
-      const modelSelected = await this.ensureModelSelected(page, target);
-      const effortAdjusted = await this.ensureThinkingEffort(page, target.thinkingEffort);
+      const modelOutcome = await this.ensureModelSelected(page, target);
+      const effortAdjusted = modelOutcome.selected
+        ? await this.ensureThinkingEffort(page, target.thinkingEffort).catch(() => false)
+        : false;
 
       await this.closePickerMenuIfOpen(page);
-      if (modelSelected && effortAdjusted) {
+      if (modelOutcome.selected && effortAdjusted) {
         this.appliedByPage.set(page, cacheKey);
       }
-      return modelSelected && effortAdjusted;
+      return {
+        modelSelected: modelOutcome.selected,
+        effortAdjusted,
+        ...(modelOutcome.reason ? { reason: modelOutcome.reason } : {}),
+      };
     } catch (error) {
       await this.closePickerMenuIfOpen(page);
       if (!(await trigger.isVisible().catch(() => false))) {
-        return await this.ensureFreeThinkToggle(page, target.thinkingEffort);
+        if (!target.isAccountDefault) {
+          return {
+            modelSelected: false,
+            effortAdjusted: false,
+            reason: `Không thể mở Model Switcher để chuyển sang '${target.modelLabel}'.`,
+          };
+        }
+        const effortAdjusted = await this.ensureFreeThinkToggle(page, target.thinkingEffort);
+        return { modelSelected: true, effortAdjusted };
       }
+      const message = error instanceof Error ? error.message : String(error);
       console.warn(
         `[chatgpt-capability] Không thể chuyển model='${target.modelLabel}' effort='${target.thinkingEffort}':`,
         error,
       );
-      return false;
+      return {
+        modelSelected: false,
+        effortAdjusted: false,
+        reason: message,
+      };
     }
   }
 
   private async ensureModelSelected(
     page: Page,
     target: ChatGptCapabilityTarget,
-  ): Promise<boolean> {
+  ): Promise<{ selected: boolean; reason?: string }> {
     const menu = page.locator(CHATGPT_SELECTORS.openPickerMenu).last();
 
     // Kiểm tra nhanh khi đang ở view simple:
@@ -107,12 +148,15 @@ export class ChatGptCapabilityPicker {
       .catch(() => false);
 
     if (quickMatch) {
-      return true;
+      return { selected: true };
     }
 
     const viewToggle = menu.locator(CHATGPT_SELECTORS.modelViewToggle).first();
     if (!(await viewToggle.isVisible().catch(() => false))) {
-      return false;
+      return {
+        selected: false,
+        reason: `Không tìm thấy danh sách chuyển model trong menu ChatGPT để chọn '${target.modelLabel}'.`,
+      };
     }
 
     await viewToggle.click({ timeout: 2_500 });
@@ -161,10 +205,22 @@ export class ChatGptCapabilityPicker {
       console.warn(
         `[chatgpt-capability] Không tìm thấy model '${target.modelLabel}' trong danh sách ChatGPT.`,
       );
-      return false;
+      return {
+        selected: false,
+        reason: `Không tìm thấy model '${target.modelLabel}' trong danh sách ChatGPT.`,
+      };
     }
 
     const targetRadio = radios.nth(matchedIndex);
+    const ariaDisabled = await targetRadio.getAttribute("aria-disabled").catch(() => null);
+    const isDisabled = ariaDisabled === "true" || (await targetRadio.isDisabled?.().catch(() => false));
+    if (!alreadyChecked && isDisabled) {
+      return {
+        selected: false,
+        reason: `Model '${target.modelLabel}' đang bị khóa/vô hiệu hóa trên tài khoản ChatGPT hiện tại.`,
+      };
+    }
+
     await targetRadio.click({ timeout: 2_500 });
     await page.waitForTimeout(220);
 
@@ -195,7 +251,7 @@ export class ChatGptCapabilityPicker {
       }
     }
 
-    return true;
+    return { selected: true };
   }
 
   private async ensureThinkingEffort(

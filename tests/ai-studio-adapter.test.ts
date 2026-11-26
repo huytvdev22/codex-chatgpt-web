@@ -117,12 +117,15 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     );
   });
 
-  test("aiStudioConversationKey tạo SHA-256 ổn định và không lộ threadId gốc", () => {
-    const parsed = makeParsedRequest();
-    const key1 = aiStudioConversationKey(parsed, "thread_secret_abc");
-    const key2 = aiStudioConversationKey(parsed, "thread_secret_abc");
+  test("aiStudioConversationKey tạo SHA-256 ổn định, giữ nguyên khi đổi model/reasoning cùng provider và không lộ threadId gốc", () => {
+    const parsedA = makeParsedRequest({ modelId: "ai-studio/gemini-4-hydrogen", options: { reasoning: "medium" } });
+    const parsedB = makeParsedRequest({ modelId: "ai-studio/gemini-4-neon", options: { reasoning: "high" } });
+    const key1 = aiStudioConversationKey(parsedA, "thread_secret_abc");
+    const key2 = aiStudioConversationKey(parsedB, "thread_secret_abc");
+    const keyOther = aiStudioConversationKey(parsedA, "thread_secret_xyz");
     expect(key1).toMatch(/^[a-f0-9]{64}$/);
     expect(key1).toBe(key2);
+    expect(key1).not.toBe(keyOther);
     expect(key1).not.toContain("thread_secret_abc");
   });
 

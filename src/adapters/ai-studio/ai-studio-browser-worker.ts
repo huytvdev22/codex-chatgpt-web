@@ -34,7 +34,7 @@ import {
   parseAiStudioConversationId,
   waitForAiStudioConversationId,
 } from "./conversation-url";
-import { AiStudioModelProvider } from "./model-provider";
+import { AiStudioCapabilityPicker } from "./capability-picker";
 
 export interface AiStudioBrowserRunOptions extends BaseBrowserRunOptions {
   conversationKey?: string;
@@ -68,10 +68,6 @@ export function parseAiStudioTokenCountText(rawText: string): number | undefined
   return Math.round(numeric * multiplier);
 }
 
-const THINKING_LEVEL_SELECT =
-  'mat-select[role="combobox"][aria-label="Thinking Level"], #mat-select-0[aria-label="Thinking Level"]';
-const SELECT_OPTION_SELECTOR =
-  '.mat-mdc-select-panel [role="option"], [role="listbox"] [role="option"]';
 const INSERT_BUTTON_SELECTOR =
   'button[aria-label="Insert images, videos, audio, or files"]';
 const UPLOAD_MENU_ITEM_SELECTOR = "button.mat-mdc-menu-item.upload-file-menu-item";
@@ -148,6 +144,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   protected readonly defaultHeartbeatIntervalMs = 10_000;
 
   private readonly domObserver = new AiStudioDomObserver();
+  private readonly capabilityPicker = new AiStudioCapabilityPicker();
   private readonly runtimeStates = new WeakMap<Page, AiStudioResponseRuntimeState>();
   private readonly retainedConversationIds = new WeakMap<Page, string>();
   private readonly botGuardSettledPages = new WeakSet<Page>();
@@ -185,6 +182,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         const currentUrl = typeof page.url === "function" ? page.url() : "";
         const liveConversationId = parseAiStudioConversationId(currentUrl);
         this.botGuardSettledPages.delete(page);
+        this.capabilityPicker.clearCache(page);
         if (liveConversationId) {
           await page
             .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
@@ -349,6 +347,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
       if (currentConversationId !== options.existingConversationId) {
         this.botGuardSettledPages.delete(page);
+        this.capabilityPicker.clearCache(page);
         await page.goto(buildAiStudioConversationUrl(options.existingConversationId), {
           waitUntil: "domcontentloaded",
           timeout: 25_000,
@@ -421,6 +420,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     if (!isCleanBlankNewChat || currentConversationId) {
       this.botGuardSettledPages.delete(page);
+      this.capabilityPicker.clearCache(page);
       await page.goto(targetNewChatUrl, {
         waitUntil: "domcontentloaded",
         timeout: 25_000,
@@ -437,16 +437,24 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     await this.waitForVisibleComposer(page, 15_000);
     await this.dismissObstructingNudges(page);
 
-    const targetLevel = AiStudioModelProvider.getInstance().resolveThinkingLevel(
+    const target = this.capabilityPicker.resolveTarget(
       options.modelSlug || "ai-studio/gemini-4-hydrogen",
       options.reasoning,
     );
-    await this.ensureThinkingLevel(page, targetLevel).catch((error) => {
-      console.warn(
-        `[ai-studio-worker] Không thể chọn Thinking Level '${targetLevel}':`,
-        error,
+    const capabilityResult = await this.capabilityPicker.ensureCapabilityDetailed(
+      page,
+      target,
+    );
+    if (!capabilityResult.modelSelected) {
+      throw new Error(
+        `[AI Studio] Không thể chuyển sang model '${target.displayName}' (${target.remoteModelId}) trên cuộc trò chuyện hiện tại: ${capabilityResult.reason || "không tìm thấy hoặc model bị giới hạn trên tài khoản này."}`,
       );
-    });
+    }
+    if (!capabilityResult.thinkingSelected) {
+      console.warn(
+        `[ai-studio-worker] Không thể chọn Thinking Level '${target.thinkingLevel}' cho '${target.modelSlug}' (giữ best-effort).`,
+      );
+    }
 
     await this.waitForComposerIdle(page);
 
@@ -455,33 +463,6 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       await waitForBotGuardReady(page, 2_000, 2_800).catch(() => { });
     }
     await humanPause(page, 280, 480);
-  }
-
-  private async ensureThinkingLevel(page: Page, targetLevel: string): Promise<void> {
-    const select = page.locator(THINKING_LEVEL_SELECT).first();
-    if (!(await select.isVisible().catch(() => false))) return;
-
-    const currentText = ((await select.innerText().catch(() => "")) || "").trim().toLowerCase();
-    const firstLine = currentText.split(/\r?\n/)[0]?.trim() || "";
-    if (currentText === targetLevel.toLowerCase() || firstLine === targetLevel.toLowerCase()) {
-      return;
-    }
-
-    await clickResilient(select, 3_000);
-    await humanPause(page, 220, 380);
-    const options = page.locator(SELECT_OPTION_SELECTOR);
-    await options.first().waitFor({ state: "visible", timeout: 3_000 });
-    const count = await options.count();
-    for (let i = 0; i < count; i += 1) {
-      const opt = options.nth(i);
-      const label = ((await opt.innerText().catch(() => "")) || "").trim();
-      if (label.toLowerCase() === targetLevel.toLowerCase()) {
-        await clickResilient(opt, 2_000);
-        await humanPause(page, 260, 440);
-        return;
-      }
-    }
-    await page.keyboard.press("Escape").catch(() => { });
   }
 
   /**

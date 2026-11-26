@@ -129,12 +129,10 @@ export class M365CopilotAdapter extends WebProviderAdapter {
         resolveState: ({
           leaseConversationId,
           launcherReused,
-          hasPriorAssistantReply,
         }) => ({
           existingConversationId: leaseConversationId,
           isNewConversation:
             !launcherReused &&
-            !hasPriorAssistantReply &&
             !leaseConversationId,
         }),
         onConversationUpdated: ({ conversationId }) => conversationId,

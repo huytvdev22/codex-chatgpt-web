@@ -264,6 +264,10 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
             return { success: false, reason: `Item '${params.label}' not found in primary menu` };
           }
 
+          if (targetItem.getAttribute("aria-disabled") === "true" || targetItem.hasAttribute("disabled")) {
+            return { success: false, reason: `Item '${params.label}' is disabled` };
+          }
+
           // Kiểm tra xem đã checked chưa
           if (targetItem.getAttribute("aria-checked") === "true") {
             return { success: true, alreadyChecked: true };
@@ -312,6 +316,10 @@ export class M365CapabilityPicker implements IM365CapabilityPicker {
 
           if (!targetSubItem) {
             return { success: false, reason: `Submenu item '${params.label}' (icon: ${params.iconTestId}) not found` };
+          }
+
+          if (targetSubItem.getAttribute("aria-disabled") === "true" || targetSubItem.hasAttribute("disabled")) {
+            return { success: false, reason: `Submenu item '${params.label}' is disabled` };
           }
 
           if (targetSubItem.getAttribute("aria-checked") === "true") {

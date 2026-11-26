@@ -44,6 +44,11 @@ export {
   type SpeechSpeakerConfig,
 } from "./ai-studio-speech-worker";
 export {
+  AiStudioCapabilityPicker,
+  type AiStudioCapabilityResult,
+  type AiStudioCapabilityTarget,
+} from "./capability-picker";
+export {
   AiStudioModelProvider,
   type AiStudioModelRouteDefinition,
   type AiStudioThinkingLevel,
@@ -128,12 +133,10 @@ export class AiStudioAdapter extends WebProviderAdapter {
         resolveState: ({
           leaseConversationId,
           launcherReused,
-          hasPriorAssistantReply,
         }) => ({
           existingConversationId: leaseConversationId,
           isNewConversation:
             !launcherReused &&
-            !hasPriorAssistantReply &&
             !leaseConversationId,
         }),
         onConversationUpdated: ({ conversationId }) => conversationId,

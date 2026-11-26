@@ -247,14 +247,20 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
       options.modelSlug || CHATGPT_DEFAULT_MODEL_SLUG,
       options.reasoning,
     );
-    await this.capabilityPicker
-      .ensureCapability(page, target)
-      .catch((error) => {
-        console.warn(
-          "[chatgpt-worker] Không thể đồng bộ Model/Thinking effort:",
-          error,
-        );
-      });
+    const capabilityResult = await this.capabilityPicker.ensureCapabilityDetailed(
+      page,
+      target,
+    );
+    if (!capabilityResult.modelSelected) {
+      throw new Error(
+        `[ChatGPT] Không thể chuyển sang model '${target.modelLabel}' trên cuộc trò chuyện hiện tại: ${capabilityResult.reason || "không tìm thấy hoặc model bị giới hạn trên tài khoản này."}`,
+      );
+    }
+    if (!capabilityResult.effortAdjusted) {
+      console.warn(
+        `[chatgpt-worker] Không thể đồng bộ Thinking effort '${target.thinkingEffort}' cho model '${target.modelLabel}' (giữ best-effort).`,
+      );
+    }
   }
 
   protected override async captureResponseBaseline(

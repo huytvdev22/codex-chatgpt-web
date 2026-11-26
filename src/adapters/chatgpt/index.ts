@@ -179,7 +179,6 @@ export class ChatGptAdapter extends WebProviderAdapter {
         resolveState: ({
           leaseConversationId,
           launcherReused,
-          hasPriorAssistantReply,
         }) => {
           const existingConversationId =
             normalizeChatGptConversationId(leaseConversationId);
@@ -187,7 +186,6 @@ export class ChatGptAdapter extends WebProviderAdapter {
             existingConversationId,
             isNewConversation:
               !launcherReused &&
-              !hasPriorAssistantReply &&
               !existingConversationId,
           };
         },

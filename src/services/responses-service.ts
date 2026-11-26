@@ -6,10 +6,15 @@ import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "..
 import { AsyncEventQueue } from "../event-queue";
 import type { BaseModelProvider } from "../models/base-model-provider";
 import { ModelRegistry } from "../models/model-registry";
+import type { ModelProviderId } from "../models/types";
 import { parseRequest } from "../responses/parser";
 import { expandPreviousResponseInput, rememberResponseState } from "../responses/state";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "../types";
 import type { NativeCodexTurnIdentity } from "../controllers/http-turn-counter";
+import {
+  ThreadProviderBindingStore,
+  threadProviderBindingStore,
+} from "./thread-provider-binding-store";
 
 export interface ResponseRequestOptions {
   /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
@@ -99,6 +104,7 @@ export class ResponsesService {
     private readonly modelRegistry: ModelRegistry = ModelRegistry.getInstance(),
     private readonly adapterRegistry: AdapterRegistry = AdapterRegistry.getInstance(),
     private readonly readConfiguredModel: () => string | undefined = readCodexConfiguredModel,
+    private readonly threadBindingStore: ThreadProviderBindingStore = threadProviderBindingStore,
   ) {}
 
   private rememberActiveTurnContext(
@@ -301,8 +307,46 @@ export class ResponsesService {
     }
 
     const identity = extractCodexTurnIdentityFromBody(expanded);
-    const conversationId = identity.threadId || (req.headers.get("x-codex-conversation-key") ?? "default");
-    if (!isCodexThreadTitleRequest(raw)) {
+    const headerConversationKey = req.headers.get("x-codex-conversation-key")?.trim();
+    const persistentThreadId =
+      identity.threadId && identity.threadId !== "default"
+        ? identity.threadId
+        : headerConversationKey && headerConversationKey !== "default"
+          ? headerConversationKey
+          : undefined;
+    const conversationId = identity.threadId || (headerConversationKey || "default");
+    const isTitleRequest = isCodexThreadTitleRequest(raw);
+
+    if (!isTitleRequest && persistentThreadId) {
+      const existingBinding = this.threadBindingStore.get(persistentThreadId);
+      if (existingBinding && existingBinding.providerId !== effectiveProviderId) {
+        const sameProviderModels = this.modelRegistry
+          .listEnabledRoutes(existingBinding.providerId as ModelProviderId)
+          .map(route => route.slug);
+        const allowedListText = sameProviderModels.length > 0
+          ? `các model hợp lệ cùng provider: ${sameProviderModels.join(", ")}`
+          : `vui lòng chọn lại model thuộc provider '${existingBinding.providerId}'`;
+        console.warn(
+          `[responses-service] Blocked cross-provider switch on threadId=${persistentThreadId}: locked=${existingBinding.providerId} (${existingBinding.modelId}) requested=${effectiveProviderId} (${effectiveModel})`,
+        );
+        return formatErrorResponse(
+          400,
+          "invalid_request_error",
+          `Không thể đổi sang provider '${effectiveProviderId}' (${effectiveModel}) trong cuộc trò chuyện hiện tại vì thread này đang gắn với provider '${existingBinding.providerId}' (model '${existingBinding.modelId}'). Hãy chọn lại model cùng provider '${existingBinding.providerId}' (${allowedListText}) để tiếp tục trên cùng link chat web, hoặc mở một cuộc trò chuyện Codex mới nếu muốn dùng '${effectiveModel}'.`,
+        );
+      }
+      if (
+        existingBinding &&
+        existingBinding.providerId === effectiveProviderId &&
+        existingBinding.modelId !== effectiveModel
+      ) {
+        console.log(
+          `[responses-service] Same-provider model switch on threadId=${persistentThreadId} (provider=${effectiveProviderId}): ${existingBinding.modelId} -> ${effectiveModel}`,
+        );
+      }
+    }
+
+    if (!isTitleRequest) {
       this.rememberActiveTurnContext(identity.threadId, {
         providerId: effectiveProviderId,
         modelId: effectiveModel,
@@ -343,6 +387,13 @@ export class ResponsesService {
 
     const maps = this.buildToolBridgeMaps(parsed);
     const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+      if (response.status === "completed" && !isTitleRequest && persistentThreadId) {
+        this.threadBindingStore.bind(persistentThreadId, {
+          providerId: effectiveProviderId,
+          modelId: effectiveModel,
+          ...(parsed.options.reasoning ? { reasoning: parsed.options.reasoning } : {}),
+        });
+      }
       if (options.rememberState !== false) {
         rememberResponseState(parsed._rawBody, response, { force: true });
       }

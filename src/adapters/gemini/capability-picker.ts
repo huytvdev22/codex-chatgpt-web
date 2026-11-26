@@ -1,15 +1,21 @@
 import type { Page } from "playwright-core";
+import { GEMINI_SELECTORS } from "./selectors";
 import type {
   GeminiCapabilityTarget,
   GeminiThinkingEffort,
 } from "./model-provider";
-import { GEMINI_SELECTORS } from "./selectors";
 
 const EFFORT_LABELS: Record<GeminiThinkingEffort, RegExp> = {
   low: /^(?:low|fast)\b/i,
   medium: /^(?:medium|thinking)\b/i,
   high: /^(?:high|pro)\b/i,
 };
+
+export interface GeminiCapabilityResult {
+  readonly modelSelected: boolean;
+  readonly thinkingSelected: boolean;
+  readonly reason?: string;
+}
 
 /**
  * Điều khiển Mode Picker, Thinking level submenu và Temporary Chat trên Gemini Web (`gemini.google.com`).
@@ -52,14 +58,29 @@ export class GeminiCapabilityPicker {
     page: Page,
     target: GeminiCapabilityTarget,
   ): Promise<boolean> {
+    const result = await this.ensureCapabilityDetailed(page, target);
+    return result.modelSelected && result.thinkingSelected;
+  }
+
+  public async ensureCapabilityDetailed(
+    page: Page,
+    target: GeminiCapabilityTarget,
+  ): Promise<GeminiCapabilityResult> {
     const trigger = page.locator(GEMINI_SELECTORS.modePickerTrigger).first();
     if (!(await trigger.isVisible().catch(() => false))) {
-      return false;
+      if (target.isAccountDefault && !target.remoteModelId) {
+        return { modelSelected: true, thinkingSelected: false };
+      }
+      return {
+        modelSelected: false,
+        thinkingSelected: false,
+        reason: `Không tìm thấy nút Mode Picker trên giao diện Gemini để chọn '${target.modelLabel || target.modelSlug}'.`,
+      };
     }
 
     const cacheKey = `${target.modelSlug}:${target.remoteModelId ?? ""}:${target.thinkingEffort}`;
     if (this.appliedByPage.get(page) === cacheKey) {
-      return true;
+      return { modelSelected: true, thinkingSelected: true };
     }
 
     try {
@@ -67,31 +88,47 @@ export class GeminiCapabilityPicker {
       const menu = page.locator(GEMINI_SELECTORS.modeMenu).first();
       await menu.waitFor({ state: "visible", timeout: 2_500 });
 
-      const modelSelected = await this.ensureModelOrModeSelected(page, target);
-      const thinkingSelected = await this.ensureThinkingLevel(
-        page,
-        target.thinkingEffort,
-      );
+      const modelOutcome = await this.ensureModelOrModeSelected(page, target);
+      const thinkingSelected = modelOutcome.selected
+        ? await this.ensureThinkingLevel(page, target.thinkingEffort).catch(() => false)
+        : false;
 
       await this.closePickerIfOpen(page);
-      if (modelSelected && thinkingSelected) {
+      if (modelOutcome.selected && thinkingSelected) {
         this.appliedByPage.set(page, cacheKey);
       }
-      return modelSelected && thinkingSelected;
+      return {
+        modelSelected: modelOutcome.selected,
+        thinkingSelected,
+        ...(modelOutcome.reason ? { reason: modelOutcome.reason } : {}),
+      };
     } catch (error) {
       await this.closePickerIfOpen(page);
+      const message = error instanceof Error ? error.message : String(error);
       console.warn(
         `[gemini-capability] Không thể chuyển model='${target.modelSlug}' effort='${target.thinkingEffort}':`,
         error,
       );
-      return false;
+      return {
+        modelSelected: false,
+        thinkingSelected: false,
+        reason: message,
+      };
     }
+  }
+
+  private async isItemDisabled(item: ReturnType<Page["locator"]>): Promise<boolean> {
+    const ariaDisabled = await item.getAttribute("aria-disabled").catch(() => null);
+    if (ariaDisabled === "true") return true;
+    const disabledAttr = await item.getAttribute("disabled").catch(() => null);
+    if (disabledAttr !== null && disabledAttr !== "false") return true;
+    return await item.isDisabled().catch(() => false);
   }
 
   private async ensureModelOrModeSelected(
     page: Page,
     target: GeminiCapabilityTarget,
-  ): Promise<boolean> {
+  ): Promise<{ selected: boolean; reason?: string }> {
     const menu = page.locator(GEMINI_SELECTORS.modeMenu).first();
     const hasThinkingSubmenu = await menu
       .locator(GEMINI_SELECTORS.thinkingLevelTrigger)
@@ -107,12 +144,20 @@ export class GeminiCapabilityPicker {
       !target.modelLabel &&
       hasThinkingSubmenu
     ) {
-      return true;
+      return { selected: true };
     }
 
     const items = menu.locator(GEMINI_SELECTORS.modeRadioItem);
     const count = await items.count();
-    if (count === 0) return true;
+    if (count === 0) {
+      if (target.isAccountDefault && !target.remoteModelId) {
+        return { selected: true };
+      }
+      return {
+        selected: false,
+        reason: "Menu Mode Picker của Gemini không có lựa chọn model nào.",
+      };
+    }
 
     // Nếu có remoteModelId (data-mode-id từ Auto-Discovery), ưu tiên khớp chính xác.
     if (target.remoteModelId) {
@@ -122,16 +167,22 @@ export class GeminiCapabilityPicker {
       if (await byId.isVisible().catch(() => false)) {
         const checked = await byId.getAttribute("aria-checked").catch(() => "");
         if (checked !== "true") {
+          if (await this.isItemDisabled(byId)) {
+            return {
+              selected: false,
+              reason: `Model '${target.modelLabel || target.modelSlug}' đang bị khóa/vô hiệu hóa trên tài khoản Gemini.`,
+            };
+          }
           await byId.click({ timeout: 2_000 });
           await page.waitForTimeout(250);
           // Click mode item thường đóng menu -> mở lại nếu còn bước Thinking level
           await this.reopenMenuIfClosed(page);
         }
-        return true;
+        return { selected: true };
       }
     }
 
-    // Nếu có modelLabel cụ thể (vd "4 Neon", "Deeper analysis", "Pro")
+    // Nếu có modelLabel cụ thể (vd "4 Neon", "4 Hydrogen", "Deeper analysis", "Pro")
     const normalizedLabel = target.modelLabel?.trim().toLowerCase();
     if (normalizedLabel) {
       for (let i = 0; i < count; i += 1) {
@@ -143,11 +194,17 @@ export class GeminiCapabilityPicker {
         if (text.includes(normalizedLabel)) {
           const checked = await item.getAttribute("aria-checked").catch(() => "");
           if (checked !== "true") {
+            if (await this.isItemDisabled(item)) {
+              return {
+                selected: false,
+                reason: `Model '${target.modelLabel}' đang bị khóa/vô hiệu hóa trên tài khoản Gemini.`,
+              };
+            }
             await item.click({ timeout: 2_000 });
             await page.waitForTimeout(250);
             await this.reopenMenuIfClosed(page);
           }
-          return true;
+          return { selected: true };
         }
       }
     }
@@ -163,15 +220,24 @@ export class GeminiCapabilityPicker {
         if (effortRegex.test(text)) {
           const checked = await item.getAttribute("aria-checked").catch(() => "");
           if (checked !== "true") {
+            if (await this.isItemDisabled(item)) {
+              return {
+                selected: false,
+                reason: `Chế độ '${text}' đang bị khóa/vô hiệu hóa trên tài khoản Gemini.`,
+              };
+            }
             await item.click({ timeout: 2_000 });
             await page.waitForTimeout(250);
           }
-          return true;
+          return { selected: true };
         }
       }
     }
 
-    return true;
+    return {
+      selected: false,
+      reason: `Không tìm thấy model '${target.modelLabel || target.modelSlug}' trong menu Gemini Web.`,
+    };
   }
 
   private async ensureThinkingLevel(
@@ -222,7 +288,7 @@ export class GeminiCapabilityPicker {
       return true;
     }
 
-    return true;
+    return false;
   }
 
   private async reopenMenuIfClosed(page: Page): Promise<void> {

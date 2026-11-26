@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **106** | Giữ nguyên cuộc trò chuyện khi đổi Model/Reasoning cùng Provider & Chặn HTTP 400 khi đổi khác Provider (`ThreadProviderBindingStore`, fail-closed `CapabilityPicker`, `AiStudioCapabilityPicker`) | `gemini`, `chatgpt`, `ai-studio`, `m365-copilot`, `web`, `server`, `codex` | ⏳ Chờ User Test & Confirm | [106-same-provider-model-switch-and-cross-provider-guard.md](./106-same-provider-model-switch-and-cross-provider-guard.md) |
 | **105** | Nâng cấp Auto-Updater Launcher (Hybrid OOP, 2 bước, sửa macOS bundle & Windows GUI, giữ tắt Dev mode) | `launcher`, `electron`, `ui`, `updater`, `macos`, `windows`, `linux` | ⏳ Chờ User Test & Confirm | [105-launcher-auto-updater-hybrid-oop.md](./105-launcher-auto-updater-hybrid-oop.md) |
 | **104** | Kiểm tra Account Usage Limits theo từng Adapter & Profile (v1: ChatGPT WHAM & Gemini Usage, cache `provider-limits.json`, Tab `Usage` + API `/v1/limits`) | `chatgpt`, `gemini`, `web`, `server`, `launcher`, `usage` | ⏳ Chờ User Test & Confirm | [104-provider-usage-limit-checker.md](./104-provider-usage-limit-checker.md) |
 | **103** | Tích hợp tạo & chỉnh sửa ảnh Gemini Web cho skill `Image Gen` của Codex (`/v1/images/generations`, `/v1/images/edits`) | `gemini`, `server`, `web`, `codex` | ⏳ Chờ User Test & Confirm | [103-gemini-web-image-generation-for-codex.md](./103-gemini-web-image-generation-for-codex.md) |

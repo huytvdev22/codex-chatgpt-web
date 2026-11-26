@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export interface WebConversationKeyInput {
   provider: string;
   source?: string;
-  modelId: string;
+  modelId?: string;
   reasoning?: string;
   includeReasoning?: boolean;
 }
@@ -21,8 +21,10 @@ export function buildWebConversationKey(
   const payload: Record<string, unknown> = {
     provider: input.provider,
     source,
-    modelId: input.modelId,
   };
+  if (input.modelId !== undefined) {
+    payload.modelId = input.modelId;
+  }
   if (input.includeReasoning) {
     payload.reasoning = input.reasoning;
   }

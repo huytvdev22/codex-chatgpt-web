@@ -201,14 +201,20 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
       options.modelSlug || GEMINI_DEFAULT_MODEL_SLUG,
       options.reasoning,
     );
-    await this.capabilityPicker
-      .ensureCapability(page, target)
-      .catch((error) => {
-        console.warn(
-          "[gemini-worker] Không thể đồng bộ Mode/Thinking level:",
-          error,
-        );
-      });
+    const capabilityResult = await this.capabilityPicker.ensureCapabilityDetailed(
+      page,
+      target,
+    );
+    if (!capabilityResult.modelSelected) {
+      throw new Error(
+        `[Gemini] Không thể chuyển sang model '${target.modelLabel || target.modelSlug}' trên cuộc trò chuyện hiện tại: ${capabilityResult.reason || "không tìm thấy hoặc model bị giới hạn trên tài khoản này."}`,
+      );
+    }
+    if (!capabilityResult.thinkingSelected) {
+      console.warn(
+        `[gemini-worker] Không thể đồng bộ Thinking level '${target.thinkingEffort}' cho model '${target.modelSlug}' (giữ best-effort).`,
+      );
+    }
   }
 
   protected override async captureResponseBaseline(

@@ -62,24 +62,40 @@ describe("GeminiAdapter contract & URL helpers", () => {
     expect(isGeminiAuthUrl("https://gemini.google.com/app")).toBe(false);
   });
 
-  test("geminiConversationKey tạo SHA-256 hex ổn định và tách biệt theo model/reasoning", () => {
+  test("geminiConversationKey tạo SHA-256 hex ổn định theo threadId và giữ nguyên khi đổi model/reasoning cùng provider", () => {
     const keyA = geminiConversationKey(
-      makeParsedRequest({ modelId: "gemini", options: { reasoning: "medium" } }),
+      makeParsedRequest({ modelId: "gemini/4-hydrogen", options: { reasoning: "medium" } }),
       "thread_secret_123",
     );
     const keyB = geminiConversationKey(
-      makeParsedRequest({ modelId: "gemini", options: { reasoning: "medium" } }),
+      makeParsedRequest({ modelId: "gemini/4-neon", options: { reasoning: "high" } }),
       "thread_secret_123",
     );
-    const keyC = geminiConversationKey(
-      makeParsedRequest({ modelId: "gemini", options: { reasoning: "high" } }),
-      "thread_secret_123",
+    const keyOtherThread = geminiConversationKey(
+      makeParsedRequest({ modelId: "gemini/4-hydrogen", options: { reasoning: "medium" } }),
+      "thread_secret_456",
     );
 
     expect(keyA).toMatch(/^[a-f0-9]{64}$/);
     expect(keyA).toBe(keyB);
-    expect(keyA).not.toBe(keyC);
+    expect(keyA).not.toBe(keyOtherThread);
     expect(keyA).not.toContain("thread_secret_123");
+  });
+
+  test("resolveState vẫn đánh dấu isNewConversation=true khi chưa có tab/link web dù Codex đã có lịch sử", () => {
+    const adapter = createGeminiAdapter() as GeminiAdapter;
+    const def = getDefinition(adapter);
+    const resolved = def.conversation.resolveState?.({
+      parsed: makeParsedRequest(),
+      incoming: { headers: new Headers() },
+      leaseConversationId: undefined,
+      launcherReused: false,
+      hasPriorAssistantReply: true,
+    });
+    expect(resolved).toEqual({
+      existingConversationId: undefined,
+      isNewConversation: true,
+    });
   });
 
   test("WebProviderDefinition tuân thủ fail-closed, ephemeral json_schema retain=false, max 3 images", () => {

@@ -8,15 +8,21 @@ import {
 const CONVERSATION_ID = "8cbbbab7-10a3-4f92-950e-f0a1b18b8f89";
 
 describe("M365 persistent conversation identity", () => {
-  test("hashes the raw Codex identity into a stable private launcher key", () => {
-    const parsed = {
-      modelId: "gpt-5.4",
+  test("hashes the raw Codex identity into a stable private launcher key across same-provider model switches", () => {
+    const parsedA = {
+      modelId: "m365-copilot/gpt-5.6",
       options: { reasoning: "high" },
     } as CodexParsedRequest;
-    const first = m365ConversationKey(parsed, "raw-thread-id");
-    const second = m365ConversationKey(parsed, "raw-thread-id");
+    const parsedB = {
+      modelId: "m365-copilot",
+      options: { reasoning: "low" },
+    } as CodexParsedRequest;
+    const first = m365ConversationKey(parsedA, "raw-thread-id");
+    const second = m365ConversationKey(parsedB, "raw-thread-id");
+    const other = m365ConversationKey(parsedA, "other-thread-id");
 
     expect(first).toBe(second);
+    expect(first).not.toBe(other);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
     expect(first).not.toContain("raw-thread-id");
   });

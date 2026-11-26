@@ -690,12 +690,18 @@ export class M365BrowserWorker extends BaseWebBrowserWorker<
         options.modelSlug,
         options.reasoning,
       );
-      await ensureM365CapabilityTarget(page, target).catch(error => {
+      const ok = await ensureM365CapabilityTarget(page, target).catch(error => {
         console.warn(
           `[m365-worker] Warning: Failed to ensure capability mode '${target.mode}':`,
           error,
         );
+        return false;
       });
+      if (!ok && target.mode !== "auto") {
+        throw new Error(
+          `[M365 Copilot] Không thể chuyển sang model/chế độ '${target.spec?.label ?? target.mode}' cho '${options.modelSlug}' trên cuộc trò chuyện hiện tại.`,
+        );
+      }
     }
 
     // Chờ tối đa 12 giây cho lượt trước hoàn tất. Chỉ dừng generation cũ khi

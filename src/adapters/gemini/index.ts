@@ -192,7 +192,6 @@ export class GeminiAdapter extends WebProviderAdapter {
         resolveState: ({
           leaseConversationId,
           launcherReused,
-          hasPriorAssistantReply,
         }) => {
           const existingConversationId =
             normalizeGeminiConversationId(leaseConversationId);
@@ -200,7 +199,6 @@ export class GeminiAdapter extends WebProviderAdapter {
             existingConversationId,
             isNewConversation:
               !launcherReused &&
-              !hasPriorAssistantReply &&
               !existingConversationId,
           };
         },

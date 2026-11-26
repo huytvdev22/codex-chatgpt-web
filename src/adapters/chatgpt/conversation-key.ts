@@ -2,18 +2,15 @@ import type { CodexParsedRequest } from "../../types";
 import { buildWebConversationKey } from "../web/conversation/conversation-key";
 
 /**
- * Tạo khóa định danh ổn định (SHA-256 hex) cho hội thoại ChatGPT Web,
- * tách biệt theo model và mức reasoning để tránh dùng nhầm luồng khi chuyển mode.
+ * Tạo khóa định danh ổn định (SHA-256 hex) cho hội thoại ChatGPT Web theo `(provider, source)`,
+ * giữ nguyên tab Launcher & link chat khi đổi model hoặc mức reasoning trong cùng provider.
  */
 export function chatGptConversationKey(
-  parsed: CodexParsedRequest,
+  _parsed: CodexParsedRequest,
   rawConversationKey?: string,
 ): string | undefined {
   return buildWebConversationKey({
     provider: "chatgpt",
     source: rawConversationKey,
-    modelId: parsed.modelId,
-    reasoning: parsed.options.reasoning,
-    includeReasoning: true,
   });
 }
