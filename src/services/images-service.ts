@@ -37,15 +37,54 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+const CODEX_OPENAI_FIXED_SIZES = new Set([
+  "auto",
+  "1024x1024",
+  "1536x1024",
+  "1024x1536",
+]);
+
+function extractExplicitPromptAspectRatio(
+  prompt?: string,
+): ImageAspectRatio | undefined {
+  const cleanPrompt = typeof prompt === "string" ? prompt : "";
+  if (!cleanPrompt) return undefined;
+
+  const contextualMatch =
+    /(?:aspect\s*ratio|ratio|tỉ\s*lệ|tỷ\s*lệ|khung\s*hình)\s*(?:is|of|:|=|là)?\s*(16:9|9:16|4:3|3:4|1:1)\b/i.exec(
+      cleanPrompt,
+    );
+  if (contextualMatch) {
+    return contextualMatch[1] as ImageAspectRatio;
+  }
+
+  const standaloneMatch = /(?:^|[\s(,;\[])(16:9|9:16|4:3|3:4|1:1)(?=$|[\s),.;\]!?])/i.exec(
+    cleanPrompt,
+  );
+  if (standaloneMatch) {
+    return standaloneMatch[1] as ImageAspectRatio;
+  }
+
+  return undefined;
+}
+
 /**
  * Ánh xạ `size` (`WIDTHxHEIGHT`) hoặc mẫu tỉ lệ tường minh trong `prompt`
  * về tỉ lệ khung hình chuẩn mà Gemini Web UI hỗ trợ.
+ * Khi `prompt` ghi sẵn tỉ lệ tường minh và `size` là một trong các mức mặc định/cố định
+ * của OpenAI `image_gen` (`auto`, `1024x1024`, `1536x1024`, `1024x1536`), ưu tiên tỉ lệ từ `prompt`.
  */
 export function resolveRequestedAspectRatio(
   size?: string,
   prompt?: string,
 ): ImageAspectRatio | undefined {
+  const promptRatio = extractExplicitPromptAspectRatio(prompt);
   const cleanSize = typeof size === "string" ? size.trim().toLowerCase() : "";
+
+  if (promptRatio && (!cleanSize || CODEX_OPENAI_FIXED_SIZES.has(cleanSize))) {
+    return promptRatio;
+  }
+
   if (cleanSize && cleanSize !== "auto") {
     const dimMatch = /^([1-9]\d*)x([1-9]\d*)$/.exec(cleanSize);
     if (dimMatch) {
@@ -67,25 +106,7 @@ export function resolveRequestedAspectRatio(
     }
   }
 
-  const cleanPrompt = typeof prompt === "string" ? prompt : "";
-  if (!cleanPrompt) return undefined;
-
-  const contextualMatch =
-    /(?:aspect\s*ratio|ratio|tỉ\s*lệ|tỷ\s*lệ|khung\s*hình)\s*(?:is|of|:|=|là)?\s*(16:9|9:16|4:3|3:4|1:1)\b/i.exec(
-      cleanPrompt,
-    );
-  if (contextualMatch) {
-    return contextualMatch[1] as ImageAspectRatio;
-  }
-
-  const standaloneMatch = /(?:^|[\s(,;\[])(16:9|9:16|4:3|3:4|1:1)(?=$|[\s),.;\]!?])/i.exec(
-    cleanPrompt,
-  );
-  if (standaloneMatch) {
-    return standaloneMatch[1] as ImageAspectRatio;
-  }
-
-  return undefined;
+  return promptRatio;
 }
 
 function parseTurnMetadataHeader(headers: Headers): ParsedTurnMetadataHeader {

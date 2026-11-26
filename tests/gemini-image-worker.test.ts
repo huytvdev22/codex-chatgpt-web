@@ -22,6 +22,7 @@ function createMockGeminiImagePage(opts: MockImagePageOptions = {}) {
   let imagesActive = opts.imagesModeAlreadyActive ?? false;
   let aspectAria = opts.initialAspectLabel ?? "";
   let composerText = "";
+  let submittedPrompt = "";
   let promptSubmitted = false;
   let pollStep = 0;
   let tempChatClicked = false;
@@ -60,6 +61,7 @@ function createMockGeminiImagePage(opts: MockImagePageOptions = {}) {
         }
         if (sel === GEMINI_SELECTORS.sendButton) {
           promptSubmitted = true;
+          submittedPrompt = composerText;
           composerText = "";
           if (currentUrl === GEMINI_HOME_URL) {
             currentUrl = "https://gemini.google.com/app/newimgconv123";
@@ -198,13 +200,14 @@ function createMockGeminiImagePage(opts: MockImagePageOptions = {}) {
       tempChatClicked,
       clickedAspectOption,
       attachedFilesCount,
+      submittedPrompt,
       promptSubmitted,
     }),
   };
 }
 
 describe("GeminiImageWorker", () => {
-  test("mở phiên mới không bật Temporary Chat, bật Create image, đặt 16:9, đính kèm ảnh và trích xuất PNG", async () => {
+  test("mở phiên mới không bật Temporary Chat, bật Create image, không bấm chip Aspect ratio, chèn gợi ý tỉ lệ nếu thiếu, đính kèm ảnh và trích xuất PNG", async () => {
     const { page, getState } = createMockGeminiImagePage({
       initialUrl: "https://gemini.google.com/app/existing-chat-123",
     });
@@ -213,7 +216,7 @@ describe("GeminiImageWorker", () => {
     const result = await worker.executeImageTurn(page, {
       modelSlug: "gemini/4-hydrogen",
       reasoning: "high",
-      prompt: "Make this sunset 16:9",
+      prompt: "Make this sunset glow",
       aspectRatio: "16:9",
       images: [
         {
@@ -229,7 +232,9 @@ describe("GeminiImageWorker", () => {
     expect(state.gotoUrls).toEqual([GEMINI_HOME_URL]);
     expect(state.tempChatClicked).toBe(false);
     expect(state.imagesActive).toBe(true);
-    expect(state.clickedAspectOption).toBe("16:9");
+    expect(state.clickedAspectOption).toBeUndefined();
+    expect(state.submittedPrompt).toContain("Make this sunset glow");
+    expect(state.submittedPrompt).toContain("Preferred aspect ratio: 16:9.");
     expect(state.attachedFilesCount).toBe(1);
     expect(state.promptSubmitted).toBe(true);
     expect(result.mimeType).toBe("image/png");

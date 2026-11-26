@@ -138,9 +138,6 @@ export class GeminiImageWorker {
 
     await this.ensureImageCreationMode(page, options.signal);
     await this.ensureImageFormat(page);
-    if (options.aspectRatio) {
-      await this.ensureAspectRatio(page, options.aspectRatio);
-    }
 
     if (options.images && options.images.length > 0) {
       const normalizedImages: NormalizedImageAttachment[] = options.images
@@ -160,7 +157,11 @@ export class GeminiImageWorker {
       .count()
       .catch(() => 0);
 
-    await this.insertPrompt(page, options.prompt, options.signal);
+    const promptToSend = this.buildPromptWithAspectRatioHint(
+      options.prompt,
+      options.aspectRatio,
+    );
+    await this.insertPrompt(page, promptToSend, options.signal);
     await this.submitPrompt(page, options.signal);
 
     const imageResult = await this.waitForGeneratedImage(
@@ -290,62 +291,28 @@ export class GeminiImageWorker {
     }
   }
 
-  private async ensureAspectRatio(
-    page: Page,
-    aspectRatio: ImageAspectRatio,
-  ): Promise<void> {
-    let aspectBtn = await this.findCompanionChipButton(page, "aspectRatio");
-    if (!aspectBtn) {
-      for (let waitAttempt = 0; waitAttempt < 3; waitAttempt += 1) {
-        await page.waitForTimeout(300);
-        aspectBtn = await this.findCompanionChipButton(page, "aspectRatio");
-        if (aspectBtn) break;
-      }
+  /**
+   * Thay vì bấm mở popup chip `Aspect ratio` trên UI (dễ bấm nhầm hoặc kẹt overlay),
+   * giữ nguyên mặc định chip và chỉ bổ sung gợi ý tỉ lệ vào prompt khi `aspectRatio`
+   * khác `1:1` mà prompt gốc chưa ghi tỉ lệ đó.
+   */
+  private buildPromptWithAspectRatioHint(
+    prompt: string,
+    aspectRatio?: ImageAspectRatio,
+  ): string {
+    const trimmed = prompt.trim();
+    if (!aspectRatio || aspectRatio === "1:1") {
+      return trimmed;
     }
-    if (!aspectBtn) {
-      console.warn(
-        `[gemini-image-worker] Không tìm thấy nút Aspect ratio để đặt tỉ lệ ${aspectRatio}; dùng mặc định của Gemini.`,
-      );
-      return;
+    const escapedRatio = aspectRatio.replace(":", "\\:");
+    const hasExplicitRatio = new RegExp(
+      `(?:^|[\\s(,;\\[])${escapedRatio}(?=$|[\\s),.;\\]!?])`,
+      "i",
+    ).test(trimmed);
+    if (hasExplicitRatio) {
+      return trimmed;
     }
-
-    const aria = ((await aspectBtn.getAttribute("aria-label").catch(() => "")) || "").trim();
-    const text = ((await aspectBtn.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
-    if (
-      aria.toLowerCase() === `aspect ratio, ${aspectRatio}`.toLowerCase() ||
-      text === aspectRatio
-    ) {
-      return;
-    }
-
-    await aspectBtn.click({ timeout: 2_500 });
-    await page.waitForTimeout(250);
-
-    const byAria = page
-      .locator(`${GEMINI_SELECTORS.companionMenuRadioItem}[aria-label="${aspectRatio}"]`)
-      .first();
-    const targetOption = (await byAria.isVisible().catch(() => false))
-      ? byAria
-      : page
-          .locator(GEMINI_SELECTORS.companionMenuRadioItem)
-          .filter({ hasText: aspectRatio })
-          .first();
-
-    if (!(await targetOption.isVisible().catch(() => false))) {
-      await page.keyboard.press("Escape").catch(() => {});
-      console.warn(
-        `[gemini-image-worker] Menu Aspect ratio không có lựa chọn ${aspectRatio}; dùng mặc định của Gemini.`,
-      );
-      return;
-    }
-
-    const checked = await targetOption.getAttribute("aria-checked").catch(() => "");
-    if (checked !== "true") {
-      await targetOption.click({ timeout: 2_000 });
-      await page.waitForTimeout(250);
-    } else {
-      await page.keyboard.press("Escape").catch(() => {});
-    }
+    return `${trimmed}\n\nPreferred aspect ratio: ${aspectRatio}.`;
   }
 
   private async insertPrompt(

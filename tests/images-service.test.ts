@@ -35,9 +35,11 @@ describe("resolveRequestedAspectRatio", () => {
     expect(resolveRequestedAspectRatio("900x1200", "a mug")).toBe("3:4");
   });
 
-  test("tự trích xuất tỉ lệ tường minh từ prompt khi size='auto' hoặc trống, tránh bắt nhầm giờ", () => {
+  test("tự trích xuất tỉ lệ tường minh từ prompt khi size='auto', trống, hoặc là mức OpenAI mặc định (1024x1024 / 1536x1024), tránh bắt nhầm giờ", () => {
     expect(resolveRequestedAspectRatio("auto", "Create a 16:9 banner of a mountain")).toBe("16:9");
     expect(resolveRequestedAspectRatio(undefined, "Poster tỉ lệ 9:16 phong cách tối giản")).toBe("9:16");
+    expect(resolveRequestedAspectRatio("1024x1024", "Cartoon kitten, 16:9 widescreen aspect ratio.")).toBe("16:9");
+    expect(resolveRequestedAspectRatio("1536x1024", "Scenic valley, 16:9")).toBe("16:9");
     expect(resolveRequestedAspectRatio("auto", "Draw a clock at 11:15 on a desk")).toBeUndefined();
     expect(resolveRequestedAspectRatio("auto", "Simple coffee cup illustration")).toBeUndefined();
   });
