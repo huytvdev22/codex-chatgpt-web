@@ -5,15 +5,19 @@ import {
 } from "../adapters/web/protocol/strict-response-parser";
 import type { AssistantParsedResponse } from "./types";
 
-const TOOL_TAG_REGEX =
-  /<tool_call\b[^>]*>([\s\S]*?)<\/\s*tool_call\s*>|<custom_tool_call\b[^>]*name=["']apply_patch["'][^>]*>([\s\S]*?)<\/\s*custom_tool_call\s*>/gi;
+const RESERVED_CONTROL_MARKER_REGEX =
+  /(?:<\/?\s*(?:webResponse|tool_call|custom_tool_call|thought|thinking)\b|\*{3}\s*(?:Begin|End) Patch)/i;
 
-const UNCLOSED_TOOL_REGEX = /<(?:tool_call|custom_tool_call)\b/i;
+const FULL_TRANSPORT_FENCE_REGEX =
+  /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n([\s\S]*)\r?\n`{4}$/i;
+
+const TRAILING_WEBRESPONSE_FENCE_REGEX =
+  /(?:^|\n)(`{4}(?:markdown|md|xml)?[ \t]*\r?\n<webResponse\b[\s\S]*\r?\n`{4})$/i;
 
 /**
  * Turndown (`webHtmlToMarkdown`) thường escape ký tự `_` và `*` thành `\_` / `\*`
- * khi AI xuất XML tool call trực tiếp không bọc code fence.
- * Chuẩn hóa các thẻ tool call + prefix mở thẻ để Gate và Parser nhận diện chính xác.
+ * khi AI xuất XML tool call ngoài code fence hoặc bị đọc từ DOM fallback.
+ * Chuẩn hóa các thẻ điều khiển + prefix mở thẻ để Gate và Parser nhận diện chính xác.
  */
 export function normalizeEscapedToolMarkers(text: string): string {
   if (!text || (!text.includes("\\_") && !text.includes("\\*"))) {
@@ -32,42 +36,32 @@ export function normalizeEscapedToolMarkers(text: string): string {
     .replace(/(^|\n)([ \t]*)\\\*\\\*\\\*/g, "$1$2***");
 }
 
-function unescapeTurndownInsideToolBlock(rawBlock: string): string {
-  // Trong JSON hoặc *** Begin Patch do Turndown trích xuất, `\_` và `\*` không phải escape hợp lệ.
-  return rawBlock.replace(/\\([_*])/g, "$1");
+function unescapeTurndownInsideToolTags(text: string): string {
+  if (!text || (!text.includes("\\_") && !text.includes("\\*"))) {
+    return text;
+  }
+  return text
+    .replace(
+      /<tool_call\b[^>]*>[\s\S]*?<\/\s*tool_call\s*>/gi,
+      (block) => block.replace(/\\([_*])/g, "$1"),
+    )
+    .replace(
+      /<custom_tool_call\b[^>]*>[\s\S]*?<\/\s*custom_tool_call\s*>/gi,
+      (block) => block.replace(/\\([_*])/g, "$1"),
+    );
 }
 
 /**
  * Gỡ wrapper vận chuyển tùy chọn (4-backtick markdown và/hoặc `<webResponse>...</webResponse>`)
- * nếu AI vẫn tự bọc dù giao thức Assistant là Natural-First.
+ * để làm sạch câu trả lời cuối khi cần (vd. đồng bộ finalize text trên Stream Gate).
  */
 export function unwrapOptionalAssistantEnvelope(rawResponse: string): string {
   let text = String(rawResponse || "").trim();
   if (!text) return "";
 
-  const fenceMatch = /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n([\s\S]*?)\r?\n`{4}$/i.exec(text);
+  const fenceMatch = FULL_TRANSPORT_FENCE_REGEX.exec(text);
   if (fenceMatch) {
     text = fenceMatch[1].trim();
-  } else {
-    // Trường hợp AI bọc toàn bộ Action Turn trong ```...``` (3 backticks) không kèm chữ ngoài
-    const tripleOnlyMatch =
-      /^`{3}(?:markdown|md|xml)?[ \t]*\r?\n(\s*(?:<webResponse\b|<tool_call\b|<custom_tool_call\b)[\s\S]*?)\r?\n`{3}$/i.exec(
-        text,
-      );
-    if (tripleOnlyMatch) {
-      text = tripleOnlyMatch[1].trim();
-    } else {
-      // Trường hợp AI viết câu dẫn ngắn trước khối 4-backtick Action Turn: bóc riêng khối 4-backtick ở cuối
-      const trailingQuadFence =
-        /(^|\n)`{4}(?:markdown|md|xml)?[ \t]*\r?\n(\s*(?:<webResponse\b|<tool(?:\\?_)+call\b|<custom(?:\\?_)+tool(?:\\?_)+call\b)[\s\S]*?)\r?\n`{4}$/i.exec(
-          text,
-        );
-      if (trailingQuadFence) {
-        const before = text.slice(0, trailingQuadFence.index).trimEnd();
-        const inner = trailingQuadFence[2].trim();
-        text = before ? `${before}\n${inner}` : inner;
-      }
-    }
   }
 
   const envelopeMatch = /^<webResponse\b[^>]*>([\s\S]*?)<\/\s*webResponse\s*>$/i.exec(text);
@@ -83,39 +77,23 @@ export function unwrapOptionalAssistantEnvelope(rawResponse: string): string {
   return text;
 }
 
-/**
- * Tìm các vùng code fence (` ```...``` `) để không nhận nhầm ví dụ `<tool_call>`
- * nằm trong đoạn code minh họa thành lời gọi công cụ thực thi.
- */
-function findCodeFenceRanges(text: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  const regex = /(?:^|\n)[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[ \t]*(?=\n|$)|$)/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    ranges.push([match.index, match.index + match[0].length]);
-  }
-  return ranges;
-}
-
-function isInsideRanges(index: number, ranges: ReadonlyArray<[number, number]>): boolean {
-  for (const [start, end] of ranges) {
-    if (index >= start && index < end) return true;
-  }
-  return false;
+function normalizeTransportLanguageTag(fenceText: string): string {
+  return fenceText.replace(/^`{4}(?:markdown|md|xml)?[ \t]*\r?\n/i, "````markdown\n");
 }
 
 /**
- * Parser Natural-First cho Trợ lý cá nhân (`src/assistant/`):
- * - Chấp nhận thẳng câu trả lời Markdown tự nhiên (không yêu cầu 4-backtick / `<webResponse>`),
- *   triệt tiêu hoàn toàn lỗi format-retry thừa ở các lượt hỏi đáp thường.
- * - Khi phát hiện `<tool_call>` hoặc `<custom_tool_call name="apply_patch">` ngoài code fence:
- *   ủy quyền validate cú pháp JSON/patch/SafeCommandGuard sang `parseStrictWebResponse`,
- *   đồng thời hỗ trợ tách câu dẫn ngắn (`commentaryText`) nếu AI lỡ viết trước thẻ tool.
+ * Parser "Strict Actions — Natural Answers" cho Trợ lý cá nhân (`src/assistant/`):
+ * - **Final Answer:** Chấp nhận thẳng Markdown tự nhiên (không ép 4-backtick hay `<webResponse>`),
+ *   giúp streaming lên Telegram mượt mà. Ví dụ XML minh họa bên trong code block ` ```...``` ` được bỏ qua.
+ * - **Action Turn:** Đồng bộ 100% với `parseStrictWebResponse` — yêu cầu `<webResponse>...</webResponse>`
+ *   (và không lẫn chữ/text thừa bên trong hay giữa các `<tool_call>`, cấm `<thought>`, kiểm đủ patch grammar
+ *   và `SafeCommandGuard`). Riêng trường hợp AI lỡ viết câu dẫn ngắn phía trước khối ` ````markdown\n<webResponse> `
+ *   đã kịp stream lên Telegram thì tách câu dẫn thành `commentaryText` trước khi parse strict phần Action.
  */
 export class AssistantResponseParser {
   public parse(rawResponse: string): AssistantParsedResponse {
-    const cleaned = normalizeEscapedToolMarkers(unwrapOptionalAssistantEnvelope(rawResponse));
-    if (!cleaned) {
+    const trimmedRaw = String(rawResponse || "").trim();
+    if (!trimmedRaw) {
       return {
         kind: "protocol_error",
         code: "EMPTY_RESPONSE",
@@ -124,59 +102,88 @@ export class AssistantResponseParser {
       };
     }
 
-    const fenceRanges = findCodeFenceRanges(cleaned);
-    const toolBlocks: Array<{ start: number; end: number; rawBlock: string }> = [];
-    TOOL_TAG_REGEX.lastIndex = 0;
+    const normalized = normalizeEscapedToolMarkers(trimmedRaw);
 
-    let match: RegExpExecArray | null;
-    while ((match = TOOL_TAG_REGEX.exec(cleaned)) !== null) {
-      if (isInsideRanges(match.index, fenceRanges)) {
-        continue;
-      }
-      toolBlocks.push({
-        start: match.index,
-        end: match.index + match[0].length,
-        rawBlock: match[0],
-      });
+    // 1. Toàn bộ phản hồi nằm trong 1 khối 4-backtick transport fence: ủy quyền thẳng sang parseStrictWebResponse.
+    if (FULL_TRANSPORT_FENCE_REGEX.test(normalized)) {
+      const strictResult = parseStrictWebResponse(normalizeTransportLanguageTag(normalized));
+      return this.mapStrictResult(strictResult, rawResponse);
     }
 
-    if (toolBlocks.length > 0) {
-      const normalizedBlocks = toolBlocks.map((b) => unescapeTurndownInsideToolBlock(b.rawBlock));
-      const canonicalEnvelope = `\`\`\`\`markdown\n<webResponse>\n${normalizedBlocks.join("\n")}\n</webResponse>\n\`\`\`\``;
-      const strictResult = parseStrictWebResponse(canonicalEnvelope);
-      if (strictResult.kind === "protocol_error") {
+    // 2. Ngoại lệ phục vụ Telegram streaming: câu dẫn tự nhiên sạch ở đầu + khối 4-backtick `<webResponse>` ở cuối.
+    const trailingFenceMatch = TRAILING_WEBRESPONSE_FENCE_REGEX.exec(normalized);
+    if (trailingFenceMatch) {
+      const fenceText = trailingFenceMatch[1];
+      const fenceStart = trailingFenceMatch.index + (trailingFenceMatch[0].length - fenceText.length);
+      const preamble = normalized.slice(0, fenceStart).trim();
+
+      if (!RESERVED_CONTROL_MARKER_REGEX.test(stripMarkdownCode(preamble))) {
+        const strictResult = parseStrictWebResponse(normalizeTransportLanguageTag(fenceText));
+        if (strictResult.kind === "final_answer") {
+          const combined = preamble
+            ? `${preamble}\n\n${strictResult.content}`
+            : strictResult.content;
+          return {
+            kind: "final_answer",
+            content: combined,
+            rawResponse,
+          };
+        }
+        return this.mapStrictResult(strictResult, rawResponse, preamble || undefined);
+      }
+    }
+
+    // 3. Nếu ngoài code fence thường có bất kỳ control marker nào (<webResponse>, <tool_call>, <custom_tool_call>,
+    //    *** Begin Patch, <thought>, <thinking>): tuyệt đối không hạ cấp thành Final Answer — đi qua parseStrictWebResponse.
+    const plainOutsideCode = stripMarkdownCode(normalized);
+    if (RESERVED_CONTROL_MARKER_REGEX.test(plainOutsideCode)) {
+      const preparedForStrict = unescapeTurndownInsideToolTags(normalized);
+      const strictResult = parseStrictWebResponse(preparedForStrict);
+      if (strictResult.kind === "final_answer") {
+        // Phòng trường hợp marker xuất hiện với biến thể ngoài khả năng nhận diện của `strict-response-parser`
         return {
           kind: "protocol_error",
-          code: strictResult.code,
-          message: strictResult.message,
+          code: "MISSING_RESPONSE_ENVELOPE",
+          message:
+            "Phát hiện thẻ điều khiển chưa bọc đúng chuẩn ````markdown\\n<webResponse>...</webResponse>\\n````.",
           rawResponse,
         };
       }
-      if (strictResult.kind === "tool_calls") {
-        const preamble = cleaned.slice(0, toolBlocks[0].start).trim();
-        return {
-          kind: "tool_calls",
-          calls: strictResult.calls as StrictWebToolCall[],
-          ...(preamble ? { commentaryText: preamble } : {}),
-          rawResponse,
-        };
-      }
+      return this.mapStrictResult(strictResult, rawResponse);
     }
 
-    // Kiểm tra trường hợp AI mở `<tool_call>` / `<custom_tool_call>` nhưng bị cắt cụt (chưa có thẻ đóng).
-    const plainOutsideCode = stripMarkdownCode(cleaned);
-    if (UNCLOSED_TOOL_REGEX.test(plainOutsideCode)) {
+    // 4. Final Answer Markdown tự nhiên thuần túy.
+    return {
+      kind: "final_answer",
+      content: trimmedRaw,
+      rawResponse,
+    };
+  }
+
+  private mapStrictResult(
+    strictResult: ReturnType<typeof parseStrictWebResponse>,
+    rawResponse: string,
+    commentaryText?: string,
+  ): AssistantParsedResponse {
+    if (strictResult.kind === "protocol_error") {
       return {
         kind: "protocol_error",
-        code: "INCOMPLETE_TOOL_CALL",
-        message: "Phát hiện thẻ gọi công cụ bị thiếu thẻ đóng (`</tool_call>` hoặc `</custom_tool_call>`).",
+        code: strictResult.code,
+        message: strictResult.message,
         rawResponse,
       };
     }
-
+    if (strictResult.kind === "tool_calls") {
+      return {
+        kind: "tool_calls",
+        calls: strictResult.calls as StrictWebToolCall[],
+        ...(commentaryText ? { commentaryText } : {}),
+        rawResponse,
+      };
+    }
     return {
       kind: "final_answer",
-      content: cleaned,
+      content: strictResult.content,
       rawResponse,
     };
   }

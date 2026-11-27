@@ -124,9 +124,9 @@ describe("Assistant routes isolation & incremental streaming (/clients/assistant
   test("POST /clients/assistant/v1/responses chặn hoàn toàn text delta khi AI gọi <tool_call>", async () => {
     const adapter = createFakeStreamingAdapter(async (req) => {
       const snaps = [
-        "<tool_call>\n",
-        '<tool_call>\n{"name":"exec_command",',
-        '<tool_call>\n{"name":"exec_command","arguments":{"cmd":"ls -la"}}\n</tool_call>',
+        "````markdown\n<webResponse>\n",
+        '````markdown\n<webResponse>\n<tool_call>\n{"name":"exec_command",',
+        '````markdown\n<webResponse>\n<tool_call>\n{"name":"exec_command","arguments":{"cmd":"ls -la"}}\n</tool_call>\n</webResponse>\n````',
       ];
       for (const snap of snaps) {
         req.onTextSnapshot?.(snap);

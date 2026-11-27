@@ -657,7 +657,7 @@ export class AssistantResponsesService {
           JSON.stringify(lookupResult),
           "```",
           "</tool_result>",
-          "Hãy gọi trực tiếp `<tool_call>` thực thi với schema trên hoặc trả lời bằng Markdown tự nhiên.",
+          "Hãy xuất `<tool_call>` thực thi với schema trên bọc trong 4-backtick + `<webResponse>...</webResponse>` hoặc trả lời trực tiếp bằng Markdown tự nhiên.",
         ].join("\n\n");
         continue;
       }

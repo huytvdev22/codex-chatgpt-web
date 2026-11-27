@@ -207,10 +207,37 @@ describe("AssistantResponseParser", () => {
     }
   });
 
-  test("parse <tool_call> kèm câu dẫn commentaryText", () => {
-    const res = parser.parse(
-      'Để mình kiểm tra thư mục nhé.\n<tool_call>\n{"name":"exec_command","arguments":{"cmd":"ls -la"}}\n</tool_call>',
-    );
+  test("parse chuẩn 1 hoặc nhiều <tool_call> bọc trong 4-backtick + <webResponse>", () => {
+    const raw = [
+      "````markdown",
+      "<webResponse>",
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"ls -la"}}</tool_call>',
+      '<tool_call>{"name":"tool_search","arguments":{"query":"telegram_send_photo"}}</tool_call>',
+      "</webResponse>",
+      "````",
+    ].join("\n");
+
+    const res = parser.parse(raw);
+    expect(res.kind).toBe("tool_calls");
+    if (res.kind === "tool_calls") {
+      expect(res.calls).toHaveLength(2);
+      expect(res.calls[0]?.name).toBe("exec_command");
+      expect(res.calls[1]?.name).toBe("tool_search");
+      expect(res.commentaryText).toBeUndefined();
+    }
+  });
+
+  test("tách commentaryText khi AI viết câu dẫn trước khối 4-backtick + <webResponse>", () => {
+    const raw = [
+      "Để mình kiểm tra thư mục nhé.",
+      "````markdown",
+      "<webResponse>",
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"ls -la"}}</tool_call>',
+      "</webResponse>",
+      "````",
+    ].join("\n");
+
+    const res = parser.parse(raw);
     expect(res.kind).toBe("tool_calls");
     if (res.kind === "tool_calls") {
       expect(res.commentaryText).toBe("Để mình kiểm tra thư mục nhé.");
@@ -219,23 +246,78 @@ describe("AssistantResponseParser", () => {
     }
   });
 
-  test("không nhận nhầm <tool_call> bên trong code fence", () => {
+  test("báo lỗi MISSING_RESPONSE_ENVELOPE khi xuất <tool_call> hoặc *** Begin Patch trần không bọc <webResponse>", () => {
+    const bareTool = parser.parse('<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>');
+    expect(bareTool.kind).toBe("protocol_error");
+    if (bareTool.kind === "protocol_error") {
+      expect(bareTool.code).toBe("MISSING_RESPONSE_ENVELOPE");
+    }
+
+    const fenceNoEnvelope = parser.parse(
+      '````markdown\n<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>\n````',
+    );
+    expect(fenceNoEnvelope.kind).toBe("protocol_error");
+    if (fenceNoEnvelope.kind === "protocol_error") {
+      expect(fenceNoEnvelope.code).toBe("MISSING_RESPONSE_ENVELOPE");
+    }
+
+    const barePatch = parser.parse("*** Begin Patch\n*** Update File: a.ts\n*** End Patch");
+    expect(barePatch.kind).toBe("protocol_error");
+    if (barePatch.kind === "protocol_error") {
+      expect(barePatch.code).toBe("MISSING_RESPONSE_ENVELOPE");
+    }
+  });
+
+  test("báo lỗi strict MIXED_TOOL_AND_TEXT_CONTENT / FORBIDDEN_THOUGHT_BLOCK / INCOMPLETE_TOOL_CALL khi sai chuẩn trong <webResponse>", () => {
+    const mixed = parser.parse(
+      [
+        "````markdown",
+        "<webResponse>",
+        '<tool_call>{"name":"exec_command","arguments":{"cmd":"pwd"}}</tool_call>',
+        "Đợi một chút nhé:",
+        '<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>',
+        "</webResponse>",
+        "````",
+      ].join("\n"),
+    );
+    expect(mixed.kind).toBe("protocol_error");
+    if (mixed.kind === "protocol_error") {
+      expect(mixed.code).toBe("MIXED_TOOL_AND_TEXT_CONTENT");
+    }
+
+    const thought = parser.parse(
+      [
+        "````markdown",
+        "<webResponse>",
+        "<thought>suy nghĩ nội bộ</thought>",
+        '<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>',
+        "</webResponse>",
+        "````",
+      ].join("\n"),
+    );
+    expect(thought.kind).toBe("protocol_error");
+    if (thought.kind === "protocol_error") {
+      expect(thought.code).toBe("FORBIDDEN_THOUGHT_BLOCK");
+    }
+
+    const unclosed = parser.parse(
+      '````markdown\n<webResponse>\n<tool_call>\n{"name":"exec_command","arguments":{"cmd":"ls"\n</webResponse>\n````',
+    );
+    expect(unclosed.kind).toBe("protocol_error");
+    if (unclosed.kind === "protocol_error") {
+      expect(unclosed.code).toBe("INCOMPLETE_TOOL_CALL");
+    }
+  });
+
+  test("không nhận nhầm <tool_call> bên trong code fence hướng dẫn thường", () => {
     const sample = 'Hướng dẫn:\n```xml\n<tool_call>\n{"name":"demo"}\n</tool_call>\n```';
     const res = parser.parse(sample);
     expect(res.kind).toBe("final_answer");
   });
 
-  test("báo lỗi INCOMPLETE_TOOL_CALL khi thẻ <tool_call> bị cắt cụt", () => {
-    const res = parser.parse('<tool_call>\n{"name":"exec_command","arguments":{"cmd":"ls"');
-    expect(res.kind).toBe("protocol_error");
-    if (res.kind === "protocol_error") {
-      expect(res.code).toBe("INCOMPLETE_TOOL_CALL");
-    }
-  });
-
-  test("parse đúng <tool\\_call> bị Turndown escape cả thẻ lẫn tên tool/tham số bên trong", () => {
+  test("parse đúng <webResponse> + <tool\\_call> khi bị Turndown DOM fallback escape dấu gạch dưới", () => {
     const res = parser.parse(
-      '<tool\\_call>{"name":"exec\\_command","arguments":{"cmd":"ls -la","sandbox\\_permissions":"use\\_default"}}</tool\\_call>',
+      '<webResponse>\n<tool\\_call>{"name":"exec\\_command","arguments":{"cmd":"ls -la","sandbox\\_permissions":"use\\_default"}}</tool\\_call>\n</webResponse>',
     );
     expect(res.kind).toBe("tool_calls");
     if (res.kind === "tool_calls") {
@@ -248,10 +330,11 @@ describe("AssistantResponseParser", () => {
     }
   });
 
-  test("parse đúng apply_patch bọc trong 4-backtick (kể cả khi bên trong có code block 3-backtick hoặc câu dẫn phía trước)", () => {
+  test("parse đúng apply_patch bọc trong 4-backtick + <webResponse> (kể cả code block 3-backtick bên trong hoặc câu dẫn phía trước)", () => {
     const rawPatchWithFence = [
       "Để mình tạo tệp ghi chú cho bạn.",
       "````markdown",
+      "<webResponse>",
       '<custom_tool_call name="apply_patch">',
       "*** Begin Patch",
       "*** Add File: notes/demo.md",
@@ -261,6 +344,7 @@ describe("AssistantResponseParser", () => {
       "+```",
       "*** End Patch",
       "</custom_tool_call>",
+      "</webResponse>",
       "````",
     ].join("\n");
 

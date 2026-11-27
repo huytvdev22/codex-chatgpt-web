@@ -1306,4 +1306,40 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     ).toBe(sampleId);
     expect(turn2Waits).toBe(0);
   });
+
+  test("AiStudioDomObserver giữ nguyên lastObservedText qua nhịp fast-path và lọc bỏ .author-label / ms-chat-loading-indicator", () => {
+    const observer = new AiStudioDomObserver();
+    const state = observer.createRuntimeState();
+
+    // Chu kỳ captureFullWhileGenerating=true thu được text thực
+    const streamSnap = observer.applyStatus(state, {
+      isGenerating: true,
+      responseReadyLive: false,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: false,
+      thoughtsCount: 0,
+      thoughtTextLength: 0,
+      rawHtml: "<p>Xin chào bạn!</p>",
+      rawText: "Xin chào bạn!",
+      hasContent: true,
+    });
+    expect(streamSnap.text).toBe("Xin chào bạn!");
+    expect(streamSnap.isCompleted).toBe(false);
+
+    // Chu kỳ fast-path xen kẽ (rawHtml rỗng) không được xóa mất lastObservedText
+    const fastPathTick = observer.applyStatus(state, {
+      isGenerating: true,
+      responseReadyLive: false,
+      hasNewAnswerTurn: true,
+      hasTurnFooter: false,
+      thoughtsCount: 0,
+      thoughtTextLength: 0,
+      answerTextLength: 13,
+      rawHtml: "",
+      rawText: "",
+      hasContent: true,
+    });
+    expect(fastPathTick.text).toBe("Xin chào bạn!");
+    expect(fastPathTick.isCompleted).toBe(false);
+  });
 });

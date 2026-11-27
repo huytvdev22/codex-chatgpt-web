@@ -23,12 +23,16 @@ const OPTIONAL_OPEN_WRAPPERS = [
 ];
 
 const MIDSTREAM_TOOL_REGEX =
-  /<tool_call\b|<custom_tool_call\b|\*{3}\s*Begin Patch/i;
+  /<webResponse\b|<tool_call\b|<custom_tool_call\b|<\/?(?:thought|thinking)\b|\*{3}\s*Begin Patch/i;
 
 const TRAILING_MARKER_PREFIXES = [
+  "<webresponse",
+  "\n<webresponse",
+  "</webresponse>",
   "<tool_call",
   "<custom_tool_call",
-  "</webresponse>",
+  "<thought",
+  "<thinking",
   "*** begin patch",
   "\n````markdown",
   "````markdown",
@@ -88,11 +92,16 @@ function findExecutableToolMarkerIndex(text: string): number {
     const fenceMatch = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
     if (!inFence) {
       if (fenceMatch) {
-        // Nếu là 4-backtick transport fence bọc ngay Action Turn bên trong, cắt trước cả dấu mở ````.
+        // Nếu là 4-backtick transport fence bọc Action Turn (<webResponse> / tool call), cắt ngay tại dấu mở ````.
         if (fenceMatch[1].length >= 4 && fenceMatch[1][0] === "`") {
           const nextBody = text.slice(nl === -1 ? text.length : nl + 1).trimStart();
-          const innerCheck = nextBody.replace(/^<webResponse\b[^>]*>\s*/i, "");
-          if (/^(?:<tool_call\b|<custom_tool_call\b|\*{3}\s*Begin Patch)/i.test(innerCheck)) {
+          const lowerNext = nextBody.toLowerCase();
+          if (
+            /^(?:<webResponse\b|<tool_call\b|<custom_tool_call\b|<\/?(?:thought|thinking)\b|\*{3}\s*Begin Patch)/i.test(
+              nextBody,
+            ) ||
+            isPrefixOfAny(lowerNext, ["<webresponse>", "<tool_call>", "<custom_tool_call>", "*** begin patch"])
+          ) {
             return lineStart;
           }
         }
@@ -148,10 +157,28 @@ function longestCommonPrefixLength(a: string, b: string): number {
   return i;
 }
 
+function stripInlineFormattingChars(text: string): {
+  plain: string;
+  originalIndexByPlain: number[];
+} {
+  let plain = "";
+  const originalIndexByPlain: number[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "*" || ch === "_" || ch === "`") {
+      continue;
+    }
+    plain += ch;
+    originalIndexByPlain.push(i);
+  }
+  return { plain, originalIndexByPlain };
+}
+
 function extractAlignedRemainingText(
   emittedText: string,
   candidate: string,
   minLcpRatio: number,
+  fallbackOnMismatch = false,
 ): string {
   if (!candidate) return "";
   if (!emittedText) return candidate;
@@ -160,29 +187,53 @@ function extractAlignedRemainingText(
   }
 
   const lcp = longestCommonPrefixLength(emittedText, candidate);
-  if (lcp < Math.floor(emittedText.length * minLcpRatio)) {
+  if (lcp >= Math.floor(emittedText.length * minLcpRatio)) {
+    // Khi DOM streaming chưa in đậm nhưng bản Markdown cuối thêm `**...**` ở giữa chuỗi,
+    // căn neo theo đoạn đuôi thực tế của `emittedText` để không cắt lệch và lặp chữ.
+    const maxAnchor = Math.min(32, emittedText.length);
+    for (let anchorLen = maxAnchor; anchorLen >= 6; anchorLen -= 2) {
+      const anchor = emittedText.slice(-anchorLen);
+      if (!anchor.trim()) continue;
+      const searchStart = Math.max(0, emittedText.length - anchorLen - 24);
+      const matchIdx = candidate.indexOf(anchor, searchStart);
+      if (matchIdx >= 0) {
+        let tail = candidate.slice(matchIdx + anchorLen);
+        const emittedBoldCount = (emittedText.match(/\*\*/g) ?? []).length;
+        if (emittedBoldCount % 2 === 0 && tail.startsWith("**")) {
+          tail = tail.slice(2);
+        }
+        return tail;
+      }
+    }
+
+    return candidate.length > emittedText.length ? candidate.slice(emittedText.length) : "";
+  }
+
+  if (!fallbackOnMismatch) {
     return "";
   }
 
-  // Khi DOM streaming chưa in đậm nhưng bản Markdown cuối thêm `**...**` ở giữa chuỗi,
-  // căn neo theo đoạn đuôi thực tế của `emittedText` để không cắt lệch và lặp chữ.
-  const maxAnchor = Math.min(32, emittedText.length);
-  for (let anchorLen = maxAnchor; anchorLen >= 6; anchorLen -= 2) {
-    const anchor = emittedText.slice(-anchorLen);
-    if (!anchor.trim()) continue;
-    const searchStart = Math.max(0, emittedText.length - anchorLen - 24);
-    const matchIdx = candidate.indexOf(anchor, searchStart);
-    if (matchIdx >= 0) {
-      let tail = candidate.slice(matchIdx + anchorLen);
-      const emittedBoldCount = (emittedText.match(/\*\*/g) ?? []).length;
-      if (emittedBoldCount % 2 === 0 && tail.startsWith("**")) {
+  // Trường hợp clipboard finalize chèn **bold** hoặc `code` ngay ở phần đầu khiến LCP thấp,
+  // khớp tiếp phần văn bản thuần để chỉ lấy đúng đoạn đuôi còn thiếu.
+  const emittedPlain = stripInlineFormattingChars(emittedText).plain;
+  const candidateMap = stripInlineFormattingChars(candidate);
+  if (emittedPlain.length >= 6) {
+    if (candidateMap.plain === emittedPlain) {
+      return "";
+    }
+    if (candidateMap.plain.startsWith(emittedPlain)) {
+      const lastMatchedOrigIdx = candidateMap.originalIndexByPlain[emittedPlain.length - 1];
+      let tail = candidate.slice(lastMatchedOrigIdx + 1);
+      if (tail.startsWith("**")) {
         tail = tail.slice(2);
       }
       return tail;
     }
   }
 
-  return candidate.length > emittedText.length ? candidate.slice(emittedText.length) : "";
+  // Nếu phần đã lỡ stream trước đó hoàn toàn không khớp với đáp án cuối (vd placeholder ngắn),
+  // nối tiếp đáp án cuối thay vì im lặng nuốt mất câu trả lời.
+  return candidate !== emittedText ? `\n\n${candidate}` : "";
 }
 
 /**
@@ -286,7 +337,7 @@ export class AssistantStreamGate {
       return cleanFinal;
     }
 
-    const remaining = extractAlignedRemainingText(this.emittedText, cleanFinal, 0.7);
+    const remaining = extractAlignedRemainingText(this.emittedText, cleanFinal, 0.7, true);
     if (remaining) {
       this.emittedText = cleanFinal;
       this.onTextDelta(remaining);

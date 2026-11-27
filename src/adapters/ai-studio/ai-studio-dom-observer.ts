@@ -203,9 +203,16 @@ export class AiStudioDomObserver {
         );
 
         // Fast-path nhẹ khi model vẫn đang stream: tránh cloneNode & innerText reflow
-        // liên tục trên UI Thread của AI Studio vì worker không stream chunk trung gian.
+        // liên tục trên UI Thread của AI Studio. Đọc từ `ms-prompt-chunk` để không tính
+        // header `.author-label` (`Model 1:42 PM`) hay `ms-chat-loading-indicator` (`Thinking`).
         if (isGenerating && !captureFullWhileGenerating) {
-          const lightweightLen = (targetAnswer.textContent || "").trim().length;
+          const chunkNodes = Array.from(
+            targetAnswer.querySelectorAll<HTMLElement>("ms-prompt-chunk"),
+          );
+          const lightweightLen =
+            chunkNodes.length > 0
+              ? chunkNodes.reduce((sum, el) => sum + (el.textContent || "").trim().length, 0)
+              : (targetAnswer.textContent || "").trim().length;
           return {
             isGenerating: true,
             responseReadyLive: isResponseReadyLive,
@@ -224,8 +231,12 @@ export class AiStudioDomObserver {
         const clone = targetAnswer.cloneNode(true) as HTMLElement;
         for (const noise of clone.querySelectorAll(
           [
+            ".author-label",
             "h3.author-label",
+            "ms-chat-loading-indicator",
+            "[class*='loading-indicator' i]",
             ".actions",
+            ".actions-container",
             ".turn-footer",
             "mat-accordion",
             "mat-expansion-panel.thought-panel",
@@ -314,12 +325,20 @@ export class AiStudioDomObserver {
       throw new Error(`[AI Studio Web Error] ${status.detectedWebError}`);
     }
 
+    const isLightweightPlaceholder =
+      status.isGenerating &&
+      !status.rawHtml &&
+      !status.rawText &&
+      !status.singleMarkdownCodeBlockText;
+
     let normalizedText = "";
     if (status.singleMarkdownCodeBlockText) {
       const inner = status.singleMarkdownCodeBlockText.trim();
       normalizedText = /^`{4}markdown\b/i.test(inner)
         ? inner
         : `\`\`\`\`markdown\n${inner}\n\`\`\`\``;
+    } else if (isLightweightPlaceholder) {
+      normalizedText = state.lastObservedText;
     } else if (
       status.rawHtml &&
       status.rawHtml === state.lastHtml &&
@@ -335,7 +354,7 @@ export class AiStudioDomObserver {
 
     if (
       normalizedText === state.lastObservedText &&
-      status.rawHtml === state.lastHtml &&
+      (isLightweightPlaceholder || status.rawHtml === state.lastHtml) &&
       status.hasContent
     ) {
       state.stableCycles += 1;
@@ -344,7 +363,9 @@ export class AiStudioDomObserver {
     }
 
     state.lastObservedText = normalizedText;
-    state.lastHtml = status.rawHtml;
+    if (!isLightweightPlaceholder) {
+      state.lastHtml = status.rawHtml;
+    }
 
     const hasUnclosedWebEnvelope =
       normalizedText.includes("<webResponse>") &&

@@ -121,17 +121,49 @@ describe("AssistantStreamGate", () => {
     expect(joined).not.toContain("conon");
   });
 
-  test("chặn hoàn toàn Action Turn bọc trong 4-backtick kể cả khi có câu dẫn trước ````markdown", () => {
+  test("chặn hoàn toàn Action Turn bọc trong 4-backtick + <webResponse> kể cả khi có câu dẫn trước ````markdown", () => {
     const deltas: string[] = [];
     const gate = new AssistantStreamGate((delta) => deltas.push(delta));
 
     gate.pushSnapshot("Để mình sửa tệp.\n");
+    gate.pushSnapshot("Để mình sửa tệp.\n````markdown\n<webR");
+    expect(gate.getState()).toBe("BLOCKED_TOOL_CALL");
+
     gate.pushSnapshot(
-      'Để mình sửa tệp.\n````markdown\n<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** End Patch\n</custom_tool_call>\n````',
+      'Để mình sửa tệp.\n````markdown\n<webResponse>\n<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** End Patch\n</custom_tool_call>\n</webResponse>\n````',
     );
     expect(gate.getState()).toBe("BLOCKED_TOOL_CALL");
     expect(deltas.join("")).toBe("Để mình sửa tệp.");
     expect(deltas.join("")).not.toContain("````");
+    expect(deltas.join("")).not.toContain("webR");
     expect(deltas.join("")).not.toContain("apply_patch");
+  });
+
+  test("chặn kịp ngay từ tiền tố <webResponse xuất hiện sau câu dẫn mà không cần đợi tới <tool_call>", () => {
+    const deltas: string[] = [];
+    const gate = new AssistantStreamGate((delta) => deltas.push(delta));
+
+    gate.pushSnapshot("Mình sẽ kiểm tra ngay.");
+    gate.pushSnapshot("Mình sẽ kiểm tra ngay.\n<webRe");
+    expect(deltas.join("")).toBe("Mình sẽ kiểm tra ngay.");
+
+    gate.pushSnapshot('Mình sẽ kiểm tra ngay.\n<webResponse>\n<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>\n</webResponse>');
+    expect(gate.getState()).toBe("BLOCKED_TOOL_CALL");
+    expect(deltas.join("")).toBe("Mình sẽ kiểm tra ngay.");
+    expect(deltas.join("")).not.toContain("<web");
+  });
+
+  test("finalizeAsFinalAnswer vẫn căn neo chuẩn khi clipboard thêm **bold** ngay từ đầu câu hoặc fallback khi mismatch hoàn toàn", () => {
+    const boldStartDeltas: string[] = [];
+    const boldStartGate = new AssistantStreamGate((delta) => boldStartDeltas.push(delta));
+    boldStartGate.pushSnapshot("Hà Nội hôm nay trời nắng nhẹ");
+    boldStartGate.finalizeAsFinalAnswer("**Hà Nội** hôm nay trời nắng nhẹ, khoảng 26°C.");
+    expect(boldStartDeltas.join("")).toBe("Hà Nội hôm nay trời nắng nhẹ, khoảng 26°C.");
+
+    const mismatchDeltas: string[] = [];
+    const mismatchGate = new AssistantStreamGate((delta) => mismatchDeltas.push(delta));
+    mismatchGate.pushSnapshot("Đang khởi tạo câu trả lời tạm thời...");
+    mismatchGate.finalizeAsFinalAnswer("Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?");
+    expect(mismatchDeltas.join("")).toContain("Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?");
   });
 });
