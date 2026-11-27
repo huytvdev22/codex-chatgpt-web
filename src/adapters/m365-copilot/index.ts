@@ -189,6 +189,9 @@ export class M365CopilotAdapter extends WebProviderAdapter {
           isNewConversation,
           retain,
           attachments,
+          streamIncremental,
+          onChunk,
+          onTextSnapshot,
           heartbeat,
         }) => {
           if (!page) {
@@ -198,9 +201,10 @@ export class M365CopilotAdapter extends WebProviderAdapter {
           }
           return worker.executeTurn(page, {
             prompt,
-            // Quarantine: browser vẫn thu thập stream nhưng adapter không emit trước validation.
-            onChunk: () => {},
-            streamIncremental: false,
+            // Quarantine: mặc định false cho Codex; chỉ bật khi caller (vd: Assistant) opt-in.
+            onChunk: onChunk ?? (() => {}),
+            onTextSnapshot,
+            streamIncremental: streamIncremental === true,
             signal: incoming.abortSignal,
             conversationKey,
             existingConversationId,

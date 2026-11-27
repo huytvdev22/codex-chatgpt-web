@@ -4,6 +4,8 @@ import type { ProviderReportedTokens } from "../../../usage/types";
 export interface BaseBrowserRunOptions {
   prompt: string;
   onChunk?: (text: string) => void;
+  onTextSnapshot?: (snapshot: string) => void;
+  streamIncremental?: boolean;
   signal?: AbortSignal;
   heartbeat?: () => Promise<void>;
   conversationId?: string;
@@ -344,11 +346,13 @@ export abstract class BaseWebBrowserWorker<
           ? observation.text.slice(lastRenderedText.length)
           : "";
         lastRenderedText = observation.text;
-        if (
-          delta &&
-          this.shouldEmitObservationDelta(observation, options)
-        ) {
-          options.onChunk?.(delta);
+        if (this.shouldEmitObservationDelta(observation, options)) {
+          if (observation.text) {
+            options.onTextSnapshot?.(observation.text);
+          }
+          if (delta) {
+            options.onChunk?.(delta);
+          }
         }
       }
 

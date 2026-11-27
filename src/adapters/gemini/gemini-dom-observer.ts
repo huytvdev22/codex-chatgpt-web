@@ -55,6 +55,7 @@ export interface GeminiObserverRuntimeState {
   attempts: number;
   lastObservedText: string;
   lastHtml: string;
+  lastStreamSnapshotAt: number;
   pendingStatus: GeminiDomStatus | null;
 }
 
@@ -73,6 +74,7 @@ export class GeminiDomObserver {
       attempts: 0,
       lastObservedText: "",
       lastHtml: "",
+      lastStreamSnapshotAt: 0,
       pendingStatus: null,
     };
   }
@@ -127,9 +129,11 @@ export class GeminiDomObserver {
   public async captureStatus(
     page: Page,
     baseline: GeminiResponseBaseline,
+    options?: { captureFullWhileGenerating?: boolean },
   ): Promise<GeminiDomStatus> {
+    const captureFullWhileGenerating = options?.captureFullWhileGenerating === true;
     return await page.evaluate(
-      ({ selectors, baselineIds, baselineCount, baselineLatestText }) => {
+      ({ selectors, baselineIds, baselineCount, baselineLatestText, captureFullWhileGenerating }) => {
         const isElementVisible = (el: Element): boolean => {
           const rect = el.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) return false;
@@ -215,7 +219,7 @@ export class GeminiDomObserver {
         );
 
         const lightweightLength = (panel.textContent || "").trim().length;
-        if (isGenerating) {
+        if (isGenerating && !captureFullWhileGenerating) {
           return {
             isGenerating: true,
             isBusy,
@@ -278,7 +282,7 @@ export class GeminiDomObserver {
         const rawText = (clone.textContent || "").trim();
 
         return {
-          isGenerating: false,
+          isGenerating,
           isBusy,
           hasNewResponse: true,
           responseId,
@@ -295,6 +299,7 @@ export class GeminiDomObserver {
         baselineIds: baseline.responseIds,
         baselineCount: baseline.responseCount,
         baselineLatestText: baseline.initialLatestText,
+        captureFullWhileGenerating,
       },
     );
   }

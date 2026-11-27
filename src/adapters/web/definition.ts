@@ -95,6 +95,12 @@ export interface WebBrowserTurnExecutionInput {
   retain?: boolean;
   attachments: NormalizedImageAttachment[];
   turnTraceId: string;
+  /** Bật đọc snapshot văn bản tăng dần khi đang sinh (opt-in, mặc định false). */
+  streamIncremental?: boolean;
+  /** Callback nhận delta văn bản tăng dần khi streamIncremental = true. */
+  onChunk?: (text: string) => void;
+  /** Callback nhận toàn bộ snapshot văn bản mới nhất khi streamIncremental = true. */
+  onTextSnapshot?: (snapshot: string) => void;
   /**
    * Gia hạn quyền sử dụng Launcher surface cho các lượt browser kéo dài.
    * Provider chỉ gọi callback này, không tự gửi lifecycle activity tới Launcher.

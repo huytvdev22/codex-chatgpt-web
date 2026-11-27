@@ -726,8 +726,11 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     return true;
   }
 
-  protected override shouldEmitObservationDelta(): boolean {
-    return false;
+  protected override shouldEmitObservationDelta(
+    _observation: AiStudioResponseObservation,
+    options: AiStudioBrowserRunOptions,
+  ): boolean {
+    return options.streamIncremental === true;
   }
 
   protected override resolveNextPollDelayMs(
@@ -760,10 +763,20 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   protected override async beforeObserveResponse(
     page: Page,
     baseline: AiStudioResponseBaseline,
+    options: AiStudioBrowserRunOptions,
   ): Promise<void> {
     const state = this.getRuntimeState(page);
     state.attempts += 1;
-    const status = await this.domObserver.captureStatus(page, baseline);
+    const now = Date.now();
+    const captureFullWhileGenerating =
+      options?.streamIncremental === true &&
+      now - state.lastStreamSnapshotAt >= 650;
+    const status = await this.domObserver.captureStatus(page, baseline, {
+      captureFullWhileGenerating,
+    });
+    if (captureFullWhileGenerating && status.isGenerating && status.hasNewAnswerTurn) {
+      state.lastStreamSnapshotAt = now;
+    }
     state.pendingStatus = status;
 
     const needsVirtualScrollNudge =

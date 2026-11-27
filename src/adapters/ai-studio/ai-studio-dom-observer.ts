@@ -39,6 +39,7 @@ export interface AiStudioResponseRuntimeState {
   attempts: number;
   lastObservedText: string;
   lastHtml: string;
+  lastStreamSnapshotAt: number;
   pendingStatus: AiStudioDomStatus | null;
 }
 
@@ -75,6 +76,7 @@ export class AiStudioDomObserver {
       attempts: 0,
       lastObservedText: "",
       lastHtml: "",
+      lastStreamSnapshotAt: 0,
       pendingStatus: null,
     };
   }
@@ -111,9 +113,11 @@ export class AiStudioDomObserver {
   public async captureStatus(
     page: Page,
     baseline: AiStudioResponseBaseline,
+    options?: { captureFullWhileGenerating?: boolean },
   ): Promise<AiStudioDomStatus> {
+    const captureFullWhileGenerating = options?.captureFullWhileGenerating === true;
     return await page.evaluate(
-      ({ selectors, baselineAnswerCount }) => {
+      ({ selectors, baselineAnswerCount, captureFullWhileGenerating }) => {
         const btnCandidates = [
           ...Array.from(
             document.querySelectorAll<HTMLElement>(selectors.runOrStopButton),
@@ -200,7 +204,7 @@ export class AiStudioDomObserver {
 
         // Fast-path nhẹ khi model vẫn đang stream: tránh cloneNode & innerText reflow
         // liên tục trên UI Thread của AI Studio vì worker không stream chunk trung gian.
-        if (isGenerating) {
+        if (isGenerating && !captureFullWhileGenerating) {
           const lightweightLen = (targetAnswer.textContent || "").trim().length;
           return {
             isGenerating: true,
@@ -296,6 +300,7 @@ export class AiStudioDomObserver {
       {
         selectors: AI_STUDIO_DOM_SELECTORS,
         baselineAnswerCount: baseline.answerCount,
+        captureFullWhileGenerating,
       },
     );
   }

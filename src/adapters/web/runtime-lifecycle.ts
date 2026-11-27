@@ -46,6 +46,7 @@ export async function acquireWebTurnSurface(options: {
   localBrowser?: LocalBrowserRuntime;
   turnTraceId: string;
   conversationKey?: string;
+  connectorIdentity?: string;
   omitConnectorIdentity?: boolean;
   initialUrl?: string;
   profileId?: string;
@@ -57,6 +58,7 @@ export async function acquireWebTurnSurface(options: {
     localBrowser,
     turnTraceId,
     conversationKey,
+    connectorIdentity: overrideConnectorIdentity,
     omitConnectorIdentity,
     initialUrl,
     profileId,
@@ -101,8 +103,12 @@ export async function acquireWebTurnSurface(options: {
           ...(conversationKey
             ? {
                 conversationKey,
-                ...(!omitConnectorIdentity && definition.browser.connectorIdentity
-                  ? { connectorIdentity: definition.browser.connectorIdentity }
+                ...(!omitConnectorIdentity &&
+                (overrideConnectorIdentity || definition.browser.connectorIdentity)
+                  ? {
+                      connectorIdentity:
+                        overrideConnectorIdentity || definition.browser.connectorIdentity,
+                    }
                   : {}),
               }
             : {}),

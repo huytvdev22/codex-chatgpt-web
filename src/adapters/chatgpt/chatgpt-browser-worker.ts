@@ -458,8 +458,11 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     return true;
   }
 
-  protected override shouldEmitObservationDelta(): boolean {
-    return false;
+  protected override shouldEmitObservationDelta(
+    _observation: ChatGptResponseObservation,
+    options: ChatGptBrowserRunOptions,
+  ): boolean {
+    return options.streamIncremental === true;
   }
 
   protected override resolveNextPollDelayMs(
@@ -492,10 +495,21 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
   protected override async beforeObserveResponse(
     page: Page,
     baseline: ChatGptResponseBaseline,
+    options: ChatGptBrowserRunOptions,
   ): Promise<void> {
     const state = this.getRuntimeState(page);
     state.attempts += 1;
-    state.pendingStatus = await this.domObserver.captureStatus(page, baseline);
+    const now = Date.now();
+    const captureFullWhileGenerating =
+      options.streamIncremental === true &&
+      now - state.lastStreamSnapshotAt >= 650;
+    const status = await this.domObserver.captureStatus(page, baseline, {
+      captureFullWhileGenerating,
+    });
+    if (captureFullWhileGenerating && status.isGenerating && status.hasNewResponse) {
+      state.lastStreamSnapshotAt = now;
+    }
+    state.pendingStatus = status;
   }
 
   protected override async observeResponse(

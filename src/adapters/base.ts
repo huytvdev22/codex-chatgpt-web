@@ -29,6 +29,35 @@ export interface RawTurnResult {
   conversationId?: string;
 }
 
+export interface ManagedTurnRequest {
+  modelId: string;
+  prompt: string;
+  reasoning?: string;
+  images?: RawTurnImageInput[];
+  conversationKey: string;
+  connectorIdentity?: string;
+  existingConversationId?: string;
+  isNewConversation?: boolean;
+  retain?: boolean;
+  profileId?: string;
+  attempt?: number;
+  streamIncremental?: boolean;
+  onTextSnapshot?: (snapshot: string) => void;
+  onChunk?: (chunk: string) => void;
+}
+
+export interface ManagedTurnResult {
+  rawResponse: string;
+  conversationId?: string;
+  launcherReused: boolean;
+  providerReportedTokens?: {
+    beforeContextTokens?: number;
+    contextTokens?: number;
+    turnDeltaTokens?: number;
+    source: "ai-studio-dom" | "tiktoken" | "char-estimate";
+  };
+}
+
 export interface SpeechSpeakerInput {
   speaker: string;
   voiceName: string;
@@ -83,6 +112,10 @@ export interface ProviderAdapter {
     request: RawTurnRequest,
     incoming: IncomingMeta,
   ): Promise<RawTurnResult>;
+  runManagedTurn?(
+    request: ManagedTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<ManagedTurnResult>;
   runSpeechTurn?(
     request: SpeechTurnRequest,
     incoming: IncomingMeta,

@@ -402,8 +402,11 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
     return true;
   }
 
-  protected override shouldEmitObservationDelta(): boolean {
-    return false;
+  protected override shouldEmitObservationDelta(
+    _observation: GeminiResponseObservation,
+    options: GeminiBrowserRunOptions,
+  ): boolean {
+    return options.streamIncremental === true;
   }
 
   protected override resolveNextPollDelayMs(
@@ -436,10 +439,21 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
   protected override async beforeObserveResponse(
     page: Page,
     baseline: GeminiResponseBaseline,
+    options: GeminiBrowserRunOptions,
   ): Promise<void> {
     const state = this.getRuntimeState(page);
     state.attempts += 1;
-    state.pendingStatus = await this.domObserver.captureStatus(page, baseline);
+    const now = Date.now();
+    const captureFullWhileGenerating =
+      options.streamIncremental === true &&
+      now - state.lastStreamSnapshotAt >= 650;
+    const status = await this.domObserver.captureStatus(page, baseline, {
+      captureFullWhileGenerating,
+    });
+    if (captureFullWhileGenerating && status.isGenerating && status.hasNewResponse) {
+      state.lastStreamSnapshotAt = now;
+    }
+    state.pendingStatus = status;
   }
 
   protected override async observeResponse(
