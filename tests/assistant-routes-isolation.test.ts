@@ -294,4 +294,58 @@ describe("Assistant routes isolation & incremental streaming (/clients/assistant
     expect(doneText).toBe(cleanClipboardTable);
     expect(doneText.match(/\| STT \| Đường dẫn \|/g)?.length).toBe(1);
   });
+
+  test("POST /clients/assistant/v1/responses thực thi đúng function_call dù model AI Studio dính nhãn thừa ```` Grok ở dòng đóng fence", async () => {
+    const rawFromIncident = [
+      "````markdown",
+      "<webResponse>",
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"cat /Users/huytv/IdeaProjects/1.codex-assistant/package.json"}}</tool_call>',
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"cat /Users/huytv/IdeaProjects/1.codex-assistant/src/daemon.ts"}}</tool_call>',
+      "</webResponse>",
+      "```` Grok",
+    ].join("\n");
+
+    const adapter = createFakeStreamingAdapter(async (req) => {
+      req.onTextSnapshot?.("````markdown\n<webResponse>\n<tool_call>");
+      await Bun.sleep(5);
+      req.onTextSnapshot?.(rawFromIncident);
+      return {
+        rawResponse: rawFromIncident,
+        conversationId: "conv-incident-grok-1",
+        launcherReused: false,
+      };
+    });
+
+    const config = { ...defaultConfig(), host: "127.0.0.1" as const, port: 0 };
+    activeServer = startServer(config, { adapterFactory: () => adapter });
+    const baseUrl = `http://127.0.0.1:${activeServer.port}`;
+
+    const res = await fetch(`${baseUrl}/clients/assistant/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "tg-incident-grok", turn_id: "turn-2" }),
+      },
+      body: JSON.stringify({
+        model: "ai-studio/gemini-4-neon",
+        stream: true,
+        tools: [
+          {
+            type: "function",
+            name: "exec_command",
+            parameters: { type: "object", properties: { cmd: { type: "string" } }, required: ["cmd"] },
+          },
+        ],
+        input: [{ role: "user", content: [{ type: "input_text", text: "Đọc code dự án này" }] }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const events = parseSseEvents(await res.text());
+    expect(events.filter((e) => e.data.type === "response.output_text.delta")).toHaveLength(0);
+    const completed = events.find((e) => e.data.type === "response.completed");
+    const output = (completed?.data.response as { output?: Array<{ type?: string; name?: string }> })?.output ?? [];
+    const fnCalls = output.filter((item) => item.type === "function_call" && item.name === "exec_command");
+    expect(fnCalls).toHaveLength(2);
+  });
 });

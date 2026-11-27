@@ -428,4 +428,45 @@ describe("AssistantResponseParser", () => {
       expect(separatedRes.content).toBe(twoSeparatedFences);
     }
   });
+
+  test("xử lý chuẩn khối <webResponse> + <tool_call> bị dính nhãn thừa ở dòng đóng fence (vd. ```` Grok) và không bao giờ lọt thành final_answer", () => {
+    const rawWithTrailingLabel = [
+      "````markdown",
+      "<webResponse>",
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"cat /Users/huytv/IdeaProjects/1.codex-assistant/package.json"}}</tool_call>',
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"cat /Users/huytv/IdeaProjects/1.codex-assistant/src/daemon.ts"}}</tool_call>',
+      "</webResponse>",
+      "```` Grok",
+    ].join("\n");
+
+    const parsed = parser.parse(rawWithTrailingLabel);
+    expect(parsed.kind).toBe("tool_calls");
+    if (parsed.kind === "tool_calls") {
+      expect(parsed.calls).toHaveLength(2);
+      expect(parsed.calls[0]?.name).toBe("exec_command");
+      expect(parsed.calls[1]?.name).toBe("exec_command");
+    }
+
+    // Trường hợp có câu dẫn ở đầu + dính nhãn thừa ở dòng đóng fence
+    const withPreamble = `Để mình đọc code nhé.\n${rawWithTrailingLabel}`;
+    const parsedWithPreamble = parser.parse(withPreamble);
+    expect(parsedWithPreamble.kind).toBe("tool_calls");
+    if (parsedWithPreamble.kind === "tool_calls") {
+      expect(parsedWithPreamble.commentaryText).toBe("Để mình đọc code nhé.");
+      expect(parsedWithPreamble.calls).toHaveLength(2);
+    }
+
+    // Trường hợp sau transport fence bị chèn cả đoạn văn bản dài bên ngoài: phải báo protocol_error, KHÔNG lọt thành final_answer
+    const withExtraParagraphAfterFence = [
+      "````markdown",
+      "<webResponse>",
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>',
+      "</webResponse>",
+      "````",
+      "",
+      "Mình sẽ giải thích chi tiết sau khi chạy lệnh trên.",
+    ].join("\n");
+    const errorRes = parser.parse(withExtraParagraphAfterFence);
+    expect(errorRes.kind).toBe("protocol_error");
+  });
 });

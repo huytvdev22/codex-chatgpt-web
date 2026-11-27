@@ -1,6 +1,5 @@
 import {
   parseStrictWebResponse,
-  stripMarkdownCode,
   type StrictWebToolCall,
 } from "../adapters/web/protocol/strict-response-parser";
 import type { AssistantParsedResponse } from "./types";
@@ -8,11 +7,20 @@ import type { AssistantParsedResponse } from "./types";
 const RESERVED_CONTROL_MARKER_REGEX =
   /(?:<\/?\s*(?:webResponse|tool_call|custom_tool_call|thought|thinking)\b|\*{3}\s*(?:Begin|End) Patch)/i;
 
-const FULL_TRANSPORT_FENCE_REGEX =
-  /^(`{3,4})(?:markdown|md|xml)?[ \t]*\r?\n([\s\S]*)\r?\n\1$/i;
+const EXECUTABLE_ACTION_MARKER_REGEX =
+  /(?:<\/?\s*(?:tool_call|custom_tool_call)\b|\*{3}\s*(?:Begin|End) Patch)/i;
 
-const TRAILING_WEBRESPONSE_FENCE_REGEX =
-  /(?:^|\n)((`{3,4})(?:markdown|md|xml)?[ \t]*\r?\n[ \t]*<webResponse\b[\s\S]*\r?\n\2)$/i;
+const TRAILING_CLOSE_NOISE_PATTERN = "(?:[ \\t]+[^\\r\\n`<>]{1,32})?[ \\t]*";
+
+const FULL_TRANSPORT_FENCE_REGEX = new RegExp(
+  `^(\`{3,4})(?:markdown|md|xml)?[ \\t]*\\r?\\n([\\s\\S]*)\\r?\\n\\1${TRAILING_CLOSE_NOISE_PATTERN}$`,
+  "i",
+);
+
+const TRAILING_WEBRESPONSE_FENCE_REGEX = new RegExp(
+  `(?:^|\\n)((\`{3,4})(?:markdown|md|xml)?[ \\t]*\\r?\\n[ \\t]*<webResponse\\b[\\s\\S]*<\\/\\s*webResponse\\s*>[ \\t]*\\r?\\n\\2${TRAILING_CLOSE_NOISE_PATTERN})$`,
+  "i",
+);
 
 /**
  * Turndown (`webHtmlToMarkdown`) thường escape ký tự `_` và `*` thành `\_` / `\*`
@@ -53,7 +61,9 @@ function unescapeTurndownInsideToolTags(text: string): string {
 
 /**
  * Tách duy nhất 1 khối transport fence ở ngoài cùng:
- * - Khối 4-backtick (` ````...```` `): luôn coi là transport fence (giữ nguyên chuẩn cũ).
+ * - Khối 4-backtick (` ````...```` `): coi là transport fence (giữ nguyên chuẩn cũ).
+ *   Nếu dòng đóng fence bị dính nhãn thừa (vd. ` ```` Grok`), chỉ chấp nhận khi bên trong
+ *   là cặp thẻ `<webResponse>...</webResponse>` hoàn chỉnh.
  * - Khối 3-backtick (` ```...``` `): CHỈ coi là transport fence khi bên trong bắt đầu bằng `<webResponse\b`
  *   và không bị đóng sớm trước dòng cuối cùng (tránh khớp gộp nhiều code block rời nhau).
  */
@@ -64,6 +74,12 @@ function extractOuterTransportFence(text: string): { fenceLen: 3 | 4; inner: str
   const fenceLen = match[1].length as 3 | 4;
   const rawInner = match[2];
   const innerTrimmed = rawInner.trim();
+  const hasTrailingNoiseOnCloseLine = !match[0].endsWith(match[1]) && !/\r?\n[ \t]*$/.test(match[0].slice(match[0].lastIndexOf(match[1]) + match[1].length));
+  const hasCompleteEnvelope = /^<webResponse\b[^>]*>[\s\S]*<\/\s*webResponse\s*>$/i.test(innerTrimmed);
+
+  if (hasTrailingNoiseOnCloseLine && !hasCompleteEnvelope) {
+    return null;
+  }
 
   if (fenceLen === 4) {
     return { fenceLen, inner: innerTrimmed };
@@ -79,6 +95,67 @@ function extractOuterTransportFence(text: string): { fenceLen: 3 | 4; inner: str
   }
 
   return { fenceLen, inner: innerTrimmed };
+}
+
+function isProtectedTransportCodeBlock(fenceChar: string, fenceLen: number, innerText: string): boolean {
+  if (fenceChar !== "`") return false;
+  if (fenceLen >= 4) {
+    return RESERVED_CONTROL_MARKER_REGEX.test(innerText);
+  }
+  if (fenceLen === 3) {
+    return /^<webResponse\b/i.test(innerText.trim()) && EXECUTABLE_ACTION_MARKER_REGEX.test(innerText);
+  }
+  return false;
+}
+
+/**
+ * Loại bỏ các code block minh họa thông thường và inline code để kiểm tra control marker,
+ * nhưng GIỮ NGUYÊN các transport block (` ````...```` ` chứa marker hoặc ` ``` ` mở đầu bằng `<webResponse>`
+ * chứa action) để không bao giờ hạ cấp nhầm lời gọi công cụ bị dính rác ngoài fence thành `final_answer`.
+ */
+function stripNonTransportCodeBlocks(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const keptLines: string[] = [];
+  let activeFence: { char: "`" | "~"; len: number; lines: string[] } | null = null;
+
+  for (const line of lines) {
+    if (!activeFence) {
+      const openMatch = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
+      if (openMatch) {
+        const char = openMatch[1][0] as "`" | "~";
+        const info = openMatch[2] || "";
+        if (char !== "`" || !info.includes("`")) {
+          activeFence = { char, len: openMatch[1].length, lines: [line] };
+          continue;
+        }
+      }
+      keptLines.push(line.replace(/`[^`\r\n]*`/g, ""));
+      continue;
+    }
+
+    activeFence.lines.push(line);
+    const closeMatch = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(line);
+    if (
+      closeMatch &&
+      closeMatch[1][0] === activeFence.char &&
+      closeMatch[1].length >= activeFence.len
+    ) {
+      const innerText = activeFence.lines.slice(1, -1).join("\n");
+      if (isProtectedTransportCodeBlock(activeFence.char, activeFence.len, innerText)) {
+        keptLines.push(...activeFence.lines);
+      }
+      activeFence = null;
+    }
+  }
+
+  if (activeFence) {
+    const innerText = activeFence.lines.slice(1).join("\n");
+    if (isProtectedTransportCodeBlock(activeFence.char, activeFence.len, innerText)) {
+      keptLines.push(...activeFence.lines);
+    }
+  }
+
+  return keptLines.join("\n");
 }
 
 function hasUnbalancedClosingTripleFenceOutsidePatch(innerBody: string): boolean {
@@ -166,7 +243,7 @@ export class AssistantResponseParser {
       const fenceStart = trailingFenceMatch.index + (trailingFenceMatch[0].length - fenceText.length);
       const preamble = normalized.slice(0, fenceStart).trim();
 
-      if (extractedTrailing && !RESERVED_CONTROL_MARKER_REGEX.test(stripMarkdownCode(preamble))) {
+      if (extractedTrailing && !RESERVED_CONTROL_MARKER_REGEX.test(stripNonTransportCodeBlocks(preamble))) {
         const strictResult = parseStrictWebResponse(
           toCanonicalQuadTransportFence(extractedTrailing.inner),
         );
@@ -184,9 +261,9 @@ export class AssistantResponseParser {
       }
     }
 
-    // 3. Nếu ngoài code fence thường có bất kỳ control marker nào (<webResponse>, <tool_call>, <custom_tool_call>,
-    //    *** Begin Patch, <thought>, <thinking>): tuyệt đối không hạ cấp thành Final Answer — đi qua parseStrictWebResponse.
-    const plainOutsideCode = stripMarkdownCode(normalized);
+    // 3. Nếu ngoài code fence minh họa có bất kỳ control marker nào (hoặc có transport fence chứa marker
+    //    nhưng bị dính text/rác bên ngoài khiến không match envelope chuẩn): tuyệt đối không hạ cấp thành Final Answer.
+    const plainOutsideCode = stripNonTransportCodeBlocks(normalized);
     if (RESERVED_CONTROL_MARKER_REGEX.test(plainOutsideCode)) {
       const preparedForStrict = unescapeTurndownInsideToolTags(normalized);
       const strictResult = parseStrictWebResponse(preparedForStrict);

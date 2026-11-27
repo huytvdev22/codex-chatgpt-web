@@ -198,6 +198,25 @@ describe("AssistantStreamGate", () => {
     expect(codeGate.getState()).toBe("STREAMING_TEXT");
     codeGate.pushSnapshot(sampleCode);
     codeGate.finalizeAsFinalAnswer(sampleCode);
+    expect(codeGate.getState()).toBe("STREAMING_TEXT");
     expect(codeDeltas.join("")).toBe(sampleCode);
+  });
+
+  test("chặn hoàn toàn action turn và gỡ wrapper sạch cho final answer dù dòng đóng fence dính nhãn thừa (vd. ```` Grok)", () => {
+    const toolDeltas: string[] = [];
+    const toolGate = new AssistantStreamGate((delta) => toolDeltas.push(delta));
+    toolGate.pushSnapshot("````markdown\n<webResponse>\n<tool_call>");
+    toolGate.pushSnapshot(
+      '````markdown\n<webResponse>\n<tool_call>{"name":"exec_command","arguments":{"cmd":"ls"}}</tool_call>\n</webResponse>\n```` Grok',
+    );
+    expect(toolGate.getState()).toBe("BLOCKED_TOOL_CALL");
+    expect(toolDeltas).toEqual([]);
+
+    const finalDeltas: string[] = [];
+    const finalGate = new AssistantStreamGate((delta) => finalDeltas.push(delta));
+    finalGate.pushSnapshot("````markdown\n<webResponse>\nĐã xử lý xong.</webResponse>\n```` Grok");
+    finalGate.finalizeAsFinalAnswer("````markdown\n<webResponse>\nĐã xử lý xong.\n</webResponse>\n```` Grok");
+    expect(finalDeltas.join("")).toBe("Đã xử lý xong.");
+    expect(finalDeltas.join("")).not.toContain("Grok");
   });
 });

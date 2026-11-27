@@ -333,7 +333,7 @@ export class AssistantStreamGate {
     }
 
     const withoutCompletedClosing = stripped.replace(
-      /\s*<\/\s*webResponse\s*>(?:\s*`{0,4})?\s*$/i,
+      /\s*<\/\s*webResponse\s*>(?:\s*`{0,4}(?:[ \t]+[^\r\n`<>]{1,32})?)?\s*$/i,
       "",
     );
     const holdback = computeTailHoldbackLength(normalizeEscapedToolMarkers(withoutCompletedClosing));
