@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
-import type { ManagedTurnRequest } from "../adapters/base";
+import { resolveRequestedProfileId, type ManagedTurnRequest } from "../adapters/base";
 import { CodexPayloadNormalizer, CodexRawPayload } from "../adapters/web/normalization";
 import { WebPromptSessionStore } from "../adapters/web/execution/web-prompt-session-store";
 import {
@@ -318,7 +318,7 @@ export class AssistantResponsesService {
     if (req.signal.aborted) abort.abort();
     else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
-    const requestedProfileId = req.headers.get("x-gateway-profile-id")?.trim() || undefined;
+    const requestedProfileId = resolveRequestedProfileId(req.headers);
     const emitEvent = (event: AdapterEvent): void => {
       options.onAdapterEvent?.(event);
       queue.push(event);
@@ -362,7 +362,10 @@ export class AssistantResponsesService {
         });
       }
       if (options.rememberState !== false) {
-        rememberResponseState(parsed._rawBody, response, { force: true });
+        rememberResponseState(parsed._rawBody, response, {
+          force: true,
+          scope: "assistant",
+        });
       }
     };
 

@@ -425,4 +425,43 @@ describe("ImagesService & /v1/images/* HTTP routes", () => {
     expect(captured[1]?.existingConversationId).toBe("gemconv998877");
     expect(captured[1]?.modelId).toBe("gemini/4-neon");
   });
+
+  test("truyền x-gateway-profile-id vào runImageTurn để ghim đúng profile Chrome", async () => {
+    const captured: ImageTurnRequest[] = [];
+    const adapterFactory = () =>
+      ({
+        id: "gemini",
+        name: "gemini",
+        runTurn: async () => {},
+        runImageTurn: async (request: ImageTurnRequest) => {
+          captured.push(request);
+          return {
+            imageBase64: ONE_BY_ONE_PNG_B64,
+            mimeType: "image/png",
+            conversationId: "gemconv-profile",
+            conversationUrl: "https://gemini.google.com/app/gemconv-profile",
+          };
+        },
+      }) as ProviderAdapter;
+
+    const responsesService = new ResponsesService(undefined, undefined, () => "gemini/4-hydrogen");
+    const service = new ImagesService(responsesService, undefined, undefined, () => "gemini/4-hydrogen");
+    const parsed = service.validateGenerationJson({
+      model: "gemini/4-hydrogen",
+      prompt: "Tạo ảnh theo profile chỉ định",
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const res = await service.executeImageTurn({
+      req: new Request("http://127.0.0.1/v1/images/generations", {
+        method: "POST",
+        headers: { "x-gateway-profile-id": "profile-gemini-2" },
+      }),
+      parsed: parsed.parsed,
+      adapterFactory,
+    });
+    expect(res.status).toBe(200);
+    expect(captured[0]?.profileId).toBe("profile-gemini-2");
+  });
 });

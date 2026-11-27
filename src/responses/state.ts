@@ -1,6 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { atomicWriteFile, getConfigDir } from "../config";
+
+export type ResponseStateScope = "codex" | "assistant";
 
 const MAX_STORED_RESPONSES = 1_000;
 const RESPONSE_TTL_MS = 60 * 60 * 1_000;
@@ -9,6 +12,10 @@ const SNAPSHOT_DEBOUNCE_MS = 2_000;
  * store the full expanded input each turn — ~quadratic bytes per chain —
  * so a count cap alone cannot bound memory. Oldest-first eviction applies past this mark. */
 const MAX_STORED_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_SCOPE_RESPONSE_BYTES: Record<ResponseStateScope, number> = {
+  codex: 40 * 1024 * 1024,
+  assistant: 24 * 1024 * 1024,
+};
 /** Entries whose serialized size exceeds this are kept in memory but skipped on disk: inputs can
  * carry base64 `input_image` data URLs, and one screenshot-heavy thread must not balloon the file. */
 const SNAPSHOT_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
@@ -20,10 +27,19 @@ export interface StoredResponseState {
   /** Approximate in-memory size, computed locally at insert time (never trusted from disk). */
   sizeBytes?: number;
   schemaVersion?: number;
+  scope?: ResponseStateScope;
 }
 
 const states = new Map<string, StoredResponseState>();
 let storedResponseBytes = 0;
+const storedScopeBytes: Record<ResponseStateScope, number> = {
+  codex: 0,
+  assistant: 0,
+};
+
+function normalizeScope(scope?: ResponseStateScope): ResponseStateScope {
+  return scope === "assistant" ? "assistant" : "codex";
+}
 
 /** The ONLY size computation: approximate entry weight from its items payload. */
 function measuredEntry(entry: Omit<StoredResponseState, "sizeBytes">): StoredResponseState {
@@ -33,14 +49,21 @@ function measuredEntry(entry: Omit<StoredResponseState, "sizeBytes">): StoredRes
   } catch {
     /* unserializable items: weightless rather than fatal */
   }
-  return { ...entry, sizeBytes };
+  return {
+    ...entry,
+    scope: normalizeScope(entry.scope),
+    sizeBytes,
+  };
 }
 
 /** The ONLY insertion point: keeps the byte counter consistent on replacement. */
 function setEntry(id: string, entry: Omit<StoredResponseState, "sizeBytes">): void {
   deleteEntry(id);
   const measured = measuredEntry(entry);
-  storedResponseBytes += measured.sizeBytes ?? 0;
+  const weight = measured.sizeBytes ?? 0;
+  const scope = normalizeScope(measured.scope);
+  storedResponseBytes += weight;
+  storedScopeBytes[scope] += weight;
   states.set(id, measured);
 }
 
@@ -48,8 +71,12 @@ function setEntry(id: string, entry: Omit<StoredResponseState, "sizeBytes">): vo
 function deleteEntry(id: string): void {
   const existing = states.get(id);
   if (!existing) return;
-  storedResponseBytes -= existing.sizeBytes ?? 0;
+  const weight = existing.sizeBytes ?? 0;
+  const scope = normalizeScope(existing.scope);
+  storedResponseBytes -= weight;
+  storedScopeBytes[scope] -= weight;
   if (storedResponseBytes < 0) storedResponseBytes = 0;
+  if (storedScopeBytes[scope] < 0) storedScopeBytes[scope] = 0;
   states.delete(id);
 }
 // Expansion provenance must stay proxy-private: a WeakMap distinguishes replayed history from the
@@ -60,6 +87,8 @@ const replayedInputPrefixLengths = new WeakMap<object, number>();
 let loaded = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPersistPath: string | null = null;
+let asyncPersistInFlight: Promise<void> | null = null;
+let asyncWriteSeq = 0;
 
 function now(): number {
   return Date.now();
@@ -95,12 +124,32 @@ function ensureLoaded(): void {
         createdAt: rec.createdAt,
         items: rec.items,
         schemaVersion: typeof rec.schemaVersion === "number" ? rec.schemaVersion : undefined,
+        scope: rec.scope === "assistant" ? "assistant" : "codex",
       });
     }
     pruneResponses();
   } catch {
     /* missing/corrupt snapshot: start empty */
   }
+}
+
+function serializeSnapshot(): string {
+  const entries: [string, StoredResponseState][] = [];
+  let total = 0;
+  // Newest-first so the most recent chains survive both caps.
+  for (const entry of [...states].reverse()) {
+    // sizeBytes is in-memory accounting only; keep it out of the disk snapshot.
+    const [id, state] = entry;
+    const { sizeBytes: _sizeBytes, ...persistable } = state;
+    const persistEntry: [string, StoredResponseState] = [id, persistable];
+    const size = JSON.stringify(persistEntry).length;
+    if (size > SNAPSHOT_ENTRY_MAX_BYTES) continue;
+    if (total + size > SNAPSHOT_TOTAL_MAX_BYTES) break;
+    total += size;
+    entries.push(persistEntry);
+  }
+  entries.reverse();
+  return JSON.stringify({ version: 1, states: entries });
 }
 
 function persistNow(path: string): void {
@@ -110,28 +159,45 @@ function persistNow(path: string): void {
   }
   pendingPersistPath = null;
   try {
-    const entries: [string, StoredResponseState][] = [];
-    let total = 0;
-    // Newest-first so the most recent chains survive both caps.
-    for (const entry of [...states].reverse()) {
-      // sizeBytes is in-memory accounting only; keep it out of the disk snapshot.
-      const [id, state] = entry;
-      const { sizeBytes: _sizeBytes, ...persistable } = state;
-      const persistEntry: [string, StoredResponseState] = [id, persistable];
-      const size = JSON.stringify(persistEntry).length;
-      if (size > SNAPSHOT_ENTRY_MAX_BYTES) continue;
-      if (total + size > SNAPSHOT_TOTAL_MAX_BYTES) break;
-      total += size;
-      entries.push(persistEntry);
-    }
-    entries.reverse();
+    const payload = serializeSnapshot();
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     // mkdirSync's mode only applies on creation — re-harden an existing config dir so the
     // conversation-content snapshot never lands in a group/world-readable directory.
     try { chmodSync(dirname(path), 0o700); } catch { /* best-effort (e.g. Windows) */ }
-    atomicWriteFile(path, JSON.stringify({ version: 1, states: entries }));
+    atomicWriteFile(path, payload);
   } catch {
     /* best-effort: disk trouble must never affect request handling */
+  }
+}
+
+async function persistAsync(path: string): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  pendingPersistPath = null;
+  const runWrite = async () => {
+    const tmpPath = `${path}.tmp-${process.pid}-${++asyncWriteSeq}`;
+    try {
+      const payload = serializeSnapshot();
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      try { await chmod(dirname(path), 0o700); } catch { /* best-effort */ }
+      await writeFile(tmpPath, payload, { encoding: "utf-8", mode: 0o600 });
+      await rename(tmpPath, path);
+    } catch {
+      await rm(tmpPath, { force: true }).catch(() => {});
+    }
+  };
+  const next = asyncPersistInFlight
+    ? asyncPersistInFlight.then(runWrite, runWrite)
+    : runWrite();
+  asyncPersistInFlight = next;
+  try {
+    await next;
+  } finally {
+    if (asyncPersistInFlight === next) {
+      asyncPersistInFlight = null;
+    }
   }
 }
 
@@ -141,7 +207,9 @@ function schedulePersist(): void {
   // debounce fires, and a late write must land in the home that owned the recorded state.
   pendingPersistPath = snapshotPath();
   const path = pendingPersistPath;
-  persistTimer = setTimeout(() => persistNow(path), SNAPSHOT_DEBOUNCE_MS);
+  persistTimer = setTimeout(() => {
+    void persistAsync(path);
+  }, SNAPSHOT_DEBOUNCE_MS);
   (persistTimer as { unref?: () => void }).unref?.();
 }
 
@@ -159,9 +227,28 @@ function inputItems(input: unknown): unknown[] {
   return [input];
 }
 
-function pruneResponses(at = now()): void {
+function evictOldestInScope(scope: ResponseStateScope, budgetBytes: number): void {
+  for (const [id, state] of states) {
+    if (storedScopeBytes[scope] <= budgetBytes) break;
+    if (normalizeScope(state.scope) !== scope) continue;
+    deleteEntry(id);
+  }
+}
+
+export function pruneResponses(
+  at = now(),
+  scopeBudgets: Partial<Record<ResponseStateScope, number>> = {},
+): void {
   for (const [id, state] of states) {
     if (at - state.createdAt > RESPONSE_TTL_MS) deleteEntry(id);
+  }
+  const codexBudget = scopeBudgets.codex ?? MAX_SCOPE_RESPONSE_BYTES.codex;
+  const assistantBudget = scopeBudgets.assistant ?? MAX_SCOPE_RESPONSE_BYTES.assistant;
+  if (storedScopeBytes.codex > codexBudget) {
+    evictOldestInScope("codex", codexBudget);
+  }
+  if (storedScopeBytes.assistant > assistantBudget) {
+    evictOldestInScope("assistant", assistantBudget);
   }
   while (states.size > MAX_STORED_RESPONSES) {
     const oldest = states.keys().next().value;
@@ -174,6 +261,10 @@ function pruneResponses(at = now()): void {
     if (!oldest) break;
     deleteEntry(oldest);
   }
+}
+
+export function getResponseStateScopeBytes(): Record<ResponseStateScope, number> {
+  return { ...storedScopeBytes };
 }
 
 export function expandPreviousResponseInput(body: unknown): unknown {
@@ -206,7 +297,7 @@ export function previousResponseReplayPrefixLength(body: unknown): number {
 export function rememberResponseState(
   requestBody: unknown,
   response: { id?: unknown; output?: unknown; status?: unknown; incomplete_details?: unknown },
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; scope?: ResponseStateScope },
 ): void {
   if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) return;
   const request = requestBody as Record<string, unknown>;
@@ -227,6 +318,7 @@ export function rememberResponseState(
     createdAt: now(),
     items: [...inputItems(request.input), ...response.output],
     schemaVersion: 2,
+    scope: normalizeScope(opts?.scope),
   });
   pruneResponses();
   schedulePersist();

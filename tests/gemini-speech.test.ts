@@ -418,6 +418,19 @@ describe("Gemini Speech (TTS / Podcast) via AI Studio UI", () => {
       adapterFactory,
     });
     expect(invalidTempRes.status).toBe(400);
+
+    const profiledRes = await service.executeSpeech({
+      req: new Request(
+        "http://127.0.0.1/v1beta/models/gemini-2.5-pro-preview-tts:generateContent",
+        { method: "POST", headers: { "x-gateway-profile-id": "Account-2" } },
+      ),
+      modelId: "gemini-2.5-pro-preview-tts",
+      method: "generateContent",
+      raw: payload,
+      adapterFactory,
+    });
+    expect(profiledRes.status).toBe(200);
+    expect(seenRequests.at(-1)?.profileId).toBe("account-2");
   });
 
   test("HTTP server định tuyến POST /v1beta/models/:model:streamGenerateContent và Swagger có tài liệu TTS", async () => {

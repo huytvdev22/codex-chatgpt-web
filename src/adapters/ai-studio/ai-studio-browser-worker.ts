@@ -23,6 +23,8 @@ import {
 import {
   clickResilient,
   humanPause,
+  moveMouseToLocator,
+  typeHumanPrompt,
   waitForBotGuardReady,
 } from "./ai-studio-human-timing";
 import {
@@ -148,6 +150,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
   private readonly runtimeStates = new WeakMap<Page, AiStudioResponseRuntimeState>();
   private readonly retainedConversationIds = new WeakMap<Page, string>();
   private readonly botGuardSettledPages = new WeakSet<Page>();
+  private readonly botGuardSettledAt = new WeakMap<Page, number>();
   private readonly networkTrackers = new WeakMap<Page, NetworkTracker>();
   private readonly domTokenSnapshots = new WeakMap<
     AiStudioBrowserRunOptions,
@@ -186,6 +189,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         const currentUrl = typeof page.url === "function" ? page.url() : "";
         const liveConversationId = parseAiStudioConversationId(currentUrl);
         this.botGuardSettledPages.delete(page);
+        this.botGuardSettledAt.delete(page);
         this.capabilityPicker.clearCache(page);
         if (liveConversationId) {
           await page
@@ -255,6 +259,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
           "[ai-studio-worker] Ô nhập liệu AI Studio đang bị ẩn (hidden), thử tải lại trang để phục hồi layout...",
         );
         this.botGuardSettledPages.delete(page);
+        this.botGuardSettledAt.delete(page);
         await page
           .reload({ waitUntil: "domcontentloaded", timeout: 25_000 })
           .catch(() => { });
@@ -351,6 +356,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
       if (currentConversationId !== options.existingConversationId) {
         this.botGuardSettledPages.delete(page);
+        this.botGuardSettledAt.delete(page);
         this.capabilityPicker.clearCache(page);
         await page.goto(buildAiStudioConversationUrl(options.existingConversationId), {
           waitUntil: "domcontentloaded",
@@ -424,6 +430,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     if (!isCleanBlankNewChat || currentConversationId) {
       this.botGuardSettledPages.delete(page);
+      this.botGuardSettledAt.delete(page);
       this.capabilityPicker.clearCache(page);
       await page.goto(targetNewChatUrl, {
         waitUntil: "domcontentloaded",
@@ -462,10 +469,30 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
 
     await this.waitForComposerIdle(page);
 
+    const lastSettledAt = this.botGuardSettledAt.get(page);
     if (!this.botGuardSettledPages.has(page)) {
       this.botGuardSettledPages.add(page);
-      await waitForBotGuardReady(page, 2_400, 4_500).catch(() => { });
+      await waitForBotGuardReady(page, 2_800, 5_000).catch(() => {});
+      await humanPause(page, 1_100, 1_600);
+    } else if (lastSettledAt !== undefined && Date.now() - lastSettledAt >= 15_000) {
+      // Đánh thức vòng paint & BotGuard sau khi tab nằm nền bị backgroundThrottling
+      if (typeof page.evaluate === "function") {
+        await page
+          .evaluate(
+            () =>
+              new Promise<void>((resolve) => {
+                if (typeof requestAnimationFrame === "function") {
+                  requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+                } else {
+                  setTimeout(resolve, 32);
+                }
+              }),
+          )
+          .catch(() => {});
+      }
+      await humanPause(page, 650, 1_100);
     }
+    this.botGuardSettledAt.set(page, Date.now());
     await humanPause(page, 350, 580);
   }
 
@@ -522,17 +549,34 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     const composer = this.getVisibleComposerLocator(page);
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => { });
+    await moveMouseToLocator(page, composer);
     await composer.hover({ timeout: 1_000 }).catch(() => { });
     await humanPause(page, 180, 340);
     await composer.click({ timeout: 2_500 }).catch(() => { });
     // Nhịp nghỉ tự nhiên sau khi focus trước khi điền prompt
-    await humanPause(page, 280, 480);
+    await humanPause(page, 260, 460);
 
-    const fillTimeoutMs = promptText.length > 8_000 ? 4_000 : 8_000;
-    await composer.fill(promptText, { force: true, timeout: fillTimeoutMs }).catch(() => { });
+    const typedNaturally = await typeHumanPrompt(page, composer, promptText).catch(
+      () => false,
+    );
+    if (!typedNaturally) {
+      const fillTimeoutMs = promptText.length > 8_000 ? 4_000 : 8_000;
+      await composer.fill(promptText, { force: true, timeout: fillTimeoutMs }).catch(() => { });
+    }
     const currentValue = await composer.inputValue().catch(() => "");
-    if (!currentValue || currentValue.length < Math.min(promptText.length, 32)) {
-      await page.evaluate(
+    const minAcceptableLen =
+      promptText.length > 0 ? Math.max(1, Math.floor(promptText.length * 0.9)) : 0;
+    if (
+      promptText.length > 0 &&
+      (!currentValue || currentValue.length < minAcceptableLen)
+    ) {
+      if (typedNaturally) {
+        const fillTimeoutMs = promptText.length > 8_000 ? 4_000 : 8_000;
+        await composer.fill(promptText, { force: true, timeout: fillTimeoutMs }).catch(() => { });
+      }
+      const afterFill = typedNaturally ? await composer.inputValue().catch(() => "") : currentValue;
+      if (!afterFill || afterFill.length < minAcceptableLen) {
+        await page.evaluate(
         ({ selector, value }) => {
           const candidates = Array.from(
             document.querySelectorAll<HTMLTextAreaElement>(selector),
@@ -562,6 +606,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
         },
         { selector: AI_STUDIO_DOM_SELECTORS.composer, value: promptText },
       );
+      }
 
       const verifiedValue = await composer.inputValue().catch(() => "");
       if (promptText.trim().length > 0 && verifiedValue.trim().length === 0) {

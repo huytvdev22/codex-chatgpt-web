@@ -1,5 +1,9 @@
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
-import type { ImageAspectRatio, RawTurnImageInput } from "../adapters/base";
+import {
+  resolveRequestedProfileId,
+  type ImageAspectRatio,
+  type RawTurnImageInput,
+} from "../adapters/base";
 import {
   normalizeGeminiConversationId,
   normalizeGeminiConversationUrl,
@@ -610,14 +614,20 @@ export class ImagesService {
     }
 
     const headerMeta = parseTurnMetadataHeader(params.req.headers);
+    const requestedProfileId = resolveRequestedProfileId(params.req.headers);
+    const threadImageScopeKey = headerMeta.threadId
+      ? requestedProfileId
+        ? `${requestedProfileId}:${headerMeta.threadId}`
+        : headerMeta.threadId
+      : undefined;
     const existingConversationId =
       params.parsed.conversationId ||
-      this.getThreadImageConversation(headerMeta.threadId);
+      this.getThreadImageConversation(threadImageScopeKey);
     const existingConversationUrl = params.parsed.conversationUrl;
-    const conversationKey = headerMeta.threadId
-      ? `image:${headerMeta.threadId}`
+    const conversationKey = threadImageScopeKey
+      ? `image:${threadImageScopeKey}`
       : existingConversationId
-        ? `image-conv:${existingConversationId}`
+        ? `image-conv:${requestedProfileId || "active"}:${existingConversationId}`
         : undefined;
 
     try {
@@ -647,6 +657,7 @@ export class ImagesService {
           ...(existingConversationUrl
             ? { conversationUrl: existingConversationUrl }
             : {}),
+          ...(requestedProfileId ? { profileId: requestedProfileId } : {}),
         },
         {
           headers: params.req.headers,
@@ -655,7 +666,7 @@ export class ImagesService {
       );
 
       this.rememberThreadImageConversation(
-        headerMeta.threadId,
+        threadImageScopeKey,
         result.conversationId || existingConversationId,
       );
 

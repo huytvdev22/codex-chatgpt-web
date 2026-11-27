@@ -97,6 +97,10 @@ export function isCodexThreadTitleRequest(raw: unknown): boolean {
  */
 export class ResponsesService {
   private recentPrimaryModel: { modelId: string; recordedAt: number } | null = null;
+  private readonly recentPrimaryModelByThread = new Map<
+    string,
+    { modelId: string; recordedAt: number }
+  >();
   private recentPrimaryContext: (ActiveTurnContext & { recordedAt: number }) | null = null;
   private readonly turnContextsByThread = new Map<string, ActiveTurnContext & { recordedAt: number }>();
 
@@ -263,6 +267,7 @@ export class ResponsesService {
       raw,
       requestedModel,
       providerId,
+      req.headers,
     );
     const effectiveModel = effectiveTarget.modelId;
     const effectiveProviderId = effectiveTarget.providerId;
@@ -464,18 +469,43 @@ export class ResponsesService {
     return { toolNsMap, freeformToolNames, toolSearchToolNames };
   }
 
+  private resolveRequestThreadKey(raw: unknown, headers?: Headers): string | undefined {
+    const bodyThreadId = extractCodexTurnIdentityFromBody(raw).threadId?.trim();
+    if (bodyThreadId && bodyThreadId !== "default") return bodyThreadId;
+    const headerConvKey = headers?.get("x-codex-conversation-key")?.trim();
+    if (headerConvKey && headerConvKey !== "default") return headerConvKey;
+    const headerThreadId = headers?.get("x-codex-thread-id")?.trim();
+    if (headerThreadId && headerThreadId !== "default") return headerThreadId;
+    return undefined;
+  }
+
+  private rememberPrimaryModelForThread(threadKey: string | undefined, modelId: string): void {
+    const recordedAt = Date.now();
+    this.recentPrimaryModel = { modelId, recordedAt };
+    if (!threadKey) return;
+    this.recentPrimaryModelByThread.delete(threadKey);
+    this.recentPrimaryModelByThread.set(threadKey, { modelId, recordedAt });
+    while (this.recentPrimaryModelByThread.size > MAX_ACTIVE_TURN_CONTEXTS) {
+      const oldest = this.recentPrimaryModelByThread.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.recentPrimaryModelByThread.delete(oldest);
+    }
+  }
+
   /**
    * Khi Codex gửi request nền sinh tiêu đề (`codex_output_schema`) bằng model fallback đầu tiên
    * của catalog (`m365-copilot/gpt-5.6`) thay vì model người dùng đang chọn, tự định tuyến
-   * về model của turn chính gần nhất hoặc model đang cấu hình trong `~/.codex/config.toml`.
+   * về model của thread tương ứng, turn chính gần nhất, hoặc model cấu hình trong `~/.codex/config.toml`.
    */
   private resolveEffectiveTurnTarget(
     raw: unknown,
     requestedModel: string,
     providerId: string,
+    headers?: Headers,
   ): { modelId: string; providerId: string } {
+    const threadKey = this.resolveRequestThreadKey(raw, headers);
     if (!isCodexThreadTitleRequest(raw)) {
-      this.recentPrimaryModel = { modelId: requestedModel, recordedAt: Date.now() };
+      this.rememberPrimaryModelForThread(threadKey, requestedModel);
       return { modelId: requestedModel, providerId };
     }
 
@@ -484,11 +514,14 @@ export class ResponsesService {
       return { modelId: requestedModel, providerId };
     }
 
+    const byThread = threadKey ? this.recentPrimaryModelByThread.get(threadKey) : undefined;
     const recent = this.recentPrimaryModel;
     const preferredModel =
-      recent && Date.now() - recent.recordedAt <= RECENT_PRIMARY_MODEL_TTL_MS
-        ? recent.modelId
-        : this.readConfiguredModel();
+      byThread && Date.now() - byThread.recordedAt <= RECENT_PRIMARY_MODEL_TTL_MS
+        ? byThread.modelId
+        : recent && Date.now() - recent.recordedAt <= RECENT_PRIMARY_MODEL_TTL_MS
+          ? recent.modelId
+          : this.readConfiguredModel();
 
     if (!preferredModel || preferredModel === requestedModel) {
       return { modelId: requestedModel, providerId };

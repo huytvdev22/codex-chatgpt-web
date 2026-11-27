@@ -415,4 +415,63 @@ describe("POST /v2/responses (Raw Passthrough & Target Conversation)", () => {
       await server.stop(true);
     }
   });
+
+  test("POST /v2/responses truyền x-gateway-profile-id và tách kho conversation theo từng profile", async () => {
+    const dir = makeTempDir("v2-profile-");
+    const storePath = join(dir, "v2-conversations.json");
+    const seenProfiles: Array<string | undefined> = [];
+    const seenConvIds: Array<string | undefined> = [];
+    const service = new RawResponsesService(
+      ModelRegistry.getInstance(),
+      AdapterRegistry.getInstance(),
+      new V2ConversationStore(storePath),
+    );
+
+    const adapterFactory = () => ({
+      name: "m365-copilot",
+      runTurn: async () => {},
+      runRawTurn: async (req: { profileId?: string; existingConversationId?: string }) => {
+        seenProfiles.push(req.profileId);
+        seenConvIds.push(req.existingConversationId);
+        return {
+          outputText: `OK:${req.profileId || "default"}`,
+          conversationId:
+            req.profileId === "p2"
+              ? "222e4567-e89b-12d3-a456-426614174002"
+              : "111e4567-e89b-12d3-a456-426614174001",
+        };
+      },
+    });
+
+    const r1 = await service.executeRawTurn({
+      req: new Request("http://127.0.0.1/v2/responses", {
+        method: "POST",
+        headers: { "x-gateway-profile-id": "P2" },
+      }),
+      raw: {
+        model: "m365-copilot/gpt-5.6",
+        conversation_key: "shared-podcast-key",
+        prompt: "Turn P2",
+      },
+      adapterFactory,
+    });
+    const r2 = await service.executeRawTurn({
+      req: new Request("http://127.0.0.1/v2/responses", { method: "POST" }),
+      raw: {
+        model: "m365-copilot/gpt-5.6",
+        conversation_key: "shared-podcast-key",
+        prompt: "Turn default",
+      },
+      adapterFactory,
+    });
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(seenProfiles).toEqual(["p2", undefined]);
+    expect(seenConvIds).toEqual([undefined, undefined]);
+    const b1 = await r1.json() as Record<string, unknown>;
+    const b2 = await r2.json() as Record<string, unknown>;
+    expect(b1.conversation_id).toBe("222e4567-e89b-12d3-a456-426614174002");
+    expect(b2.conversation_id).toBe("111e4567-e89b-12d3-a456-426614174001");
+  });
 });

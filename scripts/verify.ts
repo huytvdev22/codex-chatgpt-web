@@ -5,11 +5,17 @@ import { join, resolve } from "node:path";
 const root = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
 const runtimeBundle = join(scratch, "runtime");
+const isolatedHome = join(scratch, "codex-home");
 const PER_FILE_TEST_TIMEOUT_MS = 45_000;
 
-async function run(args: string[], timeoutMs?: number): Promise<void> {
+async function run(
+  args: string[],
+  timeoutMs?: number,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
   const child = Bun.spawn([process.execPath, ...args], {
     cwd: root,
+    env: env ?? process.env,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -45,10 +51,18 @@ async function runIsolatedTestFiles(): Promise<void> {
     .sort()
     .map((entry) => `tests/${entry}`);
 
+  const isolatedTestEnv = process.env.CODEX_CHATGPT_WEB_HOME
+    ? process.env
+    : { ...process.env, CODEX_CHATGPT_WEB_HOME: isolatedHome };
+
   for (const file of testFiles) {
     const startedAt = Date.now();
     process.stdout.write(`[verify] Running ${file}...\n`);
-    await run(["test", "--timeout", "30000", file], PER_FILE_TEST_TIMEOUT_MS);
+    await run(
+      ["test", "--timeout", "30000", file],
+      PER_FILE_TEST_TIMEOUT_MS,
+      isolatedTestEnv,
+    );
     process.stdout.write(`[verify] Passed ${file} (${Date.now() - startedAt}ms)\n`);
   }
 }

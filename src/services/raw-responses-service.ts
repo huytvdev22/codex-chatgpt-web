@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
-import type { RawTurnImageInput } from "../adapters/base";
+import { resolveRequestedProfileId, type RawTurnImageInput } from "../adapters/base";
 import { formatErrorResponse } from "../bridge";
 import { ModelRegistry } from "../models/model-registry";
 import { V2ConversationStore } from "./v2-conversation-store";
@@ -185,13 +185,16 @@ export class RawResponsesService {
     }
   }
 
-  private resolveConversationTarget(parsed: ParsedV2Request):
+  private resolveConversationTarget(
+    parsed: ParsedV2Request,
+    storeProviderKey: string,
+  ):
     | { ok: true; conversationKey: string; targetConversationId?: string }
     | { ok: false; message: string } {
-    const { providerId, requestedConversationKey, requestedConversationId } = parsed;
+    const { requestedConversationKey, requestedConversationId } = parsed;
 
     if (requestedConversationKey) {
-      const stored = this.conversationStore.get(providerId, requestedConversationKey);
+      const stored = this.conversationStore.get(storeProviderKey, requestedConversationKey);
       if (requestedConversationId && stored?.conversationId && stored.conversationId !== requestedConversationId) {
         return {
           ok: false,
@@ -206,7 +209,7 @@ export class RawResponsesService {
     }
 
     if (requestedConversationId) {
-      const existing = this.conversationStore.findByConversationId(providerId, requestedConversationId);
+      const existing = this.conversationStore.findByConversationId(storeProviderKey, requestedConversationId);
       return {
         ok: true,
         conversationKey: existing?.conversationKey ?? `id:${requestedConversationId}`,
@@ -222,13 +225,13 @@ export class RawResponsesService {
   }
 
   private acquireConversationLocks(
-    providerId: string,
+    storeProviderKey: string,
     conversationKey: string,
     targetConversationId?: string,
   ): string[] | null {
-    const keys = [`key:${providerId}:${conversationKey}`];
+    const keys = [`key:${storeProviderKey}:${conversationKey}`];
     if (targetConversationId) {
-      keys.push(`id:${providerId}:${targetConversationId}`);
+      keys.push(`id:${storeProviderKey}:${targetConversationId}`);
     }
     if (keys.some(key => this.activeLocks.has(key))) {
       return null;
@@ -259,13 +262,17 @@ export class RawResponsesService {
     }
 
     const { parsed } = validated;
-    const target = this.resolveConversationTarget(parsed);
+    const requestedProfileId = resolveRequestedProfileId(params.req.headers);
+    const storeProviderKey = requestedProfileId
+      ? `${parsed.providerId}@${requestedProfileId}`
+      : parsed.providerId;
+    const target = this.resolveConversationTarget(parsed, storeProviderKey);
     if (!target.ok) {
       return formatErrorResponse(409, "conflict_error", target.message);
     }
 
     const lockKeys = this.acquireConversationLocks(
-      parsed.providerId,
+      storeProviderKey,
       target.conversationKey,
       target.targetConversationId,
     );
@@ -301,6 +308,7 @@ export class RawResponsesService {
           images: parsed.images,
           conversationKey: target.conversationKey,
           existingConversationId: target.targetConversationId,
+          ...(requestedProfileId ? { profileId: requestedProfileId } : {}),
         },
         {
           headers: params.req.headers,
@@ -310,7 +318,7 @@ export class RawResponsesService {
 
       const resolvedConversationId = result.conversationId ?? target.targetConversationId;
       this.conversationStore.upsert({
-        provider: parsed.providerId,
+        provider: storeProviderKey,
         conversationKey: target.conversationKey,
         conversationId: resolvedConversationId,
         model: parsed.requestedModel,

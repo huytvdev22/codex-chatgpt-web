@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { AsyncEventQueue } from "../src/event-queue";
 import { bridgeToResponsesSSE } from "../src/bridge";
-import { rememberResponseState, expandPreviousResponseInput } from "../src/responses/state";
+import {
+  rememberResponseState,
+  expandPreviousResponseInput,
+  pruneResponses,
+} from "../src/responses/state";
 import type { AdapterEvent } from "../src/types";
 
 describe("M365 Conversation Lifecycle & Queue State Cleanup", () => {
@@ -204,5 +208,61 @@ describe("M365 Conversation Lifecycle & Queue State Cleanup", () => {
     expect(text).toContain("upstream_stall_timeout");
     expect(text).toContain("data: [DONE]");
     expect(cancelled).toBe(true);
+  });
+
+  it("isolates responses-state memory budgets between codex and assistant scopes", () => {
+    const codexId = `resp_codex_scope_${Date.now()}`;
+    const asstId1 = `resp_asst_scope_1_${Date.now()}`;
+    const asstId2 = `resp_asst_scope_2_${Date.now()}`;
+
+    rememberResponseState(
+      { model: "m365-copilot/gpt-5.6", input: "codex keep" },
+      {
+        id: codexId,
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "codex reply" }] }],
+      },
+      { force: true, scope: "codex" },
+    );
+
+    rememberResponseState(
+      { model: "gemini/4-hydrogen", input: "A".repeat(400) },
+      {
+        id: asstId1,
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "B".repeat(400) }] }],
+      },
+      { force: true, scope: "assistant" },
+    );
+    rememberResponseState(
+      { model: "gemini/4-hydrogen", input: "C".repeat(400) },
+      {
+        id: asstId2,
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "D".repeat(400) }] }],
+      },
+      { force: true, scope: "assistant" },
+    );
+
+    // Siết trần scope assistant -> chỉ evict entry assistant cũ, giữ nguyên entry codex
+    pruneResponses(Date.now(), { assistant: 950 });
+
+    const codexExpanded = expandPreviousResponseInput({
+      previous_response_id: codexId,
+      input: "next codex",
+    }) as { input?: unknown[] };
+    const asst1Expanded = expandPreviousResponseInput({
+      previous_response_id: asstId1,
+      input: "next asst1",
+    }) as { previous_response_id?: string; input?: unknown };
+    const asst2Expanded = expandPreviousResponseInput({
+      previous_response_id: asstId2,
+      input: "next asst2",
+    }) as { input?: unknown[] };
+
+    expect(Array.isArray(codexExpanded.input)).toBe(true);
+    expect((codexExpanded.input as unknown[]).length).toBe(3);
+    expect(asst1Expanded.input).toBe("next asst1"); // evicted
+    expect(Array.isArray(asst2Expanded.input)).toBe(true); // newest kept
   });
 });

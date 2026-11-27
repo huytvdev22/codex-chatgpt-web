@@ -8,6 +8,7 @@ import {
   type GeminiResponseBaseline,
 } from "../src/adapters/gemini";
 import { BaseWebBrowserWorker } from "../src/adapters/web/browser";
+import { BrowserIdleTimeoutError } from "../src/adapters/web/browser/base-browser-worker";
 import { focusGeminiComposer } from "../src/adapters/gemini/composer-input";
 
 class TestableGeminiWorker extends GeminiBrowserWorker {
@@ -16,6 +17,20 @@ class TestableGeminiWorker extends GeminiBrowserWorker {
     options: Parameters<GeminiBrowserWorker["navigate"]>[1],
   ): Promise<void> {
     return this.navigate(page, options);
+  }
+
+  public callResolveGeneratingStallTimeoutMs(
+    observation: Parameters<GeminiBrowserWorker["resolveGeneratingStallTimeoutMs"]>[0],
+  ): number | undefined {
+    return this.resolveGeneratingStallTimeoutMs(observation);
+  }
+
+  public async callWaitForCompletion(
+    page: Page,
+    baseline: Parameters<GeminiBrowserWorker["waitForCompletion"]>[1],
+    options: Parameters<GeminiBrowserWorker["waitForCompletion"]>[2],
+  ): Promise<Awaited<ReturnType<GeminiBrowserWorker["waitForCompletion"]>>> {
+    return this.waitForCompletion(page, baseline, options);
   }
 
   public async callResolveConversationId(
@@ -222,5 +237,95 @@ describe("GeminiBrowserWorker, DomObserver & ClipboardSalvage", () => {
 
     expect(fillCalled).toBe(false);
     expect(evaluateCalled).toBe(true);
+  });
+
+  test("resolveGeneratingStallTimeoutMs áp giới hạn 60s khi kẹt không có text và 120s khi đang có text", () => {
+    const worker = new TestableGeminiWorker();
+
+    expect(
+      worker.callResolveGeneratingStallTimeoutMs({
+        isGenerating: true,
+        isCompleted: false,
+        text: "   \n",
+        hasCopyControl: false,
+        timedOut: false,
+      }),
+    ).toBe(60_000);
+
+    expect(
+      worker.callResolveGeneratingStallTimeoutMs({
+        isGenerating: true,
+        isCompleted: false,
+        text: "đoạn mở đầu",
+        hasCopyControl: false,
+        timedOut: false,
+      }),
+    ).toBe(120_000);
+
+    expect(
+      worker.callResolveGeneratingStallTimeoutMs({
+        isGenerating: false,
+        isCompleted: true,
+        text: "",
+        hasCopyControl: false,
+        timedOut: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  test("waitForCompletion tự ngắt sớm sau 60s khi Gemini kẹt isGenerating=true mà không có text mới", async () => {
+    class StalledGeminiWorker extends TestableGeminiWorker {
+      protected override async beforeObserveResponse(): Promise<void> {}
+
+      protected override async observeResponse(): Promise<
+        Awaited<ReturnType<GeminiBrowserWorker["observeResponse"]>>
+      > {
+        return {
+          isGenerating: true,
+          isCompleted: false,
+          text: "",
+          hasCopyControl: false,
+          timedOut: false,
+        };
+      }
+
+      protected override onWaitTimeout(): undefined {
+        return undefined;
+      }
+    }
+
+    const worker = new StalledGeminiWorker();
+    let now = 1_000;
+    const realDateNow = Date.now;
+    Date.now = () => now;
+
+    const fakePage = {
+      waitForTimeout: async () => {
+        now += 35_000;
+      },
+    } as unknown as Page;
+
+    try {
+      await expect(
+        worker.callWaitForCompletion(
+          fakePage,
+          {
+            responseIds: [],
+            responseCount: 1,
+            initialLatestText: "",
+            previousLatestText: "",
+            hasSeenGenerating: true,
+            stableCount: 0,
+          },
+          {
+            prompt: "test stall",
+            onChunk: () => {},
+            idleTimeoutMs: 0,
+          },
+        ),
+      ).rejects.toThrow(BrowserIdleTimeoutError);
+    } finally {
+      Date.now = realDateNow;
+    }
   });
 });

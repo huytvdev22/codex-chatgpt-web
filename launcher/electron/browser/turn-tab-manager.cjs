@@ -609,7 +609,8 @@ class TurnTabManager {
       }
       tab.view.setBounds(bounds);
     } else {
-      if (tab.rendererReady && tab.deviceEmulationViewport) {
+      const tabProvider = tab.provider || this.host?.provider || "m365";
+      if (tab.rendererReady && tab.deviceEmulationViewport && tabProvider !== "ai-studio") {
         tab.view.webContents?.disableDeviceEmulation?.();
         tab.deviceEmulationViewport = null;
         tab.deviceEmulationDirty = true;

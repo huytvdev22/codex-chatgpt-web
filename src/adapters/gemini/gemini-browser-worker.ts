@@ -443,6 +443,15 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
     return !observation.isGenerating;
   }
 
+  protected override resolveGeneratingStallTimeoutMs(
+    observation: GeminiResponseObservation,
+  ): number | undefined {
+    if (!observation.isGenerating) return undefined;
+    // Khi nút Stop kẹt nhưng hoàn toàn chưa có ký tự nào -> ngắt sớm sau 60s thay vì treo 300s.
+    // Nếu đã có nội dung nhưng đứng im hoàn toàn quá 120s -> ngắt và cứu phần text đã có.
+    return observation.text.trim().length === 0 ? 60_000 : 120_000;
+  }
+
   protected override onWaitTimeout(
     _error: BrowserHardTimeoutError | BrowserIdleTimeoutError,
     lastObservation: GeminiResponseObservation | undefined,

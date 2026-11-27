@@ -8,6 +8,14 @@ export interface IncomingMeta {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * Chuẩn hóa `x-gateway-profile-id` từ HTTP headers để cô lập profile giữa các client/luồng song song.
+ */
+export function resolveRequestedProfileId(headers?: Headers): string | undefined {
+  const raw = headers?.get("x-gateway-profile-id")?.trim().toLowerCase();
+  return raw || undefined;
+}
+
 export interface RawTurnImageInput {
   name?: string;
   mimeType: string;
@@ -22,6 +30,7 @@ export interface RawTurnRequest {
   images?: RawTurnImageInput[];
   conversationKey?: string;
   existingConversationId?: string;
+  profileId?: string;
 }
 
 export interface RawTurnResult {
@@ -68,6 +77,7 @@ export interface SpeechTurnRequest {
   text: string;
   temperature?: number;
   speakers: SpeechSpeakerInput[];
+  profileId?: string;
 }
 
 export interface SpeechTurnResult {
@@ -87,6 +97,7 @@ export interface ImageTurnRequest {
   conversationKey?: string;
   existingConversationId?: string;
   conversationUrl?: string;
+  profileId?: string;
 }
 
 export interface ImageTurnResult {

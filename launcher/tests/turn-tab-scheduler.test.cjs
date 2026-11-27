@@ -238,3 +238,31 @@ test("sameKeyWaitTimeoutMs độc lập và giữ được chờ lâu hơn slotW
   assert.equal(prodManager.sameKeyWaitTimeoutMs, 48_000);
   prodManager.destroy();
 });
+
+test("presentTurnView giữ nguyên deviceEmulationViewport cho tab nền AI Studio ở trạng thái ready", () => {
+  let disableCalls = 0;
+  const tab = {
+    id: "ai-ready-emul",
+    provider: "ai-studio",
+    status: "ready",
+    rendererReady: true,
+    deviceEmulationViewport: { width: 1120, height: 720 },
+    deviceEmulationDirty: false,
+    view: {
+      setBounds() {},
+      setVisible() {},
+      webContents: {
+        disableDeviceEmulation() {
+          disableCalls += 1;
+        },
+      },
+    },
+  };
+  const { manager } = createReactiveHostStub({ provider: "ai-studio" });
+  manager.host.hiddenTurnBounds = () => ({ x: 1121, y: 721, width: 1120, height: 720 });
+
+  manager.presentTurnView(tab, false);
+  assert.equal(disableCalls, 0);
+  assert.deepEqual(tab.deviceEmulationViewport, { width: 1120, height: 720 });
+  assert.equal(tab.deviceEmulationDirty, false);
+});

@@ -50,7 +50,7 @@ describe("ChatGptModelProvider & Registry integration", () => {
     expect(provider.resolveCapabilityTarget("chatgpt/gpt-6.2", "high")).toEqual({
       modelSlug: "chatgpt/gpt-6.2",
       modelLabel: "GPT-6.2",
-      shortUiVersion: undefined,
+      shortUiVersion: "6.2",
       isAccountDefault: true,
       thinkingEffort: "high",
     });
