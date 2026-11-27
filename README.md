@@ -1,6 +1,6 @@
 # Codex M365 Copilot
 
-> **Phiên bản hiện tại:** `6.14.0`
+> **Phiên bản hiện tại:** `6.15.0`
 >
 > **Runtime:** Bun `1.4.0`
 >
