@@ -271,6 +271,9 @@ export class GeminiAdapter extends WebProviderAdapter {
           isNewConversation,
           retain,
           attachments,
+          streamIncremental,
+          onChunk,
+          onTextSnapshot,
           heartbeat,
         }) => {
           if (!page) {
@@ -280,7 +283,9 @@ export class GeminiAdapter extends WebProviderAdapter {
           }
           return worker.executeTurn(page, {
             prompt,
-            onChunk: () => {},
+            onChunk: onChunk ?? (() => {}),
+            onTextSnapshot,
+            streamIncremental: streamIncremental === true,
             signal: incoming.abortSignal,
             conversationKey,
             existingConversationId,

@@ -55,6 +55,7 @@ export interface ChatGptObserverRuntimeState {
   attempts: number;
   lastObservedText: string;
   lastHtml: string;
+  lastStreamSnapshotAt: number;
   pendingStatus: ChatGptDomStatus | null;
 }
 
@@ -74,6 +75,7 @@ export class ChatGptDomObserver {
       attempts: 0,
       lastObservedText: "",
       lastHtml: "",
+      lastStreamSnapshotAt: 0,
       pendingStatus: null,
     };
   }
@@ -115,9 +117,11 @@ export class ChatGptDomObserver {
   public async captureStatus(
     page: Page,
     baseline: ChatGptResponseBaseline,
+    options?: { captureFullWhileGenerating?: boolean },
   ): Promise<ChatGptDomStatus> {
+    const captureFullWhileGenerating = options?.captureFullWhileGenerating === true;
     return await page.evaluate(
-      ({ selectors, baselineIds, baselineCount, baselineLatestText }) => {
+      ({ selectors, baselineIds, baselineCount, baselineLatestText, captureFullWhileGenerating }) => {
         const isElementVisible = (el: Element): boolean => {
           const rect = el.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) return false;
@@ -204,7 +208,7 @@ export class ChatGptDomObserver {
         );
 
         const lightweightLength = (latestMessage.textContent || "").trim().length;
-        if (isGenerating && turnState !== "complete") {
+        if (isGenerating && turnState !== "complete" && !captureFullWhileGenerating) {
           return {
             isGenerating: true,
             hasNewResponse: true,
@@ -270,6 +274,7 @@ export class ChatGptDomObserver {
         baselineIds: baseline.assistantIds,
         baselineCount: baseline.assistantCount,
         baselineLatestText: baseline.initialLatestText,
+        captureFullWhileGenerating,
       },
     );
   }

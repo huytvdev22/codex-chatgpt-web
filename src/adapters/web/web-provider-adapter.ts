@@ -1,5 +1,7 @@
 import type {
   IncomingMeta,
+  ManagedTurnRequest,
+  ManagedTurnResult,
   ProviderAdapter,
   RawTurnRequest,
   RawTurnResult,
@@ -41,6 +43,13 @@ export class WebProviderAdapter implements ProviderAdapter {
     incoming: IncomingMeta,
   ): Promise<RawTurnResult> {
     return await this.engine.runRawTurn(request, incoming);
+  }
+
+  async runManagedTurn(
+    request: ManagedTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<ManagedTurnResult> {
+    return await this.engine.runManagedTurn(request, incoming);
   }
 
   async discoverModels(incoming?: IncomingMeta): Promise<DiscoveredModelEntry[]> {

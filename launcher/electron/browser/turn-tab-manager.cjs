@@ -13,7 +13,14 @@ const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const TURN_TAB_INITIAL_LOAD_TIMEOUT_MS = 20_000;
 const TURN_TAB_RETRY_LOAD_TIMEOUT_MS = 30_000;
 const MAX_BROWSER_TABS = 10;
+const MAX_ASSISTANT_RETAINED_TABS = 3;
+const ASSISTANT_CONNECTOR_SUFFIX = ":assistant";
 const MAX_CANCELLED_TURN_TRACES = 256;
+
+function isAssistantTab(tab) {
+  return typeof tab?.connectorIdentity === "string"
+    && tab.connectorIdentity.endsWith(ASSISTANT_CONNECTOR_SUFFIX);
+}
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 1024, height: 720 });
 const TURN_HEARTBEAT_SWEEP_MS = 5_000;
 const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
@@ -227,6 +234,9 @@ class TurnTabManager {
     const retained = [...this.turnTabs.values()]
       .filter(tab => tab.status === "ready")
       .sort((left, right) => {
+        const leftIsAssistant = isAssistantTab(left);
+        const rightIsAssistant = isAssistantTab(right);
+        if (leftIsAssistant !== rightIsAssistant) return leftIsAssistant ? -1 : 1;
         const leftHasId = Boolean(left.conversationId);
         const rightHasId = Boolean(right.conversationId);
         if (leftHasId !== rightHasId) return leftHasId ? -1 : 1;
@@ -235,6 +245,19 @@ class TurnTabManager {
     if (!retained) return false;
     (this.host.removeTurnTab || this.removeTurnTab).call(this.host, retained, false);
     return true;
+  }
+
+  trimAssistantRetainedTabs(keepTabId = null) {
+    const retainedAssistant = [...this.turnTabs.values()]
+      .filter(tab => tab.status === "ready" && isAssistantTab(tab) && tab.id !== keepTabId)
+      .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0));
+    const currentTotal = retainedAssistant.length + (keepTabId ? 1 : 0);
+    let overflow = currentTotal - MAX_ASSISTANT_RETAINED_TABS;
+    while (overflow > 0 && retainedAssistant.length > 0) {
+      const oldest = retainedAssistant.shift();
+      (this.host.removeTurnTab || this.removeTurnTab).call(this.host, oldest, false);
+      overflow -= 1;
+    }
   }
 
   evictOldestReclaimableTurnTab() {
@@ -333,6 +356,7 @@ class TurnTabManager {
       },
     });
     const labelPrefix = providerObj.id.toUpperCase();
+    const isBotTab = isAssistantTab({ connectorIdentity });
     const tab = {
       id,
       surfaceId,
@@ -347,7 +371,7 @@ class TurnTabManager {
       view,
       status: "running",
       ordinal,
-      label: `${labelPrefix} ${ordinal}`,
+      label: isBotTab ? `[BOT] ${labelPrefix} ${ordinal}` : `${labelPrefix} ${ordinal}`,
       pageTitle: providerObj.getFallbackTitle(),
       url: bootstrapUrl,
       loading: true,
@@ -857,6 +881,9 @@ class TurnTabManager {
       && (!tab.connectorIdentity || effectiveConnectorBound)) {
       tab.connectorBound = effectiveConnectorBound;
       tab.lastHeartbeatAt = Date.now();
+      if (isAssistantTab(tab)) {
+        this.trimAssistantRetainedTabs(tab.id);
+      }
       if (hideAfterTurn && !this.host.activeTraceId) this.host.hide();
       else this.host.syncViewVisibility?.();
       this.host.publishState?.(this.host.snapshot());
@@ -902,6 +929,7 @@ module.exports = {
   BrowserTurnCancelledError,
   HIDDEN_TURN_VIEWPORT,
   IDLE_BROWSER_URL,
+  MAX_ASSISTANT_RETAINED_TABS,
   MAX_BROWSER_TABS,
   MAX_CANCELLED_TURN_TRACES,
   PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS,

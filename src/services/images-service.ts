@@ -272,7 +272,10 @@ export class ImagesService {
   >();
 
   constructor(
-    private readonly responsesService: ResponsesService,
+    private readonly responsesService: Pick<
+      ResponsesService,
+      "resolveThreadTurnContext" | "resolveActiveTurnContext"
+    >,
     private readonly modelRegistry: ModelRegistry = ModelRegistry.getInstance(),
     private readonly adapterRegistry: AdapterRegistry = AdapterRegistry.getInstance(),
     private readonly readConfiguredModel: () => string | undefined = readCodexConfiguredModel,

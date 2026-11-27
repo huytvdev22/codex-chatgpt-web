@@ -2,6 +2,8 @@ import type { Page } from "playwright-core";
 import {
   hasActualPriorAssistantReply,
   type IncomingMeta,
+  type ManagedTurnRequest,
+  type ManagedTurnResult,
   type RawTurnRequest,
   type RawTurnResult,
   type UsageLimitCheckRequest,
@@ -1128,6 +1130,153 @@ export class WebTurnEngine {
           parsed: syntheticParsed,
           hasPriorAssistantReply: !isNewConversation,
           hasToolResults: false,
+          abortSignal: turnRegistration.signal,
+          ops: this.lifecycleOps,
+        });
+      }
+    } finally {
+      turnRegistration.finish();
+    }
+  }
+
+  /**
+   * Tầng transport độc lập cho các client ngoài Codex IDE (như module `src/assistant/`):
+   * chỉ quản lý vòng đời tab Launcher, abort, heartbeat và streaming snapshot opt-in;
+   * không chạy prompt compiler, personalization, skills store hay usage footer của Codex IDE.
+   */
+  async runManagedTurn(
+    request: ManagedTurnRequest,
+    incoming: IncomingMeta,
+  ): Promise<ManagedTurnResult> {
+    if (incoming.abortSignal?.aborted) {
+      throw new DOMException(
+        this.definition.abortMessage ||
+          `${this.definition.assistantName} turn aborted before start`,
+        "AbortError",
+      );
+    }
+
+    const turnTraceId = resolveWebTurnTraceId({
+      headers: incoming.headers,
+      ...this.definition.policies?.traceIdOptions,
+    });
+    const conversationKey = request.conversationKey;
+
+    const turnRegistration = activeWebTurnRegistry.register(
+      turnTraceId,
+      incoming.abortSignal,
+      this.definition.id,
+    );
+    const turnIncoming: IncomingMeta = {
+      ...incoming,
+      abortSignal: turnRegistration.signal,
+    };
+
+    try {
+      const initialUrl = this.definition.browser.resolveInitialUrl?.({
+        modelId: request.modelId,
+        existingConversationId: request.existingConversationId,
+      });
+      const acquired = await acquireWebTurnSurface({
+        definition: this.definition,
+        localBrowser: this.localBrowser,
+        turnTraceId,
+        conversationKey,
+        ...(request.connectorIdentity ? { connectorIdentity: request.connectorIdentity } : {}),
+        ...(initialUrl ? { initialUrl } : {}),
+        ...(request.profileId ? { profileId: request.profileId } : {}),
+        abortSignal: turnRegistration.signal,
+        ops: this.lifecycleOps,
+      });
+
+      let activeConversationId =
+        request.existingConversationId || acquired.leaseConversationId;
+      const isNewConversation =
+        request.isNewConversation !== undefined
+          ? request.isNewConversation && !acquired.launcherReused && !activeConversationId
+          : !acquired.launcherReused && !activeConversationId;
+      const retain = request.retain ?? true;
+      const syntheticParsed: CodexParsedRequest = {
+        modelId: request.modelId,
+        stream: request.streamIncremental === true,
+        context: { messages: [], tools: [] },
+        options: {
+          ...(request.reasoning ? { reasoning: request.reasoning } : {}),
+        },
+      };
+      const maxImages = this.definition.attachments?.maxInputImages ?? 3;
+      const attachments: NormalizedImageAttachment[] = (request.images ?? [])
+        .slice(0, maxImages)
+        .map((image, index) => ({
+          ref: `managed-img-${index}`,
+          name: image.name || `image-${index + 1}.png`,
+          mimeType: image.mimeType,
+          dataUrl: image.dataUrl,
+          buffer: image.buffer,
+        }));
+
+      let finalStatus: WebTurnFinalStatus = "failed";
+      try {
+        const result = await this.definition.browser.executeTurn({
+          page: acquired.page!,
+          prompt: request.prompt,
+          attempt: request.attempt ?? 0,
+          parsed: syntheticParsed,
+          incoming: turnIncoming,
+          reasoningEffort: request.reasoning,
+          conversationKey,
+          existingConversationId: activeConversationId,
+          launcherReused: acquired.launcherReused,
+          isNewConversation,
+          retain,
+          attachments,
+          turnTraceId,
+          streamIncremental: request.streamIncremental === true,
+          onChunk: request.onChunk,
+          onTextSnapshot: request.onTextSnapshot,
+          heartbeat: acquired.heartbeat,
+        });
+
+        if (this.definition.conversation.onConversationUpdated) {
+          const updatedId = this.definition.conversation.onConversationUpdated({
+            conversationKey,
+            conversationId: result.conversationId,
+          });
+          if (updatedId) {
+            activeConversationId = updatedId;
+          }
+        } else if (result.conversationId) {
+          activeConversationId = result.conversationId;
+        }
+
+        const rawResponse = this.definition.response?.sanitizeRawResponse
+          ? this.definition.response.sanitizeRawResponse(result.rawResponse)
+          : result.rawResponse;
+
+        finalStatus = "completed";
+        return {
+          rawResponse,
+          launcherReused: acquired.launcherReused,
+          ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+          ...(result.providerReportedTokens
+            ? { providerReportedTokens: result.providerReportedTokens }
+            : {}),
+        };
+      } catch (error) {
+        finalStatus = turnRegistration.signal.aborted ? "aborted" : "failed";
+        throw error;
+      } finally {
+        await releaseWebTurnSurface({
+          definition: this.definition,
+          acquired,
+          turnTraceId,
+          finalStatus,
+          activeConversationId,
+          conversationKey,
+          parsed: syntheticParsed,
+          hasPriorAssistantReply: !isNewConversation,
+          hasToolResults: false,
+          retainOverride: retain ? undefined : false,
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });

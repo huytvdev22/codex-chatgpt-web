@@ -264,20 +264,24 @@ export function bridgeToResponsesSSE(
       // synthetic compaction item's payload on done.
       let compactionText = "";
       let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
-      const closeCurrentMessage = () => {
+      const closeCurrentMessage = (authoritativeText?: string) => {
         if (!currentMsg) return;
+        const resolvedText =
+          typeof authoritativeText === "string" && authoritativeText.length > 0
+            ? authoritativeText
+            : currentMsg.text;
         // Finalize the text part (Responses protocol). Without these .done events Codex never
         // commits the content part and renders the message as truncated / cut off.
         emit("response.output_text.done", {
-          item_id: currentMsg.itemId, output_index: currentMsg.outputIndex, content_index: 0, text: currentMsg.text,
+          item_id: currentMsg.itemId, output_index: currentMsg.outputIndex, content_index: 0, text: resolvedText,
         });
         emit("response.content_part.done", {
           item_id: currentMsg.itemId, output_index: currentMsg.outputIndex, content_index: 0,
-          part: { type: "output_text", text: currentMsg.text, annotations: [] },
+          part: { type: "output_text", text: resolvedText, annotations: [] },
         });
         const item = {
           type: "message", id: currentMsg.itemId, status: "completed", role: "assistant",
-          content: [{ type: "output_text", text: currentMsg.text, annotations: [] }],
+          content: [{ type: "output_text", text: resolvedText, annotations: [] }],
           ...(currentMsg.phase ? { phase: currentMsg.phase } : {}),
         };
         emit("response.output_item.done", { output_index: currentMsg.outputIndex, item });
@@ -587,7 +591,7 @@ export function bridgeToResponsesSSE(
               break;
             }
             case "done": {
-              if (currentMsg) closeCurrentMessage();
+              if (currentMsg) closeCurrentMessage(event.finalText);
               if (currentReasoning) closeCurrentReasoning();
               if (currentRawReasoning) closeCurrentRawReasoning();
               flushHiddenRawReasoning();

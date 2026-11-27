@@ -257,11 +257,13 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
     await page.waitForTimeout(80);
 
     let fillSuccess = false;
-    try {
-      await composerLocator.fill(promptText, { timeout: 10_000 });
-      fillSuccess = true;
-    } catch {
-      fillSuccess = false;
+    if (promptText.length <= 1_500) {
+      try {
+        await composerLocator.fill(promptText, { timeout: 3_000 });
+        fillSuccess = true;
+      } catch {
+        fillSuccess = false;
+      }
     }
 
     const expectedCompactLen = promptText.replace(/\r?\n/g, "").trim().length;
@@ -281,7 +283,7 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
             }) ?? candidates[0];
           if (!editor) return;
           editor.focus();
-          editor.replaceChildren();
+          const fragment = document.createDocumentFragment();
           for (const line of text.split(/\r?\n/)) {
             const p = document.createElement("p");
             if (line.length > 0) {
@@ -289,8 +291,9 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
             } else {
               p.appendChild(document.createElement("br"));
             }
-            editor.appendChild(p);
+            fragment.appendChild(p);
           }
+          editor.replaceChildren(fragment);
           editor.dispatchEvent(
             new InputEvent("input", {
               bubbles: true,
@@ -402,8 +405,11 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
     return true;
   }
 
-  protected override shouldEmitObservationDelta(): boolean {
-    return false;
+  protected override shouldEmitObservationDelta(
+    _observation: GeminiResponseObservation,
+    options: GeminiBrowserRunOptions,
+  ): boolean {
+    return options.streamIncremental === true;
   }
 
   protected override resolveNextPollDelayMs(
@@ -436,10 +442,21 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
   protected override async beforeObserveResponse(
     page: Page,
     baseline: GeminiResponseBaseline,
+    options: GeminiBrowserRunOptions,
   ): Promise<void> {
     const state = this.getRuntimeState(page);
     state.attempts += 1;
-    state.pendingStatus = await this.domObserver.captureStatus(page, baseline);
+    const now = Date.now();
+    const captureFullWhileGenerating =
+      options.streamIncremental === true &&
+      now - state.lastStreamSnapshotAt >= 650;
+    const status = await this.domObserver.captureStatus(page, baseline, {
+      captureFullWhileGenerating,
+    });
+    if (captureFullWhileGenerating && status.isGenerating && status.hasNewResponse) {
+      state.lastStreamSnapshotAt = now;
+    }
+    state.pendingStatus = status;
   }
 
   protected override async observeResponse(

@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { ProviderAdapterFactory } from "./adapters/adapter-registry";
+import { AssistantController, AssistantResponsesService } from "./assistant";
 import { formatErrorResponse } from "./bridge";
 import { reconcileBundledCodexSkills, reconcileCodexModelCatalogConfig, type CodexModelContextOverride } from "./codex-integration";
 import type { AppConfig } from "./config";
@@ -82,6 +83,7 @@ export function startServer(
   const modelsController = new ModelsController();
   const responsesService = new ResponsesService();
   const responsesController = new ResponsesController(responsesService);
+  const assistantController = new AssistantController(new AssistantResponsesService());
   const imagesController = new ImagesController(new ImagesService(responsesService));
   const geminiSpeechController = new GeminiSpeechController();
 
@@ -160,6 +162,78 @@ export function startServer(
     if (req.method === "GET" && url.pathname === "/v1/limits") {
       return adminController.handleGetPublicLimits();
     }
+    if (url.pathname.startsWith("/clients/assistant/v1/")) {
+      const subPath = url.pathname.slice("/clients/assistant/v1".length);
+      if (req.method === "GET" && subPath === "/models") {
+        if (draining) {
+          return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        }
+        return assistantController.handleModels(config);
+      }
+      if (req.method === "GET" && subPath === "/responses") {
+        return assistantController.handleUnsupportedGet();
+      }
+      if (req.method === "POST" && subPath === "/responses") {
+        if (draining) {
+          return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        }
+        return httpTurns.track(
+          (signal, bindIdentity) => assistantController.handleResponses(
+            new Request(req, { signal }),
+            { onTurnIdentity: bindIdentity },
+            dependencies.adapterFactory,
+          ),
+          req.signal,
+          process.platform,
+          "responses",
+        );
+      }
+      if (req.method === "POST" && subPath === "/responses/compact") {
+        if (draining) {
+          return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        }
+        return httpTurns.track(
+          (signal, bindIdentity) => assistantController.handleCompact(
+            new Request(req, { signal }),
+            { onTurnIdentity: bindIdentity },
+            dependencies.adapterFactory,
+          ),
+          req.signal,
+          process.platform,
+          "compact",
+        );
+      }
+      if (req.method === "POST" && subPath === "/images/generations") {
+        if (draining) {
+          return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        }
+        return httpTurns.track(
+          (signal) => assistantController.handleImageGenerations(
+            new Request(req, { signal }),
+            dependencies.adapterFactory,
+          ),
+          req.signal,
+          process.platform,
+          "images",
+        );
+      }
+      if (req.method === "POST" && subPath === "/images/edits") {
+        if (draining) {
+          return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        }
+        return httpTurns.track(
+          (signal) => assistantController.handleImageEdits(
+            new Request(req, { signal }),
+            dependencies.adapterFactory,
+          ),
+          req.signal,
+          process.platform,
+          "images",
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    }
+
     if (req.method === "GET" && url.pathname === "/v1/models") {
       return await modelsController.handleRoute(req, config, httpTurns, draining);
     }

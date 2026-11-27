@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { CodexRawPayload } from "../src/adapters/web/normalization/codex-raw-payload";
 import { CodexPayloadNormalizer } from "../src/adapters/web/normalization/codex-normalizer";
 import { compileWebPrompt } from "../src/adapters/web/compile-prompt";
+import { htmlToMarkdown } from "../src/adapters/web/markdown";
 import { WebPromptCompiler } from "../src/adapters/web/prompt";
 import { SemanticMarkdownBuffer } from "../src/adapters/web/protocol";
 import { parseRequest } from "../src/responses/parser";
@@ -125,5 +126,22 @@ describe("Shared Web Core (Phase 1)", () => {
 
     expect(compiled.finalPrompt).toContain("Chào ChatGPT");
     expect(compiled.finalPrompt).toContain("Kiểm tra compiler");
+  });
+
+  test("htmlToMarkdown giữ bảng GFM 1 dòng mỗi hàng ngay cả khi ô chứa <p> và inline code đường dẫn", () => {
+    const html = `
+      <table>
+        <thead>
+          <tr><th><p>STT</p></th><th><p>Đường dẫn</p></th><th><p>Quyền thao tác</p></th></tr>
+        </thead>
+        <tbody>
+          <tr><td><p>1</p></td><td><p><code>~/CodexAssistant/.trash</code></p></td><td><p>Lưu tệp đã xóa mềm</p></td></tr>
+        </tbody>
+      </table>
+    `;
+    const md = htmlToMarkdown(html);
+    expect(md).toContain("| STT | Đường dẫn | Quyền thao tác |");
+    expect(md).toContain("| 1 | `~/CodexAssistant/.trash` | Lưu tệp đã xóa mềm |");
+    expect(md).not.toContain("[~/CodexAssistant/.trash]");
   });
 });
