@@ -4,6 +4,7 @@ import type {
   ImageTurnResult,
   RawTurnImageInput,
 } from "../base";
+import { withPageFocusEmulation } from "../web/browser/cdp-focus-emulation";
 import type { NormalizedImageAttachment } from "../web/normalization/canonical-types";
 import { GeminiAttachments } from "./attachments";
 import { GeminiCapabilityPicker } from "./capability-picker";
@@ -94,6 +95,16 @@ export class GeminiImageWorker {
   }
 
   public async executeImageTurn(
+    page: Page,
+    options: GeminiImageRunOptions,
+  ): Promise<ImageTurnResult> {
+    this.throwIfAborted(options.signal);
+    return await withPageFocusEmulation(page, () =>
+      this.runImageTurnInternal(page, options),
+    );
+  }
+
+  private async runImageTurnInternal(
     page: Page,
     options: GeminiImageRunOptions,
   ): Promise<ImageTurnResult> {

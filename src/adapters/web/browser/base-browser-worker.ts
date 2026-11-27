@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import type { ProviderReportedTokens } from "../../../usage/types";
+import { acquirePageFocusEmulation } from "./cdp-focus-emulation";
 
 export interface BaseBrowserRunOptions {
   prompt: string;
@@ -87,6 +88,7 @@ export abstract class BaseWebBrowserWorker<
     this.throwIfAborted(options.signal, "before start");
 
     await this.initializeTurnState(page, options);
+    const releaseFocusEmulation = await acquirePageFocusEmulation(page);
     const stopHeartbeatLoop = this.startHeartbeatLoop(options);
     try {
       await this.navigate(page, options);
@@ -125,6 +127,7 @@ export abstract class BaseWebBrowserWorker<
       throw error;
     } finally {
       stopHeartbeatLoop();
+      await releaseFocusEmulation().catch(() => {});
       await this.cleanupTurnState(page, options);
     }
   }

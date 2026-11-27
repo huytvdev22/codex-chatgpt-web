@@ -1,5 +1,4 @@
 import type { Page } from "playwright-core";
-import { browserFocusMutex } from "../web/browser/browser-focus-mutex";
 import {
   normalizeCopiedChatGptSnippet,
   type ChatGptResponseBaseline,
@@ -35,7 +34,7 @@ export function selectPreferredChatGptResponse(
 
 /**
  * Trích xuất câu trả lời hoàn chỉnh qua clipboard hook nội bộ trang
- * bằng Playwright trusted click (đưa tab lên trước để tránh lỗi focus clipboard).
+ * bằng Playwright trusted click dưới CDP Focus Emulation (tuyệt đối không gọi `bringToFront()`).
  */
 export class ChatGptClipboardSalvage {
   public async setupHook(page: Page): Promise<void> {
@@ -210,17 +209,11 @@ export class ChatGptClipboardSalvage {
 
       if (!copyButton) return null;
 
-      const clicked = await browserFocusMutex
-        .runExclusive(
-          async () => {
-            await page.bringToFront().catch(() => {});
-            await copyButton.scrollIntoViewIfNeeded();
-            await copyButton.click({ timeout: 2_000 });
-            return true;
-          },
-          { timeoutMs: 3_000 },
-        )
-        .catch(() => false);
+      const clicked = await (async () => {
+        await copyButton.scrollIntoViewIfNeeded({ timeout: 2_000 });
+        await copyButton.click({ timeout: 2_000 });
+        return true;
+      })().catch(() => false);
       if (!clicked) return null;
 
       // Chỉ đọc từ in-page clipboard hook của chính tab này; tuyệt đối không fallback

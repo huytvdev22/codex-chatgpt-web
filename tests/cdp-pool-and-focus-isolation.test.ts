@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import {
   LAUNCHER_BROWSER_HOST_KIND,
@@ -10,6 +10,10 @@ import {
 } from "../src/launcher-browser-host";
 import { LauncherCdpPool } from "../src/launcher-cdp-pool";
 import { BrowserFocusMutex } from "../src/adapters/web/browser/browser-focus-mutex";
+import {
+  acquirePageFocusEmulation,
+  withPageFocusEmulation,
+} from "../src/adapters/web/browser/cdp-focus-emulation";
 
 function makeDescriptor(surfaceTargets: Record<string, string>): LauncherBrowserHostDescriptor {
   return {
@@ -185,14 +189,63 @@ describe("CDP Pool, target isolation và Focus/Clipboard safety", () => {
       expect(codeOnly).toContain("__codex_suppress_os_clipboard_write");
     }
 
-    const insertPromptWorkers = [
-      "src/adapters/gemini/gemini-browser-worker.ts",
-      "src/adapters/chatgpt/chatgpt-browser-worker.ts",
-      "src/adapters/gemini/gemini-image-worker.ts",
-    ];
-    for (const relPath of insertPromptWorkers) {
-      const source = readFileSync(resolve(import.meta.dir, "..", relPath), "utf8");
-      expect(source).not.toContain("page.bringToFront()");
+    const adaptersRoot = resolve(import.meta.dir, "..", "src/adapters");
+    const adapterFiles: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile() && entry.name.endsWith(".ts")) adapterFiles.push(full);
+      }
+    };
+    walk(adaptersRoot);
+    expect(adapterFiles.length).toBeGreaterThan(10);
+    for (const filePath of adapterFiles) {
+      const source = readFileSync(filePath, "utf8");
+      const codeOnly = source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(codeOnly).not.toContain(".bringToFront(");
     }
+  });
+
+  test("acquirePageFocusEmulation bật CDP Emulation.setFocusEmulationEnabled theo refCount và dọn sạch khi release", async () => {
+    const cdpCalls: Array<{ method: string; params?: unknown }> = [];
+    let newSessionCount = 0;
+    let detachCount = 0;
+
+    const fakePage = {
+      context: () => ({
+        newCDPSession: async () => {
+          newSessionCount += 1;
+          return {
+            send: async (method: string, params?: unknown) => {
+              cdpCalls.push({ method, params });
+            },
+            detach: async () => {
+              detachCount += 1;
+            },
+          };
+        },
+      }),
+    } as unknown as Page;
+
+    const release1 = await acquirePageFocusEmulation(fakePage);
+    const result = await withPageFocusEmulation(fakePage, async () => {
+      expect(newSessionCount).toBe(1);
+      return "ok";
+    });
+    expect(result).toBe("ok");
+    // Chưa detach vì release1 vẫn đang giữ refCount
+    expect(detachCount).toBe(0);
+
+    await release1();
+    expect(detachCount).toBe(1);
+    expect(cdpCalls).toEqual([
+      { method: "Emulation.setFocusEmulationEnabled", params: { enabled: true } },
+      { method: "Emulation.setFocusEmulationEnabled", params: { enabled: false } },
+    ]);
+
+    // Mock Page không có context() phải no-op an toàn
+    const noopRelease = await acquirePageFocusEmulation({} as Page);
+    await noopRelease();
   });
 });

@@ -1,5 +1,4 @@
 import type { Page } from "playwright-core";
-import { browserFocusMutex } from "../web/browser/browser-focus-mutex";
 import {
   normalizeCopiedGeminiSnippet,
   type GeminiResponseBaseline,
@@ -196,17 +195,11 @@ export class GeminiClipboardSalvage {
 
       if (!copyButton) return null;
 
-      const clicked = await browserFocusMutex
-        .runExclusive(
-          async () => {
-            await page.bringToFront().catch(() => {});
-            await copyButton.scrollIntoViewIfNeeded();
-            await copyButton.click({ timeout: 2_000 });
-            return true;
-          },
-          { timeoutMs: 3_000 },
-        )
-        .catch(() => false);
+      const clicked = await (async () => {
+        await copyButton.scrollIntoViewIfNeeded({ timeout: 2_000 });
+        await copyButton.click({ timeout: 2_000 });
+        return true;
+      })().catch(() => false);
       if (!clicked) return null;
 
       // Chỉ đọc từ in-page clipboard hook của chính tab này; không fallback `navigator.clipboard.readText()`.

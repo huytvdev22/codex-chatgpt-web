@@ -3,6 +3,7 @@ const { randomBytes } = require("node:crypto");
 const { WebContentsView, session, shell } = require("electron");
 const { writePrivateFileAtomic } = require("../infra/atomic-file.cjs");
 const { PrimaryViewManager } = require("./primary-view-manager.cjs");
+const { BackgroundWorkerHost } = require("./background-worker-host.cjs");
 const { BrowserProviderRegistry } = require("./providers/browser-provider-registry.cjs");
 const {
   M365_ORIGIN,
@@ -204,6 +205,7 @@ class BrowserHost {
     providerProfiles = null,
     onProviderProfilesChanged = null,
     externalChromeLogin = null,
+    backgroundWorkerHost = null,
   }) {
     this.window = window;
     this.descriptorPath = descriptorPath;
@@ -295,6 +297,9 @@ class BrowserHost {
       provider: this.provider,
     };
 
+    this.backgroundWorkerHost = backgroundWorkerHost || new BackgroundWorkerHost({
+      logger: this.logger,
+    });
     this.turnTabManager = new TurnTabManager(this);
     this.primaryViewManager = new PrimaryViewManager({
       window,
@@ -665,6 +670,9 @@ class BrowserHost {
 
   async initializePrimaryView() {
     await this.syncProfilesAuthFromSessions().catch(() => false);
+    if (this.backgroundWorkerHost && typeof this.backgroundWorkerHost.ensureReady === "function") {
+      await this.backgroundWorkerHost.ensureReady();
+    }
     if (this.view) {
       this.view.setBounds(this.hiddenTurnBounds());
       this.view.setVisible(true);
@@ -1339,6 +1347,9 @@ class BrowserHost {
 
   show() {
     this.visible = true;
+    if (!this.homeSurfaceOpen && this.selectedTabId === "home" && this.turnTabs.size > 0) {
+      this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
+    }
     this.syncViewVisibility();
     this.setState({ visible: true });
     if (this.surfaceActive && this.boundsReady) this.activeView().webContents.focus();
@@ -2022,6 +2033,7 @@ class BrowserHost {
     this.closeAuthView(this.authView, true);
     this.clearHomeNavigationTimeout();
     this.turnTabManager?.destroy();
+    this.backgroundWorkerHost?.destroy?.();
     this.primaryViewManager?.destroyAll();
     this.providerViews?.clear();
     this.externalChromeLogin?.destroy?.();

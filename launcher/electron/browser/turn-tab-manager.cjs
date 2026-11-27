@@ -29,6 +29,7 @@ const TURN_HEARTBEAT_SWEEP_MS = 5_000;
 const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
 const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
+const WARM_TURN_THROTTLE_GRACE_MS = 90_000;
 const AI_STUDIO_REOPEN_COOLDOWN_MS = 3_000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -172,7 +173,13 @@ function loadCommittedBrowserSurface(
  * bootstrap + retry, heartbeat/lease reaping, power-save blocking và dọn dẹp tài nguyên.
  */
 class TurnTabManager {
-  constructor(host, { standalone = false, aiStudioReopenCooldownMs, slotWaitTimeoutMs, sameKeyWaitTimeoutMs } = {}) {
+  constructor(host, {
+    standalone = false,
+    aiStudioReopenCooldownMs,
+    slotWaitTimeoutMs,
+    sameKeyWaitTimeoutMs,
+    warmThrottleGraceMs,
+  } = {}) {
     this.host = host;
     this.turnTabs = host.turnTabs instanceof Map ? host.turnTabs : new Map();
     this.closedTurnOwners = host.closedTurnOwners instanceof Map ? host.closedTurnOwners : new Map();
@@ -202,6 +209,11 @@ class TurnTabManager {
           : typeof host.slotWaitTimeoutMs === "number"
             ? host.slotWaitTimeoutMs
             : (standalone ? 0 : DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS));
+    this.warmThrottleGraceMs = typeof warmThrottleGraceMs === "number"
+      ? warmThrottleGraceMs
+      : typeof host.warmThrottleGraceMs === "number"
+        ? host.warmThrottleGraceMs
+        : WARM_TURN_THROTTLE_GRACE_MS;
     this.turnLeaseSweep = null;
     this.resumeListener = null;
 
@@ -365,6 +377,9 @@ class TurnTabManager {
       activeProfileId,
       resolvedInitialUrl,
     );
+    if (this.host.backgroundWorkerHost && typeof this.host.backgroundWorkerHost.ensureReady === "function") {
+      await this.host.backgroundWorkerHost.ensureReady();
+    }
     const view = new WebContentsView({
       webPreferences: {
         partition: targetPartition,
@@ -399,6 +414,9 @@ class TurnTabManager {
       initializingSurface: true,
       bootstrapReady: false,
       rendererReady: false,
+      attachedToMainWindow: false,
+      warmGraceActive: false,
+      warmThrottleTimer: null,
       deviceEmulationViewport: null,
       deviceEmulationDirty: true,
       bootstrapDeadlineAt: Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS,
@@ -406,7 +424,10 @@ class TurnTabManager {
     };
     this.turnTabs.set(id, tab);
     this.syncPowerSaveBlocker();
-    this.host.window.contentView.addChildView(view);
+    if (!this.host.backgroundWorkerHost) {
+      this.host.window.contentView.addChildView(view);
+      tab.attachedToMainWindow = true;
+    }
     this.host.presentTurnView(tab, false);
     view.webContents.setZoomFactor(this.host.state.zoomFactor);
     this.host.bindShellZoomShortcuts(view.webContents);
@@ -497,7 +518,7 @@ class TurnTabManager {
     }
     if (tab.status !== "running") throw new Error(`Browser turn ${traceId} is no longer running`);
     tab.lastHeartbeatAt = Date.now();
-    if (refreshViewport) {
+    if (refreshViewport && !this.host.backgroundWorkerHost) {
       tab.deviceEmulationDirty = true;
       this.host.syncViewVisibility();
     }
@@ -589,7 +610,69 @@ class TurnTabManager {
     return Promise.all(cancellations);
   }
 
+  clearWarmThrottleTimer(tab) {
+    if (!tab) return;
+    if (tab.warmThrottleTimer) {
+      clearTimeout(tab.warmThrottleTimer);
+      tab.warmThrottleTimer = null;
+    }
+    tab.warmGraceActive = false;
+  }
+
+  scheduleWarmThrottle(tab) {
+    this.clearWarmThrottleTimer(tab);
+    const contents = tab?.view?.webContents;
+    const applyIdleThrottle = () => {
+      tab.warmThrottleTimer = null;
+      tab.warmGraceActive = false;
+      if (this.turnTabs.get(tab.id) !== tab || tab.status !== "ready") return;
+      if (contents && !contents.isDestroyed?.()) {
+        contents.setBackgroundThrottling?.(true);
+      }
+      this.host.syncViewVisibility?.();
+    };
+    if (!Number.isFinite(this.warmThrottleGraceMs) || this.warmThrottleGraceMs <= 0) {
+      applyIdleThrottle();
+      return;
+    }
+    tab.warmGraceActive = true;
+    if (contents && !contents.isDestroyed?.()) {
+      contents.setBackgroundThrottling?.(false);
+    }
+    const timer = setTimeout(applyIdleThrottle, this.warmThrottleGraceMs);
+    timer.unref?.();
+    tab.warmThrottleTimer = timer;
+  }
+
   presentTurnView(tab, visible) {
+    const workerHost = this.host.backgroundWorkerHost;
+    if (workerHost) {
+      if (visible) {
+        workerHost.detachView?.(tab.view);
+        if (!tab.attachedToMainWindow) {
+          this.host.window?.contentView?.addChildView?.(tab.view);
+          tab.attachedToMainWindow = true;
+        }
+        tab.view.setBounds(this.host.bounds);
+        if (tab.rendererReady && tab.deviceEmulationViewport) {
+          tab.view.webContents?.disableDeviceEmulation?.();
+          tab.deviceEmulationViewport = null;
+        }
+        if (tab.rendererReady) tab.deviceEmulationDirty = false;
+        tab.view.setVisible(true);
+      } else {
+        if (tab.attachedToMainWindow) {
+          try {
+            this.host.window?.contentView?.removeChildView?.(tab.view);
+          } catch {}
+          tab.attachedToMainWindow = false;
+        }
+        const keepPainted = tab.status === "running" || tab.warmGraceActive === true;
+        workerHost.attachView(tab.view, { visible: keepPainted });
+      }
+      return;
+    }
+
     if (visible) {
       tab.view.setBounds(this.host.bounds);
       if (tab.rendererReady && tab.deviceEmulationViewport) {
@@ -623,6 +706,7 @@ class TurnTabManager {
   removeTurnTab(tab, abortRunning) {
     if (!this.turnTabs.has(tab.id)) return;
     this.turnTabs.delete(tab.id);
+    this.clearWarmThrottleTimer(tab);
     const closedDueToFailure = abortRunning === true
       || tab.status === "error"
       || tab.status === "aborted";
@@ -642,7 +726,9 @@ class TurnTabManager {
       }
       this.host.shellZoomShortcutBindings.delete(contents);
     }
-    try { this.host.window.contentView.removeChildView(tab.view); } catch {}
+    this.host.backgroundWorkerHost?.detachView?.(tab.view);
+    try { this.host.window?.contentView?.removeChildView?.(tab.view); } catch {}
+    tab.attachedToMainWindow = false;
     if (contents && !contents.isDestroyed()) {
       if (tab.deviceEmulationViewport) {
         contents.disableDeviceEmulation?.();
@@ -683,8 +769,12 @@ class TurnTabManager {
 
   _shouldSelectTabOnBegin(tab, reveal) {
     if (reveal === true) return true;
-    const currentSelected = this.selectedTurnTab();
-    if (currentSelected && currentSelected.id !== tab.id && currentSelected.status === "running") {
+    const hasSelectedTurnTab = this.host.selectedTabId !== "home"
+      && this.turnTabs.has(this.host.selectedTabId);
+    if (hasSelectedTurnTab) {
+      return false;
+    }
+    if (this.host.homeSurfaceOpen === true || this.host.visible === true) {
       return false;
     }
     return true;
@@ -850,6 +940,7 @@ class TurnTabManager {
           existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
         }
         existing.lastHeartbeatAt = Date.now();
+        this.clearWarmThrottleTimer(existing);
         if (!existing.view.webContents.isDestroyed()) {
           existing.view.webContents.setBackgroundThrottling(false);
         }
@@ -1027,13 +1118,13 @@ class TurnTabManager {
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `${providerObj.displayName} turn ${status}`;
     tab.loading = false;
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
     if (status === "completed"
       && retain
       && tab.conversationKey
       && (!tab.connectorIdentity || effectiveConnectorBound)) {
       tab.connectorBound = effectiveConnectorBound;
       tab.lastHeartbeatAt = Date.now();
+      this.scheduleWarmThrottle(tab);
       if (isAssistantTab(tab)) {
         this.trimAssistantRetainedTabs(tab.id);
       }
@@ -1044,6 +1135,8 @@ class TurnTabManager {
       this._notifyTabReleased(tab);
       return { cancelledByUser };
     }
+    this.clearWarmThrottleTimer(tab);
+    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
     if (typeof this.host.removeTurnTab === "function") {
       this.host.removeTurnTab(tab, false);
     } else {
@@ -1069,7 +1162,10 @@ class TurnTabManager {
       this.host.powerSaveBlockerId = null;
     }
     for (const tab of this.turnTabs.values()) {
-      try { this.host.window.contentView.removeChildView(tab.view); } catch {}
+      this.clearWarmThrottleTimer(tab);
+      this.host.backgroundWorkerHost?.detachView?.(tab.view);
+      try { this.host.window?.contentView?.removeChildView?.(tab.view); } catch {}
+      tab.attachedToMainWindow = false;
       if (!tab.view.webContents.isDestroyed()) {
         if (tab.deviceEmulationViewport) {
           tab.view.webContents.disableDeviceEmulation?.();
@@ -1098,6 +1194,7 @@ module.exports = {
   TURN_HEARTBEAT_SWEEP_MS,
   TURN_HEARTBEAT_TIMEOUT_MS,
   TURN_TAB_BOOTSTRAP_TIMEOUT_MS,
+  WARM_TURN_THROTTLE_GRACE_MS,
   TurnTabManager,
   TurnTabScheduler,
   hasProviderOnHost,

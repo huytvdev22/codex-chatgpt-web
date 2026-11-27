@@ -1033,7 +1033,7 @@ function BrowserSurface({
           </button>
           <IconButton icon="plus" label={copy.zoomIn} onClick={() => void zoom("in")} />
           <IconButton
-            disabled={!visible}
+            disabled={!visible && (browser?.tabs ?? []).length === 0}
             icon="logs"
             label={copy.openBrowserDevTools}
             onClick={() => void openDevTools()}

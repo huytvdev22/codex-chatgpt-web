@@ -1,0 +1,18 @@
+# 115: Kiến trúc Chạy Nền Headless-First (`BackgroundWorkerHost`, Reparenting On-Demand, CDP Focus Emulation & Warm Grace 90s)
+
+> **Trạng thái:** ⏳ Chờ User Test & Confirm  
+> **Providers:** `launcher`, `electron`, `cdp`, `playwright`, `ai-studio`, `gemini`, `chatgpt`, `m365-copilot`  
+> **Keywords:** `BackgroundWorkerHost`, `headless-first`, `WebContentsView`, `reparenting`, `Emulation.setFocusEmulationEnabled`, `bringToFront`, `warmThrottleGraceMs`, `IDLE_BROWSER_URL`, `Hide Browser`
+
+## ⚡ TL;DR
+1. **Triệu chứng:** Khi chạy nhiều provider/adapter song song trong nền, các `WebContentsView` gắn chung vào `mainWindow` với trick `hiddenTurnBounds(width+1, height+1)` và toggle `enableDeviceEmulation()` ↔ `disableDeviceEmulation()` dễ bị ảnh hưởng bởi thao tác cửa sổ (`hide`/`minimize`/resize/đổi tab); ChatGPT & Gemini vẫn còn `page.bringToFront()` có nguy cơ cướp focus; tab `ready` bị `setBackgroundThrottling(true)` ngay lập tức tại giây thứ 0 làm gián đoạn chuỗi tool-call/chat nối tiếp.
+2. **Nguyên nhân gốc rễ:** Thiếu ranh giới tách bạch giữa automation worker nền và cửa sổ hiển thị UI cho user; chưa bật CDP `Emulation.setFocusEmulationEnabled(true)` ở tầng worker chung; và đóng băng renderer ngay khi `endTurn()` mà không có khoảng ấm (grace period).
+3. **Cách sửa:** Tách `BackgroundWorkerHost` sở hữu `BrowserWindow` ẩn cố định (`1280×800`, `show: false`, `focusable: false`, `paintWhenInitiallyHidden: true`, nạp sẵn `IDLE_BROWSER_URL` tránh Lỗi 098) làm sân chạy mặc định cho mọi turn tab; chỉ reparent `WebContentsView` sang `mainWindow` on-demand khi user bật `Show Browser` (bấm tab lúc đang `Hide Browser` vẫn giữ ẩn, turn nền không tự nhảy `selectedTabId`); bật `Emulation.setFocusEmulationEnabled(true)` theo refCount ở tầng chung và cấm tuyệt đối `.bringToFront(` trong `src/adapters/`; áp dụng Warm Grace Period `90s` sau `endTurn()` trước khi hạ `setBackgroundThrottling(true)`.
+
+## Chi tiết thay đổi
+- `launcher/electron/browser/background-worker-host.cjs` (mới): Class `BackgroundWorkerHost` quản lý cửa sổ ẩn `1280×800`, nạp `IDLE_BROWSER_URL` khi `ensureReady()`, hỗ trợ `attachView`, `detachView`, `hasView`, `destroy`.
+- `launcher/electron/browser/turn-tab-manager.cjs` & `launcher/electron/browser/browser-host.cjs`: Gắn `turnTabs` mặc định vào `BackgroundWorkerHost`, reparent sang `mainWindow` chỉ khi `visible` (`Show Browser`), tự detach trả về `workerWindow` khi ẩn/minimize/đổi mục; không cướp `selectedTabId` khi `reveal=false`; giữ ẩn khi `selectTab()` lúc `Hide Browser`; bổ sung Warm Grace Period `90_000ms` (`scheduleWarmThrottle` / `clearWarmThrottleTimer`).
+- `src/adapters/web/browser/cdp-focus-emulation.ts` (mới), `src/adapters/web/browser/base-browser-worker.ts`, `src/adapters/ai-studio/ai-studio-speech-worker.ts`, `src/adapters/gemini/gemini-image-worker.ts`: Bật CDP `Emulation.setFocusEmulationEnabled(true)` theo refCount xuyên suốt lượt chạy và dọn sạch khi kết thúc.
+- `src/adapters/chatgpt/chatgpt-clipboard-salvage.ts` & `src/adapters/gemini/gemini-clipboard-salvage.ts`: Gỡ bỏ hoàn toàn `page.bringToFront()` và `browserFocusMutex`, dùng trusted click dưới CDP Focus Emulation (fallback thẳng về DOM extraction nếu hook không bắt được).
+- `launcher/src/App.tsx`: Cho phép bấm nút `Open DevTools` (detached) ngay cả khi đang `Hide Browser` miễn là có tab nền.
+- `launcher/tests/background-worker-host.test.cjs` (mới), `launcher/tests/browser-host.test.cjs` & `tests/cdp-pool-and-focus-isolation.test.ts`: Bổ sung unit test cho `BackgroundWorkerHost`, reparenting, `selectTab` khi ẩn, Warm Grace Period, `acquirePageFocusEmulation` và architecture guard cấm `.bringToFront(` trên toàn bộ `src/adapters/`.
