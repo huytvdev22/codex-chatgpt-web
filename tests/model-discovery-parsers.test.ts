@@ -179,5 +179,19 @@ describe("Adapter Model Discovery Parsers", () => {
       false,
     );
     expect(legacyUiModels.map(m => m.slug)).toEqual(["gemini/4-hydrogen"]);
+
+    const viUiModels = buildGeminiDiscoveredModels(
+      [
+        { label: "Tự động", sublabel: "Thích ứng với nhu cầu của bạn", modeId: "8c46e95b1a07cecc", isChecked: false },
+        { label: "Trợ giúp hằng ngày", sublabel: "4 Hydrogen", modeId: "56fdd199312815e2", isChecked: true },
+        { label: "Phân tích sâu hơn", sublabel: "4 Neon", modeId: "e6fa609c3fa255c0", isChecked: false },
+      ],
+      true,
+    );
+    expect(viUiModels.map(m => m.slug)).toEqual([
+      "gemini/auto",
+      "gemini/4-hydrogen",
+      "gemini/4-neon",
+    ]);
   });
 });

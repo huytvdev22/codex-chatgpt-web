@@ -13,14 +13,21 @@ export const GEMINI_SELECTORS = {
 
   /** Nút gửi tin nhắn (Send) */
   sendButton: [
+    '[data-test-id="send-button-container"] gem-icon-button.send-button.submit button',
+    "gem-icon-button.send-button.submit button",
+    '[data-test-id="send-button-container"] gem-icon-button.send-button:not(.stop) button',
     'button[aria-label="Send message"]',
+    'button[aria-label="Gửi tin nhắn"]',
     "button.send-button",
     'button[aria-label*="Send" i]',
   ].join(", "),
 
   /** Nút dừng sinh câu trả lời */
   stopButton: [
+    '[data-test-id="send-button-container"] gem-icon-button.send-button.stop button',
+    "gem-icon-button.send-button.stop button",
     'button[aria-label="Stop response"]',
+    'button[aria-label="Ngừng tạo câu trả lời"]',
     'button[aria-label*="Stop generating" i]',
     'button[aria-label*="Stop streaming" i]',
     'button[aria-label*="Stop" i]',
@@ -48,14 +55,22 @@ export const GEMINI_SELECTORS = {
   /** Nút bật / tắt Temporary Chat */
   tempChatOnButton: [
     'button[aria-label="Turn on temporary chat"]',
-    '[data-test-id="temp-chat-button-container"] button[aria-label*="temporary chat" i]',
+    'button[aria-label="Bật cuộc trò chuyện tạm thời"]',
+    '[data-test-id="temp-chat-button-container"] button[aria-label*="Turn on" i]',
+    '[data-test-id="temp-chat-button-container"] button[aria-label*="Bật " i]',
   ].join(", "),
-  tempChatOffButton: 'button[aria-label="Turn off temporary chat"]',
+  tempChatOffButton: [
+    'button[aria-label="Turn off temporary chat"]',
+    'button[aria-label="Tắt cuộc trò chuyện tạm thời"]',
+    '[data-test-id="temp-chat-button-container"] button[aria-label*="Turn off" i]',
+    '[data-test-id="temp-chat-button-container"] button[aria-label*="Tắt " i]',
+  ].join(", "),
 
   /** Nút mở menu Upload & tools và thẻ input file ảnh ẩn */
   uploadAndToolsButton: [
     'button[aria-label="Upload & tools"]',
     'button[aria-label="Upload and tools"]',
+    'button[aria-label="Nội dung tải lên và công cụ"]',
     'button[aria-label*="Upload" i][aria-haspopup="menu"]',
     'gem-icon-button.gem-menu-button button[aria-haspopup="menu"]',
   ].join(", "),
@@ -74,10 +89,22 @@ export const GEMINI_SELECTORS = {
   /** Khối code block & các nút Copy */
   codeBlock: "code-block, pre",
   codeBlockDecoration: ".code-block-decoration",
-  copyCodeButton:
-    'gem-icon-button[data-test-id="gem-copy-button"] button, button[aria-label="Copy code"]',
-  copyAssistantResponseButton: 'button[aria-label="Copy"]',
-  redoButton: 'button[aria-label="Redo"]',
+  copyCodeButton: [
+    'gem-icon-button[data-test-id="gem-copy-button"] button',
+    'button[aria-label="Copy code"]',
+    'button[aria-label="Sao chép mã"]',
+  ].join(", "),
+  copyAssistantResponseButton: [
+    "copy-button button",
+    'button[aria-label="Copy"]',
+    'button[aria-label="Sao chép"]',
+  ].join(", "),
+  redoButton: [
+    "regenerate-button button",
+    'gem-icon-button[data-test-id="regenerate-button"] button',
+    'button[aria-label="Redo"]',
+    'button[aria-label="Khôi phục"]',
+  ].join(", "),
 
   /** Các banner lỗi / cảnh báo hệ thống ngoài vùng nội dung chat */
   errorBanner: [

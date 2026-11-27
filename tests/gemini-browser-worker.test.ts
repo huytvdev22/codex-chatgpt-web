@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Page } from "playwright-core";
 import {
+  GEMINI_SELECTORS,
   GeminiBrowserWorker,
+  GeminiCapabilityPicker,
   GeminiDomObserver,
   normalizeCopiedGeminiSnippet,
   selectPreferredGeminiResponse,
@@ -327,5 +329,91 @@ describe("GeminiBrowserWorker, DomObserver & ClipboardSalvage", () => {
     } finally {
       Date.now = realDateNow;
     }
+  });
+
+  test("GEMINI_SELECTORS chứa selector cấu trúc độc lập ngôn ngữ và fallback tiếng Việt cho Send/Stop/Copy/Redo", () => {
+    expect(GEMINI_SELECTORS.sendButton).toContain("gem-icon-button.send-button.submit button");
+    expect(GEMINI_SELECTORS.sendButton).toContain('button[aria-label="Gửi tin nhắn"]');
+    expect(GEMINI_SELECTORS.stopButton).toContain("gem-icon-button.send-button.stop button");
+    expect(GEMINI_SELECTORS.stopButton).toContain('button[aria-label="Ngừng tạo câu trả lời"]');
+    expect(GEMINI_SELECTORS.copyAssistantResponseButton).toContain("copy-button button");
+    expect(GEMINI_SELECTORS.redoButton).toContain("regenerate-button button");
+    expect(GEMINI_SELECTORS.tempChatOnButton).toContain('button[aria-label="Bật cuộc trò chuyện tạm thời"]');
+    expect(GEMINI_SELECTORS.tempChatOffButton).toContain('button[aria-label="Tắt cuộc trò chuyện tạm thời"]');
+  });
+
+  test("GeminiCapabilityPicker chọn được mức Thinking level tiếng Việt (Thấp / Trung bình / Cao)", async () => {
+    const picker = new GeminiCapabilityPicker();
+    let clickedText = "";
+    const viSubItems = [
+      { text: "Thấp Nhanh và hiệu quả", checked: "true" },
+      { text: "Trung bình Độ sâu cân bằng", checked: "false" },
+      { text: "Cao Cực kỳ kỹ lưỡng", checked: "false" },
+    ];
+    const makeItem = (entry: { text: string; checked: string }) => ({
+      isVisible: async () => true,
+      innerText: async () => entry.text,
+      getAttribute: async (name: string) => (name === "aria-checked" ? entry.checked : null),
+      click: async () => {
+        clickedText = entry.text;
+      },
+    });
+    const fakePage = {
+      waitForTimeout: async () => {},
+      keyboard: { press: async () => {} },
+      locator: (selector: string) => {
+        if (selector.includes("bard-mode-menu-button")) {
+          return { first: () => ({ isVisible: async () => true, click: async () => {} }) };
+        }
+        if (selector.includes("gem-mode-menu")) {
+          return {
+            first: () => ({
+              isVisible: async () => true,
+              waitFor: async () => {},
+              locator: (inner: string) => {
+                if (inner.includes("thinking_level")) {
+                  return {
+                    first: () => ({
+                      isVisible: async () => true,
+                      getAttribute: async () => "sub-id",
+                      hover: async () => {},
+                      click: async () => {},
+                    }),
+                  };
+                }
+                return {
+                  count: async () => 1,
+                  nth: () => ({
+                    isVisible: async () => true,
+                    innerText: async () => "Trợ giúp hằng ngày 4 Hydrogen",
+                    getAttribute: async (n: string) => (n === "aria-checked" ? "true" : null),
+                  }),
+                };
+              },
+            }),
+          };
+        }
+        if (selector === "#sub-id") {
+          return {
+            isVisible: async () => true,
+            locator: () => ({
+              count: async () => viSubItems.length,
+              nth: (i: number) => makeItem(viSubItems[i]!),
+            }),
+          };
+        }
+        return { first: () => ({ isVisible: async () => false }) };
+      },
+    } as unknown as Page;
+
+    const result = await picker.ensureCapabilityDetailed(fakePage, {
+      modelSlug: "gemini/4-hydrogen",
+      modelLabel: "4 Hydrogen",
+      thinkingEffort: "high",
+      isAccountDefault: true,
+    });
+    expect(result.modelSelected).toBe(true);
+    expect(result.thinkingSelected).toBe(true);
+    expect(clickedText).toBe("Cao Cực kỳ kỹ lưỡng");
   });
 });

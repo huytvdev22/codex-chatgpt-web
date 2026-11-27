@@ -101,7 +101,11 @@ class GeminiSmokeTester {
 
     await view.webContents.executeJavaScript(`(() => {
       const selectors = [
+        '[data-test-id="send-button-container"] gem-icon-button.send-button.submit button',
+        'gem-icon-button.send-button.submit button',
+        '[data-test-id="send-button-container"] gem-icon-button.send-button:not(.stop) button',
         'button[aria-label="Send message"]',
+        'button[aria-label="Gửi tin nhắn"]',
         'button.send-button',
         'button[aria-label*="Send" i]',
       ];

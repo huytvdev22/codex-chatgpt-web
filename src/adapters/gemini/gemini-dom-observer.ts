@@ -60,7 +60,7 @@ export interface GeminiObserverRuntimeState {
 }
 
 const GEMINI_WEB_ERROR_REGEX =
-  /something went wrong|you['’]ve reached.*limit|rate limit|too many requests|try again later|network error|session has expired|couldn['’]t generate|unavailable/i;
+  /something went wrong|you['’]ve reached.*limit|rate limit|too many requests|try again later|network error|session has expired|couldn['’]t generate|unavailable|đã xảy ra lỗi|đạt đến giới hạn|quá nhiều yêu cầu|thử lại sau|lỗi mạng|phiên đã hết hạn|không thể tạo/i;
 
 /**
  * Quan sát DOM câu trả lời trên Gemini Web (`gemini.google.com`):
@@ -179,7 +179,7 @@ export class GeminiDomObserver {
           const text = (banner.innerText || banner.textContent || "").trim();
           if (
             text &&
-            /something went wrong|limit|error|expired|too many|try again|unavailable/i.test(
+            /something went wrong|limit|error|expired|too many|try again|unavailable|đã xảy ra lỗi|giới hạn|quá nhiều|thử lại|hết hạn|không thể tạo/i.test(
               text,
             )
           ) {

@@ -12,9 +12,12 @@ export interface RawGeminiDomModeItem {
 }
 
 function cleanGeminiUiLabel(raw: RawGeminiDomModeItem): string {
-  const sub = raw.sublabel?.replace(/\b(?:new|beta|default)\b/gi, "").trim();
-  const lbl = raw.label.replace(/\b(?:new|beta|default)\b/gi, "").trim();
-  if (sub && !/adapts to your needs/i.test(sub)) {
+  const sub = raw.sublabel?.replace(/\b(?:new|beta|default|mới)\b/gi, "").trim();
+  const lbl = raw.label.replace(/\b(?:new|beta|default|mới)\b/gi, "").trim();
+  if (/^(?:auto|tự động)$/i.test(lbl)) {
+    return "Auto";
+  }
+  if (sub && !/adapts to your needs|thích ứng với nhu cầu/i.test(sub)) {
     return sub;
   }
   return lbl;

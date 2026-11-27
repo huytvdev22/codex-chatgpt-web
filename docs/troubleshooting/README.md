@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **116** | Gemini Web đứng yên 15s sau khi chọn model & điền prompt do `<gem-icon-button>` đổi DOM nút Send/Stop và nhãn Tiếng Việt (`Gửi tin nhắn`, `Thấp/Trung bình/Cao`) | `gemini`, `web`, `assistant`, `launcher` | ⏳ Chờ User Test & Confirm | [116-gemini-send-button-dom-and-vi-locale-selectors.md](./116-gemini-send-button-dom-and-vi-locale-selectors.md) |
 | **115** | Kiến trúc chạy nền Headless-first (`BackgroundWorkerHost` ẩn `1280×800`, reparenting on-demand, CDP Focus Emulation, cấm `bringToFront`, Warm Grace `90s`) | `launcher`, `electron`, `cdp`, `playwright`, `ai-studio`, `gemini`, `chatgpt`, `m365-copilot` | ⏳ Chờ User Test & Confirm | [115-headless-first-background-worker-host.md](./115-headless-first-background-worker-host.md) |
 | **114** | Tự động đóng hộp thoại `Welcome to AI Studio` (`#g1-welcome-dialog` / `ms-g1-welcome-dialog`) chặn thao tác khi mở Google AI Studio | `ai-studio`, `speech`, `launcher` | ⏳ Chờ User Test & Confirm | [114-ai-studio-g1-welcome-dialog-dismiss.md](./114-ai-studio-g1-welcome-dialog-dismiss.md) |
 | **113** | Fix root cause AI Studio `Permission denied` (`403` BotGuard/deviceEmulation) & xử lý P1–P3 (Gemini stall guard, multi-profile `x-gateway-profile-id`, cô lập `responses-state`, cô lập `verify`) | `ai-studio`, `gemini`, `launcher`, `gateway`, `responses-state`, `verify` | ⏳ Chờ User Test & Confirm | [113-aistudio-403-rootcause-and-p1-p3-stability.md](./113-aistudio-403-rootcause-and-p1-p3-stability.md) |

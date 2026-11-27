@@ -6,9 +6,9 @@ import type {
 } from "./model-provider";
 
 const EFFORT_LABELS: Record<GeminiThinkingEffort, RegExp> = {
-  low: /^(?:low|fast)\b/i,
-  medium: /^(?:medium|thinking)\b/i,
-  high: /^(?:high|pro)\b/i,
+  low: /^(?:low|fast|thấp|nhanh)\b/i,
+  medium: /^(?:medium|thinking|trung\s*bình)\b/i,
+  high: /^(?:high|pro|cao)\b/i,
 };
 
 export interface GeminiCapabilityResult {
