@@ -700,6 +700,7 @@ export class AssistantResponsesService {
         type: "done",
         stopReason: "stop",
         endTurn: true,
+        finalText: finalParsed.content,
         usage,
       });
     } else {

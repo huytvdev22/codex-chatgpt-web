@@ -153,7 +153,7 @@ describe("AssistantStreamGate", () => {
     expect(deltas.join("")).not.toContain("<web");
   });
 
-  test("finalizeAsFinalAnswer vẫn căn neo chuẩn khi clipboard thêm **bold** ngay từ đầu câu hoặc fallback khi mismatch hoàn toàn", () => {
+  test("finalizeAsFinalAnswer vẫn căn neo chuẩn khi clipboard thêm **bold** ngay từ đầu câu và không lặp đôi khi mismatch", () => {
     const boldStartDeltas: string[] = [];
     const boldStartGate = new AssistantStreamGate((delta) => boldStartDeltas.push(delta));
     boldStartGate.pushSnapshot("Hà Nội hôm nay trời nắng nhẹ");
@@ -162,8 +162,9 @@ describe("AssistantStreamGate", () => {
 
     const mismatchDeltas: string[] = [];
     const mismatchGate = new AssistantStreamGate((delta) => mismatchDeltas.push(delta));
-    mismatchGate.pushSnapshot("Đang khởi tạo câu trả lời tạm thời...");
-    mismatchGate.finalizeAsFinalAnswer("Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?");
-    expect(mismatchDeltas.join("")).toContain("Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?");
+    mismatchGate.pushSnapshot("Bảng bị vỡ khi đang stream...");
+    const appended = mismatchGate.finalizeAsFinalAnswer("| STT | Đường dẫn |\n| --- | --- |\n| 1 | `~/a` |");
+    expect(appended).toBe("");
+    expect(mismatchDeltas).toEqual(["Bảng bị vỡ khi đang stream..."]);
   });
 });

@@ -231,9 +231,10 @@ function extractAlignedRemainingText(
     }
   }
 
-  // Nếu phần đã lỡ stream trước đó hoàn toàn không khớp với đáp án cuối (vd placeholder ngắn),
-  // nối tiếp đáp án cuối thay vì im lặng nuốt mất câu trả lời.
-  return candidate !== emittedText ? `\n\n${candidate}` : "";
+  // Không nối `\n\n${candidate}` khi snapshot streaming đã đi một nhánh format khác:
+  // bản chốt cuối sạch sẽ được gửi qua `done.finalText` -> `response.output_item.done`
+  // để client ghi đè sạch thay vì hiển thị lặp đôi cả 2 bản.
+  return "";
 }
 
 /**

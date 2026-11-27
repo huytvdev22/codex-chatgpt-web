@@ -204,4 +204,44 @@ describe("Assistant routes isolation & incremental streaming (/clients/assistant
     });
     expect(imgRes.status).toBe(400);
   });
+
+  test("POST /clients/assistant/v1/responses chốt cuối response.output_item.done bằng bản Clipboard sạch, không lặp đôi bảng", async () => {
+    const streamedDomTable = "| STT | Đường dẫn |\n| --- | --- |\n| 1 | [~/a](<~/a>) |";
+    const cleanClipboardTable = "| STT | Đường dẫn |\n| --- | --- |\n| 1 | `~/a` |";
+    const adapter = createFakeStreamingAdapter(async (req) => {
+      req.onTextSnapshot?.(streamedDomTable);
+      await Bun.sleep(5);
+      return {
+        rawResponse: cleanClipboardTable,
+        conversationId: "conv-table-dedup-1",
+        launcherReused: false,
+      };
+    });
+
+    const config = { ...defaultConfig(), host: "127.0.0.1" as const, port: 0 };
+    activeServer = startServer(config, { adapterFactory: () => adapter });
+    const baseUrl = `http://127.0.0.1:${activeServer.port}`;
+
+    const res = await fetch(`${baseUrl}/clients/assistant/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "tg-table-dedup", turn_id: "turn-1" }),
+      },
+      body: JSON.stringify({
+        model: "gemini/gemini-2.5-flash",
+        stream: true,
+        input: [{ role: "user", content: [{ type: "input_text", text: "Trả về dạng bảng" }] }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const events = parseSseEvents(await res.text());
+    const itemDone = events.find((e) => e.data.type === "response.output_item.done");
+    const doneText = String(
+      ((itemDone?.data.item as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]?.text) ?? "",
+    );
+    expect(doneText).toBe(cleanClipboardTable);
+    expect(doneText.match(/\| STT \| Đường dẫn \|/g)?.length).toBe(1);
+  });
 });

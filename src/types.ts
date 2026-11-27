@@ -205,6 +205,8 @@ export type AdapterEvent =
       usage?: CodexUsage;
       stopReason?: string;
       endTurn?: boolean;
+      /** Bản văn bản chốt cuối (vd. từ nút Copy/Clipboard) để đóng item hoàn chỉnh không bị lệch DOM streaming. */
+      finalText?: string;
       providerState?: CodexProviderContinuationState;
     }
   | {

@@ -12,6 +12,72 @@ const turndown = new TurndownService({
 });
 
 turndown.use(gfm);
+
+function isInsideTableCell(node: Node | null): boolean {
+  for (let cur = node?.parentNode ?? null; cur; cur = cur.parentNode) {
+    if (cur.nodeName === "TD" || cur.nodeName === "TH") return true;
+  }
+  return false;
+}
+
+function getTableRowCellElements(tr: Node | null): HTMLElement[] {
+  if (!tr) return [];
+  return Array.from(tr.childNodes).filter(
+    (child): child is HTMLElement => child.nodeName === "TH" || child.nodeName === "TD",
+  );
+}
+
+function isHeadingTableRow(tr: Node | null): boolean {
+  const parentNode = tr?.parentNode;
+  if (!tr || !parentNode) return false;
+  if (parentNode.nodeName === "THEAD") return true;
+  const cells = getTableRowCellElements(tr);
+  if (cells.length === 0) return false;
+  const isFirstRow =
+    parentNode.firstChild === tr ||
+    (parentNode.nodeName === "TBODY" &&
+      parentNode.parentNode &&
+      Array.from(parentNode.children ?? []).indexOf(tr as Element) === 0);
+  return Boolean(isFirstRow && cells.every((c) => c.nodeName === "TH"));
+}
+
+function formatGfmTableCell(content: string, cellIndex: number): string {
+  return `${cellIndex === 0 ? "| " : " "}${content} |`;
+}
+
+// ChatGPT thường bọc `<p>` bên trong `<th>`/`<td>`; gộp gọn về 1 dòng chuẩn GFM thay vì vỡ dòng theo ô.
+turndown.addRule("gfmTableCellCompact", {
+  filter: ["th", "td"],
+  replacement: (content, node) => {
+    const cells = getTableRowCellElements(node.parentNode);
+    const cellIndex = cells.indexOf(node as HTMLElement);
+    const compact = content
+      .replace(/\r?\n+/g, " ")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/(?<!\\)\|/g, "\\|")
+      .trim();
+    return formatGfmTableCell(compact, cellIndex < 0 ? 0 : cellIndex);
+  },
+});
+
+turndown.addRule("gfmTableRowCompact", {
+  filter: "tr",
+  replacement: (content, node) => {
+    const cleanRow = content.replace(/\r?\n+/g, " ").trim();
+    let borderCells = "";
+    if (isHeadingTableRow(node)) {
+      const alignMap: Record<string, string> = { left: ":--", right: "--:", center: ":-:" };
+      const cells = getTableRowCellElements(node);
+      for (let i = 0; i < cells.length; i += 1) {
+        const align = (cells[i]?.getAttribute("align") || "").toLowerCase();
+        const border = alignMap[align] || "---";
+        borderCells += formatGfmTableCell(border, i);
+      }
+    }
+    return `\n${cleanRow}${borderCells ? `\n${borderCells}` : ""}`;
+  },
+});
+
 turndown.remove(["button"]);
 turndown.keep(["script", "style"]);
 turndown.addRule("removeImages", {
@@ -24,10 +90,13 @@ turndown.addRule("removeSvg", {
 });
 turndown.addRule("preserveCodexPlanBlockTags", {
   filter: "p",
-  replacement: content => {
+  replacement: (content, node) => {
     // Codex recognizes these standalone control lines verbatim. Restore only paragraph text:
     // a post-conversion replacement would also rewrite literal escapes in fenced code.
     const paragraph = content.replace(/^([ \t]*)<(\/?)proposed\\_plan>([ \t]*)$/gm, "$1<$2proposed_plan>$3");
+    if (isInsideTableCell(node)) {
+      return node.nextSibling ? `${paragraph} ` : paragraph;
+    }
     return `\n\n${paragraph}\n\n`;
   },
 });
@@ -60,7 +129,7 @@ turndown.addRule("compactListItem", {
 function inlineFilePath(node: Node): string | undefined {
   if (node.nodeName !== "CODE") return undefined;
   for (let ancestor = node.parentNode; ancestor; ancestor = ancestor.parentNode) {
-    if (["A", "PRE"].includes(ancestor.nodeName)) return undefined;
+    if (["A", "PRE", "TD", "TH"].includes(ancestor.nodeName)) return undefined;
   }
 
   const path = node.textContent ?? "";
