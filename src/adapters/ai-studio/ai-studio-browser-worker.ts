@@ -3,6 +3,8 @@ import {
   BaseWebBrowserWorker,
   BrowserHardTimeoutError,
   BrowserIdleTimeoutError,
+  installInPageClipboardHook,
+  releaseOsClipboardSuppression,
   type BaseBrowserRunOptions,
   type BaseBrowserTurnResult,
   type BrowserCompletionContext,
@@ -996,51 +998,9 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     baselineAnswerCount: number,
   ): Promise<string | null> {
     try {
-      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => { });
-      await page.evaluate(() => {
-        const win = window as unknown as Record<string, unknown>;
-        win.__aistudio_last_copied_markdown = null;
-        win.__codex_suppress_os_clipboard_write = true;
-        if (!win.__aistudio_clipboard_hooked) {
-          win.__aistudio_clipboard_hooked = true;
-          if (navigator.clipboard) {
-            const origWriteText = navigator.clipboard.writeText?.bind(navigator.clipboard);
-            navigator.clipboard.writeText = async (text: string) => {
-              win.__aistudio_last_copied_markdown = text;
-              if (win.__codex_suppress_os_clipboard_write) return;
-              if (origWriteText) {
-                await origWriteText(text).catch(() => { });
-              }
-            };
-            const origWrite = navigator.clipboard.write?.bind(navigator.clipboard);
-            if (origWrite) {
-              navigator.clipboard.write = async (items: ClipboardItems) => {
-                try {
-                  for (const item of items) {
-                    if (item.types?.includes("text/plain")) {
-                      const blob = await item.getType("text/plain");
-                      const text = await blob.text();
-                      if (text && text.trim()) {
-                        win.__aistudio_last_copied_markdown = text;
-                        break;
-                      }
-                    }
-                  }
-                } catch { }
-                if (win.__codex_suppress_os_clipboard_write) return;
-                await origWrite(items).catch(() => { });
-              };
-            }
-          }
-          document.addEventListener(
-            "copy",
-            (event: ClipboardEvent) => {
-              const clipText = event.clipboardData?.getData("text/plain");
-              if (clipText) win.__aistudio_last_copied_markdown = clipText;
-            },
-            { capture: true },
-          );
-        }
+      await installInPageClipboardHook(page, {
+        resultKey: "__aistudio_last_copied_markdown",
+        suppressOsClipboardNow: true,
       });
 
       const answerTurns = page.locator(ANSWER_TURN_SELECTOR);
@@ -1090,12 +1050,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     } catch {
       return null;
     } finally {
-      await page
-        .evaluate(() => {
-          const win = window as unknown as Record<string, unknown>;
-          win.__codex_suppress_os_clipboard_write = false;
-        })
-        .catch(() => { });
+      await releaseOsClipboardSuppression(page);
     }
   }
 

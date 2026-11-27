@@ -1674,6 +1674,7 @@ test("a completed keyed turn is retained for thirty minutes and preserves its ac
     closedTurnOwners: new Map(),
     userCancelledTurnOwners: new Map(),
     selectedTabId: tab.id,
+    warmThrottleGraceMs: 25,
     syncViewVisibility() {},
     writeDescriptor() {},
     publishState() {},
@@ -1708,7 +1709,11 @@ test("a completed keyed turn is retained for thirty minutes and preserves its ac
   assert.equal(tab.status, "ready");
   assert.equal(tab.connectorBound, true);
   assert.equal(Number.isFinite(tab.lastHeartbeatAt), true);
-  assert.deepEqual(throttling, [true]);
+  assert.equal(tab.warmGraceActive, true);
+  assert.deepEqual(throttling, [false]);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(tab.warmGraceActive, false);
+  assert.deepEqual(throttling, [false, true]);
 
   const retainedAt = tab.lastHeartbeatAt;
   BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, retainedAt + (30 * 60 * 1000) - 1);

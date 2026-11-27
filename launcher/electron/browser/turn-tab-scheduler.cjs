@@ -156,14 +156,16 @@ class TurnTabScheduler {
   }
 
   /**
-   * Đánh thức waiter đầu tiên đang chờ slot (ưu tiên đúng `providerId` trước, sau đó mới tới global FIFO).
+   * Đánh thức waiter đầu tiên có khả năng nhận slot ngay lập tức
+   * (ưu tiên đúng `providerId` trước, sau đó duyệt FIFO tìm global waiter đủ capacity).
    */
-  notifySlotFreed(providerId = null) {
+  notifySlotFreed(providerId = null, canAcquire = null) {
     if (this.slotWaiters.length === 0) return false;
+    const isEligible = (entry) => (typeof canAcquire === "function" ? Boolean(canAcquire(entry.providerId)) : true);
     const matched = providerId
-      ? this.slotWaiters.find((entry) => entry.providerId === providerId)
+      ? this.slotWaiters.find((entry) => entry.providerId === providerId && isEligible(entry))
       : null;
-    const target = matched || this.slotWaiters[0];
+    const target = matched || this.slotWaiters.find(isEligible) || (!canAcquire ? this.slotWaiters[0] : null);
     if (!target) return false;
     target.resolve();
     return true;

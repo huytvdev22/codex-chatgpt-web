@@ -1,5 +1,5 @@
 import type { Page } from "playwright-core";
-import { browserFocusMutex } from "../web/browser/browser-focus-mutex";
+import { installInPageClipboardHook } from "../web/browser/in-page-clipboard-hook";
 import {
   normalizeCopiedChatGptSnippet,
   type ChatGptResponseBaseline,
@@ -35,74 +35,13 @@ export function selectPreferredChatGptResponse(
 
 /**
  * Trích xuất câu trả lời hoàn chỉnh qua clipboard hook nội bộ trang
- * bằng Playwright trusted click (đưa tab lên trước để tránh lỗi focus clipboard).
+ * bằng Playwright trusted click dưới CDP Focus Emulation (tuyệt đối không gọi `bringToFront()`).
  */
 export class ChatGptClipboardSalvage {
   public async setupHook(page: Page): Promise<void> {
-    await page
-      .context()
-      .grantPermissions(["clipboard-read", "clipboard-write"])
-      .catch(() => {});
-    await page.evaluate(() => {
-      const win = window as unknown as Record<string, unknown>;
-      win.__chatgpt_last_copied_code = null;
-
-      if (!win.__chatgpt_hook_installed) {
-        win.__chatgpt_hook_installed = true;
-        document.addEventListener(
-          "copy",
-          (event: ClipboardEvent) => {
-            const text =
-              event.clipboardData?.getData("text/plain") ||
-              window.getSelection()?.toString();
-            if (text && text.trim()) {
-              win.__chatgpt_last_copied_code = text;
-            }
-          },
-          { capture: true },
-        );
-
-        const origWriteText = navigator.clipboard?.writeText?.bind(
-          navigator.clipboard,
-        );
-        if (navigator.clipboard && origWriteText) {
-          navigator.clipboard.writeText = async (text: string) => {
-            if (text && text.trim()) {
-              win.__chatgpt_last_copied_code = text;
-            }
-            if (win.__codex_suppress_os_clipboard_write) return undefined;
-            try {
-              return await origWriteText(text);
-            } catch {
-              return undefined;
-            }
-          };
-        }
-
-        const origWrite = navigator.clipboard?.write?.bind(navigator.clipboard);
-        if (navigator.clipboard && origWrite) {
-          navigator.clipboard.write = async (items: ClipboardItems) => {
-            try {
-              for (const item of items) {
-                if (item.types?.includes("text/plain")) {
-                  const blob = await item.getType("text/plain");
-                  const text = await blob.text();
-                  if (text && text.trim()) {
-                    win.__chatgpt_last_copied_code = text;
-                    break;
-                  }
-                }
-              }
-            } catch {}
-            if (win.__codex_suppress_os_clipboard_write) return undefined;
-            try {
-              return await origWrite(items);
-            } catch {
-              return undefined;
-            }
-          };
-        }
-      }
+    await installInPageClipboardHook(page, {
+      resultKey: "__chatgpt_last_copied_code",
+      suppressOsClipboardNow: false,
     });
   }
 
@@ -210,17 +149,11 @@ export class ChatGptClipboardSalvage {
 
       if (!copyButton) return null;
 
-      const clicked = await browserFocusMutex
-        .runExclusive(
-          async () => {
-            await page.bringToFront().catch(() => {});
-            await copyButton.scrollIntoViewIfNeeded();
-            await copyButton.click({ timeout: 2_000 });
-            return true;
-          },
-          { timeoutMs: 3_000 },
-        )
-        .catch(() => false);
+      const clicked = await (async () => {
+        await copyButton.scrollIntoViewIfNeeded({ timeout: 2_000 });
+        await copyButton.click({ timeout: 2_000 });
+        return true;
+      })().catch(() => false);
       if (!clicked) return null;
 
       // Chỉ đọc từ in-page clipboard hook của chính tab này; tuyệt đối không fallback

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Locator, Page, Request } from "playwright-core";
+import { withPageFocusEmulation } from "../web/browser/cdp-focus-emulation";
 import { isAiStudioGenerationRequest } from "./ai-studio-browser-worker";
 import {
   clickResilient,
@@ -198,6 +199,16 @@ export class AiStudioSpeechWorker {
   }
 
   public async executeSpeech(
+    page: Page,
+    options: AiStudioSpeechRunOptions,
+  ): Promise<AiStudioSpeechResult> {
+    this.throwIfAborted(options.signal);
+    return await withPageFocusEmulation(page, () =>
+      this.runSpeechTurn(page, options),
+    );
+  }
+
+  private async runSpeechTurn(
     page: Page,
     options: AiStudioSpeechRunOptions,
   ): Promise<AiStudioSpeechResult> {
