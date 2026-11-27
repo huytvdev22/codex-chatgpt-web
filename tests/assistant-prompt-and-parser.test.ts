@@ -358,4 +358,74 @@ describe("AssistantResponseParser", () => {
       expect(String(res.calls[0]?.arguments?.input || "")).toContain("+  const x = 1;");
     }
   });
+
+  test("chấp nhận khối 3-backtick bọc <webResponse> từ Gemini Web và không phá vỡ code block 3-backtick thường", () => {
+    const geminiTripleFence = [
+      "```markdown",
+      "<webResponse>",
+      '<tool_call>{"name":"exec_command","arguments":{"cmd":"ps -axo pid,comm","workdir":"/Users/huytv/CodexAssistant"}}</tool_call>',
+      "</webResponse>",
+      "",
+      "```",
+    ].join("\n");
+
+    const toolRes = parser.parse(geminiTripleFence);
+    expect(toolRes.kind).toBe("tool_calls");
+    if (toolRes.kind === "tool_calls") {
+      expect(toolRes.calls).toHaveLength(1);
+      expect(toolRes.calls[0]?.name).toBe("exec_command");
+    }
+
+    const trailingTriplePatch = [
+      "Mình sẽ cập nhật tệp ngay.",
+      "```markdown",
+      "<webResponse>",
+      '<custom_tool_call name="apply_patch">',
+      "*** Begin Patch",
+      "*** Add File: notes/triple.md",
+      "+# Test",
+      "+```ts",
+      "+  const y = 2;",
+      "+```",
+      "*** End Patch",
+      "</custom_tool_call>",
+      "</webResponse>",
+      "```",
+    ].join("\n");
+
+    const patchRes = parser.parse(trailingTriplePatch);
+    expect(patchRes.kind).toBe("tool_calls");
+    if (patchRes.kind === "tool_calls") {
+      expect(patchRes.commentaryText).toBe("Mình sẽ cập nhật tệp ngay.");
+      expect(patchRes.calls[0]?.name).toBe("apply_patch");
+      expect(String(patchRes.calls[0]?.arguments?.input || "")).toContain("+  const y = 2;");
+    }
+
+    // Code block 3-backtick không mở đầu bằng <webResponse> vẫn phải giữ nguyên làm final_answer.
+    const normalMarkdownFence = "```markdown\n# Hướng dẫn nhanh\n- Mục 1\n```";
+    const normalRes = parser.parse(normalMarkdownFence);
+    expect(normalRes.kind).toBe("final_answer");
+    if (normalRes.kind === "final_answer") {
+      expect(normalRes.content).toBe(normalMarkdownFence);
+    }
+
+    const twoSeparatedFences = [
+      "```markdown",
+      "<webResponse>",
+      "Ví dụ mẫu",
+      "</webResponse>",
+      "```",
+      "",
+      "Đoạn chuyển tiếp",
+      "",
+      "```bash",
+      "echo ok",
+      "```",
+    ].join("\n");
+    const separatedRes = parser.parse(twoSeparatedFences);
+    expect(separatedRes.kind).toBe("final_answer");
+    if (separatedRes.kind === "final_answer") {
+      expect(separatedRes.content).toBe(twoSeparatedFences);
+    }
+  });
 });

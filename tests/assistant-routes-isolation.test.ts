@@ -174,6 +174,56 @@ describe("Assistant routes isolation & incremental streaming (/clients/assistant
     expect(output.some((item) => item.type === "function_call" && item.name === "exec_command")).toBe(true);
   });
 
+  test("POST /clients/assistant/v1/responses chấp nhận 3-backtick <webResponse> của Gemini Web và không rò XML ra SSE", async () => {
+    const adapter = createFakeStreamingAdapter(async (req) => {
+      const snaps = [
+        "```markdown\n",
+        "```markdown\n<webResponse>\n",
+        '```markdown\n<webResponse>\n<tool_call>{"name":"exec_command","arguments":{"cmd":"ps -axo pid,comm"}}</tool_call>\n</webResponse>\n\n```',
+      ];
+      for (const snap of snaps) {
+        req.onTextSnapshot?.(snap);
+        await Bun.sleep(5);
+      }
+      return {
+        rawResponse: snaps[snaps.length - 1],
+        conversationId: "conv-gemini-triple-1",
+        launcherReused: false,
+      };
+    });
+
+    const config = { ...defaultConfig(), host: "127.0.0.1" as const, port: 0 };
+    activeServer = startServer(config, { adapterFactory: () => adapter });
+    const baseUrl = `http://127.0.0.1:${activeServer.port}`;
+
+    const res = await fetch(`${baseUrl}/clients/assistant/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "tg-gemini-triple-1", turn_id: "turn-1" }),
+      },
+      body: JSON.stringify({
+        model: "gemini/4-neon",
+        stream: true,
+        tools: [
+          {
+            type: "function",
+            name: "exec_command",
+            parameters: { type: "object", properties: { cmd: { type: "string" } }, required: ["cmd"] },
+          },
+        ],
+        input: [{ role: "user", content: [{ type: "input_text", text: "Xem ứng dụng đang chạy" }] }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const events = parseSseEvents(await res.text());
+    expect(events.filter((e) => e.data.type === "response.output_text.delta")).toHaveLength(0);
+    const completed = events.find((e) => e.data.type === "response.completed");
+    const output = (completed?.data.response as { output?: Array<{ type?: string; name?: string }> })?.output ?? [];
+    expect(output.some((item) => item.type === "function_call" && item.name === "exec_command")).toBe(true);
+  });
+
   test("POST /clients/assistant/v1/responses/compact & /images/generations được gắn route đúng", async () => {
     const adapter = createFakeStreamingAdapter(async () => ({
       rawResponse: "Tóm tắt ngắn gọn ngữ cảnh hội thoại.",

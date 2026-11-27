@@ -18,6 +18,10 @@ const OPTIONAL_OPEN_WRAPPERS = [
   "````md\n",
   "````xml\n",
   "````\n",
+  "```markdown\n",
+  "```md\n",
+  "```xml\n",
+  "```\n",
   "<webresponse>\n",
   "<webresponse>",
 ];
@@ -38,6 +42,10 @@ const TRAILING_MARKER_PREFIXES = [
   "````markdown",
   "\n````",
   "````",
+  "\n```markdown",
+  "```markdown",
+  "\n```",
+  "```",
 ];
 
 const MAX_TAIL_HOLDBACK_CHARS = 32;
@@ -55,10 +63,26 @@ function stripOptionalOpeningWrappers(input: string): {
   while (cursor.length > 0) {
     const lower = cursor.toLowerCase();
 
-    const fenceOpen = /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n/.exec(cursor);
-    if (fenceOpen) {
-      cursor = cursor.slice(fenceOpen[0].length).trimStart();
+    const quadOpen = /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n/.exec(cursor);
+    if (quadOpen) {
+      cursor = cursor.slice(quadOpen[0].length).trimStart();
       continue;
+    }
+
+    // Với khối 3-backtick ở đầu: chỉ bóc nếu phần nội dung là `<webResponse>` (hoặc tiền tố đang stream của nó),
+    // còn code block thường (ví dụ ```ts ... ```) phải giữ nguyên nguyên vẹn để hiển thị đúng.
+    const tripleOpen = /^`{3}(?:markdown|md|xml)?[ \t]*\r?\n/.exec(cursor);
+    if (tripleOpen) {
+      const afterOpen = cursor.slice(tripleOpen[0].length).trimStart();
+      const afterLower = afterOpen.toLowerCase();
+      if (!afterOpen || isPrefixOfAny(afterLower, ["<webresponse>\n", "<webresponse>"])) {
+        return { stripped: cursor, stillAmbiguous: true };
+      }
+      if (/^<webResponse\b/i.test(afterOpen)) {
+        cursor = afterOpen;
+        continue;
+      }
+      break;
     }
 
     const envOpen = /^<webResponse\b[^>]*>\s*/i.exec(cursor);
@@ -92,16 +116,20 @@ function findExecutableToolMarkerIndex(text: string): number {
     const fenceMatch = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
     if (!inFence) {
       if (fenceMatch) {
-        // Nếu là 4-backtick transport fence bọc Action Turn (<webResponse> / tool call), cắt ngay tại dấu mở ````.
+        const nextBody = text.slice(nl === -1 ? text.length : nl + 1).trimStart();
+        const lowerNext = nextBody.toLowerCase();
+        // Khối 4-backtick Action Turn hoặc khối 3-backtick bọc `<webResponse>`: cắt ngay tại dấu mở fence.
         if (fenceMatch[1].length >= 4 && fenceMatch[1][0] === "`") {
-          const nextBody = text.slice(nl === -1 ? text.length : nl + 1).trimStart();
-          const lowerNext = nextBody.toLowerCase();
           if (
             /^(?:<webResponse\b|<tool_call\b|<custom_tool_call\b|<\/?(?:thought|thinking)\b|\*{3}\s*Begin Patch)/i.test(
               nextBody,
             ) ||
             isPrefixOfAny(lowerNext, ["<webresponse>", "<tool_call>", "<custom_tool_call>", "*** begin patch"])
           ) {
+            return lineStart;
+          }
+        } else if (fenceMatch[1].length === 3 && fenceMatch[1][0] === "`") {
+          if (/^<webResponse\b/i.test(nextBody) || isPrefixOfAny(lowerNext, ["<webresponse>"])) {
             return lineStart;
           }
         }

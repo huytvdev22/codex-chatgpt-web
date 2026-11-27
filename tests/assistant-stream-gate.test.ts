@@ -167,4 +167,37 @@ describe("AssistantStreamGate", () => {
     expect(appended).toBe("");
     expect(mismatchDeltas).toEqual(["Bảng bị vỡ khi đang stream..."]);
   });
+
+  test("chặn hoàn toàn khối 3-backtick bọc <webResponse> của Gemini Web nhưng vẫn stream nguyên code block 3-backtick thường", () => {
+    // 1. Mở đầu bằng ```markdown\n<webResponse>
+    const blockedDeltas: string[] = [];
+    const blockedGate = new AssistantStreamGate((delta) => blockedDeltas.push(delta));
+    blockedGate.pushSnapshot("```");
+    expect(blockedGate.getState()).toBe("BUFFERING");
+    blockedGate.pushSnapshot("```markdown\n<webRe");
+    expect(blockedGate.getState()).toBe("BUFFERING");
+    blockedGate.pushSnapshot(
+      '```markdown\n<webResponse>\n<tool_call>{"name":"exec_command","arguments":{"cmd":"ps"}}</tool_call>\n</webResponse>\n```',
+    );
+    expect(blockedGate.getState()).toBe("BLOCKED_TOOL_CALL");
+    expect(blockedDeltas).toEqual([]);
+
+    // 2. Xuất hiện sau câu dẫn ngắn
+    const midDeltas: string[] = [];
+    const midGate = new AssistantStreamGate((delta) => midDeltas.push(delta));
+    midGate.pushSnapshot("Để mình kiểm tra tiến trình.");
+    midGate.pushSnapshot("Để mình kiểm tra tiến trình.\n```markdown\n<webR");
+    expect(midGate.getState()).toBe("BLOCKED_TOOL_CALL");
+    expect(midDeltas.join("")).toBe("Để mình kiểm tra tiến trình.");
+
+    // 3. Code block 3-backtick thông thường ở đầu tin nhắn phải giữ nguyên dấu ```
+    const codeDeltas: string[] = [];
+    const codeGate = new AssistantStreamGate((delta) => codeDeltas.push(delta));
+    const sampleCode = "```markdown\n# Hướng dẫn chi tiết\n- Bước 1: mở app\n```";
+    codeGate.pushSnapshot("```markdown\n# Hướng dẫn chi tiết");
+    expect(codeGate.getState()).toBe("STREAMING_TEXT");
+    codeGate.pushSnapshot(sampleCode);
+    codeGate.finalizeAsFinalAnswer(sampleCode);
+    expect(codeDeltas.join("")).toBe(sampleCode);
+  });
 });

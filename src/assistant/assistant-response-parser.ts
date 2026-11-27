@@ -9,10 +9,10 @@ const RESERVED_CONTROL_MARKER_REGEX =
   /(?:<\/?\s*(?:webResponse|tool_call|custom_tool_call|thought|thinking)\b|\*{3}\s*(?:Begin|End) Patch)/i;
 
 const FULL_TRANSPORT_FENCE_REGEX =
-  /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n([\s\S]*)\r?\n`{4}$/i;
+  /^(`{3,4})(?:markdown|md|xml)?[ \t]*\r?\n([\s\S]*)\r?\n\1$/i;
 
 const TRAILING_WEBRESPONSE_FENCE_REGEX =
-  /(?:^|\n)(`{4}(?:markdown|md|xml)?[ \t]*\r?\n<webResponse\b[\s\S]*\r?\n`{4})$/i;
+  /(?:^|\n)((`{3,4})(?:markdown|md|xml)?[ \t]*\r?\n[ \t]*<webResponse\b[\s\S]*\r?\n\2)$/i;
 
 /**
  * Turndown (`webHtmlToMarkdown`) thường escape ký tự `_` và `*` thành `\_` / `\*`
@@ -52,16 +52,62 @@ function unescapeTurndownInsideToolTags(text: string): string {
 }
 
 /**
- * Gỡ wrapper vận chuyển tùy chọn (4-backtick markdown và/hoặc `<webResponse>...</webResponse>`)
+ * Tách duy nhất 1 khối transport fence ở ngoài cùng:
+ * - Khối 4-backtick (` ````...```` `): luôn coi là transport fence (giữ nguyên chuẩn cũ).
+ * - Khối 3-backtick (` ```...``` `): CHỈ coi là transport fence khi bên trong bắt đầu bằng `<webResponse\b`
+ *   và không bị đóng sớm trước dòng cuối cùng (tránh khớp gộp nhiều code block rời nhau).
+ */
+function extractOuterTransportFence(text: string): { fenceLen: 3 | 4; inner: string } | null {
+  const match = FULL_TRANSPORT_FENCE_REGEX.exec(text);
+  if (!match) return null;
+
+  const fenceLen = match[1].length as 3 | 4;
+  const rawInner = match[2];
+  const innerTrimmed = rawInner.trim();
+
+  if (fenceLen === 4) {
+    return { fenceLen, inner: innerTrimmed };
+  }
+
+  if (!/^<webResponse\b/i.test(innerTrimmed)) {
+    return null;
+  }
+
+  // Bảo vệ trường hợp có >= 2 block 3-backtick tách rời mà block đầu tình cờ mở đầu bằng <webResponse>.
+  if (hasUnbalancedClosingTripleFenceOutsidePatch(rawInner)) {
+    return null;
+  }
+
+  return { fenceLen, inner: innerTrimmed };
+}
+
+function hasUnbalancedClosingTripleFenceOutsidePatch(innerBody: string): boolean {
+  let insideCustomTool = false;
+  for (const line of innerBody.split(/\r?\n/)) {
+    if (/<custom_tool_call\b/i.test(line)) {
+      insideCustomTool = true;
+    }
+    if (!insideCustomTool && /^[ \t]*`{3}[ \t]*$/.test(line)) {
+      return true;
+    }
+    if (/<\/\s*custom_tool_call\s*>/i.test(line)) {
+      insideCustomTool = false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Gỡ wrapper vận chuyển tùy chọn (4-backtick hoặc 3-backtick kèm `<webResponse>...</webResponse>`)
  * để làm sạch câu trả lời cuối khi cần (vd. đồng bộ finalize text trên Stream Gate).
  */
 export function unwrapOptionalAssistantEnvelope(rawResponse: string): string {
   let text = String(rawResponse || "").trim();
   if (!text) return "";
 
-  const fenceMatch = FULL_TRANSPORT_FENCE_REGEX.exec(text);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
+  const extracted = extractOuterTransportFence(text);
+  if (extracted) {
+    text = extracted.inner;
   }
 
   const envelopeMatch = /^<webResponse\b[^>]*>([\s\S]*?)<\/\s*webResponse\s*>$/i.exec(text);
@@ -77,8 +123,8 @@ export function unwrapOptionalAssistantEnvelope(rawResponse: string): string {
   return text;
 }
 
-function normalizeTransportLanguageTag(fenceText: string): string {
-  return fenceText.replace(/^`{4}(?:markdown|md|xml)?[ \t]*\r?\n/i, "````markdown\n");
+function toCanonicalQuadTransportFence(innerBody: string): string {
+  return `\`\`\`\`markdown\n${innerBody.trim()}\n\`\`\`\``;
 }
 
 /**
@@ -104,21 +150,26 @@ export class AssistantResponseParser {
 
     const normalized = normalizeEscapedToolMarkers(trimmedRaw);
 
-    // 1. Toàn bộ phản hồi nằm trong 1 khối 4-backtick transport fence: ủy quyền thẳng sang parseStrictWebResponse.
-    if (FULL_TRANSPORT_FENCE_REGEX.test(normalized)) {
-      const strictResult = parseStrictWebResponse(normalizeTransportLanguageTag(normalized));
+    // 1. Toàn bộ phản hồi nằm trong 1 khối 4-backtick hoặc 3-backtick kèm `<webResponse>`:
+    //    chuẩn hóa về 4-backtick rồi ủy quyền thẳng sang parseStrictWebResponse.
+    const outerTransport = extractOuterTransportFence(normalized);
+    if (outerTransport) {
+      const strictResult = parseStrictWebResponse(toCanonicalQuadTransportFence(outerTransport.inner));
       return this.mapStrictResult(strictResult, rawResponse);
     }
 
-    // 2. Ngoại lệ phục vụ Telegram streaming: câu dẫn tự nhiên sạch ở đầu + khối 4-backtick `<webResponse>` ở cuối.
+    // 2. Ngoại lệ phục vụ Telegram streaming: câu dẫn tự nhiên sạch ở đầu + khối 3/4-backtick `<webResponse>` ở cuối.
     const trailingFenceMatch = TRAILING_WEBRESPONSE_FENCE_REGEX.exec(normalized);
     if (trailingFenceMatch) {
       const fenceText = trailingFenceMatch[1];
+      const extractedTrailing = extractOuterTransportFence(fenceText.trim());
       const fenceStart = trailingFenceMatch.index + (trailingFenceMatch[0].length - fenceText.length);
       const preamble = normalized.slice(0, fenceStart).trim();
 
-      if (!RESERVED_CONTROL_MARKER_REGEX.test(stripMarkdownCode(preamble))) {
-        const strictResult = parseStrictWebResponse(normalizeTransportLanguageTag(fenceText));
+      if (extractedTrailing && !RESERVED_CONTROL_MARKER_REGEX.test(stripMarkdownCode(preamble))) {
+        const strictResult = parseStrictWebResponse(
+          toCanonicalQuadTransportFence(extractedTrailing.inner),
+        );
         if (strictResult.kind === "final_answer") {
           const combined = preamble
             ? `${preamble}\n\n${strictResult.content}`
