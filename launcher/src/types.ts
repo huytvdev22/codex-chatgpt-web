@@ -322,6 +322,7 @@ export interface LauncherState {
   autoStart: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
+  autoSwitchProfileOnQuotaLimit: boolean;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
@@ -524,7 +525,10 @@ export interface LauncherApi {
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setUseSavedChats(enabled: boolean): Promise<LauncherState>;
   setPreference(
-    key: "keepRunningOnClose" | "showBrowserDuringTurns",
+    key:
+      | "keepRunningOnClose"
+      | "showBrowserDuringTurns"
+      | "autoSwitchProfileOnQuotaLimit",
     value: boolean,
   ): Promise<LauncherState>;
   getPersonalization(): Promise<PersonalizationSettings>;

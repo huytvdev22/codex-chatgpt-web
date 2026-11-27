@@ -42,6 +42,7 @@ const {
   createStateStore,
   nextSessionRefreshReminderAt,
 } = require("./infra/state-store.cjs");
+const { writePrivateFileAtomic } = require("./infra/atomic-file.cjs");
 const { createPersonalizationStore } = require("./infra/personalization-store.cjs");
 const { createSkillsStore } = require("./infra/skills-store.cjs");
 const { createUsageStore } = require("./infra/usage-store.cjs");
@@ -473,6 +474,54 @@ async function start() {
     showMainWindow,
     requestQuit,
   });
+  const syncFailoverSettings = (enabled) => {
+    try {
+      const targetPath = path.join(CORE_HOME, "profile-failover-settings.json");
+      writePrivateFileAtomic(
+        targetPath,
+        `${JSON.stringify({
+          version: 1,
+          autoSwitchProfileOnQuotaLimit: enabled === true,
+          updatedAt: new Date().toISOString(),
+        }, null, 2)}\n`,
+      );
+    } catch (error) {
+      logger.warn("launcher.failover_settings_sync_failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  syncFailoverSettings(stateStore.read().autoSwitchProfileOnQuotaLimit === true);
+
+  const limitsStore = createLimitsStore(
+    path.join(CORE_HOME, "provider-limits.json"),
+    () => runtimeHost?.runtimeConfigSnapshot?.()?.config ?? null,
+    () => browserHost?.listProviders?.() ?? [],
+  );
+
+  let limitsWatchDebounce = null;
+  let limitsWatcher = null;
+  try {
+    fs.mkdirSync(CORE_HOME, { recursive: true });
+    limitsWatcher = fs.watch(CORE_HOME, (_eventType, filename) => {
+      if (filename && filename !== "provider-limits.json") return;
+      if (limitsWatchDebounce) clearTimeout(limitsWatchDebounce);
+      limitsWatchDebounce = setTimeout(() => {
+        limitsWatchDebounce = null;
+        if (quitting || !mainWindow || mainWindow.isDestroyed()) return;
+        void limitsStore.getSnapshot()
+          .then((snapshot) => {
+            if (!quitting && mainWindow && !mainWindow.isDestroyed()) {
+              send("launcher:limits-changed", snapshot);
+            }
+          })
+          .catch(() => {});
+      }, 250);
+    });
+  } catch {
+    limitsWatcher = null;
+  }
+
   new IpcRouter({
     app,
     logger,
@@ -490,11 +539,8 @@ async function start() {
       path.join(CORE_HOME, "models.json"),
       () => runtimeHost?.runtimeConfigSnapshot?.()?.config ?? null,
     ),
-    limitsStore: createLimitsStore(
-      path.join(CORE_HOME, "provider-limits.json"),
-      () => runtimeHost?.runtimeConfigSnapshot?.()?.config ?? null,
-      () => browserHost?.listProviders?.() ?? [],
-    ),
+    limitsStore,
+    syncFailoverSettings,
     launcherProfile: LAUNCHER_PROFILE,
     isDevProfile: IS_DEV_PROFILE,
     coreHome: CORE_HOME,
@@ -895,6 +941,12 @@ async function start() {
   }).finally(finishRuntimeStartup);
 
   app.on("before-quit", (event) => {
+    if (limitsWatchDebounce) {
+      clearTimeout(limitsWatchDebounce);
+      limitsWatchDebounce = null;
+    }
+    try { limitsWatcher?.close(); } catch {}
+    limitsWatcher = null;
     if (exitCommitted) return;
     event.preventDefault();
     void requestQuit();

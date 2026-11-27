@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   startLauncherBrowserTurn,
   WebProviderAdapter,
@@ -10,6 +13,13 @@ import {
   type WebRuntimeLifecycleOps,
 } from "../src/adapters/web";
 import { M365CopilotAdapter } from "../src/adapters/m365-copilot";
+import {
+  LimitStore,
+  ProfileCooldownStore,
+  ProfileFailoverCoordinator,
+  ProfileFailoverSettingsStore,
+  ThreadProfileBindingStore,
+} from "../src/limits";
 import { adapterFailureFromMessage } from "../src/lib/errors";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
@@ -1443,28 +1453,50 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
       closeTurn: async () => {},
     };
 
-    const engine = new WebTurnEngine(definition, undefined, ops);
-    const events: AdapterEvent[] = [];
-    await engine.runTurn(
-      createParsedRequest([{ role: "user", content: "xin chào" }]),
-      { headers: new Headers() },
-      ev => events.push(ev),
-    );
+    const tmpDir = mkdtempSync(join(tmpdir(), "codex-wte-aistudio-quota-"));
+    try {
+      const coordinator = new ProfileFailoverCoordinator(
+        new ProfileFailoverSettingsStore(join(tmpDir, "settings.json")),
+        new ProfileCooldownStore(join(tmpDir, "cooldowns.json")),
+        new ThreadProfileBindingStore({
+          filePath: join(tmpDir, "bindings.json"),
+          debounceMs: 0,
+        }),
+        new LimitStore(join(tmpDir, "limits.json")),
+        () => null,
+      );
+      const engine = new WebTurnEngine(
+        definition,
+        undefined,
+        ops,
+        undefined,
+        undefined,
+        coordinator,
+      );
+      const events: AdapterEvent[] = [];
+      await engine.runTurn(
+        createParsedRequest([{ role: "user", content: "xin chào" }]),
+        { headers: new Headers() },
+        ev => events.push(ev),
+      );
 
-    expect(browserExecuteCalls).toBe(1);
-    expect(endedStatuses).toEqual(["failed"]);
-    expect(events).toEqual([
-      {
-        type: "error",
-        message: `[AI Studio] ${aiStudioQuotaMessage}`,
-        retryable: false,
-      },
-    ]);
+      expect(browserExecuteCalls).toBe(1);
+      expect(endedStatuses).toEqual(["failed"]);
+      expect(events).toEqual([
+        {
+          type: "error",
+          message: `[AI Studio] ${aiStudioQuotaMessage}`,
+          retryable: false,
+        },
+      ]);
 
-    const mapped = adapterFailureFromMessage(`[AI Studio] ${aiStudioQuotaMessage}`);
-    expect(mapped.httpStatus).toBe(429);
-    expect(mapped.error.type).toBe("insufficient_quota");
-    expect(mapped.error.code).toBe("insufficient_quota");
+      const mapped = adapterFailureFromMessage(`[AI Studio] ${aiStudioQuotaMessage}`);
+      expect(mapped.httpStatus).toBe(429);
+      expect(mapped.error.type).toBe("insufficient_quota");
+      expect(mapped.error.code).toBe("insufficient_quota");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test("26. Tự động nhắc nội bộ và dừng sớm khi model lặp lại apply_patch vừa bị verification failed", async () => {

@@ -239,8 +239,16 @@ export function UsageSurface({
     const entries = limitsSnapshot?.entries ?? [];
     const groups = new Map<string, ProfileLimitEntry[]>();
     const unsupported = new Set<string>();
+    const providersWithPassiveExhausted = new Set(
+      entries
+        .filter((entry) => entry.support === "unsupported" && entry.status === "exhausted")
+        .map((entry) => entry.providerId),
+    );
     for (const entry of entries) {
-      if (entry.support === "unsupported") {
+      if (
+        entry.support === "unsupported" &&
+        !providersWithPassiveExhausted.has(entry.providerId)
+      ) {
         unsupported.add(formatProviderName(entry.providerId));
         continue;
       }

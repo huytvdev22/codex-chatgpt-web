@@ -268,6 +268,70 @@ export class LimitStore {
     return record;
   }
 
+  public savePassiveCooldownResult(options: {
+    providerId: string;
+    profileId: string;
+    profileName?: string;
+    buckets: ProviderLimitBucket[];
+    rawSummary: string;
+    lastError: string;
+    checkedAt?: string;
+  }): StoredProfileLimitRecord {
+    const file = this.readFile();
+    const checkedAt = options.checkedAt ?? new Date().toISOString();
+    const key = buildLimitEntryKey(options.providerId, options.profileId);
+    const existing = file.entries[key];
+    const record: StoredProfileLimitRecord = {
+      providerId: options.providerId,
+      profileId: options.profileId,
+      ...(options.profileName
+        ? { profileName: options.profileName }
+        : existing?.profileName
+          ? { profileName: existing.profileName }
+          : {}),
+      status: "exhausted",
+      planName: existing?.planName ?? null,
+      sourceUrl: existing?.sourceUrl ?? null,
+      sourceKind: "dom-fallback",
+      scopeNote: existing?.scopeNote ?? "Passive quota limit detected during turn execution.",
+      providerUpdatedText: existing?.providerUpdatedText ?? null,
+      buckets: options.buckets,
+      rawSummary: options.rawSummary,
+      checkedAt,
+      lastError: options.lastError,
+    };
+    this.writeFile({
+      version: 1,
+      updatedAt: checkedAt,
+      entries: { ...file.entries, [key]: record },
+    });
+    return record;
+  }
+
+  public clearPassiveExhaustedIfExpired(
+    providerId: string,
+    profileId: string,
+  ): boolean {
+    const file = this.readFile();
+    const key = buildLimitEntryKey(providerId, profileId);
+    const existing = file.entries[key];
+    if (
+      !existing ||
+      existing.status !== "exhausted" ||
+      existing.sourceKind !== "dom-fallback"
+    ) {
+      return false;
+    }
+    const nextEntries = { ...file.entries };
+    delete nextEntries[key];
+    this.writeFile({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      entries: nextEntries,
+    });
+    return true;
+  }
+
   public saveFailure(options: {
     providerId: string;
     profileId: string;

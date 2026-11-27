@@ -64,6 +64,7 @@ class IpcRouter {
       usageStore,
       modelsStore,
       limitsStore,
+      syncFailoverSettings,
       launcherProfile,
       isDevProfile,
       coreHome,
@@ -404,9 +405,16 @@ class IpcRouter {
       return syncPrefs(runtimeHost.runtimeConfigSnapshot().config);
     });
     handle("launcher:set-preference", (_event, key, value) => {
-      const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
+      const ordinary =
+        key === "keepRunningOnClose" ||
+        key === "showBrowserDuringTurns" ||
+        key === "autoSwitchProfileOnQuotaLimit";
       if (!ordinary) throw new Error("Unknown preference");
-      return stateStore.update({ [key]: value === true });
+      const nextState = stateStore.update({ [key]: value === true });
+      if (key === "autoSwitchProfileOnQuotaLimit") {
+        syncFailoverSettings?.(nextState.autoSwitchProfileOnQuotaLimit === true);
+      }
+      return nextState;
     });
     handle("launcher:personalization-get", () => {
       if (!personalizationStore) throw new Error("Personalization store is unavailable");

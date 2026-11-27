@@ -781,6 +781,24 @@ function BrowserSurface({
   );
   const activeProviderLimitTone = limitAlertTone(activeProviderLimitEntry?.status);
   const activeProviderAlertLabel = limitAlertBadgeText(activeProviderLimitEntry);
+  const fallbackProfileCandidate = supportsProfiles
+    ? profiles.find((item) => {
+        if (item.id === activeProfileId || !item.authenticated) return false;
+        const entry = limitEntryByKey.get(
+          `${runtimeProviderIdFor(activeProviderId)}::${item.id}`,
+        );
+        return entry?.status !== "exhausted";
+      }) ?? null
+    : null;
+  const activeExhaustedDetail =
+    activeProviderLimitEntry?.status === "exhausted"
+      ? activeProviderLimitEntry.buckets
+          .map((bucket) =>
+            bucket.resetText ? `${bucket.label} (${bucket.resetText})` : bucket.label,
+          )
+          .filter(Boolean)
+          .join(", ")
+      : "";
   const activeTabId = browser?.activeTabId || "home";
   const profileControlLocked = switchingProvider || switchingProfile || navigationLocked || externalLoginActive;
   const showExternalChromeCard = (activeProvider?.usesExternalChromeLogin === true || activeProviderId === "ai-studio")
@@ -1046,6 +1064,34 @@ function BrowserSurface({
         ) : null}
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
+      {supportsProfiles && activeProviderLimitEntry?.status === "exhausted" ? (
+        <div className="browser-quota-banner" role="status">
+          <div className="browser-quota-banner-text">
+            <Icon name="alert" />
+            <span>
+              {copy.quotaExhaustedBanner
+                .replace("{profile}", activeProfile?.name || activeProfileId)
+                .replace(
+                  "{detail}",
+                  activeExhaustedDetail ? ` — ${activeExhaustedDetail}` : "",
+                )}
+            </span>
+          </div>
+          {fallbackProfileCandidate ? (
+            <button
+              className="browser-quota-banner-cta"
+              disabled={profileControlLocked}
+              onClick={() => void switchProfile(fallbackProfileCandidate.id)}
+              type="button"
+            >
+              {copy.quotaExhaustedSwitchCta.replace(
+                "{profile}",
+                fallbackProfileCandidate.name,
+              )}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="browser-viewport" ref={browserSlotRef}>
         {showExternalChromeCard ? (
           <div className="browser-empty browser-external-signin">
@@ -1581,6 +1627,14 @@ function SettingsSurface({
           <Switch
             checked={snapshot.state.showBrowserDuringTurns}
             onChange={(checked) => void api!.setPreference("showBrowserDuringTurns", checked)
+              .then(updateState)
+              .catch((cause) => setError(messageOf(cause)))}
+          />
+        </SettingRow>
+        <SettingRow body={copy.autoSwitchOnQuotaLimitBody} label={copy.autoSwitchOnQuotaLimit}>
+          <Switch
+            checked={snapshot.state.autoSwitchProfileOnQuotaLimit === true}
+            onChange={(checked) => void api!.setPreference("autoSwitchProfileOnQuotaLimit", checked)
               .then(updateState)
               .catch((cause) => setError(messageOf(cause)))}
           />

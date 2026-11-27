@@ -10,7 +10,10 @@ import {
   type UsageLimitCheckRequest,
 } from "../base";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
-import type { ProviderLimitCheckResult } from "../../limits/types";
+import {
+  ProfileFailoverCoordinator,
+  type ProviderLimitCheckResult,
+} from "../../limits";
 import type { DiscoveredModelEntry } from "../../models/types";
 import { adapterFailureFromMessage } from "../../lib/errors";
 import {
@@ -68,6 +71,7 @@ import {
   resolveWebTurnTraceId,
 } from "./turn-identity";
 import type { LocalBrowserRuntime } from "./local-browser-runtime";
+import { resolveLauncherDescriptorPath } from "./launcher-runtime";
 import type {
   WebProviderDefinition,
   WebTurnFinalStatus,
@@ -145,6 +149,7 @@ export class WebTurnEngine {
   private readonly loopGuard = new WebTurnLoopGuard();
   private readonly traceRecorder: TurnTraceRecorder;
   private readonly sessionStore: WebPromptSessionStore;
+  private readonly failoverCoordinator: ProfileFailoverCoordinator;
 
   constructor(
     private readonly definition: WebProviderDefinition,
@@ -152,9 +157,12 @@ export class WebTurnEngine {
     private readonly lifecycleOps?: Partial<WebRuntimeLifecycleOps>,
     traceRecorder?: TurnTraceRecorder,
     sessionStore?: WebPromptSessionStore,
+    failoverCoordinator?: ProfileFailoverCoordinator,
   ) {
     this.traceRecorder = traceRecorder ?? new TurnTraceRecorder();
     this.sessionStore = sessionStore ?? webPromptSessionStore;
+    this.failoverCoordinator =
+      failoverCoordinator ?? ProfileFailoverCoordinator.getInstance();
   }
 
   async runTurn(
@@ -222,38 +230,78 @@ export class WebTurnEngine {
     };
 
     try {
-      const initialUrl = this.definition.browser.resolveInitialUrl?.({
+      const resolvedDescriptorPath =
+        (this.lifecycleOps?.resolveDescriptorPath ?? resolveLauncherDescriptorPath)(
+          this.definition.browser.descriptorPath,
+          this.definition.browser.descriptorSubdirs,
+        ) ?? undefined;
+      const initialProfile = this.failoverCoordinator.resolveInitialProfile({
+        providerId: this.definition.id,
         modelId: parsed.modelId,
+        threadId,
+        explicitProfileId: resolveRequestedProfileId(incoming.headers),
+        descriptorPath: resolvedDescriptorPath,
       });
-      const profileId = resolveRequestedProfileId(incoming.headers);
-      const acquired = await acquireWebTurnSurface({
-        definition: this.definition,
-        localBrowser: this.localBrowser,
-        turnTraceId,
-        conversationKey,
-        ...(initialUrl ? { initialUrl } : {}),
-        ...(profileId ? { profileId } : {}),
-        abortSignal: turnRegistration.signal,
-        ops: this.lifecycleOps,
-      });
+      let currentProfileId = initialProfile.profileId;
+      let forceNewConversation = initialProfile.switchedFromStickyOrActive;
+      const attemptedProfileIds = new Set<string>();
+      if (currentProfileId) {
+        attemptedProfileIds.add(currentProfileId);
+      }
 
-      const stateResolution = this.definition.conversation.resolveState
-        ? this.definition.conversation.resolveState({
-            parsed,
-            incoming: turnIncoming,
-            threadId,
-            conversationKey,
-            leaseConversationId: acquired.leaseConversationId,
-            launcherReused: acquired.launcherReused,
-            hasPriorAssistantReply,
-          })
-        : {
-            existingConversationId: acquired.leaseConversationId,
-            isNewConversation: !hasPriorAssistantReply,
-          };
+      for (let failoverAttempt = 0; ; failoverAttempt += 1) {
+        const initialUrl = this.definition.browser.resolveInitialUrl?.({
+          modelId: parsed.modelId,
+        });
+        const acquired = await acquireWebTurnSurface({
+          definition: this.definition,
+          localBrowser: this.localBrowser,
+          turnTraceId,
+          conversationKey,
+          ...(initialUrl ? { initialUrl } : {}),
+          ...(currentProfileId ? { profileId: currentProfileId } : {}),
+          abortSignal: turnRegistration.signal,
+          ops: this.lifecycleOps,
+        });
 
-      const { existingConversationId, isNewConversation } = stateResolution;
-      let activeConversationId = existingConversationId;
+        const baseStateResolution = this.definition.conversation.resolveState
+          ? this.definition.conversation.resolveState({
+              parsed,
+              incoming: turnIncoming,
+              threadId,
+              conversationKey,
+              leaseConversationId: acquired.leaseConversationId,
+              launcherReused: acquired.launcherReused,
+              hasPriorAssistantReply,
+            })
+          : {
+              existingConversationId: acquired.leaseConversationId,
+              isNewConversation: !hasPriorAssistantReply,
+            };
+
+        const existingConversationId = forceNewConversation
+          ? undefined
+          : baseStateResolution.existingConversationId;
+        const isNewConversation = forceNewConversation
+          ? true
+          : baseStateResolution.isNewConversation;
+        let activeConversationId = existingConversationId;
+        let hasEmittedOutput = false;
+        const trackedEmit = (event: AdapterEvent): void => {
+          if (
+            event.type === "text_delta" ||
+            event.type === "thinking_delta" ||
+            event.type === "reasoning_raw_delta" ||
+            event.type === "tool_call_start" ||
+            event.type === "tool_call_delta" ||
+            event.type === "tool_call_end" ||
+            event.type === "done" ||
+            event.type === "incomplete"
+          ) {
+            hasEmittedOutput = true;
+          }
+          emit(event);
+        };
 
       const rawPayload = CodexRawPayload.from(parsed._rawBody || parsed);
       const normalized = CodexPayloadNormalizer.normalize(rawPayload, {
@@ -418,6 +466,7 @@ export class WebTurnEngine {
       let lastFailedToolName: string | undefined;
       let lastProtocolError: { code: string; message: string } | undefined;
 
+      let retryNextProfileId: string | undefined;
       try {
         const configuredMaxRetries = this.definition.policies?.maxFormatRetries;
         const maxRetries =
@@ -852,14 +901,14 @@ export class WebTurnEngine {
           });
         };
 
-        if (
+          if (
           this.definition.policies?.enableToolLoopGuard &&
           this.loopGuard.evaluate({
             protocolResult,
             clientTools: parsed.context.tools || [],
             conversationKey,
             logPrefix: this.definition.logPrefix,
-            emit,
+            emit: trackedEmit,
             usage: codexWindowUsage,
             previousToolFailed,
             nudgedRepeatedFailure: didRepeatedFailedToolNudge,
@@ -882,6 +931,12 @@ export class WebTurnEngine {
             );
           }
           recordTurnUsage();
+          this.failoverCoordinator.recordTurnSuccess({
+            providerId: this.definition.id,
+            modelId: parsed.modelId,
+            profileId: currentProfileId,
+            threadId,
+          });
           finalStatus = "completed";
           return;
         }
@@ -911,7 +966,7 @@ export class WebTurnEngine {
         emitWebProtocolResponse({
           result: resultToEmit,
           clientTools: parsed.context.tools || [],
-          emit,
+          emit: trackedEmit,
           createCallId:
             this.definition.response?.createCallId ??
             (() =>
@@ -941,6 +996,12 @@ export class WebTurnEngine {
         }
 
         recordTurnUsage();
+        this.failoverCoordinator.recordTurnSuccess({
+          providerId: this.definition.id,
+          modelId: parsed.modelId,
+          profileId: currentProfileId,
+          threadId,
+        });
         finalStatus = "completed";
       } catch (error) {
         if (!structuredOutputFormat && lastProtocolError && lastFailedToolName) {
@@ -967,21 +1028,43 @@ export class WebTurnEngine {
           );
         }
 
-        if (this.definition.policies?.emitErrorEventOnFailure ?? true) {
-          const rawMsg = error instanceof Error ? error.message : String(error);
-          const prefix = this.definition.policies?.errorMessagePrefix;
-          const classified = adapterFailureFromMessage(rawMsg);
-          emit({
-            type: "error",
-            message: prefix ? `${prefix} ${rawMsg}` : rawMsg,
-            ...(classified.error.code === "insufficient_quota"
-              ? { retryable: false }
-              : {}),
+        const rawMsg = error instanceof Error ? error.message : String(error);
+        const classified = adapterFailureFromMessage(rawMsg);
+        if (
+          !turnRegistration.signal.aborted &&
+          classified.error.code === "insufficient_quota"
+        ) {
+          const failover = this.failoverCoordinator.handleQuotaFailure({
+            providerId: this.definition.id,
+            modelId: parsed.modelId,
+            profileId: currentProfileId,
+            threadId,
+            errorMessage: rawMsg,
+            pinnedByCaller: initialProfile.pinnedByCaller,
+            attemptedProfileIds,
+            hasEmittedOutput,
+            descriptorPath: resolvedDescriptorPath,
           });
+          if (failover.shouldFailover && failover.nextProfileId) {
+            retryNextProfileId = failover.nextProfileId;
+          }
         }
 
-        if (this.definition.policies?.rethrowError ?? true) {
-          throw error;
+        if (!retryNextProfileId) {
+          if (this.definition.policies?.emitErrorEventOnFailure ?? true) {
+            const prefix = this.definition.policies?.errorMessagePrefix;
+            emit({
+              type: "error",
+              message: prefix ? `${prefix} ${rawMsg}` : rawMsg,
+              ...(classified.error.code === "insufficient_quota"
+                ? { retryable: false }
+                : {}),
+            });
+          }
+
+          if (this.definition.policies?.rethrowError ?? true) {
+            throw error;
+          }
         }
       } finally {
         traceSession?.finalize(finalStatus, activeConversationId, traceError);
@@ -995,9 +1078,22 @@ export class WebTurnEngine {
           parsed,
           hasPriorAssistantReply,
           hasToolResults,
+          ...(retryNextProfileId ? { retainOverride: false } : {}),
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });
+      }
+
+      if (retryNextProfileId) {
+        console.warn(
+          `[${this.definition.logPrefix}] Profile '${currentProfileId || "default"}' hết hạn mức model '${parsed.modelId}'; tự động chuyển sang profile '${retryNextProfileId}' (attempt=${failoverAttempt + 1}).`,
+        );
+        currentProfileId = retryNextProfileId;
+        attemptedProfileIds.add(retryNextProfileId);
+        forceNewConversation = true;
+        continue;
+      }
+      break;
       }
     } finally {
       turnRegistration.finish();
@@ -1042,104 +1138,171 @@ export class WebTurnEngine {
     };
 
     try {
-      const initialUrl = this.definition.browser.resolveInitialUrl?.({
-        modelId: request.modelId,
-        existingConversationId: request.existingConversationId,
-      });
-      const profileId =
+      const resolvedDescriptorPath =
+        (this.lifecycleOps?.resolveDescriptorPath ?? resolveLauncherDescriptorPath)(
+          this.definition.browser.descriptorPath,
+          this.definition.browser.descriptorSubdirs,
+        ) ?? undefined;
+      const explicitProfile =
         request.profileId?.trim().toLowerCase() ||
         resolveRequestedProfileId(incoming.headers);
-      const acquired = await acquireWebTurnSurface({
-        definition: this.definition,
-        localBrowser: this.localBrowser,
-        turnTraceId,
-        conversationKey,
-        ...(initialUrl ? { initialUrl } : {}),
-        ...(profileId ? { profileId } : {}),
-        abortSignal: turnRegistration.signal,
-        ops: this.lifecycleOps,
-      });
-
-      let activeConversationId =
-        request.existingConversationId || acquired.leaseConversationId;
-      const isNewConversation =
-        !acquired.launcherReused && !activeConversationId;
-      const syntheticParsed: CodexParsedRequest = {
+      const initialProfile = this.failoverCoordinator.resolveInitialProfile({
+        providerId: this.definition.id,
         modelId: request.modelId,
-        stream: false,
-        context: { messages: [], tools: [] },
-        options: {
-          ...(request.reasoning ? { reasoning: request.reasoning } : {}),
-        },
-      };
-      const maxImages = this.definition.attachments?.maxInputImages ?? 3;
-      const attachments: NormalizedImageAttachment[] = (request.images ?? [])
-        .slice(0, maxImages)
-        .map((image, index) => ({
-          ref: `v2-img-${index}`,
-          name: image.name || `image-${index + 1}.png`,
-          mimeType: image.mimeType,
-          dataUrl: image.dataUrl,
-          buffer: image.buffer,
-        }));
+        threadId: request.conversationKey,
+        explicitProfileId: explicitProfile,
+        descriptorPath: resolvedDescriptorPath,
+      });
+      let currentProfileId = initialProfile.profileId;
+      let forceNewConversation = initialProfile.switchedFromStickyOrActive;
+      const attemptedProfileIds = new Set<string>();
+      if (currentProfileId) {
+        attemptedProfileIds.add(currentProfileId);
+      }
 
-      let finalStatus: WebTurnFinalStatus = "failed";
-      try {
-        const result = await this.definition.browser.executeTurn({
-          page: acquired.page!,
-          prompt: request.prompt,
-          attempt: 0,
-          parsed: syntheticParsed,
-          incoming: turnIncoming,
-          reasoningEffort: request.reasoning,
-          conversationKey,
-          existingConversationId: activeConversationId,
-          launcherReused: acquired.launcherReused,
-          isNewConversation,
-          retain: true,
-          attachments,
-          turnTraceId,
-          heartbeat: acquired.heartbeat,
+      for (let failoverAttempt = 0; ; failoverAttempt += 1) {
+        const effectiveExistingId = forceNewConversation
+          ? undefined
+          : request.existingConversationId;
+        const initialUrl = this.definition.browser.resolveInitialUrl?.({
+          modelId: request.modelId,
+          existingConversationId: effectiveExistingId,
         });
-
-        if (this.definition.conversation.onConversationUpdated) {
-          const updatedId = this.definition.conversation.onConversationUpdated({
-            conversationKey,
-            conversationId: result.conversationId,
-          });
-          if (updatedId) {
-            activeConversationId = updatedId;
-          }
-        } else if (result.conversationId) {
-          activeConversationId = result.conversationId;
-        }
-
-        const outputText = this.definition.response?.sanitizeRawResponse
-          ? this.definition.response.sanitizeRawResponse(result.rawResponse)
-          : result.rawResponse;
-
-        finalStatus = "completed";
-        return {
-          outputText,
-          ...(activeConversationId ? { conversationId: activeConversationId } : {}),
-        };
-      } catch (error) {
-        finalStatus = turnRegistration.signal.aborted ? "aborted" : "failed";
-        throw error;
-      } finally {
-        await releaseWebTurnSurface({
+        const acquired = await acquireWebTurnSurface({
           definition: this.definition,
-          acquired,
+          localBrowser: this.localBrowser,
           turnTraceId,
-          finalStatus,
-          activeConversationId,
           conversationKey,
-          parsed: syntheticParsed,
-          hasPriorAssistantReply: !isNewConversation,
-          hasToolResults: false,
+          ...(initialUrl ? { initialUrl } : {}),
+          ...(currentProfileId ? { profileId: currentProfileId } : {}),
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });
+
+        let activeConversationId = forceNewConversation
+          ? undefined
+          : effectiveExistingId || acquired.leaseConversationId;
+        const isNewConversation =
+          forceNewConversation ||
+          (!acquired.launcherReused && !activeConversationId);
+        const syntheticParsed: CodexParsedRequest = {
+          modelId: request.modelId,
+          stream: false,
+          context: { messages: [], tools: [] },
+          options: {
+            ...(request.reasoning ? { reasoning: request.reasoning } : {}),
+          },
+        };
+        const maxImages = this.definition.attachments?.maxInputImages ?? 3;
+        const attachments: NormalizedImageAttachment[] = (request.images ?? [])
+          .slice(0, maxImages)
+          .map((image, index) => ({
+            ref: `v2-img-${index}`,
+            name: image.name || `image-${index + 1}.png`,
+            mimeType: image.mimeType,
+            dataUrl: image.dataUrl,
+            buffer: image.buffer,
+          }));
+
+        let finalStatus: WebTurnFinalStatus = "failed";
+        let retryNextProfileId: string | undefined;
+        try {
+          const result = await this.definition.browser.executeTurn({
+            page: acquired.page!,
+            prompt: request.prompt,
+            attempt: failoverAttempt,
+            parsed: syntheticParsed,
+            incoming: turnIncoming,
+            reasoningEffort: request.reasoning,
+            conversationKey,
+            existingConversationId: activeConversationId,
+            launcherReused: forceNewConversation ? false : acquired.launcherReused,
+            isNewConversation,
+            retain: true,
+            attachments,
+            turnTraceId,
+            heartbeat: acquired.heartbeat,
+          });
+
+          if (this.definition.conversation.onConversationUpdated) {
+            const updatedId = this.definition.conversation.onConversationUpdated({
+              conversationKey,
+              conversationId: result.conversationId,
+            });
+            if (updatedId) {
+              activeConversationId = updatedId;
+            }
+          } else if (result.conversationId) {
+            activeConversationId = result.conversationId;
+          }
+
+          const outputText = this.definition.response?.sanitizeRawResponse
+            ? this.definition.response.sanitizeRawResponse(result.rawResponse)
+            : result.rawResponse;
+
+          this.failoverCoordinator.recordTurnSuccess({
+            providerId: this.definition.id,
+            modelId: request.modelId,
+            profileId: currentProfileId,
+            threadId: request.conversationKey,
+          });
+          finalStatus = "completed";
+          return {
+            outputText,
+            ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+          };
+        } catch (error) {
+          finalStatus = turnRegistration.signal.aborted ? "aborted" : "failed";
+          const rawMsg = error instanceof Error ? error.message : String(error);
+          const classified = adapterFailureFromMessage(rawMsg);
+          if (
+            !turnRegistration.signal.aborted &&
+            classified.error.code === "insufficient_quota"
+          ) {
+            const failover = this.failoverCoordinator.handleQuotaFailure({
+              providerId: this.definition.id,
+              modelId: request.modelId,
+              profileId: currentProfileId,
+              threadId: request.conversationKey,
+              errorMessage: rawMsg,
+              // Nếu đã có conversationId trên profile cũ, /v2/responses không giữ full history để tự dựng lại
+              pinnedByCaller:
+                initialProfile.pinnedByCaller || Boolean(activeConversationId),
+              attemptedProfileIds,
+              hasEmittedOutput: false,
+              descriptorPath: resolvedDescriptorPath,
+            });
+            if (failover.shouldFailover && failover.nextProfileId) {
+              retryNextProfileId = failover.nextProfileId;
+            }
+          }
+          if (!retryNextProfileId) {
+            throw error;
+          }
+        } finally {
+          await releaseWebTurnSurface({
+            definition: this.definition,
+            acquired,
+            turnTraceId,
+            finalStatus,
+            activeConversationId,
+            conversationKey,
+            parsed: syntheticParsed,
+            hasPriorAssistantReply: !isNewConversation,
+            hasToolResults: false,
+            ...(retryNextProfileId ? { retainOverride: false } : {}),
+            abortSignal: turnRegistration.signal,
+            ops: this.lifecycleOps,
+          });
+        }
+
+        if (retryNextProfileId) {
+          currentProfileId = retryNextProfileId;
+          attemptedProfileIds.add(retryNextProfileId);
+          forceNewConversation = true;
+          continue;
+        }
+        throw new Error(`[${this.definition.logPrefix}] Raw turn exited unexpectedly without result`);
       }
     } finally {
       turnRegistration.finish();
@@ -1180,113 +1343,189 @@ export class WebTurnEngine {
     };
 
     try {
-      const initialUrl = this.definition.browser.resolveInitialUrl?.({
+      const resolvedDescriptorPath =
+        (this.lifecycleOps?.resolveDescriptorPath ?? resolveLauncherDescriptorPath)(
+          this.definition.browser.descriptorPath,
+          this.definition.browser.descriptorSubdirs,
+        ) ?? undefined;
+      const initialProfile = this.failoverCoordinator.resolveInitialProfile({
+        providerId: this.definition.id,
         modelId: request.modelId,
-        existingConversationId: request.existingConversationId,
+        threadId: request.conversationKey,
+        explicitProfileId: request.profileId,
+        descriptorPath: resolvedDescriptorPath,
       });
-      const acquired = await acquireWebTurnSurface({
-        definition: this.definition,
-        localBrowser: this.localBrowser,
-        turnTraceId,
-        conversationKey,
-        ...(request.connectorIdentity ? { connectorIdentity: request.connectorIdentity } : {}),
-        ...(initialUrl ? { initialUrl } : {}),
-        ...(request.profileId ? { profileId: request.profileId } : {}),
-        abortSignal: turnRegistration.signal,
-        ops: this.lifecycleOps,
-      });
+      let currentProfileId = initialProfile.profileId;
+      let forceNewConversation = initialProfile.switchedFromStickyOrActive;
+      const attemptedProfileIds = new Set<string>();
+      if (currentProfileId) {
+        attemptedProfileIds.add(currentProfileId);
+      }
 
-      let activeConversationId =
-        request.existingConversationId || acquired.leaseConversationId;
-      const isNewConversation =
-        request.isNewConversation !== undefined
-          ? request.isNewConversation && !acquired.launcherReused && !activeConversationId
-          : !acquired.launcherReused && !activeConversationId;
-      const retain = request.retain ?? true;
-      const syntheticParsed: CodexParsedRequest = {
-        modelId: request.modelId,
-        stream: request.streamIncremental === true,
-        context: { messages: [], tools: [] },
-        options: {
-          ...(request.reasoning ? { reasoning: request.reasoning } : {}),
-        },
-      };
-      const maxImages = this.definition.attachments?.maxInputImages ?? 3;
-      const attachments: NormalizedImageAttachment[] = (request.images ?? [])
-        .slice(0, maxImages)
-        .map((image, index) => ({
-          ref: `managed-img-${index}`,
-          name: image.name || `image-${index + 1}.png`,
-          mimeType: image.mimeType,
-          dataUrl: image.dataUrl,
-          buffer: image.buffer,
-        }));
-
-      let finalStatus: WebTurnFinalStatus = "failed";
-      try {
-        const result = await this.definition.browser.executeTurn({
-          page: acquired.page!,
-          prompt: request.prompt,
-          attempt: request.attempt ?? 0,
-          parsed: syntheticParsed,
-          incoming: turnIncoming,
-          reasoningEffort: request.reasoning,
-          conversationKey,
-          existingConversationId: activeConversationId,
-          launcherReused: acquired.launcherReused,
-          isNewConversation,
-          retain,
-          attachments,
-          turnTraceId,
-          streamIncremental: request.streamIncremental === true,
-          onChunk: request.onChunk,
-          onTextSnapshot: request.onTextSnapshot,
-          heartbeat: acquired.heartbeat,
+      for (let failoverAttempt = 0; ; failoverAttempt += 1) {
+        const effectiveExistingId = forceNewConversation
+          ? undefined
+          : request.existingConversationId;
+        const initialUrl = this.definition.browser.resolveInitialUrl?.({
+          modelId: request.modelId,
+          existingConversationId: effectiveExistingId,
         });
-
-        if (this.definition.conversation.onConversationUpdated) {
-          const updatedId = this.definition.conversation.onConversationUpdated({
-            conversationKey,
-            conversationId: result.conversationId,
-          });
-          if (updatedId) {
-            activeConversationId = updatedId;
-          }
-        } else if (result.conversationId) {
-          activeConversationId = result.conversationId;
-        }
-
-        const rawResponse = this.definition.response?.sanitizeRawResponse
-          ? this.definition.response.sanitizeRawResponse(result.rawResponse)
-          : result.rawResponse;
-
-        finalStatus = "completed";
-        return {
-          rawResponse,
-          launcherReused: acquired.launcherReused,
-          ...(activeConversationId ? { conversationId: activeConversationId } : {}),
-          ...(result.providerReportedTokens
-            ? { providerReportedTokens: result.providerReportedTokens }
-            : {}),
-        };
-      } catch (error) {
-        finalStatus = turnRegistration.signal.aborted ? "aborted" : "failed";
-        throw error;
-      } finally {
-        await releaseWebTurnSurface({
+        const acquired = await acquireWebTurnSurface({
           definition: this.definition,
-          acquired,
+          localBrowser: this.localBrowser,
           turnTraceId,
-          finalStatus,
-          activeConversationId,
           conversationKey,
-          parsed: syntheticParsed,
-          hasPriorAssistantReply: !isNewConversation,
-          hasToolResults: false,
-          retainOverride: retain ? undefined : false,
+          ...(request.connectorIdentity ? { connectorIdentity: request.connectorIdentity } : {}),
+          ...(initialUrl ? { initialUrl } : {}),
+          ...(currentProfileId ? { profileId: currentProfileId } : {}),
           abortSignal: turnRegistration.signal,
           ops: this.lifecycleOps,
         });
+
+        let activeConversationId = forceNewConversation
+          ? undefined
+          : effectiveExistingId || acquired.leaseConversationId;
+        const isNewConversation = forceNewConversation
+          ? true
+          : request.isNewConversation !== undefined
+            ? request.isNewConversation && !acquired.launcherReused && !activeConversationId
+            : !acquired.launcherReused && !activeConversationId;
+        const retain = request.retain ?? true;
+        const syntheticParsed: CodexParsedRequest = {
+          modelId: request.modelId,
+          stream: request.streamIncremental === true,
+          context: { messages: [], tools: [] },
+          options: {
+            ...(request.reasoning ? { reasoning: request.reasoning } : {}),
+          },
+        };
+        const maxImages = this.definition.attachments?.maxInputImages ?? 3;
+        const attachments: NormalizedImageAttachment[] = (request.images ?? [])
+          .slice(0, maxImages)
+          .map((image, index) => ({
+            ref: `managed-img-${index}`,
+            name: image.name || `image-${index + 1}.png`,
+            mimeType: image.mimeType,
+            dataUrl: image.dataUrl,
+            buffer: image.buffer,
+          }));
+
+        let hasEmittedOutput = false;
+        let finalStatus: WebTurnFinalStatus = "failed";
+        let retryNextProfileId: string | undefined;
+        try {
+          const result = await this.definition.browser.executeTurn({
+            page: acquired.page!,
+            prompt: request.prompt,
+            attempt: failoverAttempt > 0 ? failoverAttempt : (request.attempt ?? 0),
+            parsed: syntheticParsed,
+            incoming: turnIncoming,
+            reasoningEffort: request.reasoning,
+            conversationKey,
+            existingConversationId: activeConversationId,
+            launcherReused: forceNewConversation ? false : acquired.launcherReused,
+            isNewConversation,
+            retain,
+            attachments,
+            turnTraceId,
+            streamIncremental: request.streamIncremental === true,
+            onChunk: request.onChunk
+              ? (chunk: string) => {
+                  if (chunk) hasEmittedOutput = true;
+                  request.onChunk?.(chunk);
+                }
+              : undefined,
+            onTextSnapshot: request.onTextSnapshot
+              ? (snapshot: string) => {
+                  if (snapshot) hasEmittedOutput = true;
+                  request.onTextSnapshot?.(snapshot);
+                }
+              : undefined,
+            heartbeat: acquired.heartbeat,
+          });
+
+          if (this.definition.conversation.onConversationUpdated) {
+            const updatedId = this.definition.conversation.onConversationUpdated({
+              conversationKey,
+              conversationId: result.conversationId,
+            });
+            if (updatedId) {
+              activeConversationId = updatedId;
+            }
+          } else if (result.conversationId) {
+            activeConversationId = result.conversationId;
+          }
+
+          const rawResponse = this.definition.response?.sanitizeRawResponse
+            ? this.definition.response.sanitizeRawResponse(result.rawResponse)
+            : result.rawResponse;
+
+          this.failoverCoordinator.recordTurnSuccess({
+            providerId: this.definition.id,
+            modelId: request.modelId,
+            profileId: currentProfileId,
+            threadId: request.conversationKey,
+          });
+          finalStatus = "completed";
+          return {
+            rawResponse,
+            launcherReused: forceNewConversation ? false : acquired.launcherReused,
+            ...(activeConversationId ? { conversationId: activeConversationId } : {}),
+            ...(result.providerReportedTokens
+              ? { providerReportedTokens: result.providerReportedTokens }
+              : {}),
+          };
+        } catch (error) {
+          finalStatus = turnRegistration.signal.aborted ? "aborted" : "failed";
+          const rawMsg = error instanceof Error ? error.message : String(error);
+          const classified = adapterFailureFromMessage(rawMsg);
+          if (
+            !turnRegistration.signal.aborted &&
+            classified.error.code === "insufficient_quota"
+          ) {
+            const failover = this.failoverCoordinator.handleQuotaFailure({
+              providerId: this.definition.id,
+              modelId: request.modelId,
+              profileId: currentProfileId,
+              threadId: request.conversationKey,
+              errorMessage: rawMsg,
+              pinnedByCaller:
+                initialProfile.pinnedByCaller || Boolean(activeConversationId),
+              attemptedProfileIds,
+              hasEmittedOutput,
+              descriptorPath: resolvedDescriptorPath,
+            });
+            if (failover.shouldFailover && failover.nextProfileId) {
+              retryNextProfileId = failover.nextProfileId;
+            }
+          }
+          if (!retryNextProfileId) {
+            throw error;
+          }
+        } finally {
+          await releaseWebTurnSurface({
+            definition: this.definition,
+            acquired,
+            turnTraceId,
+            finalStatus,
+            activeConversationId,
+            conversationKey,
+            parsed: syntheticParsed,
+            hasPriorAssistantReply: !isNewConversation,
+            hasToolResults: false,
+            retainOverride: retryNextProfileId ? false : retain ? undefined : false,
+            abortSignal: turnRegistration.signal,
+            ops: this.lifecycleOps,
+          });
+        }
+
+        if (retryNextProfileId) {
+          currentProfileId = retryNextProfileId;
+          attemptedProfileIds.add(retryNextProfileId);
+          forceNewConversation = true;
+          continue;
+        }
+        throw new Error(`[${this.definition.logPrefix}] Raw turn exited unexpectedly without result`);
       }
     } finally {
       turnRegistration.finish();

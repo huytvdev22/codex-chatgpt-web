@@ -838,6 +838,60 @@ code {
   }
 }
 
+.browser-quota-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgb(248 113 113 / 28%);
+  background: rgb(127 29 29 / 28%);
+  color: #fecaca;
+  font-size: var(--text-xs);
+}
+
+.browser-quota-banner-text {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.browser-quota-banner-text svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: #f87171;
+}
+
+.browser-quota-banner-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-quota-banner-cta {
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 1px solid rgb(248 113 113 / 45%);
+  border-radius: var(--radius-sm);
+  background: rgb(220 38 38 / 25%);
+  color: #fef2f2;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.browser-quota-banner-cta:hover:not(:disabled) {
+  background: rgb(220 38 38 / 42%);
+}
+
+.browser-quota-banner-cta:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .browser-viewport {
   position: relative;
   min-width: 0;

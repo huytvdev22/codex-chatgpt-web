@@ -66,10 +66,44 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
   }
 
   const entries = [];
+  const nowMs = Date.now();
   for (const group of normalizedProviders) {
     const support = SUPPORTED_LIMIT_PROVIDERS.has(group.runtimeId) ? "supported" : "unsupported";
     for (const profile of group.profiles) {
+      const cached = file.entries[`${group.runtimeId}::${profile.id}`];
       if (support === "unsupported") {
+        if (
+          profile.authenticated
+          && cached
+          && isPlainObject(cached)
+          && cached.status === "exhausted"
+          && cached.sourceKind === "dom-fallback"
+        ) {
+          const activeBuckets = Array.isArray(cached.buckets)
+            ? cached.buckets.filter((b) => !b?.resetAt || Date.parse(b.resetAt) > nowMs)
+            : [];
+          if (activeBuckets.length > 0) {
+            entries.push({
+              providerId: group.runtimeId,
+              profileId: profile.id,
+              profileName: profile.name,
+              isActive: profile.isActive,
+              authenticated: profile.authenticated,
+              support,
+              status: "exhausted",
+              planName: null,
+              sourceUrl: cached.sourceUrl ?? null,
+              sourceKind: "dom-fallback",
+              scopeNote: cached.scopeNote ?? null,
+              providerUpdatedText: cached.providerUpdatedText ?? null,
+              buckets: activeBuckets,
+              rawSummary: cached.rawSummary ?? null,
+              checkedAt: cached.checkedAt ?? null,
+              lastError: cached.lastError ?? null,
+            });
+            continue;
+          }
+        }
         entries.push({
           providerId: group.runtimeId,
           profileId: profile.id,
@@ -91,7 +125,6 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
         continue;
       }
 
-      const cached = file.entries[`${group.runtimeId}::${profile.id}`];
       if (!cached || !isPlainObject(cached)) {
         entries.push({
           providerId: group.runtimeId,

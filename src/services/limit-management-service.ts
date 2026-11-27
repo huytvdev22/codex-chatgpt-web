@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { AdapterRegistry } from "../adapters/adapter-registry";
 import { activeWebTurnRegistry, ProviderBusyError } from "../adapters/web";
 import { resolveLauncherDescriptorPath } from "../adapters/web/launcher-runtime";
@@ -8,12 +9,15 @@ import {
 import {
   buildLimitEntryKey,
   DEFAULT_LIMIT_WARNING_THRESHOLD_PERCENT,
+  formatResetRemainingText,
   LimitStore,
+  ProfileCooldownStore,
   toLauncherProviderId,
   toRuntimeProviderId,
   type LimitRefreshTargetResult,
   type LimitSupportKind,
   type ProfileLimitEntry,
+  type ProviderLimitBucket,
   type ProviderLimitsSnapshot,
   type StoredProfileLimitRecord,
 } from "../limits";
@@ -69,6 +73,8 @@ function classifyErrorToStatus(
  * hợp nhất danh sách profile từ Launcher descriptor và cache `provider-limits.json`.
  */
 export class LimitManagementService {
+  private readonly cooldownStore: ProfileCooldownStore;
+
   constructor(
     private readonly limitStore: LimitStore = LimitStore.getInstance(),
     private readonly modelRegistry: ModelRegistry = ModelRegistry.getInstance(),
@@ -82,7 +88,16 @@ export class LimitManagementService {
         return null;
       }
     },
-  ) {}
+    cooldownStore?: ProfileCooldownStore,
+  ) {
+    this.cooldownStore =
+      cooldownStore ??
+      (limitStore === LimitStore.getInstance()
+        ? ProfileCooldownStore.getInstance()
+        : new ProfileCooldownStore(
+            join(dirname(limitStore.resolveFilePath()), "profile-cooldowns.json"),
+          ));
+  }
 
   private listKnownProfiles(): {
     profiles: KnownProviderProfile[];
@@ -170,9 +185,92 @@ export class LimitManagementService {
     }
 
     const file = this.limitStore.readFile();
+    const nowMs = Date.now();
     const entries: ProfileLimitEntry[] = profiles.map((profile) => {
       const support = supportKindForProvider(profile.providerId);
+      const key = buildLimitEntryKey(profile.providerId, profile.profileId);
+      const cached = file.entries[key];
       if (support === "unsupported") {
+        const activeCooldowns = this.cooldownStore.listActiveCooldownsForProfile(
+          profile.providerId,
+          profile.profileId,
+          nowMs,
+        );
+        const activePassiveBuckets =
+          activeCooldowns.length > 0
+            ? activeCooldowns.map<ProviderLimitBucket>((entry) => ({
+                id: `cooldown:${entry.modelSlug}`,
+                label: entry.modelSlug,
+                percentUsed: 100,
+                remainingText: "0 remaining",
+                resetAt: entry.resetAt,
+                resetText: `Resets in ${formatResetRemainingText(entry.cooldownUntilMs, nowMs)}`,
+                severity: "exhausted",
+              }))
+            : cached?.status === "exhausted" && cached.sourceKind === "dom-fallback"
+              ? cached.buckets.filter(
+                  (b) => !b.resetAt || Date.parse(b.resetAt) > nowMs,
+                )
+              : [];
+
+        if (activePassiveBuckets.length > 0) {
+          if (fromDescriptor && !profile.authenticated) {
+            return {
+              providerId: profile.providerId,
+              profileId: profile.profileId,
+              profileName: profile.profileName,
+              isActive: profile.isActive,
+              authenticated: profile.authenticated,
+              support,
+              status: "signed_out",
+              planName: null,
+              sourceUrl: null,
+              sourceKind: "dom-fallback",
+              scopeNote: cached?.scopeNote ?? null,
+              providerUpdatedText: null,
+              buckets: [],
+              rawSummary: null,
+              checkedAt: cached?.checkedAt ?? null,
+              lastError: null,
+            };
+          }
+          const rawSummary =
+            activeCooldowns.length > 0
+              ? activeCooldowns
+                  .map(
+                    (entry) =>
+                      `${entry.modelSlug}: limit reached (resets in ${formatResetRemainingText(entry.cooldownUntilMs, nowMs)})`,
+                  )
+                  .join(" | ")
+              : cached?.rawSummary ?? null;
+          return {
+            providerId: profile.providerId,
+            profileId: profile.profileId,
+            profileName: profile.profileName,
+            isActive: profile.isActive,
+            authenticated: profile.authenticated,
+            support,
+            status: "exhausted",
+            planName: null,
+            sourceUrl: cached?.sourceUrl ?? null,
+            sourceKind: "dom-fallback",
+            scopeNote:
+              cached?.scopeNote ?? "Passive quota limit detected during turn execution.",
+            providerUpdatedText: cached?.providerUpdatedText ?? null,
+            buckets: activePassiveBuckets,
+            rawSummary,
+            checkedAt: cached?.checkedAt ?? activeCooldowns[0]?.exhaustedAt ?? null,
+            lastError: cached?.lastError ?? activeCooldowns[0]?.reason ?? null,
+          };
+        }
+
+        if (cached?.status === "exhausted" && cached.sourceKind === "dom-fallback") {
+          this.limitStore.clearPassiveExhaustedIfExpired(
+            profile.providerId,
+            profile.profileId,
+          );
+        }
+
         return {
           providerId: profile.providerId,
           profileId: profile.profileId,
@@ -193,8 +291,6 @@ export class LimitManagementService {
         };
       }
 
-      const key = buildLimitEntryKey(profile.providerId, profile.profileId);
-      const cached = file.entries[key];
       if (!cached) {
         return {
           providerId: profile.providerId,
