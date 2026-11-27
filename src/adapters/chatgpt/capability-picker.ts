@@ -120,29 +120,32 @@ export class ChatGptCapabilityPicker {
     const menu = page.locator(CHATGPT_SELECTORS.openPickerMenu).last();
 
     // Kiểm tra nhanh khi đang ở view simple:
-    // - Nếu là model mặc định của tài khoản, nút "Reset to default" sẽ không xuất hiện.
-    // - Nếu là model có shortUiVersion (vd: "6", "5.6"), toggle text sẽ bắt đầu bằng tiền tố đó.
+    // Chỉ skip bước mở danh sách radio nếu text model hiện trên toggle thực sự khớp model đích
+    // (không dựa vào việc thiếu nút "Reset to default", tránh nhận nhầm khi tài khoản/thread đang ở 5.6).
     const quickMatch = await menu
       .evaluate(
-        (menuEl, { toggleSel, expectedShort, isDefault }) => {
+        (menuEl, { toggleSel, expectedShort, expectedLabel }) => {
           const toggle = menuEl.querySelector<HTMLElement>(toggleSel);
-          const hasReset = Array.from(
-            menuEl.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-          ).some((el) => /reset to default/i.test(el.textContent || ""));
-          if (isDefault && !hasReset) {
-            return true;
-          }
-          if (!toggle || !expectedShort) return false;
+          if (!toggle) return false;
           const firstLine = (toggle.innerText || toggle.textContent || "")
             .trim()
             .split(/\r?\n/)[0]
-            ?.trim();
-          return firstLine?.toLowerCase() === expectedShort.toLowerCase();
+            ?.trim()
+            .toLowerCase();
+          if (!firstLine) return false;
+          const shortLower = expectedShort.trim().toLowerCase();
+          const labelLower = expectedLabel.trim().toLowerCase();
+          const strippedGpt = labelLower.replace(/^gpt[- ]?/i, "");
+          if (shortLower && firstLine === shortLower) return true;
+          if (labelLower && (firstLine === labelLower || (strippedGpt && firstLine === strippedGpt))) {
+            return true;
+          }
+          return false;
         },
         {
           toggleSel: CHATGPT_SELECTORS.modelViewToggle,
           expectedShort: target.shortUiVersion ?? "",
-          isDefault: Boolean(target.isAccountDefault),
+          expectedLabel: target.modelLabel,
         },
       )
       .catch(() => false);
@@ -165,43 +168,76 @@ export class ChatGptCapabilityPicker {
     const radios = menu.locator(CHATGPT_SELECTORS.modelRadioItem);
     await radios.first().waitFor({ state: "visible", timeout: 2_500 }).catch(() => {});
 
-    const radioCount = await radios.count();
-    let matchedIndex = -1;
-    let alreadyChecked = false;
     const normalizedTarget = target.modelLabel.trim().toLowerCase();
-
-    for (let index = 0; index < radioCount; index += 1) {
-      const radio = radios.nth(index);
-      const label = ((await radio.innerText().catch(() => "")) || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
-      if (!label) continue;
-      if (label === normalizedTarget || label.startsWith(`${normalizedTarget} `)) {
-        matchedIndex = index;
-        alreadyChecked =
-          (await radio.getAttribute("aria-checked").catch(() => "")) === "true";
-        break;
+    const findMatchedRadio = async (): Promise<{
+      matchedIndex: number;
+      alreadyChecked: boolean;
+      targetRadio: ReturnType<typeof radios.nth> | null;
+    }> => {
+      const count = await radios.count();
+      for (let index = 0; index < count; index += 1) {
+        const radio = radios.nth(index);
+        const label = ((await radio.innerText().catch(() => "")) || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+        if (!label) continue;
+        if (label === normalizedTarget || label.startsWith(`${normalizedTarget} `)) {
+          return {
+            matchedIndex: index,
+            alreadyChecked: (await radio.getAttribute("aria-checked").catch(() => "")) === "true",
+            targetRadio: radio,
+          };
+        }
       }
-    }
-
-    if (matchedIndex < 0) {
-      for (let index = 0; index < radioCount; index += 1) {
+      for (let index = 0; index < count; index += 1) {
         const radio = radios.nth(index);
         const label = ((await radio.innerText().catch(() => "")) || "")
           .replace(/\s+/g, " ")
           .trim()
           .toLowerCase();
         if (label.includes(normalizedTarget)) {
-          matchedIndex = index;
-          alreadyChecked =
-            (await radio.getAttribute("aria-checked").catch(() => "")) === "true";
-          break;
+          return {
+            matchedIndex: index,
+            alreadyChecked: (await radio.getAttribute("aria-checked").catch(() => "")) === "true",
+            targetRadio: radio,
+          };
+        }
+      }
+      return { matchedIndex: -1, alreadyChecked: false, targetRadio: null };
+    };
+
+    let matched = await findMatchedRadio();
+    if (matched.matchedIndex < 0) {
+      const legacyTrigger = menu
+        .locator('[role="menuitem"]:has-text("Legacy"), [role="menuitem"]:has-text("More models")')
+        .first();
+      if (await legacyTrigger.isVisible().catch(() => false)) {
+        await legacyTrigger.hover().catch(() => {});
+        await legacyTrigger.click({ timeout: 1_500 }).catch(() => {});
+        await page.waitForTimeout(240);
+        const activeMenu = page.locator(CHATGPT_SELECTORS.openPickerMenu).last();
+        const subRadios = activeMenu.locator(CHATGPT_SELECTORS.modelRadioItem);
+        const subCount = await subRadios.count().catch(() => 0);
+        for (let index = 0; index < subCount; index += 1) {
+          const radio = subRadios.nth(index);
+          const label = ((await radio.innerText().catch(() => "")) || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+          if (label === normalizedTarget || label.startsWith(`${normalizedTarget} `) || label.includes(normalizedTarget)) {
+            matched = {
+              matchedIndex: index,
+              alreadyChecked: (await radio.getAttribute("aria-checked").catch(() => "")) === "true",
+              targetRadio: radio,
+            };
+            break;
+          }
         }
       }
     }
 
-    if (matchedIndex < 0) {
+    if (matched.matchedIndex < 0 || !matched.targetRadio) {
       console.warn(
         `[chatgpt-capability] Không tìm thấy model '${target.modelLabel}' trong danh sách ChatGPT.`,
       );
@@ -211,7 +247,7 @@ export class ChatGptCapabilityPicker {
       };
     }
 
-    const targetRadio = radios.nth(matchedIndex);
+    const { targetRadio, alreadyChecked } = matched;
     const ariaDisabled = await targetRadio.getAttribute("aria-disabled").catch(() => null);
     const isDisabled = ariaDisabled === "true" || (await targetRadio.isDisabled?.().catch(() => false));
     if (!alreadyChecked && isDisabled) {

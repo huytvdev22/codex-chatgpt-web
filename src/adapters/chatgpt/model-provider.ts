@@ -48,6 +48,7 @@ export class ChatGptModelProvider extends BaseModelProvider<ChatGptModelRouteDef
     {
       slug: "chatgpt/gpt-6.2",
       uiLabel: "GPT-6.2",
+      shortUiVersion: "6.2",
       isAccountDefault: true,
       displayName: "ChatGPT - GPT-6.2",
       description: "GPT-6.2 qua ChatGPT Web",

@@ -3,6 +3,8 @@ import {
   buildChatGptConversationUrl,
   CHATGPT_HOME_URL,
   ChatGptAdapter,
+  ChatGptCapabilityPicker,
+  ChatGptModelProvider,
   chatGptConversationKey,
   createChatGptAdapter,
   isChatGptAuthUrl,
@@ -182,5 +184,85 @@ describe("ChatGptAdapter contract & URL helpers", () => {
       lastRaw: "Hi there",
     });
     expect(usage?.totalTokens).toBeGreaterThan(0);
+  });
+
+  test("ChatGptCapabilityPicker không bỏ qua bước chọn GPT-6.2 khi UI đang ở 5.6 và thiếu nút Reset to default", async () => {
+    const picker = new ChatGptCapabilityPicker();
+    let clickedToggle = false;
+    let clickedGpt62Radio = false;
+    let currentEffort = "medium";
+
+    const makeLocator = (kind: string, index = 0): any => ({
+      first() {
+        return makeLocator(kind, 0);
+      },
+      last() {
+        return makeLocator(kind, 0);
+      },
+      nth(i: number) {
+        return makeLocator(kind, i);
+      },
+      locator(subSel: string) {
+        if (subSel.includes("model-picker-view-toggle")) return makeLocator("viewToggle");
+        if (subSel.includes("menuitemradio")) return makeLocator("radios");
+        if (subSel.includes("reasoning-slider")) return makeLocator("sliderRow");
+        if (subSel.includes("slider")) return makeLocator("sliderThumb");
+        if (subSel.includes("Legacy")) return makeLocator("legacy");
+        return makeLocator("unknown");
+      },
+      async isVisible() {
+        if (kind === "legacy") return false;
+        return true;
+      },
+      async waitFor() {},
+      async click() {
+        if (kind === "viewToggle") clickedToggle = true;
+        if (kind === "radios" && index === 0) clickedGpt62Radio = true;
+      },
+      async count() {
+        if (kind === "radios") return 2;
+        return 1;
+      },
+      async innerText() {
+        if (kind === "radios") return index === 0 ? "GPT-6.2" : "GPT-5.6 Sol";
+        return "";
+      },
+      async getAttribute(name: string) {
+        if (kind === "trigger" && name === "data-selected-reasoning-effort") return currentEffort;
+        if (kind === "radios" && name === "aria-checked") {
+          return index === 0 ? (clickedGpt62Radio ? "true" : "false") : "true";
+        }
+        return null;
+      },
+      async evaluate(fn: any, arg: any) {
+        if (kind === "menu") {
+          // Giả lập simple view đang hiện "5.6" và KHÔNG có nút "Reset to default"
+          const fakeMenu = {
+            querySelector: (sel: string) =>
+              sel.includes("view-toggle") ? { innerText: "5.6\nThinking", textContent: "5.6\nThinking" } : null,
+            querySelectorAll: () => [],
+          };
+          return fn(fakeMenu, arg);
+        }
+        return { min: 0, max: 2, now: 1 };
+      },
+    });
+
+    const fakePage: any = {
+      locator(sel: string) {
+        if (sel.includes("Select ChatGPT model")) return makeLocator("trigger");
+        if (sel.includes("role=\"menu\"")) return makeLocator("menu");
+        return makeLocator("other");
+      },
+      keyboard: { press: async () => {} },
+      waitForTimeout: async () => {},
+    };
+
+    const target = ChatGptModelProvider.getInstance().resolveCapabilityTarget("chatgpt/gpt-6.2", "medium");
+    const result = await picker.ensureCapabilityDetailed(fakePage, target);
+
+    expect(result.modelSelected).toBe(true);
+    expect(clickedToggle).toBe(true);
+    expect(clickedGpt62Radio).toBe(true);
   });
 });
