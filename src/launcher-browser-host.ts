@@ -554,7 +554,7 @@ export type LauncherTurnActivity =
     };
 
 // Startup must exceed the launcher's bootstrap + retry budget (20s + 0.5s + 30s). This is not a model-turn budget.
-export const LAUNCHER_TURN_START_TIMEOUT_MS = 60_000;
+export const LAUNCHER_TURN_START_TIMEOUT_MS = 180_000;
 export const LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS = 5_000;
 export const LAUNCHER_TURN_END_TIMEOUT_MS = 15_000;

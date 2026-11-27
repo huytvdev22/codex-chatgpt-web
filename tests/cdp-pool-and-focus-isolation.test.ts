@@ -14,6 +14,7 @@ import {
   acquirePageFocusEmulation,
   withPageFocusEmulation,
 } from "../src/adapters/web/browser/cdp-focus-emulation";
+import { applyInPageClipboardInterceptor } from "../src/adapters/web/browser/in-page-clipboard-hook";
 
 function makeDescriptor(surfaceTargets: Record<string, string>): LauncherBrowserHostDescriptor {
   return {
@@ -173,7 +174,7 @@ describe("CDP Pool, target isolation và Focus/Clipboard safety", () => {
     expect(order).toEqual(["start-1", "end-1", "start-2", "end-2"]);
   });
 
-  test("4 adapter đã gỡ fallback navigator.clipboard.readText và hook cả navigator.clipboard.write", () => {
+  test("4 adapter dùng shared clipboard hook và chặn triệt để write/execCommand/copy ghi OS Clipboard", () => {
     const clipboardFiles = [
       "src/adapters/chatgpt/chatgpt-clipboard-salvage.ts",
       "src/adapters/gemini/gemini-clipboard-salvage.ts",
@@ -185,9 +186,74 @@ describe("CDP Pool, target isolation và Focus/Clipboard safety", () => {
       const codeOnly = source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
       expect(codeOnly).not.toContain("clipboard.readText");
       expect(codeOnly).not.toContain("clipboard?.readText");
-      expect(codeOnly).toContain("navigator.clipboard.write =");
-      expect(codeOnly).toContain("__codex_suppress_os_clipboard_write");
+      expect(codeOnly).toContain("installInPageClipboardHook");
     }
+
+    const hookSource = readFileSync(
+      resolve(import.meta.dir, "..", "src/adapters/web/browser/in-page-clipboard-hook.ts"),
+      "utf8",
+    );
+    expect(hookSource).toContain("navigator.clipboard.write =");
+    expect(hookSource).toContain("execCommand");
+    expect(hookSource).toContain("event.preventDefault()");
+    expect(hookSource).toContain("__codex_suppress_os_clipboard_write");
+
+    // Kiểm chứng hành vi runtime chặn execCommand("copy") & copy event không chạm OS clipboard
+    let origExecCalled = 0;
+    let origWriteCalled = 0;
+    let copyPrevented = false;
+    let copyStopped = false;
+    const listeners: Record<string, Array<(e: unknown) => void>> = {};
+    const fakeDoc = {
+      activeElement: { value: "AI_STUDIO_CDK_EXEC_COPY_TEXT" },
+      execCommand: (_cmd: string) => {
+        origExecCalled += 1;
+        return true;
+      },
+      addEventListener: (name: string, fn: (e: unknown) => void) => {
+        (listeners[name] ||= []).push(fn);
+      },
+    } as unknown as Document;
+    const fakeWin: Record<string, unknown> = {
+      getSelection: () => ({ toString: () => "" }),
+      navigator: {
+        clipboard: {
+          writeText: async () => {
+            origWriteCalled += 1;
+          },
+          write: async () => {
+            origWriteCalled += 1;
+          },
+        },
+      },
+    };
+
+    applyInPageClipboardInterceptor(fakeWin, fakeDoc, {
+      resultKey: "__test_copied",
+      suppressOsClipboardNow: true,
+    });
+
+    const execResult = fakeDoc.execCommand("copy");
+    expect(execResult).toBe(true);
+    expect(origExecCalled).toBe(0);
+    expect(fakeWin.__test_copied).toBe("AI_STUDIO_CDK_EXEC_COPY_TEXT");
+
+    fakeWin.__test_copied = null;
+    for (const cb of listeners.copy || []) {
+      cb({
+        clipboardData: { getData: () => "COPY_EVENT_TEXT" },
+        preventDefault: () => {
+          copyPrevented = true;
+        },
+        stopImmediatePropagation: () => {
+          copyStopped = true;
+        },
+      });
+    }
+    expect(fakeWin.__test_copied).toBe("COPY_EVENT_TEXT");
+    expect(copyPrevented).toBe(true);
+    expect(copyStopped).toBe(true);
+    expect(origWriteCalled).toBe(0);
 
     const adaptersRoot = resolve(import.meta.dir, "..", "src/adapters");
     const adapterFiles: string[] = [];

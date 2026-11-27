@@ -1,4 +1,5 @@
 import type { Page } from "playwright-core";
+import { installInPageClipboardHook } from "../web/browser/in-page-clipboard-hook";
 import {
   normalizeCopiedGeminiSnippet,
   type GeminiResponseBaseline,
@@ -38,70 +39,9 @@ export function selectPreferredGeminiResponse(
  */
 export class GeminiClipboardSalvage {
   public async setupHook(page: Page): Promise<void> {
-    await page
-      .context()
-      .grantPermissions(["clipboard-read", "clipboard-write"])
-      .catch(() => {});
-    await page.evaluate(() => {
-      const win = window as unknown as Record<string, unknown>;
-      win.__gemini_last_copied_code = null;
-
-      if (!win.__gemini_hook_installed) {
-        win.__gemini_hook_installed = true;
-        document.addEventListener(
-          "copy",
-          (event: ClipboardEvent) => {
-            const text =
-              event.clipboardData?.getData("text/plain") ||
-              window.getSelection()?.toString();
-            if (text && text.trim()) {
-              win.__gemini_last_copied_code = text;
-            }
-          },
-          { capture: true },
-        );
-
-        const origWriteText = navigator.clipboard?.writeText?.bind(
-          navigator.clipboard,
-        );
-        if (navigator.clipboard && origWriteText) {
-          navigator.clipboard.writeText = async (text: string) => {
-            if (text && text.trim()) {
-              win.__gemini_last_copied_code = text;
-            }
-            if (win.__codex_suppress_os_clipboard_write) return undefined;
-            try {
-              return await origWriteText(text);
-            } catch {
-              return undefined;
-            }
-          };
-        }
-
-        const origWrite = navigator.clipboard?.write?.bind(navigator.clipboard);
-        if (navigator.clipboard && origWrite) {
-          navigator.clipboard.write = async (items: ClipboardItems) => {
-            try {
-              for (const item of items) {
-                if (item.types?.includes("text/plain")) {
-                  const blob = await item.getType("text/plain");
-                  const text = await blob.text();
-                  if (text && text.trim()) {
-                    win.__gemini_last_copied_code = text;
-                    break;
-                  }
-                }
-              }
-            } catch {}
-            if (win.__codex_suppress_os_clipboard_write) return undefined;
-            try {
-              return await origWrite(items);
-            } catch {
-              return undefined;
-            }
-          };
-        }
-      }
+    await installInPageClipboardHook(page, {
+      resultKey: "__gemini_last_copied_code",
+      suppressOsClipboardNow: false,
     });
   }
 

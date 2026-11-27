@@ -234,9 +234,44 @@ test("_assertProfileMutationAllowed chỉ chặn theo đúng provider đang có 
 test("sameKeyWaitTimeoutMs độc lập và giữ được chờ lâu hơn slotWaitTimeoutMs (dùng cho TTS dài >25s)", () => {
   const host = { turnTabs: new Map(), closedTurnOwners: new Map(), userCancelledTurnOwners: new Map() };
   const prodManager = new TurnTabManager(host);
-  assert.equal(prodManager.slotWaitTimeoutMs, 25_000);
-  assert.equal(prodManager.sameKeyWaitTimeoutMs, 48_000);
+  assert.equal(prodManager.slotWaitTimeoutMs, 90_000);
+  assert.equal(prodManager.sameKeyWaitTimeoutMs, 150_000);
   prodManager.destroy();
+});
+
+test("notifySlotFreed bỏ qua provider đang kín maxSurfaces và đánh thức đúng provider còn khả năng chạy ở global cap 10 tab", async () => {
+  const { host, manager } = createReactiveHostStub({ provider: "m365", slotWaitTimeoutMs: 1_000 });
+  // Lấp 10 tab đang chạy: 3 m365 (kín MAX_M365_SURFACES=3) + 5 ai-studio + 2 gemini
+  for (let i = 1; i <= 3; i += 1) {
+    await manager.beginTurn(`m365_${i}`, false, process.pid, `m365_${i}`.repeat(16).slice(0, 64), "codex", false, "m365");
+  }
+  for (let i = 1; i <= 5; i += 1) {
+    await manager.beginTurn(`ai_${i}`, false, process.pid, `ai_${i}`.repeat(16).slice(0, 64), "codex", false, "ai-studio");
+  }
+  for (let i = 1; i <= 2; i += 1) {
+    await manager.beginTurn(`gem_${i}`, false, process.pid, `gem_${i}`.repeat(16).slice(0, 64), "codex", false, "gemini");
+  }
+  assert.equal(host.turnTabs.size, 10);
+
+  // Waiter 1 (m365) đến trước nhưng m365 vẫn kín 3/3;
+  // Waiter 2 (chatgpt) đến sau nhưng chatgpt mới 0/8 -> chỉ bị chặn bởi trần toàn cục 10 tab.
+  const m365Waiter = manager.beginTurn("m365_4", false, process.pid, "z".repeat(64), "codex", false, "m365");
+  const gptWaiter = manager.beginTurn("gpt_1", false, process.pid, "y".repeat(64), "codex", false, "chatgpt");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(manager.scheduler.pendingSlotCount(), 2);
+
+  // Khi 1 tab Gemini kết thúc (non-retained -> giải phóng 1 slot toàn cục):
+  // Scheduler phải bỏ qua m365_4 (đang kín 3/3) và đánh thức đúng gpt_1 thay vì lost wakeup.
+  await manager.endTurn("gem_1", process.pid, "completed", false, undefined, false, false);
+  const gptLease = await gptWaiter;
+  assert.equal(gptLease.reused, false);
+  assert.equal(host.turnTabs.size, 10);
+
+  // Sau đó giải phóng 1 tab m365 -> m365_4 được đánh thức ngay
+  await manager.endTurn("m365_1", process.pid, "completed", false, undefined, false, false);
+  const m365Lease = await m365Waiter;
+  assert.equal(m365Lease.reused, false);
+  assert.equal(host.turnTabs.size, 10);
 });
 
 test("presentTurnView giữ nguyên deviceEmulationViewport cho tab nền AI Studio ở trạng thái ready", () => {

@@ -1,4 +1,8 @@
 import type { Page } from "playwright-core";
+import {
+  installInPageClipboardHook,
+  releaseOsClipboardSuppression,
+} from "../web/browser/in-page-clipboard-hook";
 
 const COPY_LOCATOR_TIMEOUT_MS = 1_500;
 const EDITOR_MOUNT_TIMEOUT_MS = 2_500;
@@ -375,76 +379,11 @@ export class M365ClipboardSalvage {
 
       // Fallback Tầng C: Cài Clipboard Hook và click Copy Code (không gọi page.bringToFront() trên cửa sổ ẩn)
       suppressedOsClipboard = true;
-      await page
-        .context()
-        .grantPermissions(["clipboard-read", "clipboard-write"])
-        .catch(() => {});
-
-      await page
-        .evaluate(() => {
-          try {
-            window.focus();
-            document.body?.focus();
-          } catch {}
-          const win = window as any;
-          win.__m365_last_copied_code = null;
-          win.__codex_suppress_os_clipboard_write = true;
-          if (!win.__m365_clipboard_hooked) {
-            win.__m365_clipboard_hooked = true;
-            const origWriteText = navigator.clipboard
-              ? navigator.clipboard.writeText
-              : null;
-            const origWrite = navigator.clipboard?.write
-              ? navigator.clipboard.write.bind(navigator.clipboard)
-              : null;
-            if (navigator.clipboard) {
-              navigator.clipboard.writeText = async (text: string) => {
-                win.__m365_last_copied_code = text;
-                if (win.__codex_suppress_os_clipboard_write) return Promise.resolve();
-                try {
-                  if (origWriteText) {
-                    return await origWriteText.call(navigator.clipboard, text);
-                  }
-                } catch {
-                  return Promise.resolve();
-                }
-              };
-              if (origWrite) {
-                navigator.clipboard.write = async (items: ClipboardItems) => {
-                  try {
-                    for (const item of items) {
-                      if (item.types?.includes("text/plain")) {
-                        const blob = await item.getType("text/plain");
-                        const text = await blob.text();
-                        if (text && text.trim()) {
-                          win.__m365_last_copied_code = text;
-                          break;
-                        }
-                      }
-                    }
-                  } catch {}
-                  if (win.__codex_suppress_os_clipboard_write) return Promise.resolve();
-                  try {
-                    return await origWrite(items);
-                  } catch {
-                    return Promise.resolve();
-                  }
-                };
-              }
-            }
-            document.addEventListener(
-              "copy",
-              (e: ClipboardEvent) => {
-                const text =
-                  e.clipboardData?.getData("text/plain") ||
-                  window.getSelection()?.toString();
-                if (text) win.__m365_last_copied_code = text;
-              },
-              { capture: true },
-            );
-          }
-        })
-        .catch(() => {});
+      await installInPageClipboardHook(page, {
+        resultKey: "__m365_last_copied_code",
+        suppressOsClipboardNow: true,
+        focusBody: true,
+      }).catch(() => {});
 
       const domCopyClicked = await page
         .evaluate(() => {
@@ -622,11 +561,7 @@ export class M365ClipboardSalvage {
       return null;
     } finally {
       if (suppressedOsClipboard) {
-        await page
-          .evaluate(() => {
-            (window as any).__codex_suppress_os_clipboard_write = false;
-          })
-          .catch(() => {});
+        await releaseOsClipboardSuppression(page);
       }
     }
   }

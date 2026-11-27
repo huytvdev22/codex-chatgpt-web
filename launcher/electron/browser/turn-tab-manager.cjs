@@ -17,8 +17,8 @@ const MAX_BROWSER_TABS = 10;
 const MAX_ASSISTANT_RETAINED_TABS = 3;
 const ASSISTANT_CONNECTOR_SUFFIX = ":assistant";
 const MAX_CANCELLED_TURN_TRACES = 256;
-const DEFAULT_SLOT_WAIT_TIMEOUT_MS = 25_000;
-const DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS = 48_000;
+const DEFAULT_SLOT_WAIT_TIMEOUT_MS = 90_000;
+const DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS = 150_000;
 
 function isAssistantTab(tab) {
   return typeof tab?.connectorIdentity === "string"
@@ -338,17 +338,20 @@ class TurnTabManager {
     return normalized;
   }
 
+  async _waitAiStudioReopenCooldown(providerId, traceId, signal) {
+    if (providerId !== "ai-studio" || !(this.aiStudioReopenCooldownMs > 0)) return;
+    const lastClosedAt = this.lastClosedAtByProvider?.get("ai-studio") || 0;
+    const elapsed = Date.now() - lastClosedAt;
+    if (lastClosedAt > 0 && elapsed < this.aiStudioReopenCooldownMs) {
+      const remainingMs = this.aiStudioReopenCooldownMs - elapsed;
+      this.host.logger?.info?.("browser.ai_studio_reopen_cooldown", { traceId, remainingMs });
+      await sleepWithAbort(remainingMs, signal);
+    }
+  }
+
   async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, signal, providerId = this.host?.provider || "m365", initialUrl = null, profileId = null) {
     signal?.throwIfAborted();
-    if (providerId === "ai-studio" && this.aiStudioReopenCooldownMs > 0) {
-      const lastClosedAt = this.lastClosedAtByProvider?.get("ai-studio") || 0;
-      const elapsed = Date.now() - lastClosedAt;
-      if (lastClosedAt > 0 && elapsed < this.aiStudioReopenCooldownMs) {
-        const remainingMs = this.aiStudioReopenCooldownMs - elapsed;
-        this.host.logger?.info?.("browser.ai_studio_reopen_cooldown", { traceId, remainingMs });
-        await sleepWithAbort(remainingMs, signal);
-      }
-    }
+    await this._waitAiStudioReopenCooldown(providerId, traceId, signal);
     const evictReclaimable = this.host.evictOldestReclaimableTurnTab || (() => this.evictOldestReclaimableTurnTab());
     if (this.turnTabs.size >= MAX_BROWSER_TABS && !evictReclaimable.call(this.host)) {
       const providerLabel = this.hasProvider(providerId)
@@ -814,7 +817,10 @@ class TurnTabManager {
     if (tab?.conversationKey) {
       this.scheduler.notifyKeySettled(providerId, profileId, tab.conversationKey);
     }
-    this.scheduler.notifySlotFreed(providerId);
+    this.scheduler.notifySlotFreed(providerId, (candidateProviderId) => {
+      if (!this.hasProvider(candidateProviderId)) return true;
+      return this._hasCapacityForNewTab(this.resolveProvider(candidateProviderId), null);
+    });
   }
 
   rememberUserCancelledTurn(traceId, helperPid) {
@@ -1018,6 +1024,14 @@ class TurnTabManager {
           continue;
         } catch (error) {
           if (!(error instanceof TurnTabWaitTimeoutError)) throw error;
+        }
+      }
+
+      if (providerId === "ai-studio") {
+        await this._waitAiStudioReopenCooldown(providerId, traceId, signal);
+        const postCooldownWaitMs = waitDeadline > 0 ? waitDeadline - Date.now() : 0;
+        if (!this._hasCapacityForNewTab(providerObj, conversationKey) && postCooldownWaitMs > 0) {
+          continue;
         }
       }
 
