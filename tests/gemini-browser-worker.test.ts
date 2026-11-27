@@ -24,6 +24,14 @@ class TestableGeminiWorker extends GeminiBrowserWorker {
   ): Promise<string | undefined> {
     return this.resolveConversationId(page, options);
   }
+
+  public async callInsertPrompt(
+    page: Page,
+    promptText: string,
+    options: Parameters<GeminiBrowserWorker["insertPrompt"]>[2],
+  ): Promise<void> {
+    return this.insertPrompt(page, promptText, options);
+  }
 }
 
 describe("GeminiBrowserWorker, DomObserver & ClipboardSalvage", () => {
@@ -169,5 +177,50 @@ describe("GeminiBrowserWorker, DomObserver & ClipboardSalvage", () => {
 
     await focusGeminiComposer(fakePage, fakeComposer);
     expect(events).toEqual(["click:normal#1", "key:Escape", "click:normal#2", "focus"]);
+  });
+
+  test("insertPrompt bỏ qua .fill() với prompt dài > 1500 ký tự và chèn thẳng qua DOM Fragment", async () => {
+    const worker = new TestableGeminiWorker();
+    let fillCalled = false;
+    let evaluateCalled = false;
+    const longPrompt = "A".repeat(2_000) + "\n" + "B".repeat(500);
+
+    const fakeComposer = {
+      isVisible: async () => true,
+      click: async () => {},
+      focus: async () => {},
+      fill: async () => {
+        fillCalled = true;
+      },
+      textContent: async () => "",
+    };
+    const fakeSend = {
+      isVisible: async () => true,
+      isEnabled: async () => true,
+    };
+
+    const fakePage = {
+      bringToFront: async () => {},
+      waitForTimeout: async () => {},
+      keyboard: { press: async () => {} },
+      evaluate: async () => {
+        evaluateCalled = true;
+      },
+      locator: (selector: string) => {
+        const target = selector.includes("Send") ? fakeSend : fakeComposer;
+        return {
+          count: async () => 1,
+          nth: () => target,
+        };
+      },
+    } as unknown as Page;
+
+    await worker.callInsertPrompt(fakePage, longPrompt, {
+      prompt: longPrompt,
+      onChunk: () => {},
+    });
+
+    expect(fillCalled).toBe(false);
+    expect(evaluateCalled).toBe(true);
   });
 });

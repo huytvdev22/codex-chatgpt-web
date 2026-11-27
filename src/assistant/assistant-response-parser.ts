@@ -11,6 +11,33 @@ const TOOL_TAG_REGEX =
 const UNCLOSED_TOOL_REGEX = /<(?:tool_call|custom_tool_call)\b/i;
 
 /**
+ * Turndown (`webHtmlToMarkdown`) thường escape ký tự `_` và `*` thành `\_` / `\*`
+ * khi AI xuất XML tool call trực tiếp không bọc code fence.
+ * Chuẩn hóa các thẻ tool call + prefix mở thẻ để Gate và Parser nhận diện chính xác.
+ */
+export function normalizeEscapedToolMarkers(text: string): string {
+  if (!text || (!text.includes("\\_") && !text.includes("\\*"))) {
+    return text;
+  }
+  return text
+    .replace(/<(\/?)\s*tool(?:\\?_)+call\b([^>]*)>/gi, "<$1tool_call$2>")
+    .replace(/<(\/?)\s*custom(?:\\?_)+tool(?:\\?_)+call\b([^>]*)>/gi, (_, slash: string, attrs: string) => {
+      const cleanAttrs = attrs.replace(/\\_/g, "_");
+      return `<${slash}custom_tool_call${cleanAttrs}>`;
+    })
+    .replace(/<(\/?)\s*tool(?:\\?_)+(?:c(?:a(?:l(?:l)?)?)?)?$/i, (m) => m.replace(/\\_/g, "_"))
+    .replace(/<(\/?)\s*custom(?:\\?_)+(?:t(?:o(?:o(?:l(?:\\?_)+(?:c(?:a(?:l(?:l)?)?)?)?)?)?)?)?$/i, (m) =>
+      m.replace(/\\_/g, "_"),
+    )
+    .replace(/(^|\n)([ \t]*)\\\*\\\*\\\*/g, "$1$2***");
+}
+
+function unescapeTurndownInsideToolBlock(rawBlock: string): string {
+  // Trong JSON hoặc *** Begin Patch do Turndown trích xuất, `\_` và `\*` không phải escape hợp lệ.
+  return rawBlock.replace(/\\([_*])/g, "$1");
+}
+
+/**
  * Gỡ wrapper vận chuyển tùy chọn (4-backtick markdown và/hoặc `<webResponse>...</webResponse>`)
  * nếu AI vẫn tự bọc dù giao thức Assistant là Natural-First.
  */
@@ -18,9 +45,29 @@ export function unwrapOptionalAssistantEnvelope(rawResponse: string): string {
   let text = String(rawResponse || "").trim();
   if (!text) return "";
 
-  const fenceMatch = /^`{4}(?:markdown|md)?[ \t]*\r?\n([\s\S]*?)\r?\n`{4}$/i.exec(text);
+  const fenceMatch = /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n([\s\S]*?)\r?\n`{4}$/i.exec(text);
   if (fenceMatch) {
     text = fenceMatch[1].trim();
+  } else {
+    // Trường hợp AI bọc toàn bộ Action Turn trong ```...``` (3 backticks) không kèm chữ ngoài
+    const tripleOnlyMatch =
+      /^`{3}(?:markdown|md|xml)?[ \t]*\r?\n(\s*(?:<webResponse\b|<tool_call\b|<custom_tool_call\b)[\s\S]*?)\r?\n`{3}$/i.exec(
+        text,
+      );
+    if (tripleOnlyMatch) {
+      text = tripleOnlyMatch[1].trim();
+    } else {
+      // Trường hợp AI viết câu dẫn ngắn trước khối 4-backtick Action Turn: bóc riêng khối 4-backtick ở cuối
+      const trailingQuadFence =
+        /(^|\n)`{4}(?:markdown|md|xml)?[ \t]*\r?\n(\s*(?:<webResponse\b|<tool(?:\\?_)+call\b|<custom(?:\\?_)+tool(?:\\?_)+call\b)[\s\S]*?)\r?\n`{4}$/i.exec(
+          text,
+        );
+      if (trailingQuadFence) {
+        const before = text.slice(0, trailingQuadFence.index).trimEnd();
+        const inner = trailingQuadFence[2].trim();
+        text = before ? `${before}\n${inner}` : inner;
+      }
+    }
   }
 
   const envelopeMatch = /^<webResponse\b[^>]*>([\s\S]*?)<\/\s*webResponse\s*>$/i.exec(text);
@@ -67,7 +114,7 @@ function isInsideRanges(index: number, ranges: ReadonlyArray<[number, number]>):
  */
 export class AssistantResponseParser {
   public parse(rawResponse: string): AssistantParsedResponse {
-    const cleaned = unwrapOptionalAssistantEnvelope(rawResponse);
+    const cleaned = normalizeEscapedToolMarkers(unwrapOptionalAssistantEnvelope(rawResponse));
     if (!cleaned) {
       return {
         kind: "protocol_error",
@@ -94,7 +141,8 @@ export class AssistantResponseParser {
     }
 
     if (toolBlocks.length > 0) {
-      const canonicalEnvelope = `\`\`\`\`markdown\n<webResponse>\n${toolBlocks.map((b) => b.rawBlock).join("\n")}\n</webResponse>\n\`\`\`\``;
+      const normalizedBlocks = toolBlocks.map((b) => unescapeTurndownInsideToolBlock(b.rawBlock));
+      const canonicalEnvelope = `\`\`\`\`markdown\n<webResponse>\n${normalizedBlocks.join("\n")}\n</webResponse>\n\`\`\`\``;
       const strictResult = parseStrictWebResponse(canonicalEnvelope);
       if (strictResult.kind === "protocol_error") {
         return {

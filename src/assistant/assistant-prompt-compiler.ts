@@ -22,7 +22,10 @@ import {
 import { assistantToolCatalogRenderer } from "./assistant-tool-catalog-renderer";
 import type { AssistantPromptCompileResult, AssistantPromptScenario } from "./types";
 
-const DEFAULT_ASSISTANT_MAX_PROMPT_CHARS = 95_000;
+const DEFAULT_ASSISTANT_MAX_PROMPT_CHARS = 36_000;
+const DEFAULT_ASSISTANT_MAX_TOOL_TURN_PROMPT_CHARS = 64_000;
+const MAX_ASSISTANT_PRIOR_HISTORY_CHARS = 16_000;
+const MAX_ASSISTANT_HISTORY_TOOL_OUTPUT_CHARS = 350;
 
 /**
  * Cấu hình lọc skill tĩnh cho Assistant:
@@ -112,8 +115,12 @@ export class AssistantPromptCompiler {
   public compile(input: AssistantPromptCompileInput): AssistantPromptCompileResult {
     const { normalized, parsed, isNewConversation } = input;
     const assistantName = input.assistantName || "trợ lý";
-    const maxPromptChars = input.maxPromptChars ?? DEFAULT_ASSISTANT_MAX_PROMPT_CHARS;
     const hasToolResults = normalized.trailingToolResults.length > 0;
+    const maxPromptChars =
+      input.maxPromptChars ??
+      (hasToolResults
+        ? DEFAULT_ASSISTANT_MAX_TOOL_TURN_PROMPT_CHARS
+        : DEFAULT_ASSISTANT_MAX_PROMPT_CHARS);
     const structuredFormat = isStructuredJsonOutputTurn(parsed, hasToolResults)
       ? parsed?.options?.outputFormat
       : undefined;
@@ -205,16 +212,38 @@ export class AssistantPromptCompiler {
 
     let priorHistoryText = "";
     if (isNewConversation && normalized.priorHistory.length > 0) {
-      const historyLines: string[] = [];
-      for (const h of normalized.priorHistory) {
-        if (h.role === "user") historyLines.push(`Người dùng: ${h.content}`);
-        else if (h.role === "assistant") historyLines.push(`Trợ lý: ${h.content}`);
-        else if (h.role === "tool") {
-          historyLines.push(`<tool_result id="${h.callId || ""}">\n${h.content}\n</tool_result>`);
+      const recentReversed: string[] = [];
+      let accumulatedChars = 0;
+      let truncatedOlder = false;
+      for (let i = normalized.priorHistory.length - 1; i >= 0; i -= 1) {
+        const h = normalized.priorHistory[i]!;
+        let line = "";
+        if (h.role === "user") {
+          line = `Người dùng: ${h.content}`;
+        } else if (h.role === "assistant") {
+          line = `Trợ lý: ${h.content}`;
+        } else if (h.role === "tool") {
+          const compactOutput =
+            h.content.length > MAX_ASSISTANT_HISTORY_TOOL_OUTPUT_CHARS
+              ? `${h.content.slice(0, MAX_ASSISTANT_HISTORY_TOOL_OUTPUT_CHARS)}…`
+              : h.content;
+          line = `<tool_result id="${h.callId || ""}">\n${compactOutput}\n</tool_result>`;
         }
+        if (!line) continue;
+        if (
+          recentReversed.length > 0 &&
+          accumulatedChars + line.length + 2 > MAX_ASSISTANT_PRIOR_HISTORY_CHARS
+        ) {
+          truncatedOlder = true;
+          break;
+        }
+        recentReversed.push(line);
+        accumulatedChars += line.length + 2;
       }
-      if (historyLines.length > 0) {
-        priorHistoryText = `[Lịch sử trước đó]:\n${historyLines.join("\n\n")}`;
+      if (recentReversed.length > 0) {
+        recentReversed.reverse();
+        const prefix = truncatedOlder ? "... [Đã lược bớt lịch sử cũ hơn] ...\n\n" : "";
+        priorHistoryText = `[Lịch sử gần nhất]:\n${prefix}${recentReversed.join("\n\n")}`;
       }
     }
 

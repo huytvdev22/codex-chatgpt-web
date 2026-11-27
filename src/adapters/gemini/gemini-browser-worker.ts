@@ -257,11 +257,13 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
     await page.waitForTimeout(80);
 
     let fillSuccess = false;
-    try {
-      await composerLocator.fill(promptText, { timeout: 10_000 });
-      fillSuccess = true;
-    } catch {
-      fillSuccess = false;
+    if (promptText.length <= 1_500) {
+      try {
+        await composerLocator.fill(promptText, { timeout: 3_000 });
+        fillSuccess = true;
+      } catch {
+        fillSuccess = false;
+      }
     }
 
     const expectedCompactLen = promptText.replace(/\r?\n/g, "").trim().length;
@@ -281,7 +283,7 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
             }) ?? candidates[0];
           if (!editor) return;
           editor.focus();
-          editor.replaceChildren();
+          const fragment = document.createDocumentFragment();
           for (const line of text.split(/\r?\n/)) {
             const p = document.createElement("p");
             if (line.length > 0) {
@@ -289,8 +291,9 @@ export class GeminiBrowserWorker extends BaseWebBrowserWorker<
             } else {
               p.appendChild(document.createElement("br"));
             }
-            editor.appendChild(p);
+            fragment.appendChild(p);
           }
+          editor.replaceChildren(fragment);
           editor.dispatchEvent(
             new InputEvent("input", {
               bubbles: true,

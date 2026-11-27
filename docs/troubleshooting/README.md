@@ -5,6 +5,7 @@
 
 | ID | Vấn đề / Lỗi | Providers | Trạng thái | File chi tiết |
 | :--- | :--- | :--- | :--- | :--- |
+| **108** | Gemini Web đứng yên ~29s sau khi select model do `.fill()` prompt dài (~95k ký tự) trên Quill `.ql-editor` (`insertPrompt` + nén `priorHistory`) | `gemini`, `web`, `assistant`, `playwright` | ⏳ Chờ User Test & Confirm | [108-gemini-long-prompt-fill-hang.md](./108-gemini-long-prompt-fill-hang.md) |
 | **107** | Tách module Assistant độc lập (`/clients/assistant/v1/*`), streaming Telegram (chặn tool call), bảo vệ tab VS Code & kho Skills riêng (`~/CodexAssistant/skills`) | `assistant`, `server`, `web`, `gemini`, `chatgpt`, `ai-studio`, `m365-copilot`, `launcher`, `telegram` | ⏳ Chờ User Test & Confirm | [107-assistant-isolated-module-and-streaming.md](./107-assistant-isolated-module-and-streaming.md) |
 | **106** | Giữ nguyên cuộc trò chuyện khi đổi Model/Reasoning cùng Provider & Chặn HTTP 400 khi đổi khác Provider (`ThreadProviderBindingStore`, fail-closed `CapabilityPicker`, `AiStudioCapabilityPicker`) | `gemini`, `chatgpt`, `ai-studio`, `m365-copilot`, `web`, `server`, `codex` | ⏳ Chờ User Test & Confirm | [106-same-provider-model-switch-and-cross-provider-guard.md](./106-same-provider-model-switch-and-cross-provider-guard.md) |
 | **105** | Nâng cấp Auto-Updater Launcher (Hybrid OOP, 2 bước, sửa macOS bundle & Windows GUI, giữ tắt Dev mode) | `launcher`, `electron`, `ui`, `updater`, `macos`, `windows`, `linux` | ⏳ Chờ User Test & Confirm | [105-launcher-auto-updater-hybrid-oop.md](./105-launcher-auto-updater-hybrid-oop.md) |

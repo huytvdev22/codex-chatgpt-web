@@ -1,5 +1,8 @@
 import { FastPathStreamBuffer } from "../adapters/web/protocol/fast-path-stream-buffer";
-import { unwrapOptionalAssistantEnvelope } from "./assistant-response-parser";
+import {
+  normalizeEscapedToolMarkers,
+  unwrapOptionalAssistantEnvelope,
+} from "./assistant-response-parser";
 import type { AssistantStreamGateState } from "./types";
 
 const START_TOOL_MARKERS = [
@@ -13,6 +16,7 @@ const START_TOOL_MARKERS = [
 const OPTIONAL_OPEN_WRAPPERS = [
   "````markdown\n",
   "````md\n",
+  "````xml\n",
   "````\n",
   "<webresponse>\n",
   "<webresponse>",
@@ -26,11 +30,13 @@ const TRAILING_MARKER_PREFIXES = [
   "<custom_tool_call",
   "</webresponse>",
   "*** begin patch",
+  "\n````markdown",
+  "````markdown",
   "\n````",
   "````",
 ];
 
-const MAX_TAIL_HOLDBACK_CHARS = 24;
+const MAX_TAIL_HOLDBACK_CHARS = 32;
 
 function isPrefixOfAny(candidateLower: string, targets: readonly string[]): boolean {
   if (!candidateLower) return false;
@@ -45,7 +51,7 @@ function stripOptionalOpeningWrappers(input: string): {
   while (cursor.length > 0) {
     const lower = cursor.toLowerCase();
 
-    const fenceOpen = /^`{4}(?:markdown|md)?[ \t]*\r?\n/.exec(cursor);
+    const fenceOpen = /^`{4}(?:markdown|md|xml)?[ \t]*\r?\n/.exec(cursor);
     if (fenceOpen) {
       cursor = cursor.slice(fenceOpen[0].length).trimStart();
       continue;
@@ -82,6 +88,14 @@ function findExecutableToolMarkerIndex(text: string): number {
     const fenceMatch = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
     if (!inFence) {
       if (fenceMatch) {
+        // Nếu là 4-backtick transport fence bọc ngay Action Turn bên trong, cắt trước cả dấu mở ````.
+        if (fenceMatch[1].length >= 4 && fenceMatch[1][0] === "`") {
+          const nextBody = text.slice(nl === -1 ? text.length : nl + 1).trimStart();
+          const innerCheck = nextBody.replace(/^<webResponse\b[^>]*>\s*/i, "");
+          if (/^(?:<tool_call\b|<custom_tool_call\b|\*{3}\s*Begin Patch)/i.test(innerCheck)) {
+            return lineStart;
+          }
+        }
         inFence = true;
         fenceChar = fenceMatch[1][0];
         fenceLen = fenceMatch[1].length;
@@ -134,6 +148,43 @@ function longestCommonPrefixLength(a: string, b: string): number {
   return i;
 }
 
+function extractAlignedRemainingText(
+  emittedText: string,
+  candidate: string,
+  minLcpRatio: number,
+): string {
+  if (!candidate) return "";
+  if (!emittedText) return candidate;
+  if (candidate.startsWith(emittedText)) {
+    return candidate.slice(emittedText.length);
+  }
+
+  const lcp = longestCommonPrefixLength(emittedText, candidate);
+  if (lcp < Math.floor(emittedText.length * minLcpRatio)) {
+    return "";
+  }
+
+  // Khi DOM streaming chưa in đậm nhưng bản Markdown cuối thêm `**...**` ở giữa chuỗi,
+  // căn neo theo đoạn đuôi thực tế của `emittedText` để không cắt lệch và lặp chữ.
+  const maxAnchor = Math.min(32, emittedText.length);
+  for (let anchorLen = maxAnchor; anchorLen >= 6; anchorLen -= 2) {
+    const anchor = emittedText.slice(-anchorLen);
+    if (!anchor.trim()) continue;
+    const searchStart = Math.max(0, emittedText.length - anchorLen - 24);
+    const matchIdx = candidate.indexOf(anchor, searchStart);
+    if (matchIdx >= 0) {
+      let tail = candidate.slice(matchIdx + anchorLen);
+      const emittedBoldCount = (emittedText.match(/\*\*/g) ?? []).length;
+      if (emittedBoldCount % 2 === 0 && tail.startsWith("**")) {
+        tail = tail.slice(2);
+      }
+      return tail;
+    }
+  }
+
+  return candidate.length > emittedText.length ? candidate.slice(emittedText.length) : "";
+}
+
 /**
  * Bộ cổng điều phối Streaming cho Trợ lý Telegram (`src/assistant/`):
  * - Chặn tuyệt đối khi AI bắt đầu hoặc chèn `<tool_call>` / `<custom_tool_call>` / `*** Begin Patch`.
@@ -171,7 +222,8 @@ export class AssistantStreamGate {
       return;
     }
 
-    const lower = stripped.toLowerCase();
+    const markerView = normalizeEscapedToolMarkers(stripped);
+    const lower = markerView.toLowerCase();
 
     if (this.state === "BUFFERING") {
       if (START_TOOL_MARKERS.some((marker) => lower.startsWith(marker))) {
@@ -183,18 +235,18 @@ export class AssistantStreamGate {
       }
       // Chờ thêm một chút nếu bắt đầu bằng ký tự có thể mở thẻ/fence mà chưa đủ rõ ràng.
       if (
-        stripped.length < 16 &&
-        (stripped.startsWith("<") || stripped.startsWith("`") || stripped.startsWith("*"))
+        markerView.length < 18 &&
+        (markerView.startsWith("<") || markerView.startsWith("`") || markerView.startsWith("*") || markerView.startsWith("\\*"))
       ) {
         return;
       }
       this.state = "STREAMING_TEXT";
     }
 
-    // Kiểm tra tool call xuất hiện giữa chừng (AI lỡ viết 1 câu dẫn rồi mới mở `<tool_call>`).
-    const midstreamToolIdx = findExecutableToolMarkerIndex(stripped);
+    // Kiểm tra tool call xuất hiện giữa chừng (AI lỡ viết 1 câu dẫn rồi mới mở `<tool_call>` hoặc `<tool\_call>`).
+    const midstreamToolIdx = findExecutableToolMarkerIndex(markerView);
     if (midstreamToolIdx >= 0) {
-      const safeBeforeTool = stripped.slice(0, midstreamToolIdx).replace(/\s+$/, "");
+      const safeBeforeTool = markerView.slice(0, midstreamToolIdx).replace(/\s+$/, "");
       this.emitMonotonicDelta(safeBeforeTool);
       this.state = "BLOCKED_TOOL_CALL";
       return;
@@ -204,10 +256,18 @@ export class AssistantStreamGate {
       /\s*<\/\s*webResponse\s*>(?:\s*`{0,4})?\s*$/i,
       "",
     );
-    const holdback = computeTailHoldbackLength(withoutCompletedClosing);
-    const safePrefix =
+    const holdback = computeTailHoldbackLength(normalizeEscapedToolMarkers(withoutCompletedClosing));
+    // Nếu cuối chuỗi gốc chứa dấu backslash escape (vd `<tool\_`), lùi thêm cho an toàn nếu độ dài khớp khác nhẹ.
+    const safeHoldback =
       holdback > 0
-        ? withoutCompletedClosing.slice(0, withoutCompletedClosing.length - holdback)
+        ? Math.min(
+            withoutCompletedClosing.length,
+            holdback + (withoutCompletedClosing.slice(-holdback - 4).includes("\\_") ? 2 : 0),
+          )
+        : 0;
+    const safePrefix =
+      safeHoldback > 0
+        ? withoutCompletedClosing.slice(0, withoutCompletedClosing.length - safeHoldback)
         : withoutCompletedClosing;
     this.emitMonotonicDelta(safePrefix);
   }
@@ -226,28 +286,12 @@ export class AssistantStreamGate {
       return cleanFinal;
     }
 
-    if (cleanFinal.startsWith(this.emittedText)) {
-      const remaining = cleanFinal.slice(this.emittedText.length);
-      if (remaining) {
-        this.emittedText = cleanFinal;
-        this.onTextDelta(remaining);
-      }
-      return remaining;
+    const remaining = extractAlignedRemainingText(this.emittedText, cleanFinal, 0.7);
+    if (remaining) {
+      this.emittedText = cleanFinal;
+      this.onTextDelta(remaining);
     }
-
-    // Nếu bản Markdown cuối cùng có chỉnh sửa nhỏ ở giữa chuỗi đã stream:
-    // chỉ phát tiếp phần mới vượt quá độ dài đã phát để không làm trùng lặp nội dung trên SSE.
-    const lcp = longestCommonPrefixLength(this.emittedText, cleanFinal);
-    if (cleanFinal.length > this.emittedText.length && lcp >= Math.floor(this.emittedText.length * 0.7)) {
-      const remaining = cleanFinal.slice(this.emittedText.length);
-      if (remaining) {
-        this.emittedText += remaining;
-        this.onTextDelta(remaining);
-      }
-      return remaining;
-    }
-
-    return "";
+    return remaining;
   }
 
   private emitMonotonicDelta(safeCandidate: string): void {
@@ -259,22 +303,10 @@ export class AssistantStreamGate {
       this.onTextDelta(safeCandidate);
       return;
     }
-    if (safeCandidate.startsWith(this.emittedText)) {
-      const delta = safeCandidate.slice(this.emittedText.length);
-      if (delta) {
-        this.emittedText = safeCandidate;
-        this.onTextDelta(delta);
-      }
-      return;
-    }
-    // Chống jitter nhẹ khi Turndown cập nhật định dạng Markdown lúc đang gõ
-    const lcp = longestCommonPrefixLength(this.emittedText, safeCandidate);
-    if (lcp >= Math.floor(this.emittedText.length * 0.85)) {
-      const delta = safeCandidate.slice(this.emittedText.length);
-      if (delta) {
-        this.emittedText += delta;
-        this.onTextDelta(delta);
-      }
+    const delta = extractAlignedRemainingText(this.emittedText, safeCandidate, 0.85);
+    if (delta) {
+      this.emittedText += delta;
+      this.onTextDelta(delta);
     }
   }
 }

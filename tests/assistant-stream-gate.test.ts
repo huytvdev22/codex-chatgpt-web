@@ -39,6 +39,35 @@ describe("AssistantStreamGate", () => {
     expect(patchDeltas).toEqual([]);
   });
 
+  test("chặn tuyệt đối <tool\\_call> bị Turndown DOM observer escape dấu gạch dưới", () => {
+    const deltas: string[] = [];
+    const gate = new AssistantStreamGate((delta) => deltas.push(delta));
+
+    gate.pushSnapshot("<tool\\_");
+    expect(gate.getState()).toBe("BUFFERING");
+    expect(deltas).toEqual([]);
+
+    gate.pushSnapshot('<tool\\_call>{"name":"exec\\_command","arguments":{"cmd":"ls -la"}}</tool\\_call>');
+    expect(gate.getState()).toBe("BLOCKED_TOOL_CALL");
+    expect(deltas).toEqual([]);
+  });
+
+  test("cắt ngay trước <tool\\_call> giữa chừng khi bị Turndown escape", () => {
+    const deltas: string[] = [];
+    const gate = new AssistantStreamGate((delta) => deltas.push(delta));
+
+    gate.pushSnapshot("Để mình kiểm tra nhé.\n");
+    expect(gate.getState()).toBe("STREAMING_TEXT");
+
+    gate.pushSnapshot(
+      'Để mình kiểm tra nhé.\n<tool\\_call>{"name":"exec\\_command","arguments":{"cmd":"ls"}}</tool\\_call>',
+    );
+    expect(gate.getState()).toBe("BLOCKED_TOOL_CALL");
+    const streamed = deltas.join("");
+    expect(streamed).toContain("Để mình kiểm tra nhé.");
+    expect(streamed).not.toContain("tool");
+  });
+
   test("cắt ngay trước <tool_call> xuất hiện giữa chừng và không rò thẻ XML", () => {
     const deltas: string[] = [];
     const gate = new AssistantStreamGate((delta) => deltas.push(delta));
@@ -78,5 +107,31 @@ describe("AssistantStreamGate", () => {
     expect(gate.getState()).toBe("STREAMING_TEXT");
     gate.finalizeAsFinalAnswer(docText);
     expect(deltas.join("")).toBe(docText);
+  });
+
+  test("căn neo đuôi chính xác khi clipboard finalize thêm **bold** giữa câu đã stream", () => {
+    const deltas: string[] = [];
+    const gate = new AssistantStreamGate((delta) => deltas.push(delta));
+
+    gate.pushSnapshot("Trong `~/CodexAssistant` hiện có 5 thư mục con");
+    gate.finalizeAsFinalAnswer("Trong `~/CodexAssistant` hiện có **5 thư mục con**:\n\n- `inbox`");
+
+    const joined = deltas.join("");
+    expect(joined).toBe("Trong `~/CodexAssistant` hiện có 5 thư mục con:\n\n- `inbox`");
+    expect(joined).not.toContain("conon");
+  });
+
+  test("chặn hoàn toàn Action Turn bọc trong 4-backtick kể cả khi có câu dẫn trước ````markdown", () => {
+    const deltas: string[] = [];
+    const gate = new AssistantStreamGate((delta) => deltas.push(delta));
+
+    gate.pushSnapshot("Để mình sửa tệp.\n");
+    gate.pushSnapshot(
+      'Để mình sửa tệp.\n````markdown\n<custom_tool_call name="apply_patch">\n*** Begin Patch\n*** End Patch\n</custom_tool_call>\n````',
+    );
+    expect(gate.getState()).toBe("BLOCKED_TOOL_CALL");
+    expect(deltas.join("")).toBe("Để mình sửa tệp.");
+    expect(deltas.join("")).not.toContain("````");
+    expect(deltas.join("")).not.toContain("apply_patch");
   });
 });
