@@ -1,5 +1,5 @@
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
-import type { SpeechSpeakerInput } from "../adapters/base";
+import { resolveRequestedProfileId, type SpeechSpeakerInput } from "../adapters/base";
 import { formatErrorResponse } from "../bridge";
 
 export type GeminiSpeechMethod = "generateContent" | "streamGenerateContent";
@@ -183,12 +183,14 @@ export class GeminiSpeechService {
         );
       }
 
+      const requestedProfileId = resolveRequestedProfileId(params.req.headers);
       const result = await adapter.runSpeechTurn(
         {
           modelId: parsed.modelId,
           text: parsed.text,
           temperature: parsed.temperature,
           speakers: parsed.speakers,
+          ...(requestedProfileId ? { profileId: requestedProfileId } : {}),
         },
         {
           headers: params.req.headers,

@@ -17,7 +17,35 @@ export async function humanPause(
 }
 
 /**
- * Rê chuột tự nhiên (`scrollIntoViewIfNeeded` -> `hover` -> nghỉ ngắn) rồi mới click,
+ * Di chuyển chuột mượt theo nhiều bước về tâm phần tử mục tiêu để tạo quỹ đạo pointer tự nhiên cho BotGuard.
+ */
+export async function moveMouseToLocator(
+  page: Page,
+  locator: Locator,
+): Promise<void> {
+  if (
+    typeof page.mouse?.move !== "function" ||
+    typeof locator.boundingBox !== "function"
+  ) {
+    return;
+  }
+  try {
+    const box = await locator.boundingBox({ timeout: 1_000 });
+    if (!box || box.width <= 0 || box.height <= 0) return;
+    const jitterX = (Math.random() - 0.5) * Math.min(12, box.width * 0.25);
+    const jitterY = (Math.random() - 0.5) * Math.min(8, box.height * 0.25);
+    await page.mouse.move(
+      box.x + box.width / 2 + jitterX,
+      box.y + box.height / 2 + jitterY,
+      { steps: 5 },
+    );
+  } catch {
+    // Non-fatal: locator có thể vừa di chuyển hoặc mock không có boundingBox
+  }
+}
+
+/**
+ * Rê chuột tự nhiên (`scrollIntoViewIfNeeded` -> `mouse.move` -> `hover` -> nghỉ ngắn) rồi mới click,
  * kèm fallback click `force` hoặc DOM click khi overlay Angular che khuất.
  */
 export async function clickResilient(
@@ -26,6 +54,7 @@ export async function clickResilient(
 ): Promise<void> {
   const page = locator.page();
   await locator.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => {});
+  await moveMouseToLocator(page, locator);
   await locator.hover({ timeout: 1_000 }).catch(() => {});
   await humanPause(page, 140, 280);
   try {
@@ -73,8 +102,53 @@ export async function fillFieldNatural(
 }
 
 /**
- * Chờ script BotGuard (`waa-pa.clients6.google.com` / `google.com/js/th`) nạp xong
- * và trang đạt độ tuổi tối thiểu trước khi gửi request GenerateContent.
+ * Nhập văn bản tự nhiên qua sự kiện bàn phím thật (`keyboard.type` / `keyboard.insertText`)
+ * để kích hoạt đầy đủ chuỗi `keydown`/`keyup`/`input` thay vì `locator.fill()` tức thì `0ms`.
+ * Trả về `false` nếu `Page` mock không hỗ trợ `keyboard` để caller rơi về `fill()` an toàn.
+ */
+export async function typeHumanPrompt(
+  page: Page,
+  locator: Locator,
+  promptText: string,
+): Promise<boolean> {
+  if (
+    typeof page.keyboard?.type !== "function" ||
+    typeof page.keyboard?.insertText !== "function"
+  ) {
+    return false;
+  }
+
+  const existingValue = await locator.inputValue().catch(() => "");
+  if (existingValue.length > 0 && typeof page.keyboard.press === "function") {
+    const selectAllShortcut = process.platform === "darwin" ? "Meta+a" : "Control+a";
+    await page.keyboard.press(selectAllShortcut).catch(() => {});
+    await page.keyboard.press("Backspace").catch(() => {});
+    await humanPause(page, 80, 150);
+  }
+
+  if (promptText.length === 0) {
+    return true;
+  }
+
+  if (promptText.length <= 180) {
+    await page.keyboard.type(promptText, { delay: 14 });
+    return true;
+  }
+
+  const head = promptText.slice(0, 18);
+  const middle = promptText.slice(18, -10);
+  const tail = promptText.slice(-10);
+  await page.keyboard.type(head, { delay: 15 });
+  if (middle.length > 0) {
+    await page.keyboard.insertText(middle);
+  }
+  await page.keyboard.type(tail, { delay: 15 });
+  return true;
+}
+
+/**
+ * Chờ script BotGuard (`waa-pa.clients6.google.com` & `www.google.com/js/bg/...` hoặc `/js/th`) nạp xong
+ * và trang đạt độ tuổi tối thiểu trước khi gửi `GenerateContent`.
  */
 export async function waitForBotGuardReady(
   page: Page,
@@ -86,19 +160,31 @@ export async function waitForBotGuardReady(
     const probe = await page
       .evaluate(() => {
         const resources = performance.getEntriesByType("resource") || [];
-        const waaReady = resources.some((entry) => {
+        let waaDone = false;
+        let bgScriptDone = false;
+        for (const entry of resources) {
           const name = String(entry?.name || "");
-          return (
-            /waa-pa\.clients6\.google\.com|google\.com\/js\/th/i.test(name) &&
-            (!Number.isFinite((entry as PerformanceResourceTiming)?.responseEnd) ||
-              (entry as PerformanceResourceTiming).responseEnd > 0)
-          );
-        });
-        return { waaReady, pageAgeMs: performance.now() };
+          const responseEnd = (entry as PerformanceResourceTiming)?.responseEnd;
+          const loaded = !Number.isFinite(responseEnd) || responseEnd > 0;
+          if (!loaded) continue;
+          if (/waa-pa\.clients6\.google\.com/i.test(name)) {
+            waaDone = true;
+          }
+          if (/www\.google\.com\/js\/(?:bg|th)\/|google\.com\/js\/th/i.test(name)) {
+            bgScriptDone = true;
+          }
+        }
+        return {
+          waaReady: waaDone,
+          bgScriptDone,
+          pageAgeMs: performance.now(),
+        };
       })
-      .catch(() => ({ waaReady: false, pageAgeMs: 0 }));
+      .catch(() => ({ waaReady: false, bgScriptDone: false, pageAgeMs: 0 }));
 
-    if (probe.waaReady && probe.pageAgeMs >= minPageAgeMs) return;
+    if (probe.waaReady && probe.pageAgeMs >= minPageAgeMs) {
+      return;
+    }
     await page.waitForTimeout(150);
   }
 }

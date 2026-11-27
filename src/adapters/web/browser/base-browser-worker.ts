@@ -195,6 +195,18 @@ export abstract class BaseWebBrowserWorker<
   }
 
   /**
+   * Trần thời gian đứng im tối đa khi `shouldEnforceIdleTimeout` đang tạm hoãn
+   * (ví dụ nút Stop còn hiển thị nhưng model hoàn toàn không sinh thêm token).
+   * Trả về `undefined` để giữ nguyên hành vi miễn trừ không giới hạn đến hardTimeoutMs.
+   */
+  protected resolveGeneratingStallTimeoutMs(
+    _observation: TObservation,
+    _options: TOptions,
+  ): number | undefined {
+    return undefined;
+  }
+
+  /**
    * Cho phép provider xử lý hoặc cứu hộ observation cuối cùng khi hết thời gian chờ.
    * Trả về undefined để ném lỗi timeout chuẩn mặc định.
    */
@@ -282,6 +294,8 @@ export abstract class BaseWebBrowserWorker<
     const startedAt = Date.now();
     let lastActivityAt = startedAt;
     let lastActivityKey: string | undefined;
+    let lastProgressAt = startedAt;
+    let lastProgressKey: string | undefined;
     let lastRenderedText = "";
     let lastObservation: TObservation | undefined;
     let isFirstObservation = true;
@@ -336,6 +350,11 @@ export abstract class BaseWebBrowserWorker<
         observation.activityKey ??
         `${observation.isGenerating}:${observation.text}`;
 
+      if (activityKey !== lastProgressKey) {
+        lastProgressKey = activityKey;
+        lastProgressAt = now;
+      }
+
       if (activityKey !== lastActivityKey || !this.shouldEnforceIdleTimeout(observation, options)) {
         lastActivityKey = activityKey;
         lastActivityAt = now;
@@ -361,12 +380,22 @@ export abstract class BaseWebBrowserWorker<
         return observation;
       }
 
-      if (
+      const generatingStallTimeoutMs = this.resolveGeneratingStallTimeoutMs(
+        observation,
+        options,
+      );
+      const stalledTimeoutMs =
         this.shouldEnforceIdleTimeout(observation, options) &&
         now - lastActivityAt >= idleTimeoutMs
-      ) {
+          ? idleTimeoutMs
+          : generatingStallTimeoutMs !== undefined &&
+              now - lastProgressAt >= generatingStallTimeoutMs
+            ? generatingStallTimeoutMs
+            : undefined;
+
+      if (stalledTimeoutMs !== undefined) {
         await this.stopGeneration(page).catch(() => false);
-        const idleTimeoutError = new BrowserIdleTimeoutError(idleTimeoutMs);
+        const idleTimeoutError = new BrowserIdleTimeoutError(stalledTimeoutMs);
         const fallback = this.onWaitTimeout(
           idleTimeoutError,
           lastObservation,

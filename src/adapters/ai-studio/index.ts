@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   hasActualPriorAssistantReply,
+  resolveRequestedProfileId,
   type IncomingMeta,
   type ProviderAdapter,
   type SpeechTurnRequest,
@@ -258,6 +259,9 @@ export class AiStudioAdapter extends WebProviderAdapter {
     const cleanModel =
       request.modelId.replace(/^ai-studio\//i, "").trim() ||
       AI_STUDIO_DEFAULT_TTS_MODEL;
+    const profileId =
+      request.profileId?.trim().toLowerCase() ||
+      resolveRequestedProfileId(incoming.headers);
     return await this.engine.runEphemeralSurfaceTask(
       incoming,
       async ({ page, launcherReused, signal, heartbeat }) => {
@@ -278,7 +282,10 @@ export class AiStudioAdapter extends WebProviderAdapter {
       },
       {
         initialUrl: buildAiStudioSpeechUrl(cleanModel),
-        conversationKeySource: `speech:${cleanModel}`,
+        conversationKeySource: profileId
+          ? `speech:${profileId}:${cleanModel}`
+          : `speech:${cleanModel}`,
+        ...(profileId ? { profileId } : {}),
         retainOnCompleted: true,
         omitConnectorIdentity: true,
       },

@@ -1342,4 +1342,68 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     expect(fastPathTick.text).toBe("Xin chào bạn!");
     expect(fastPathTick.isCompleted).toBe(false);
   });
+
+  test("AiStudioBrowserWorker.insertPrompt ưu tiên mouse.move + keyboard.type/insertText tự nhiên khi Page hỗ trợ", async () => {
+    const worker = new AiStudioBrowserWorker();
+    const events: string[] = [];
+    let composerText = "";
+    let fillCalled = false;
+
+    const fakePage = {
+      waitForTimeout: async () => {},
+      mouse: {
+        move: async (x: number, y: number) => {
+          events.push(`mouse:${Math.round(x)},${Math.round(y)}`);
+        },
+      },
+      keyboard: {
+        press: async (key: string) => {
+          events.push(`press:${key}`);
+        },
+        type: async (text: string) => {
+          events.push(`type:${text.length}`);
+          composerText += text;
+        },
+        insertText: async (text: string) => {
+          events.push(`insertText:${text.length}`);
+          composerText += text;
+        },
+      },
+      locator: () => {
+        const loc = {
+          page: () => fakePage,
+          locator: () => loc,
+          first: () => loc,
+          waitFor: async () => {},
+          scrollIntoViewIfNeeded: async () => {},
+          boundingBox: async () => ({ x: 100, y: 200, width: 300, height: 60 }),
+          hover: async () => {
+            events.push("hover:composer");
+          },
+          click: async () => {
+            events.push("click:composer");
+          },
+          fill: async () => {
+            fillCalled = true;
+          },
+          inputValue: async () => composerText,
+          isVisible: async () => false,
+        };
+        return loc;
+      },
+      evaluate: async () => false,
+    } as never;
+
+    const helper = worker as unknown as {
+      insertPrompt: (p: unknown, text: string, o: Record<string, unknown>) => Promise<void>;
+    };
+    const longPrompt = "A".repeat(260);
+    await helper.insertPrompt(fakePage, longPrompt, {});
+
+    expect(composerText).toBe(longPrompt);
+    expect(fillCalled).toBe(false);
+    expect(events.some((e) => e.startsWith("mouse:"))).toBe(true);
+    expect(events.some((e) => e.startsWith("type:"))).toBe(true);
+    expect(events.some((e) => e.startsWith("insertText:"))).toBe(true);
+  });
 });

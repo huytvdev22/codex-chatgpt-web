@@ -51,7 +51,7 @@ describe("Bundled $gemini-image skill & CLI helper", () => {
 
       // Kiểm chứng SkillDirectoryScanner & SkillPromptBuilder tự nạp $gemini-image
       const scanner = new SkillDirectoryScanner();
-      const scanned = scanner.scanDirectories([{ path: targetSkillsDir, enabled: true }], "user");
+      const scanned = scanner.scanDirectories([{ path: targetSkillsDir, enabled: true }]);
       expect(scanned.skills.some((s) => s.name === "gemini-image")).toBe(true);
 
       const builder = new SkillPromptBuilder();

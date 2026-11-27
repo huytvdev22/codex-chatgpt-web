@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   hasActualPriorAssistantReply,
+  resolveRequestedProfileId,
   type ImageTurnRequest,
   type ImageTurnResult,
   type IncomingMeta,
@@ -344,6 +345,9 @@ export class GeminiAdapter extends WebProviderAdapter {
     const initialUrl =
       normalizedUrl ||
       (resolvedId ? buildGeminiConversationUrl(resolvedId) : GEMINI_HOME_URL);
+    const profileId =
+      request.profileId?.trim().toLowerCase() ||
+      resolveRequestedProfileId(incoming.headers);
     return await this.engine.runEphemeralSurfaceTask(
       incoming,
       async ({ page, signal, heartbeat }) => {
@@ -363,6 +367,7 @@ export class GeminiAdapter extends WebProviderAdapter {
       {
         initialUrl,
         conversationKeySource: request.conversationKey || `image:${randomUUID()}`,
+        ...(profileId ? { profileId } : {}),
         retainOnCompleted: false,
         omitConnectorIdentity: true,
       },

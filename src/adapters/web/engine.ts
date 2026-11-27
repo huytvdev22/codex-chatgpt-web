@@ -1,6 +1,7 @@
 import type { Page } from "playwright-core";
 import {
   hasActualPriorAssistantReply,
+  resolveRequestedProfileId,
   type IncomingMeta,
   type ManagedTurnRequest,
   type ManagedTurnResult,
@@ -224,12 +225,14 @@ export class WebTurnEngine {
       const initialUrl = this.definition.browser.resolveInitialUrl?.({
         modelId: parsed.modelId,
       });
+      const profileId = resolveRequestedProfileId(incoming.headers);
       const acquired = await acquireWebTurnSurface({
         definition: this.definition,
         localBrowser: this.localBrowser,
         turnTraceId,
         conversationKey,
         ...(initialUrl ? { initialUrl } : {}),
+        ...(profileId ? { profileId } : {}),
         abortSignal: turnRegistration.signal,
         ops: this.lifecycleOps,
       });
@@ -1043,12 +1046,16 @@ export class WebTurnEngine {
         modelId: request.modelId,
         existingConversationId: request.existingConversationId,
       });
+      const profileId =
+        request.profileId?.trim().toLowerCase() ||
+        resolveRequestedProfileId(incoming.headers);
       const acquired = await acquireWebTurnSurface({
         definition: this.definition,
         localBrowser: this.localBrowser,
         turnTraceId,
         conversationKey,
         ...(initialUrl ? { initialUrl } : {}),
+        ...(profileId ? { profileId } : {}),
         abortSignal: turnRegistration.signal,
         ops: this.lifecycleOps,
       });

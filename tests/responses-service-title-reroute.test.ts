@@ -212,4 +212,71 @@ describe("ResponsesService Codex thread-title rerouting", () => {
       rmSync(tempHome, { recursive: true, force: true });
     }
   });
+
+  test("tách recentPrimaryModel theo từng threadId khi 2 phiên Codex chạy song song khác provider", async () => {
+    const dispatched: Array<{ threadId: string | null; providerId: string; modelId: string }> = [];
+    const makeStubAdapter = (providerId: string): ProviderAdapter => ({
+      name: providerId,
+      async runTurn(parsed: CodexParsedRequest, incoming, emit) {
+        dispatched.push({
+          threadId: incoming.headers.get("x-codex-conversation-key"),
+          providerId,
+          modelId: parsed.modelId,
+        });
+        emit({ type: "text_delta", text: "ok" });
+        emit({ type: "done" });
+      },
+    });
+
+    const adapterRegistry = new AdapterRegistry([
+      ["m365-copilot", () => makeStubAdapter("m365-copilot")],
+      ["ai-studio", () => makeStubAdapter("ai-studio")],
+      ["chatgpt", () => makeStubAdapter("chatgpt")],
+    ]);
+    const service = new ResponsesService(
+      ModelRegistry.getInstance(),
+      adapterRegistry,
+      () => undefined,
+    );
+
+    // Thread A chạy AI Studio, ngay sau đó Thread B chạy ChatGPT
+    await service.executeTurn({
+      req: new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "x-codex-conversation-key": "thread-a" },
+      }),
+      raw: makeNormalRequestPayload("ai-studio/gemini-4-hydrogen"),
+      requestedModel: "ai-studio/gemini-4-hydrogen",
+      providerId: "ai-studio",
+      options: { rememberState: false },
+    });
+    await service.executeTurn({
+      req: new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "x-codex-conversation-key": "thread-b" },
+      }),
+      raw: makeNormalRequestPayload("chatgpt/gpt-6.2"),
+      requestedModel: "chatgpt/gpt-6.2",
+      providerId: "chatgpt",
+      options: { rememberState: false },
+    });
+
+    // Request sinh tiêu đề của Thread A phải quay lại đúng ai-studio dù Thread B chạy sau
+    await service.executeTurn({
+      req: new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "x-codex-conversation-key": "thread-a" },
+      }),
+      raw: makeTitleRequestPayload("m365-copilot/gpt-5.6"),
+      requestedModel: "m365-copilot/gpt-5.6",
+      providerId: "m365-copilot",
+      options: { rememberState: false },
+    });
+
+    expect(dispatched).toEqual([
+      { threadId: "thread-a", providerId: "ai-studio", modelId: "ai-studio/gemini-4-hydrogen" },
+      { threadId: "thread-b", providerId: "chatgpt", modelId: "chatgpt/gpt-6.2" },
+      { threadId: "thread-a", providerId: "ai-studio", modelId: "ai-studio/gemini-4-hydrogen" },
+    ]);
+  });
 });
