@@ -153,7 +153,7 @@ export class AiStudioDomObserver {
 
         let detectedWebError = "";
         const alertErrorRegex =
-          /Failed to generate content|permission denied|quota exceeded|rate limit|service unavailable/i;
+          /Failed to generate content|permission denied|quota exceeded|daily limit|rate limit|service unavailable/i;
         for (const alertEl of document.querySelectorAll<HTMLElement>(
           '[role="alert"], mat-snack-bar-container, simple-snack-bar, [class*="error-banner" i], [class*="toast" i]',
         )) {
@@ -287,7 +287,7 @@ export class AiStudioDomObserver {
         if (
           !detectedWebError &&
           !hasTurnFooter &&
-          /^(?:Permission denied\.|Failed to generate content\b|An internal error has occurred\.|Quota exceeded\b|Please check your account permissions)/i.test(
+          /^(?:Permission denied\.|Failed to generate content\b|An internal error has occurred\.|Quota exceeded\b|You have reached the daily limit\b|Please check your account permissions)/i.test(
             rawText,
           )
         ) {

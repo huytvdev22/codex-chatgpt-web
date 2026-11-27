@@ -78,10 +78,15 @@ export function isInsufficientQuotaMessage(text: string): boolean {
   return (
     lower.includes("insufficient_quota") ||
     lower.includes("exceeded your current quota") ||
+    lower.includes("exceeded your quota") ||
+    lower.includes("quota exceeded") ||
     lower.includes("quota exhausted") ||
     lower.includes("account quota exceeded") ||
     lower.includes("monthly quota exceeded") ||
     lower.includes("daily quota exceeded") ||
+    lower.includes("reached the daily limit") ||
+    lower.includes("reached your daily limit") ||
+    lower.includes("daily limit of requests") ||
     lower.includes("used your daily chat limit") ||
     lower.includes("reached your daily chat limit") ||
     lower.includes("daily chat limit") ||

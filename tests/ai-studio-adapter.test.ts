@@ -896,6 +896,18 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     expect(isTransientAiStudioWebError(new Error("Quota exceeded for model"))).toBe(
       false,
     );
+    expect(
+      isTransientAiStudioWebError(
+        new Error(
+          "[AI Studio Web Error] error Failed to generate content, Quota exceeded: you have reached the daily limit of requests for this model (resets in 15 hours, 24 minutes). Please select a different model, or try again tomorrow. close",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isTransientAiStudioWebError(
+        new Error("Failed to generate content: you have reached the daily limit of requests"),
+      ),
+    ).toBe(false);
     expect(isTransientAiStudioWebError(new Error("The operation was aborted"))).toBe(
       false,
     );

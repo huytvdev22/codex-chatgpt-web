@@ -1392,6 +1392,81 @@ describe("WebTurnEngine & WebProviderAdapter Contract Tests", () => {
     expect(mapped.error.code).toBe("insufficient_quota");
   });
 
+  test("WebTurnEngine dừng ngay (không retry) và gắn insufficient_quota + retryable=false khi AI Studio báo Quota exceeded", async () => {
+    let browserExecuteCalls = 0;
+    const endedStatuses: string[] = [];
+    const aiStudioQuotaMessage =
+      "[AI Studio Web Error] error Failed to generate content, Quota exceeded: you have reached the daily limit of requests for this model (resets in 15 hours, 24 minutes). Please select a different model, or try again tomorrow. close";
+
+    const definition: WebProviderDefinition = {
+      id: "ai-studio",
+      assistantName: "Gemini",
+      logPrefix: "ai-studio-adapter",
+      abortMessage: "AI Studio aborted",
+      policies: {
+        maxFormatRetries: 3,
+        emitErrorEventOnFailure: true,
+        errorMessagePrefix: "[AI Studio]",
+        rethrowError: false,
+      },
+      conversation: {
+        resolveConversationKey: () => "ai-studio-quota-conv",
+      },
+      browser: {
+        launcherProviderId: "ai-studio",
+        connectorIdentity: "ai-studio",
+        executeTurn: async () => {
+          browserExecuteCalls += 1;
+          throw new Error(aiStudioQuotaMessage);
+        },
+      },
+    };
+
+    const ops: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/nonexistent-launcher.json",
+      startTurn: async () => ({
+        surfaceId: "surface-aistudio-quota",
+        conversationId: undefined,
+        connectorBound: false,
+        reused: false,
+        connection: {
+          descriptor: {} as never,
+          context: {} as never,
+          page: {} as never,
+          browser: { close: async () => {} } as never,
+        },
+      }),
+      heartbeatTurn: async () => {},
+      endTurn: async ({ activity }) => {
+        endedStatuses.push(activity.status);
+      },
+      closeTurn: async () => {},
+    };
+
+    const engine = new WebTurnEngine(definition, undefined, ops);
+    const events: AdapterEvent[] = [];
+    await engine.runTurn(
+      createParsedRequest([{ role: "user", content: "xin chào" }]),
+      { headers: new Headers() },
+      ev => events.push(ev),
+    );
+
+    expect(browserExecuteCalls).toBe(1);
+    expect(endedStatuses).toEqual(["failed"]);
+    expect(events).toEqual([
+      {
+        type: "error",
+        message: `[AI Studio] ${aiStudioQuotaMessage}`,
+        retryable: false,
+      },
+    ]);
+
+    const mapped = adapterFailureFromMessage(`[AI Studio] ${aiStudioQuotaMessage}`);
+    expect(mapped.httpStatus).toBe(429);
+    expect(mapped.error.type).toBe("insufficient_quota");
+    expect(mapped.error.code).toBe("insufficient_quota");
+  });
+
   test("26. Tự động nhắc nội bộ và dừng sớm khi model lặp lại apply_patch vừa bị verification failed", async () => {
     const patchBody = [
       "*** Begin Patch",

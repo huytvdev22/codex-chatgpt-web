@@ -115,7 +115,12 @@ const MAX_TRANSIENT_WEB_RETRIES = 2;
 export function isTransientAiStudioWebError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (!message) return false;
-  if (/quota exceeded/i.test(message) || /AbortError/i.test(message)) {
+  if (
+    /quota exceeded|daily limit|daily quota|insufficient_quota|exceeded your (?:current )?quota/i.test(
+      message,
+    ) ||
+    /AbortError/i.test(message)
+  ) {
     return false;
   }
   return /permission denied|failed to generate content|service unavailable/i.test(

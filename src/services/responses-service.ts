@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { AdapterRegistry, type ProviderAdapterFactory } from "../adapters/adapter-registry";
 import { readCodexConfiguredModel } from "../codex-integration-document";
 import { extractCodexTurnIdentityFromBody } from "../responses/turn-identity";
-import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "../bridge";
+import { adapterFailureFromMessage, bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "../bridge";
 import { AsyncEventQueue } from "../event-queue";
 import type { BaseModelProvider } from "../models/base-model-provider";
 import { ModelRegistry } from "../models/model-registry";
@@ -380,8 +380,14 @@ export class ResponsesService {
         });
         console.log(`${turnTag} [completed] requestId=${requestId} conversationId=${conversationId} queueSize=${queue.size()}`);
       } catch (error) {
-        console.error(`${turnTag} [error] requestId=${requestId} conversationId=${conversationId} error=${error instanceof Error ? error.message : String(error)}`);
-        const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+        const rawMsg = error instanceof Error ? error.message : String(error);
+        console.error(`${turnTag} [error] requestId=${requestId} conversationId=${conversationId} error=${rawMsg}`);
+        const classified = adapterFailureFromMessage(rawMsg);
+        const event: AdapterEvent = {
+          type: "error",
+          message: rawMsg,
+          ...(classified.error.code === "insufficient_quota" ? { retryable: false } : {}),
+        };
         options.onAdapterEvent?.(event);
         queue.push(event);
       } finally {
