@@ -88,7 +88,7 @@ function createSampleNormalizedRequest(): NormalizedCodexRequest {
     model: "gemini/gemini-2.5-flash",
     stream: true,
     systemInstructions: [
-      "Bạn là Trợ lý AI Cá nhân cục bộ chạy trên máy macOS của người dùng, giao tiếp qua Telegram.",
+      "Bạn là Trợ lý AI Cá nhân cục bộ chạy trên máy tính của người dùng, giao tiếp qua Telegram.",
     ],
     developerInstructions: ["Workspace chính: /Users/test/CodexAssistant"],
     priorHistory: [],
@@ -141,6 +141,7 @@ describe("AssistantPromptCompiler & AssistantToolCatalogRenderer", () => {
     const prompt = compiled.finalPrompt;
     expect(prompt).not.toContain(".codex-copilot/MEMORY.md");
     expect(prompt).not.toContain("PowerShell");
+    expect(prompt).not.toContain("máy Mac");
     expect(prompt).not.toContain("get_goal");
     expect(prompt).not.toContain("create_goal");
     expect(prompt).not.toContain("update_goal");

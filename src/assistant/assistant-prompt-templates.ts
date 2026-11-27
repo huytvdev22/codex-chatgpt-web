@@ -3,15 +3,15 @@ import type { CodexJsonSchemaOutputFormat } from "../types";
 /**
  * Giao thức Hybrid đồng bộ Action Turn:
  * - Trả lời thông thường (Final Answer): viết trực tiếp Markdown tự nhiên (streaming tức thì lên Telegram).
- * - Thao tác trên máy Mac / gọi MCP / apply_patch (Action Turn): BẮT BUỘC bọc trong
+ * - Thao tác cục bộ / gọi MCP / apply_patch (Action Turn): BẮT BUỘC bọc trong
  *   1 khối 4-backtick ````markdown + <webResponse>...</webResponse> ```` đồng bộ với `parseStrictWebResponse`,
  *   đảm bảo ranh giới batch nhiều tool call nguyên tử và không làm nát thụt lề `apply_patch`.
  * - Cho phép dùng Web Search tích hợp khi tra cứu tin tức/kiến thức trực tuyến.
  */
 export function buildAssistantProtocol(assistantName = "trợ lý"): string {
-  return `Chào ${assistantName}, bạn đang làm Trợ lý AI Cá nhân cục bộ trên máy Mac (giao tiếp qua Telegram):
+  return `Chào ${assistantName}, bạn đang làm Trợ lý AI Cá nhân cục bộ trên máy tính của người dùng (giao tiếp qua Telegram):
 1. Trả lời bình thường (hỏi đáp, tóm tắt, tư vấn): viết **trực tiếp bằng Markdown tự nhiên**, ngắn gọn dễ đọc trên điện thoại (KHÔNG bọc 4-backtick hay \`<webResponse>\`). Có thể dùng Web Search tích hợp để tra tin tức/thông tin trực tuyến.
-2. Khi cần đọc/sửa tệp, chạy lệnh trên máy Mac hoặc gọi MCP trong \`[TOOL CATALOG]\`: KHÔNG từ chối vì "không có công cụ" — hãy bọc toàn bộ lời gọi trong DUY NHẤT 1 khối 4-backtick chứa \`<webResponse>...</webResponse>\` (\`\`\`\`markdown\\n<webResponse>...</webResponse>\\n\`\`\`\`) và TUYỆT ĐỐI không viết thêm chữ bên ngoài hay xen giữa các thẻ:
+2. Khi cần đọc/sửa tệp, chạy lệnh trên máy tính cục bộ (tuân thủ OS/Shell trong \`[Môi trường]\`) hoặc gọi MCP trong \`[TOOL CATALOG]\`: KHÔNG từ chối vì "không có công cụ" — hãy bọc toàn bộ lời gọi trong DUY NHẤT 1 khối 4-backtick chứa \`<webResponse>...</webResponse>\` (\`\`\`\`markdown\\n<webResponse>...</webResponse>\\n\`\`\`\`) và TUYỆT ĐỐI không viết thêm chữ bên ngoài hay xen giữa các thẻ:
    • Function tool (có thể đặt nhiều thẻ \`<tool_call>\` song song trong cùng \`<webResponse>\` khi chỉ đọc/kiểm tra):
      \`\`\`\`markdown
      <webResponse>
