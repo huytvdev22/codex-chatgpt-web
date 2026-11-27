@@ -138,6 +138,7 @@ export class M365ClipboardSalvage {
    * Thử trích xuất toàn bộ nội dung từ Code Block của tin nhắn AI mới nhất.
    */
   public async tryExtractCodeViaCopyButton(page: Page): Promise<string | null> {
+    let suppressedOsClipboard = false;
     try {
       // Fast-path: Đọc ngay trong bộ nhớ trước khi đụng tới toggle/clipboard/focus
       const fastMemory = await this.tryExtractInMemory(page);
@@ -373,6 +374,7 @@ export class M365ClipboardSalvage {
       }
 
       // Fallback Tầng C: Cài Clipboard Hook và click Copy Code (không gọi page.bringToFront() trên cửa sổ ẩn)
+      suppressedOsClipboard = true;
       await page
         .context()
         .grantPermissions(["clipboard-read", "clipboard-write"])
@@ -386,14 +388,19 @@ export class M365ClipboardSalvage {
           } catch {}
           const win = window as any;
           win.__m365_last_copied_code = null;
+          win.__codex_suppress_os_clipboard_write = true;
           if (!win.__m365_clipboard_hooked) {
             win.__m365_clipboard_hooked = true;
             const origWriteText = navigator.clipboard
               ? navigator.clipboard.writeText
               : null;
+            const origWrite = navigator.clipboard?.write
+              ? navigator.clipboard.write.bind(navigator.clipboard)
+              : null;
             if (navigator.clipboard) {
               navigator.clipboard.writeText = async (text: string) => {
                 win.__m365_last_copied_code = text;
+                if (win.__codex_suppress_os_clipboard_write) return Promise.resolve();
                 try {
                   if (origWriteText) {
                     return await origWriteText.call(navigator.clipboard, text);
@@ -402,6 +409,28 @@ export class M365ClipboardSalvage {
                   return Promise.resolve();
                 }
               };
+              if (origWrite) {
+                navigator.clipboard.write = async (items: ClipboardItems) => {
+                  try {
+                    for (const item of items) {
+                      if (item.types?.includes("text/plain")) {
+                        const blob = await item.getType("text/plain");
+                        const text = await blob.text();
+                        if (text && text.trim()) {
+                          win.__m365_last_copied_code = text;
+                          break;
+                        }
+                      }
+                    }
+                  } catch {}
+                  if (win.__codex_suppress_os_clipboard_write) return Promise.resolve();
+                  try {
+                    return await origWrite(items);
+                  } catch {
+                    return Promise.resolve();
+                  }
+                };
+              }
             }
             document.addEventListener(
               "copy",
@@ -504,7 +533,7 @@ export class M365ClipboardSalvage {
       while (Date.now() - readStart < CLIPBOARD_POLL_TIMEOUT_MS) {
         await page.waitForTimeout(100);
         const hookResult = await page
-          .evaluate(async () => {
+          .evaluate(() => {
             const win = window as any;
             if (
               typeof win.__m365_last_copied_code === "string" &&
@@ -512,23 +541,9 @@ export class M365ClipboardSalvage {
             ) {
               return {
                 text: win.__m365_last_copied_code.trim(),
-                source: "Window Hook (writeText)",
+                source: "Window Hook (writeText/write)",
               };
             }
-            try {
-              if (
-                navigator.clipboard &&
-                typeof navigator.clipboard.readText === "function"
-              ) {
-                const sys = await navigator.clipboard.readText();
-                if (sys && sys.trim().length > 0) {
-                  return {
-                    text: sys.trim(),
-                    source: "System Clipboard (readText)",
-                  };
-                }
-              }
-            } catch {}
             return null;
           })
           .catch(() => null);
@@ -605,6 +620,14 @@ export class M365ClipboardSalvage {
         `[m365-worker] [copy-salvage] Ngoại lệ không mong muốn: ${err?.message || err}`,
       );
       return null;
+    } finally {
+      if (suppressedOsClipboard) {
+        await page
+          .evaluate(() => {
+            (window as any).__codex_suppress_os_clipboard_write = false;
+          })
+          .catch(() => {});
+      }
     }
   }
 }

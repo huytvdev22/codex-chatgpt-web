@@ -7,6 +7,7 @@ const {
   sweepGapIndicatesSuspension,
 } = require("../infra/turn-suspension.cjs");
 const { M365BrowserProvider } = require("./providers/m365/m365-browser-provider.cjs");
+const { TurnTabScheduler, TurnTabWaitTimeoutError } = require("./turn-tab-scheduler.cjs");
 
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
@@ -16,6 +17,8 @@ const MAX_BROWSER_TABS = 10;
 const MAX_ASSISTANT_RETAINED_TABS = 3;
 const ASSISTANT_CONNECTOR_SUFFIX = ":assistant";
 const MAX_CANCELLED_TURN_TRACES = 256;
+const DEFAULT_SLOT_WAIT_TIMEOUT_MS = 25_000;
+const DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS = 48_000;
 
 function isAssistantTab(tab) {
   return typeof tab?.connectorIdentity === "string"
@@ -169,7 +172,7 @@ function loadCommittedBrowserSurface(
  * bootstrap + retry, heartbeat/lease reaping, power-save blocking và dọn dẹp tài nguyên.
  */
 class TurnTabManager {
-  constructor(host, { standalone = false, aiStudioReopenCooldownMs } = {}) {
+  constructor(host, { standalone = false, aiStudioReopenCooldownMs, slotWaitTimeoutMs, sameKeyWaitTimeoutMs } = {}) {
     this.host = host;
     this.turnTabs = host.turnTabs instanceof Map ? host.turnTabs : new Map();
     this.closedTurnOwners = host.closedTurnOwners instanceof Map ? host.closedTurnOwners : new Map();
@@ -177,11 +180,28 @@ class TurnTabManager {
     this.lastClosedAtByProvider = host.lastClosedAtByProvider instanceof Map
       ? host.lastClosedAtByProvider
       : new Map();
+    this.scheduler = host.turnTabScheduler instanceof TurnTabScheduler
+      ? host.turnTabScheduler
+      : new TurnTabScheduler();
     this.aiStudioReopenCooldownMs = typeof aiStudioReopenCooldownMs === "number"
       ? aiStudioReopenCooldownMs
       : typeof host.aiStudioReopenCooldownMs === "number"
         ? host.aiStudioReopenCooldownMs
         : AI_STUDIO_REOPEN_COOLDOWN_MS;
+    this.slotWaitTimeoutMs = typeof slotWaitTimeoutMs === "number"
+      ? slotWaitTimeoutMs
+      : typeof host.slotWaitTimeoutMs === "number"
+        ? host.slotWaitTimeoutMs
+        : (standalone ? 0 : DEFAULT_SLOT_WAIT_TIMEOUT_MS);
+    this.sameKeyWaitTimeoutMs = typeof sameKeyWaitTimeoutMs === "number"
+      ? sameKeyWaitTimeoutMs
+      : typeof host.sameKeyWaitTimeoutMs === "number"
+        ? host.sameKeyWaitTimeoutMs
+        : (typeof slotWaitTimeoutMs === "number"
+          ? slotWaitTimeoutMs
+          : typeof host.slotWaitTimeoutMs === "number"
+            ? host.slotWaitTimeoutMs
+            : (standalone ? 0 : DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS));
     this.turnLeaseSweep = null;
     this.resumeListener = null;
 
@@ -602,7 +622,10 @@ class TurnTabManager {
   removeTurnTab(tab, abortRunning) {
     if (!this.turnTabs.has(tab.id)) return;
     this.turnTabs.delete(tab.id);
-    if ((tab.provider || this.host?.provider) === "ai-studio") {
+    const closedDueToFailure = abortRunning === true
+      || tab.status === "error"
+      || tab.status === "aborted";
+    if (closedDueToFailure && (tab.provider || this.host?.provider) === "ai-studio") {
       this.lastClosedAtByProvider?.set?.("ai-studio", Date.now());
     }
     this.syncPowerSaveBlocker();
@@ -641,6 +664,66 @@ class TurnTabManager {
     this.host.syncViewVisibility();
     this.host.publishState?.(this.host.snapshot());
     this.host.writeDescriptor();
+    this._notifyTabReleased(tab);
+  }
+
+  _readTargetId(tab) {
+    const contents = tab?.view?.webContents;
+    if (!contents || contents.isDestroyed?.() || typeof contents.getOrCreateDevToolsTargetId !== "function") {
+      return undefined;
+    }
+    try {
+      const targetId = contents.getOrCreateDevToolsTargetId();
+      return typeof targetId === "string" && targetId.trim() ? targetId : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  _shouldSelectTabOnBegin(tab, reveal) {
+    if (reveal === true) return true;
+    const currentSelected = this.selectedTurnTab();
+    if (currentSelected && currentSelected.id !== tab.id && currentSelected.status === "running") {
+      return false;
+    }
+    return true;
+  }
+
+  _hasReclaimableTab(providerId = null) {
+    for (const tab of this.turnTabs.values()) {
+      if (providerId && (tab.provider || this.host?.provider || "m365") !== providerId) {
+        continue;
+      }
+      if (tab.status === "ready") return true;
+      if (!providerId && (tab.status === "error" || tab.status === "aborted")) return true;
+      if (!providerId && tab.status === "running" && tab.helperPid && !processRunning(tab.helperPid)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _hasCapacityForNewTab(providerObj, conversationKey) {
+    if (this.turnTabs.size >= MAX_BROWSER_TABS && !this._hasReclaimableTab(null)) {
+      return false;
+    }
+    const providerTabs = [...this.turnTabs.values()].filter(
+      (tab) => (tab.provider || providerObj.id) === providerObj.id,
+    );
+    if (providerTabs.length < providerObj.maxSurfaces) return true;
+    if (conversationKey && providerTabs.some((tab) => tab.conversationKey === conversationKey)) {
+      return true;
+    }
+    return providerTabs.some((tab) => tab.status === "ready");
+  }
+
+  _notifyTabReleased(tab) {
+    const providerId = tab?.provider || this.host?.provider || "m365";
+    const profileId = tab?.profileId || "default";
+    if (tab?.conversationKey) {
+      this.scheduler.notifyKeySettled(providerId, profileId, tab.conversationKey);
+    }
+    this.scheduler.notifySlotFreed(providerId);
   }
 
   rememberUserCancelledTurn(traceId, helperPid) {
@@ -698,92 +781,157 @@ class TurnTabManager {
       throw new Error("Browser turn provider is invalid");
     }
     const providerObj = this.resolveProvider(providerId);
-    if (this.host.manualOperation) {
-      throw new Error(`Browser is busy with ${this.host.manualOperation}`);
-    }
-    if (this.userCancelledTurnOwners.has(traceId)) {
-      throw new BrowserTurnCancelledError(traceId);
-    }
-    const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
-    if (sameTrace && (sameTrace.conversationKey !== conversationKey
-      || sameTrace.connectorIdentity !== connectorIdentity
-      || (sameTrace.provider || "m365") !== providerId)) {
-      throw new Error(`Browser turn ${traceId} conversation metadata does not match its owned tab`);
-    }
     const activeProfileId = this.resolveTargetProfileId(providerObj, profileId);
-    const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
-      tab.status === "ready"
-      && tab.conversationKey === conversationKey
-      && tab.connectorIdentity === connectorIdentity
-      && (tab.provider || "m365") === providerId
-      && (tab.profileId || "default") === activeProfileId
-      && (!connectorIdentity || tab.connectorBound === true)
-    )) : [];
-    if (retainedMatches.length > 1) {
-      this.host.logger.warn("browser.multiple_retained_tabs_reconciled", {
-        conversationKey,
-        count: retainedMatches.length,
-      });
-      retainedMatches.sort((left, right) => (right.lastHeartbeatAt ?? 0) - (left.lastHeartbeatAt ?? 0));
-      const chosen = retainedMatches.shift();
-      for (const extra of retainedMatches) {
-        (this.host.removeTurnTab || this.removeTurnTab).call(this.host, extra, false);
+    const waitDeadline = this.slotWaitTimeoutMs > 0 ? Date.now() + this.slotWaitTimeoutMs : 0;
+    const sameKeyWaitDeadline = this.sameKeyWaitTimeoutMs > 0 ? Date.now() + this.sameKeyWaitTimeoutMs : 0;
+
+    while (true) {
+      signal?.throwIfAborted();
+      if (this.host.manualOperation) {
+        throw new Error(`Browser is busy with ${this.host.manualOperation}`);
       }
-      retainedMatches.length = 1;
-      retainedMatches[0] = chosen;
-    }
-    const exactRetained = retainedMatches[0];
-    if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
-      throw new Error(`Browser turn ${traceId} is retained under different conversation metadata`);
-    }
-    const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
-    if (existing) {
-      const reused = existing.status === "ready";
-      if (existing.status === "running" && existing.helperPid !== helperPid) {
-        if (processRunning(existing.helperPid)) {
-          throw new Error(`Browser turn ${traceId} is owned by another helper process`);
-        }
-        this.host.logger.warn("browser.stale_turn_owner_replaced", {
-          tabId: existing.id,
-          traceId,
-          previousHelperPid: existing.helperPid,
-          helperPid,
-          evidence: "previous helper exited",
+      if (this.userCancelledTurnOwners.has(traceId)) {
+        throw new BrowserTurnCancelledError(traceId);
+      }
+      const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
+      if (sameTrace && (sameTrace.conversationKey !== conversationKey
+        || sameTrace.connectorIdentity !== connectorIdentity
+        || (sameTrace.provider || "m365") !== providerId)) {
+        throw new Error(`Browser turn ${traceId} conversation metadata does not match its owned tab`);
+      }
+      const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
+        tab.status === "ready"
+        && tab.conversationKey === conversationKey
+        && tab.connectorIdentity === connectorIdentity
+        && (tab.provider || "m365") === providerId
+        && (tab.profileId || "default") === activeProfileId
+        && (!connectorIdentity || tab.connectorBound === true)
+      )) : [];
+      if (retainedMatches.length > 1) {
+        this.host.logger.warn("browser.multiple_retained_tabs_reconciled", {
+          conversationKey,
+          count: retainedMatches.length,
         });
+        retainedMatches.sort((left, right) => (right.lastHeartbeatAt ?? 0) - (left.lastHeartbeatAt ?? 0));
+        const chosen = retainedMatches.shift();
+        for (const extra of retainedMatches) {
+          (this.host.removeTurnTab || this.removeTurnTab).call(this.host, extra, false);
+        }
+        retainedMatches.length = 1;
+        retainedMatches[0] = chosen;
       }
-      existing.helperPid = helperPid;
-      existing.traceId = traceId;
-      existing.status = "running";
-      existing.loading = true;
-      existing.message = `${providerObj.displayName} is working`;
-      if (!reused) {
-        existing.bootstrapReady = false;
-        existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
+      const exactRetained = retainedMatches[0];
+      if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
+        throw new Error(`Browser turn ${traceId} is retained under different conversation metadata`);
       }
-      existing.lastHeartbeatAt = Date.now();
-      if (!existing.view.webContents.isDestroyed()) {
-        existing.view.webContents.setBackgroundThrottling(false);
+      const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
+      if (existing) {
+        const reused = existing.status === "ready";
+        if (existing.status === "running" && existing.helperPid !== helperPid) {
+          if (processRunning(existing.helperPid)) {
+            throw new Error(`Browser turn ${traceId} is owned by another helper process`);
+          }
+          this.host.logger.warn("browser.stale_turn_owner_replaced", {
+            tabId: existing.id,
+            traceId,
+            previousHelperPid: existing.helperPid,
+            helperPid,
+            evidence: "previous helper exited",
+          });
+        }
+        existing.helperPid = helperPid;
+        existing.traceId = traceId;
+        existing.status = "running";
+        existing.loading = true;
+        existing.message = `${providerObj.displayName} is working`;
+        if (!reused) {
+          existing.bootstrapReady = false;
+          existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
+        }
+        existing.lastHeartbeatAt = Date.now();
+        if (!existing.view.webContents.isDestroyed()) {
+          existing.view.webContents.setBackgroundThrottling(false);
+        }
+        this.host.homeSurfaceOpen = false;
+        if (this._shouldSelectTabOnBegin(existing, reveal)) {
+          this.host.selectedTabId = existing.id;
+        }
+        this.host.parkIdlePrimaryView?.();
+        if (reveal) this.host.show();
+        else this.host.syncViewVisibility();
+        this.host.publishState?.(this.host.snapshot());
+        this.host.writeDescriptor();
+        const targetId = this._readTargetId(existing);
+        return {
+          surfaceId: existing.surfaceId,
+          tabId: existing.id,
+          reused,
+          connectorBound: existing.connectorBound === true,
+          ...(existing.conversationId ? { conversationId: existing.conversationId } : {}),
+          ...(targetId ? { targetId } : {}),
+        };
       }
-      this.host.homeSurfaceOpen = false;
-      this.host.selectedTabId = existing.id;
-      this.host.parkIdlePrimaryView?.();
-      if (reveal) this.host.show();
-      else this.host.syncViewVisibility();
-      this.host.publishState?.(this.host.snapshot());
-      this.host.writeDescriptor();
-      return {
-        surfaceId: existing.surfaceId,
-        tabId: existing.id,
-        reused,
-        connectorBound: existing.connectorBound === true,
-        ...(existing.conversationId ? { conversationId: existing.conversationId } : {}),
-      };
+
+      const remainingWaitMs = waitDeadline > 0 ? waitDeadline - Date.now() : 0;
+      const remainingSameKeyWaitMs = sameKeyWaitDeadline > 0 ? sameKeyWaitDeadline - Date.now() : 0;
+      const runningSameKey = conversationKey ? [...this.turnTabs.values()].find((tab) => (
+        tab.status === "running"
+        && tab.traceId !== traceId
+        && tab.conversationKey === conversationKey
+        && tab.connectorIdentity === connectorIdentity
+        && (tab.provider || "m365") === providerId
+        && (tab.profileId || "default") === activeProfileId
+      )) : null;
+
+      if (runningSameKey && remainingSameKeyWaitMs > 0) {
+        this.host.logger?.info?.("browser.turn_wait_same_key", {
+          traceId,
+          provider: providerId,
+          activeTabId: runningSameKey.id,
+          remainingWaitMs: remainingSameKeyWaitMs,
+        });
+        try {
+          await this.scheduler.waitForKey({
+            providerId,
+            profileId: activeProfileId,
+            conversationKey,
+            timeoutMs: remainingSameKeyWaitMs,
+            signal,
+          });
+          continue;
+        } catch (error) {
+          if (!(error instanceof TurnTabWaitTimeoutError)) throw error;
+        }
+      }
+
+      if (requireRetainedConversation) {
+        const error = new Error(`The retained ${providerObj.displayName} conversation is no longer available`);
+        error.code = "retained_conversation_unavailable";
+        throw error;
+      }
+
+      if (!this._hasCapacityForNewTab(providerObj, conversationKey) && remainingWaitMs > 0) {
+        this.host.logger?.info?.("browser.turn_wait_slot", {
+          traceId,
+          provider: providerId,
+          tabCount: this.turnTabs.size,
+          remainingWaitMs,
+        });
+        try {
+          await this.scheduler.waitForSlot({
+            providerId,
+            timeoutMs: remainingWaitMs,
+            signal,
+          });
+          continue;
+        } catch (error) {
+          if (!(error instanceof TurnTabWaitTimeoutError)) throw error;
+        }
+      }
+
+      break;
     }
-    if (requireRetainedConversation) {
-      const error = new Error(`The retained ${providerObj.displayName} conversation is no longer available`);
-      error.code = "retained_conversation_unavailable";
-      throw error;
-    }
+
     providerObj.prepareAllocation(
       this.turnTabs,
       conversationKey,
@@ -808,19 +956,23 @@ class TurnTabManager {
     }
     const tab = await createTab.call(this.host, ...createTabArgs);
     this.host.homeSurfaceOpen = false;
-    this.host.selectedTabId = tab.id;
+    if (this._shouldSelectTabOnBegin(tab, reveal)) {
+      this.host.selectedTabId = tab.id;
+    }
     this.host.parkIdlePrimaryView?.();
     if (reveal) this.host.show();
     else this.host.syncViewVisibility();
     this.host.publishState?.(this.host.snapshot());
     this.host.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
     this.host.writeDescriptor();
+    const targetId = this._readTargetId(tab);
     return {
       surfaceId: tab.surfaceId,
       tabId: tab.id,
       reused: false,
       connectorBound: tab.connectorBound === true,
       ...(tab.conversationId ? { conversationId: tab.conversationId } : {}),
+      ...(targetId ? { targetId } : {}),
     };
   }
 
@@ -888,15 +1040,21 @@ class TurnTabManager {
       else this.host.syncViewVisibility?.();
       this.host.publishState?.(this.host.snapshot());
       this.host.writeDescriptor();
+      this._notifyTabReleased(tab);
       return { cancelledByUser };
     }
-    (this.host.removeTurnTab || this.removeTurnTab).call(this.host, tab, false);
+    if (typeof this.host.removeTurnTab === "function") {
+      this.host.removeTurnTab(tab, false);
+    } else {
+      this.removeTurnTab(tab, false);
+    }
     if (hideAfterTurn && !this.host.activeTraceId) this.host.hide();
     this.host.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
     return { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };
   }
 
   destroy() {
+    this.scheduler.destroy(new Error("Browser host destroyed"));
     if (this.turnLeaseSweep) {
       clearInterval(this.turnLeaseSweep);
       this.turnLeaseSweep = null;
@@ -927,6 +1085,8 @@ class TurnTabManager {
 module.exports = {
   AI_STUDIO_REOPEN_COOLDOWN_MS,
   BrowserTurnCancelledError,
+  DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS,
+  DEFAULT_SLOT_WAIT_TIMEOUT_MS,
   HIDDEN_TURN_VIEWPORT,
   IDLE_BROWSER_URL,
   MAX_ASSISTANT_RETAINED_TABS,
@@ -938,6 +1098,7 @@ module.exports = {
   TURN_HEARTBEAT_TIMEOUT_MS,
   TURN_TAB_BOOTSTRAP_TIMEOUT_MS,
   TurnTabManager,
+  TurnTabScheduler,
   hasProviderOnHost,
   loadCommittedBrowserSurface,
   resolveProviderFromHost,

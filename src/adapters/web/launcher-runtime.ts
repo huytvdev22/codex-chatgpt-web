@@ -106,6 +106,7 @@ export async function startLauncherBrowserTurn(
       options.connectionTimeoutMs ?? 20_000,
       surfaceId,
       options.signal,
+      lease.targetId,
     );
 
     return {
@@ -141,6 +142,10 @@ export async function closeLauncherBrowserTurn(
   connection: LauncherBrowserConnection | null,
 ): Promise<void> {
   if (!connection) return;
+  if (typeof connection.release === "function") {
+    await connection.release().catch(() => {});
+    return;
+  }
   await connection.browser.close().catch(() => {});
 }
 
