@@ -283,7 +283,6 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     }
 
     await this.waitForVisibleComposer(page, 15_000, options.signal);
-    await page.bringToFront().catch(() => {});
 
     const composerLocator = await this.findVisibleLocator(
       page,
@@ -298,10 +297,29 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     await composerLocator.click({ timeout: 3_000 });
     await composerLocator.focus({ timeout: 2_000 }).catch(() => {});
 
-    const selectAllKey = process.platform === "darwin" ? "Meta+a" : "Control+a";
-    await page.keyboard.press(selectAllKey);
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(80);
+    // Xóa nội dung cũ trong ProseMirror nội bộ trang thay vì bringToFront + Meta+a/Backspace
+    // để tránh cướp focus của các tab khác đang chạy song song.
+    await page
+      .evaluate((selector) => {
+        const candidates = Array.from(
+          document.querySelectorAll<HTMLElement>(selector),
+        );
+        const editor =
+          candidates.find((el) => {
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          }) ?? candidates[0];
+        if (!editor) return;
+        editor.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        document.execCommand("delete", false, undefined);
+      }, CHATGPT_SELECTORS.composer)
+      .catch(() => {});
+    await page.waitForTimeout(60);
 
     // Dùng execCommand("insertText") cho prompt dài để tránh Playwright .fill() chờ stability gây chậm/timeout
     // trên ProseMirror, và tuyệt đối không dùng paste event tránh ChatGPT tạo file "Pasted text.txt".

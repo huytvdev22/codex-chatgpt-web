@@ -391,6 +391,9 @@ export class M365ClipboardSalvage {
             const origWriteText = navigator.clipboard
               ? navigator.clipboard.writeText
               : null;
+            const origWrite = navigator.clipboard?.write
+              ? navigator.clipboard.write.bind(navigator.clipboard)
+              : null;
             if (navigator.clipboard) {
               navigator.clipboard.writeText = async (text: string) => {
                 win.__m365_last_copied_code = text;
@@ -402,6 +405,27 @@ export class M365ClipboardSalvage {
                   return Promise.resolve();
                 }
               };
+              if (origWrite) {
+                navigator.clipboard.write = async (items: ClipboardItems) => {
+                  try {
+                    for (const item of items) {
+                      if (item.types?.includes("text/plain")) {
+                        const blob = await item.getType("text/plain");
+                        const text = await blob.text();
+                        if (text && text.trim()) {
+                          win.__m365_last_copied_code = text;
+                          break;
+                        }
+                      }
+                    }
+                  } catch {}
+                  try {
+                    return await origWrite(items);
+                  } catch {
+                    return Promise.resolve();
+                  }
+                };
+              }
             }
             document.addEventListener(
               "copy",
@@ -504,7 +528,7 @@ export class M365ClipboardSalvage {
       while (Date.now() - readStart < CLIPBOARD_POLL_TIMEOUT_MS) {
         await page.waitForTimeout(100);
         const hookResult = await page
-          .evaluate(async () => {
+          .evaluate(() => {
             const win = window as any;
             if (
               typeof win.__m365_last_copied_code === "string" &&
@@ -512,23 +536,9 @@ export class M365ClipboardSalvage {
             ) {
               return {
                 text: win.__m365_last_copied_code.trim(),
-                source: "Window Hook (writeText)",
+                source: "Window Hook (writeText/write)",
               };
             }
-            try {
-              if (
-                navigator.clipboard &&
-                typeof navigator.clipboard.readText === "function"
-              ) {
-                const sys = await navigator.clipboard.readText();
-                if (sys && sys.trim().length > 0) {
-                  return {
-                    text: sys.trim(),
-                    source: "System Clipboard (readText)",
-                  };
-                }
-              }
-            } catch {}
             return null;
           })
           .catch(() => null);

@@ -958,6 +958,24 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
                 await origWriteText(text).catch(() => { });
               }
             };
+            const origWrite = navigator.clipboard.write?.bind(navigator.clipboard);
+            if (origWrite) {
+              navigator.clipboard.write = async (items: ClipboardItems) => {
+                try {
+                  for (const item of items) {
+                    if (item.types?.includes("text/plain")) {
+                      const blob = await item.getType("text/plain");
+                      const text = await blob.text();
+                      if (text && text.trim()) {
+                        win.__aistudio_last_copied_markdown = text;
+                        break;
+                      }
+                    }
+                  }
+                } catch { }
+                await origWrite(items).catch(() => { });
+              };
+            }
           }
           document.addEventListener(
             "copy",
@@ -1024,7 +1042,7 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
     while (Date.now() < deadline) {
       await page.waitForTimeout(100);
       const copied = await page
-        .evaluate(async () => {
+        .evaluate(() => {
           const win = window as unknown as Record<string, unknown>;
           if (
             typeof win.__aistudio_last_copied_markdown === "string" &&
@@ -1032,12 +1050,6 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
           ) {
             return win.__aistudio_last_copied_markdown.trim();
           }
-          try {
-            if (navigator.clipboard?.readText) {
-              const sys = await navigator.clipboard.readText();
-              if (sys && sys.trim().length > 0) return sys.trim();
-            }
-          } catch { }
           return null;
         })
         .catch(() => null);

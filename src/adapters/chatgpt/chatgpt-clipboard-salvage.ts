@@ -1,4 +1,5 @@
 import type { Page } from "playwright-core";
+import { browserFocusMutex } from "../web/browser/browser-focus-mutex";
 import {
   normalizeCopiedChatGptSnippet,
   type ChatGptResponseBaseline,
@@ -69,7 +70,34 @@ export class ChatGptClipboardSalvage {
             if (text && text.trim()) {
               win.__chatgpt_last_copied_code = text;
             }
-            return await origWriteText(text);
+            try {
+              return await origWriteText(text);
+            } catch {
+              return undefined;
+            }
+          };
+        }
+
+        const origWrite = navigator.clipboard?.write?.bind(navigator.clipboard);
+        if (navigator.clipboard && origWrite) {
+          navigator.clipboard.write = async (items: ClipboardItems) => {
+            try {
+              for (const item of items) {
+                if (item.types?.includes("text/plain")) {
+                  const blob = await item.getType("text/plain");
+                  const text = await blob.text();
+                  if (text && text.trim()) {
+                    win.__chatgpt_last_copied_code = text;
+                    break;
+                  }
+                }
+              }
+            } catch {}
+            try {
+              return await origWrite(items);
+            } catch {
+              return undefined;
+            }
           };
         }
       }
@@ -80,7 +108,6 @@ export class ChatGptClipboardSalvage {
     page: Page,
     baseline: ChatGptResponseBaseline,
   ): Promise<string | null> {
-    await page.bringToFront().catch(() => {});
     const targetToken = `codex-copy-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
@@ -180,18 +207,26 @@ export class ChatGptClipboardSalvage {
 
       if (!copyButton) return null;
 
-      const clicked = await copyButton
-        .scrollIntoViewIfNeeded()
-        .then(() => copyButton.click({ timeout: 2_000 }))
-        .then(() => true)
+      const clicked = await browserFocusMutex
+        .runExclusive(
+          async () => {
+            await page.bringToFront().catch(() => {});
+            await copyButton.scrollIntoViewIfNeeded();
+            await copyButton.click({ timeout: 2_000 });
+            return true;
+          },
+          { timeoutMs: 3_000 },
+        )
         .catch(() => false);
       if (!clicked) return null;
 
+      // Chỉ đọc từ in-page clipboard hook của chính tab này; tuyệt đối không fallback
+      // `navigator.clipboard.readText()` để tránh đọc nhầm clipboard macOS hoặc response tab khác.
       const readDeadline = Date.now() + 2_200;
       while (Date.now() < readDeadline) {
         await page.waitForTimeout(100);
         const copied = await page
-          .evaluate(async () => {
+          .evaluate(() => {
             const win = window as unknown as Record<string, unknown>;
             if (
               typeof win.__chatgpt_last_copied_code === "string" &&
@@ -199,14 +234,6 @@ export class ChatGptClipboardSalvage {
             ) {
               return win.__chatgpt_last_copied_code.trim();
             }
-            try {
-              if (navigator.clipboard?.readText) {
-                const sysText = await navigator.clipboard.readText();
-                if (sysText && sysText.trim().length > 0) {
-                  return sysText.trim();
-                }
-              }
-            } catch {}
             return null;
           })
           .catch(() => null);

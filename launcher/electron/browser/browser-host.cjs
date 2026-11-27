@@ -278,6 +278,7 @@ class BrowserHost {
     this.lastTurnSweepAt = Date.now();
     this.powerSaveBlockerId = null;
     this.boundsReady = false;
+    this.surfaceReadyWaiters = new Set();
     this.bounds = { x: 0, y: 0, width: 1, height: 1 };
     this.state = {
       status: "idle",
@@ -392,8 +393,11 @@ class BrowserHost {
     if (!providerObj.isProfileSupported?.()) {
       throw new Error(`${providerObj.displayName} does not support multiple profiles`);
     }
-    if (this.activeTraceId || [...this.turnTabs.values()].some((tab) => tab.status === "running")) {
-      throw new Error(`Cannot switch or modify profiles while a Codex turn is running`);
+    const providerRunning = [...this.turnTabs.values()].some(
+      (tab) => tab.status === "running" && (tab.provider || this.provider) === providerObj.id,
+    );
+    if (providerRunning) {
+      throw new Error(`Cannot switch or modify profiles for ${providerObj.displayName} while a Codex turn is running`);
     }
     if (this.manualOperation || this.loginOperation) {
       throw new Error(`Browser is busy with ${this.currentOperation()}`);
@@ -1047,6 +1051,7 @@ class BrowserHost {
       { width, height },
     );
     this.boundsReady = true;
+    this._notifySurfaceReady?.();
     this.authView?.setBounds(this.bounds);
     this.syncViewVisibility();
     void this.view?.webContents?.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
@@ -1366,12 +1371,44 @@ class BrowserHost {
 
   setSurfaceActive(active) {
     this.surfaceActive = active === true;
+    this._notifySurfaceReady?.();
     this.syncViewVisibility();
     this.setState({ surfaceActive: this.surfaceActive });
     return this.snapshot();
   }
 
+  _notifySurfaceReady() {
+    if (!this.surfaceReadyWaiters || this.surfaceReadyWaiters.size === 0) return;
+    if (!this.surfaceActive || !this.boundsReady) return;
+    for (const wake of [...this.surfaceReadyWaiters]) {
+      this.surfaceReadyWaiters.delete(wake);
+      wake();
+    }
+  }
+
   async waitForSurfaceReady(timeoutMs = 15_000, pollMs = 50) {
+    if (this.surfaceActive && this.boundsReady) return;
+    if (this.surfaceReadyWaiters instanceof Set) {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          this.surfaceReadyWaiters.delete(wake);
+        };
+        const wake = () => {
+          cleanup();
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(
+            "Embedded browser surface did not receive measured bounds before the operation",
+          ));
+        }, timeoutMs);
+        timer.unref?.();
+        this.surfaceReadyWaiters.add(wake);
+      });
+      return;
+    }
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (this.surfaceActive && this.boundsReady) return;

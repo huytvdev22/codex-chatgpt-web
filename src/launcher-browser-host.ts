@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 import { expandUserPath } from "./config";
+import { launcherCdpPool } from "./launcher-cdp-pool";
 import { processRunning } from "./process";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
@@ -63,6 +64,7 @@ export interface LauncherBrowserConnection {
   browser: Browser;
   context: BrowserContext;
   page: Page;
+  release?: () => Promise<void>;
 }
 
 function assertLoopbackEndpoint(value: unknown, label: string): string {
@@ -259,69 +261,145 @@ export async function inspectLauncherBrowserHostLiveness(
   return descriptor;
 }
 
+export interface SelectLauncherPageOptions {
+  explicitTargetId?: string;
+  pageTargetCache?: WeakMap<Page, string>;
+  duplicateCheckGraceMs?: number;
+}
+
+const MATCH_DUPLICATE_GRACE_MS = 25;
+
 export async function selectLauncherPage(
   browser: Browser,
   descriptor: LauncherBrowserHostDescriptor,
   timeoutMs: number,
   surfaceId = descriptor.surfaceId,
   abortSignal?: AbortSignal,
+  options: SelectLauncherPageOptions = {},
 ): Promise<{ context: BrowserContext; page: Page }> {
   if (abortSignal?.aborted) {
     throw new DOMException("Launcher browser connection aborted", "AbortError");
   }
-  const targetId = descriptor.surfaceTargets[surfaceId];
+  const targetId = options.explicitTargetId?.trim() || descriptor.surfaceTargets[surfaceId];
   if (!targetId) throw new Error("Launcher browser surface is no longer registered with its native target");
+  const cache = options.pageTargetCache;
+  const duplicateGraceMs = options.duplicateCheckGraceMs ?? MATCH_DUPLICATE_GRACE_MS;
   const deadline = Date.now() + timeoutMs;
   do {
     if (abortSignal?.aborted) {
       throw new DOMException("Launcher browser connection aborted", "AbortError");
     }
     const candidates = browser.contexts().flatMap(context => context.pages().map(page => ({ context, page })));
-    // Target metadata belongs to the browser process. Evaluating every page here makes an
-    // unrelated busy/paused renderer block acquisition of an already-responsive owned page.
-    const inspectCandidate = async (candidate: { context: BrowserContext; page: Page }) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const sessionPromise = candidate.context.newCDPSession(candidate.page).catch(() => undefined);
-      try {
-        const session = await Promise.race([
-          sessionPromise,
-          new Promise<undefined>((resolve) => {
-            timer = setTimeout(() => resolve(undefined), 1_500);
-            timer.unref?.();
-          }),
-        ]);
-        if (!session) {
-          void sessionPromise.then(s => s?.detach().catch(() => {}));
-          return { ...candidate, targetId: undefined };
-        }
-        let innerTimer: ReturnType<typeof setTimeout> | undefined;
+
+    if (cache) {
+      const cachedMatches = candidates.filter(candidate => cache.get(candidate.page) === targetId);
+      if (cachedMatches.length === 1) {
+        return { context: cachedMatches[0].context, page: cachedMatches[0].page };
+      }
+      if (cachedMatches.length > 1) {
+        throw new Error(`Launcher browser host exposed ${cachedMatches.length} surfaces with the same ownership id`);
+      }
+    }
+
+    const uncachedCandidates = cache
+      ? candidates.filter(candidate => !cache.has(candidate.page))
+      : candidates;
+
+    if (uncachedCandidates.length > 0) {
+      // Target metadata thuộc về browser process; dùng race-to-first-match để một tab cũ
+      // đang đứng/unresponsive không bao giờ kéo chậm 1.5s–3s việc lấy tab sở hữu đã sẵn sàng.
+      const inspectCandidate = async (candidate: { context: BrowserContext; page: Page }) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const sessionPromise = candidate.context.newCDPSession(candidate.page).catch(() => undefined);
         try {
-          const { targetInfo } = await Promise.race([
-            session.send("Target.getTargetInfo"),
-            new Promise<never>((_resolve, reject) => {
-              innerTimer = setTimeout(() => reject(new Error("Target.getTargetInfo timed out")), 1_500);
-              innerTimer.unref?.();
+          const session = await Promise.race([
+            sessionPromise,
+            new Promise<undefined>((resolve) => {
+              timer = setTimeout(() => resolve(undefined), 1_500);
+              timer.unref?.();
             }),
           ]);
-          return { ...candidate, targetId: targetInfo.targetId };
-        } catch {
-          return { ...candidate, targetId: undefined };
+          if (!session) {
+            void sessionPromise.then(s => s?.detach().catch(() => {}));
+            return { ...candidate, targetId: undefined };
+          }
+          let innerTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const { targetInfo } = await Promise.race([
+              session.send("Target.getTargetInfo"),
+              new Promise<never>((_resolve, reject) => {
+                innerTimer = setTimeout(() => reject(new Error("Target.getTargetInfo timed out")), 1_500);
+                innerTimer.unref?.();
+              }),
+            ]);
+            if (targetInfo?.targetId) {
+              cache?.set(candidate.page, targetInfo.targetId);
+            }
+            return { ...candidate, targetId: targetInfo.targetId };
+          } catch {
+            return { ...candidate, targetId: undefined };
+          } finally {
+            if (innerTimer) clearTimeout(innerTimer);
+            await session.detach().catch(() => {});
+          }
         } finally {
-          if (innerTimer) clearTimeout(innerTimer);
-          await session.detach().catch(() => {});
+          if (timer) clearTimeout(timer);
         }
-      } finally {
-        if (timer) clearTimeout(timer);
+      };
+
+      const owned = await new Promise<Array<{ context: BrowserContext; page: Page; targetId: string | undefined }>>(
+        (resolve, reject) => {
+          const matches: Array<{ context: BrowserContext; page: Page; targetId: string | undefined }> = [];
+          let remaining = uncachedCandidates.length;
+          let settled = false;
+          let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (graceTimer) clearTimeout(graceTimer);
+            abortSignal?.removeEventListener("abort", onAbort);
+            resolve(matches);
+          };
+
+          const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            if (graceTimer) clearTimeout(graceTimer);
+            reject(new DOMException("Launcher browser connection aborted", "AbortError"));
+          };
+          abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+          for (const candidate of uncachedCandidates) {
+            void inspectCandidate(candidate).then((result) => {
+              remaining -= 1;
+              if (result.targetId === targetId) {
+                matches.push(result);
+                if (matches.length > 1) {
+                  finish();
+                  return;
+                }
+                if (remaining > 0 && !graceTimer) {
+                  graceTimer = setTimeout(finish, duplicateGraceMs);
+                  graceTimer.unref?.();
+                }
+              }
+              if (remaining === 0) {
+                finish();
+              }
+            });
+          }
+        },
+      );
+
+      if (owned.length === 1) {
+        return { context: owned[0].context, page: owned[0].page };
       }
-    };
-    const inspected = await Promise.all(candidates.map(inspectCandidate));
-    const owned = inspected.filter(candidate => candidate.targetId === targetId);
-    if (owned.length === 1) {
-      return { context: owned[0].context, page: owned[0].page };
+      if (owned.length > 1) {
+        throw new Error(`Launcher browser host exposed ${owned.length} surfaces with the same ownership id`);
+      }
     }
-    if (owned.length > 1) {
-      throw new Error(`Launcher browser host exposed ${owned.length} surfaces with the same ownership id`);
-    }
+
     await new Promise(resolve => setTimeout(resolve, 100));
   } while (Date.now() < deadline);
   throw new Error("Launcher browser host did not expose its owned browser surface");
@@ -332,38 +410,65 @@ export async function connectLauncherBrowserHost(
   timeoutMs = 20_000,
   surfaceId?: string,
   abortSignal?: AbortSignal,
+  explicitTargetId?: string,
 ): Promise<LauncherBrowserConnection> {
   if (abortSignal?.aborted) {
     throw new DOMException("Launcher browser connection aborted", "AbortError");
   }
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  await assertCdpReady(descriptor, Math.min(timeoutMs, 5_000));
-  let browser: Browser;
-  try {
-    browser = await chromium.connectOverCDP(descriptor.endpoint, { timeout: timeoutMs });
-  } catch (error) {
-    throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const closeOnAbort = () => { void browser.close().catch(() => {}); };
-  abortSignal?.addEventListener("abort", closeOnAbort, { once: true });
-  try {
-    if (abortSignal?.aborted) {
-      throw new DOMException("Launcher browser connection aborted", "AbortError");
+  const deadline = Date.now() + timeoutMs;
+
+  const attemptConnect = async (allowStaleRetry: boolean): Promise<LauncherBrowserConnection> => {
+    const remainingMs = Math.max(1_000, deadline - Date.now());
+    const lease = await launcherCdpPool.acquire({
+      endpoint: descriptor.endpoint,
+      pid: descriptor.pid,
+      timeoutMs: remainingMs,
+      signal: abortSignal,
+    });
+    if (!lease.reusedConnection) {
+      await assertCdpReady(descriptor, Math.min(remainingMs, 5_000)).catch(async (error) => {
+        await lease.invalidate();
+        throw error;
+      });
     }
-    const { context, page } = await selectLauncherPage(
-      browser,
-      descriptor,
-      timeoutMs,
-      surfaceId,
-      abortSignal,
-    );
-    return { descriptor, browser, context, page };
-  } catch (error) {
-    await browser.close().catch(() => {});
-    throw error;
-  } finally {
-    abortSignal?.removeEventListener("abort", closeOnAbort);
-  }
+    try {
+      if (abortSignal?.aborted) {
+        throw new DOMException("Launcher browser connection aborted", "AbortError");
+      }
+      // Nếu đang dùng shared connection cũ mà chưa thấy page mới sau 3s, tự reconnect 1 lần
+      const selectBudgetMs = lease.reusedConnection && allowStaleRetry
+        ? Math.min(3_000, Math.max(1_000, deadline - Date.now()))
+        : Math.max(1_000, deadline - Date.now());
+      const { context, page } = await selectLauncherPage(
+        lease.browser,
+        descriptor,
+        selectBudgetMs,
+        surfaceId,
+        abortSignal,
+        {
+          explicitTargetId,
+          pageTargetCache: lease.pageTargetCache,
+        },
+      );
+      return {
+        descriptor,
+        browser: lease.browser,
+        context,
+        page,
+        release: lease.release,
+      };
+    } catch (error) {
+      if (lease.reusedConnection && allowStaleRetry && !abortSignal?.aborted && Date.now() < deadline) {
+        await lease.invalidate();
+        return await attemptConnect(false);
+      }
+      await lease.release();
+      throw error;
+    }
+  };
+
+  return await attemptConnect(true);
 }
 
 export async function inspectLauncherBrowserHost(
@@ -465,6 +570,7 @@ export async function notifyLauncherTurn(
   signal?: AbortSignal,
 ): Promise<{
   surfaceId?: string;
+  targetId?: string;
   reused?: boolean;
   connectorBound?: boolean;
   conversationId?: string;
@@ -517,6 +623,7 @@ export async function notifyLauncherTurn(
       }
       return {
         surfaceId: body.surfaceId,
+        ...(typeof body.targetId === "string" && body.targetId.trim() ? { targetId: body.targetId.trim() } : {}),
         reused: body.reused,
         connectorBound: body.connectorBound,
         ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
