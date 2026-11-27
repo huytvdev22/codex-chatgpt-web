@@ -27,6 +27,11 @@ import {
   normalizeCopiedAiStudioCodeSnippet,
   resolveClipboardMenuItemIndex,
 } from "../src/adapters/ai-studio/ai-studio-clipboard-salvage";
+import {
+  AI_STUDIO_WELCOME_DIALOG_ACTION_SELECTOR,
+  AI_STUDIO_WELCOME_DIALOG_SELECTOR,
+  dismissAiStudioWelcomeDialogs,
+} from "../src/adapters/ai-studio/ai-studio-human-timing";
 import { parseStrictWebResponse } from "../src/adapters/web/protocol/strict-response-parser";
 import { ModelRegistry } from "../src/models/model-registry";
 import type { CodexParsedRequest } from "../src/types";
@@ -702,7 +707,7 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
         }
         if (arg === undefined) {
           events.push("botguard_probe");
-          return { waaReady: true, pageAgeMs: 2_500 };
+          return { waaReady: true, pageAgeMs: 3_000 };
         }
         return false;
       },
@@ -1405,5 +1410,124 @@ describe("Google AI Studio Web Adapter (Playwright CDP)", () => {
     expect(events.some((e) => e.startsWith("mouse:"))).toBe(true);
     expect(events.some((e) => e.startsWith("type:"))).toBe(true);
     expect(events.some((e) => e.startsWith("insertText:"))).toBe(true);
+  });
+
+  test("dismissAiStudioWelcomeDialogs tự động bấm nút Continue đóng #g1-welcome-dialog và bỏ qua nhanh khi không có dialog", async () => {
+    let dialogOpen = true;
+    const events: string[] = [];
+
+    const makeFakePage = () => {
+      const fakePage = {
+        waitForTimeout: async () => {},
+        mouse: {
+          move: async () => {
+            events.push("mouse:move");
+          },
+        },
+        locator: (selector: string) => {
+          const isDialog = selector === AI_STUDIO_WELCOME_DIALOG_SELECTOR;
+          const isAction = selector === AI_STUDIO_WELCOME_DIALOG_ACTION_SELECTOR;
+          const loc = {
+            page: () => fakePage,
+            first: () => loc,
+            isVisible: async () => (isDialog || isAction ? dialogOpen : false),
+            getAttribute: async () => "false",
+            scrollIntoViewIfNeeded: async () => {},
+            boundingBox: async () => ({ x: 400, y: 500, width: 100, height: 36 }),
+            hover: async () => {
+              events.push("hover:continue");
+            },
+            click: async () => {
+              if (isAction) {
+                events.push("click:continue");
+                dialogOpen = false;
+              }
+            },
+            waitFor: async (opts?: { state?: string }) => {
+              if (isDialog && opts?.state === "hidden" && !dialogOpen) {
+                events.push("wait:hidden");
+              }
+            },
+          };
+          return loc;
+        },
+        evaluate: async () => false,
+      } as never;
+      return fakePage;
+    };
+
+    const pageWithDialog = makeFakePage();
+    expect(await dismissAiStudioWelcomeDialogs(pageWithDialog)).toBe(true);
+    expect(dialogOpen).toBe(false);
+    expect(events).toContain("click:continue");
+    expect(events).toContain("wait:hidden");
+
+    // Khi dialog đã đóng: trả false ngay và không phát sinh thêm thao tác nào
+    const prevEventCount = events.length;
+    expect(await dismissAiStudioWelcomeDialogs(pageWithDialog)).toBe(false);
+    expect(events.length).toBe(prevEventCount);
+  });
+
+  test("AiStudioBrowserWorker.insertPrompt đóng #g1-welcome-dialog trước khi thao tác với composer", async () => {
+    const worker = new AiStudioBrowserWorker();
+    let dialogOpen = true;
+    let composerText = "";
+    const order: string[] = [];
+
+    const fakePage = {
+      waitForTimeout: async () => {},
+      mouse: { move: async () => {} },
+      keyboard: {
+        press: async () => {},
+        type: async (text: string) => {
+          composerText += text;
+        },
+        insertText: async (text: string) => {
+          composerText += text;
+        },
+      },
+      locator: (selector: string) => {
+        const isDialog = selector === AI_STUDIO_WELCOME_DIALOG_SELECTOR;
+        const isAction = selector === AI_STUDIO_WELCOME_DIALOG_ACTION_SELECTOR;
+        const isComposer = selector.includes('aria-label="Enter a prompt"');
+        const loc = {
+          page: () => fakePage,
+          locator: () => loc,
+          first: () => loc,
+          isVisible: async () => (isDialog || isAction ? dialogOpen : false),
+          getAttribute: async () => "false",
+          waitFor: async () => {},
+          scrollIntoViewIfNeeded: async () => {},
+          boundingBox: async () => ({ x: 100, y: 200, width: 300, height: 60 }),
+          hover: async () => {},
+          click: async () => {
+            if (isAction) {
+              order.push("dismiss:welcome");
+              dialogOpen = false;
+            } else if (isComposer) {
+              if (dialogOpen) {
+                throw new Error("Intercepted by cdk-overlay-backdrop");
+              }
+              order.push("click:composer");
+            }
+          },
+          fill: async (val: string) => {
+            composerText = val;
+          },
+          inputValue: async () => composerText,
+        };
+        return loc;
+      },
+      evaluate: async () => false,
+    } as never;
+
+    const helper = worker as unknown as {
+      insertPrompt: (p: unknown, text: string, o: Record<string, unknown>) => Promise<void>;
+    };
+    await helper.insertPrompt(fakePage, "Xin chào", {});
+
+    expect(dialogOpen).toBe(false);
+    expect(order).toEqual(["dismiss:welcome", "click:composer"]);
+    expect(composerText).toBe("Xin chào");
   });
 });

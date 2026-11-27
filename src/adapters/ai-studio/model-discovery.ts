@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import type { DiscoveredModelEntry } from "../../models/types";
+import { dismissAiStudioWelcomeDialogs } from "./ai-studio-human-timing";
 import { AI_STUDIO_ORIGIN } from "./conversation-url";
 
 export interface RawAiStudioDomModelItem {
@@ -144,6 +145,8 @@ export class AiStudioModelDiscovery {
         "Google AI Studio session is signed out. Sign in with Chrome before refreshing models.",
       );
     }
+
+    await dismissAiStudioWelcomeDialogs(page);
 
     let openedPanel = false;
     try {

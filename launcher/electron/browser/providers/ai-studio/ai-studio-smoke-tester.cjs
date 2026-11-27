@@ -44,6 +44,25 @@ class AiStudioSmokeTester {
       throw new Error("Không tìm thấy ô nhập prompt của Google AI Studio!");
     }
 
+    const dismissedWelcome = await view.webContents.executeJavaScript(`(() => {
+      const container =
+        document.querySelector("#g1-welcome-dialog") ||
+        document.querySelector("ms-g1-welcome-dialog") ||
+        document.querySelector("ms-tos-disclaimer")?.closest("mat-dialog-container");
+      if (!container) return false;
+      const btn =
+        container.querySelector("[mat-dialog-actions] button.ms-button-primary:not([disabled]):not([aria-disabled='true'])") ||
+        container.querySelector("button.ms-button-primary:not([disabled]):not([aria-disabled='true'])") ||
+        container.querySelector("[mat-dialog-actions] button:not([disabled]):not([aria-disabled='true'])") ||
+        container.querySelector('button[aria-label="Close dialog"]:not([disabled]):not([aria-disabled="true"])');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`, true).catch(() => false);
+    if (dismissedWelcome) {
+      await sleep(350);
+    }
+
     const promptText = "Reply with exactly: CODEX WEB GPT READY";
     setState({ status: "testing", message: "Sending smoke test prompt to Google AI Studio..." });
 

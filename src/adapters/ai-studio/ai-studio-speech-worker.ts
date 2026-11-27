@@ -3,6 +3,7 @@ import type { Locator, Page, Request } from "playwright-core";
 import { isAiStudioGenerationRequest } from "./ai-studio-browser-worker";
 import {
   clickResilient,
+  dismissAiStudioWelcomeDialogs,
   fillFieldNatural,
   humanPause,
   waitForBotGuardReady,
@@ -279,6 +280,7 @@ export class AiStudioSpeechWorker {
     if (!options.reusedSurface) {
       await waitForBotGuardReady(page, 2_000, 2_800).catch(() => {});
     }
+    await dismissAiStudioWelcomeDialogs(page);
     await humanPause(page, 650, 1_050);
 
     const inFlight = new Set<Request>();
@@ -316,6 +318,7 @@ export class AiStudioSpeechWorker {
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       this.throwIfAborted(signal);
+      await dismissAiStudioWelcomeDialogs(page);
       if (await promptLocator.isVisible().catch(() => false)) break;
       if (await textToggle.isVisible().catch(() => false)) break;
       if (await presetLocator.isVisible().catch(() => false)) {
@@ -330,6 +333,7 @@ export class AiStudioSpeechWorker {
       await page.waitForTimeout(200);
     }
 
+    await dismissAiStudioWelcomeDialogs(page);
     if (await textToggle.isVisible().catch(() => false)) {
       const pressed = await textToggle.getAttribute("aria-pressed").catch(() => null);
       const checked = await textToggle.getAttribute("aria-checked").catch(() => null);

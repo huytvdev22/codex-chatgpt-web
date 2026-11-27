@@ -22,6 +22,7 @@ import {
 } from "./ai-studio-dom-observer";
 import {
   clickResilient,
+  dismissAiStudioWelcomeDialogs,
   humanPause,
   moveMouseToLocator,
   typeHumanPrompt,
@@ -493,15 +494,17 @@ export class AiStudioBrowserWorker extends BaseWebBrowserWorker<
       await humanPause(page, 650, 1_100);
     }
     this.botGuardSettledAt.set(page, Date.now());
+    await dismissAiStudioWelcomeDialogs(page);
     await humanPause(page, 350, 580);
   }
 
   /**
-   * Đóng các card/nudge nổi phía trên ô nhập liệu (như "Enable URL Context")
-   * để tránh chiếm chỗ và làm xê dịch layout trong lúc click/fill/submit.
+   * Đóng các hộp thoại chào mừng/điều khoản (`#g1-welcome-dialog`) và card/nudge nổi phía trên
+   * ô nhập liệu (như "Enable URL Context") để tránh backdrop chặn thao tác click/fill/submit.
    */
   private async dismissObstructingNudges(page: Page): Promise<void> {
     try {
+      await dismissAiStudioWelcomeDialogs(page);
       const dismissButton = page.locator(URL_CONTEXT_NUDGE_DISMISS_SELECTOR).first();
       let dismissedAny = false;
       for (let attempt = 0; attempt < 3; attempt += 1) {
