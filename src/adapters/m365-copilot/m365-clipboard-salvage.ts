@@ -138,6 +138,7 @@ export class M365ClipboardSalvage {
    * Thử trích xuất toàn bộ nội dung từ Code Block của tin nhắn AI mới nhất.
    */
   public async tryExtractCodeViaCopyButton(page: Page): Promise<string | null> {
+    let suppressedOsClipboard = false;
     try {
       // Fast-path: Đọc ngay trong bộ nhớ trước khi đụng tới toggle/clipboard/focus
       const fastMemory = await this.tryExtractInMemory(page);
@@ -373,6 +374,7 @@ export class M365ClipboardSalvage {
       }
 
       // Fallback Tầng C: Cài Clipboard Hook và click Copy Code (không gọi page.bringToFront() trên cửa sổ ẩn)
+      suppressedOsClipboard = true;
       await page
         .context()
         .grantPermissions(["clipboard-read", "clipboard-write"])
@@ -386,6 +388,7 @@ export class M365ClipboardSalvage {
           } catch {}
           const win = window as any;
           win.__m365_last_copied_code = null;
+          win.__codex_suppress_os_clipboard_write = true;
           if (!win.__m365_clipboard_hooked) {
             win.__m365_clipboard_hooked = true;
             const origWriteText = navigator.clipboard
@@ -397,6 +400,7 @@ export class M365ClipboardSalvage {
             if (navigator.clipboard) {
               navigator.clipboard.writeText = async (text: string) => {
                 win.__m365_last_copied_code = text;
+                if (win.__codex_suppress_os_clipboard_write) return Promise.resolve();
                 try {
                   if (origWriteText) {
                     return await origWriteText.call(navigator.clipboard, text);
@@ -419,6 +423,7 @@ export class M365ClipboardSalvage {
                       }
                     }
                   } catch {}
+                  if (win.__codex_suppress_os_clipboard_write) return Promise.resolve();
                   try {
                     return await origWrite(items);
                   } catch {
@@ -615,6 +620,14 @@ export class M365ClipboardSalvage {
         `[m365-worker] [copy-salvage] Ngoại lệ không mong muốn: ${err?.message || err}`,
       );
       return null;
+    } finally {
+      if (suppressedOsClipboard) {
+        await page
+          .evaluate(() => {
+            (window as any).__codex_suppress_os_clipboard_write = false;
+          })
+          .catch(() => {});
+      }
     }
   }
 }

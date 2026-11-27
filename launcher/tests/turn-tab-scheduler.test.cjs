@@ -230,3 +230,11 @@ test("_assertProfileMutationAllowed chỉ chặn theo đúng provider đang có 
   const geminiProvider = host._assertProfileMutationAllowed("gemini");
   assert.equal(geminiProvider.id, "gemini");
 });
+
+test("sameKeyWaitTimeoutMs độc lập và giữ được chờ lâu hơn slotWaitTimeoutMs (dùng cho TTS dài >25s)", () => {
+  const host = { turnTabs: new Map(), closedTurnOwners: new Map(), userCancelledTurnOwners: new Map() };
+  const prodManager = new TurnTabManager(host);
+  assert.equal(prodManager.slotWaitTimeoutMs, 25_000);
+  assert.equal(prodManager.sameKeyWaitTimeoutMs, 48_000);
+  prodManager.destroy();
+});

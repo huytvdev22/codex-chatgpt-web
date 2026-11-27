@@ -18,6 +18,7 @@ const MAX_ASSISTANT_RETAINED_TABS = 3;
 const ASSISTANT_CONNECTOR_SUFFIX = ":assistant";
 const MAX_CANCELLED_TURN_TRACES = 256;
 const DEFAULT_SLOT_WAIT_TIMEOUT_MS = 25_000;
+const DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS = 48_000;
 
 function isAssistantTab(tab) {
   return typeof tab?.connectorIdentity === "string"
@@ -171,7 +172,7 @@ function loadCommittedBrowserSurface(
  * bootstrap + retry, heartbeat/lease reaping, power-save blocking và dọn dẹp tài nguyên.
  */
 class TurnTabManager {
-  constructor(host, { standalone = false, aiStudioReopenCooldownMs, slotWaitTimeoutMs } = {}) {
+  constructor(host, { standalone = false, aiStudioReopenCooldownMs, slotWaitTimeoutMs, sameKeyWaitTimeoutMs } = {}) {
     this.host = host;
     this.turnTabs = host.turnTabs instanceof Map ? host.turnTabs : new Map();
     this.closedTurnOwners = host.closedTurnOwners instanceof Map ? host.closedTurnOwners : new Map();
@@ -192,6 +193,15 @@ class TurnTabManager {
       : typeof host.slotWaitTimeoutMs === "number"
         ? host.slotWaitTimeoutMs
         : (standalone ? 0 : DEFAULT_SLOT_WAIT_TIMEOUT_MS);
+    this.sameKeyWaitTimeoutMs = typeof sameKeyWaitTimeoutMs === "number"
+      ? sameKeyWaitTimeoutMs
+      : typeof host.sameKeyWaitTimeoutMs === "number"
+        ? host.sameKeyWaitTimeoutMs
+        : (typeof slotWaitTimeoutMs === "number"
+          ? slotWaitTimeoutMs
+          : typeof host.slotWaitTimeoutMs === "number"
+            ? host.slotWaitTimeoutMs
+            : (standalone ? 0 : DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS));
     this.turnLeaseSweep = null;
     this.resumeListener = null;
 
@@ -773,6 +783,7 @@ class TurnTabManager {
     const providerObj = this.resolveProvider(providerId);
     const activeProfileId = this.resolveTargetProfileId(providerObj, profileId);
     const waitDeadline = this.slotWaitTimeoutMs > 0 ? Date.now() + this.slotWaitTimeoutMs : 0;
+    const sameKeyWaitDeadline = this.sameKeyWaitTimeoutMs > 0 ? Date.now() + this.sameKeyWaitTimeoutMs : 0;
 
     while (true) {
       signal?.throwIfAborted();
@@ -862,6 +873,7 @@ class TurnTabManager {
       }
 
       const remainingWaitMs = waitDeadline > 0 ? waitDeadline - Date.now() : 0;
+      const remainingSameKeyWaitMs = sameKeyWaitDeadline > 0 ? sameKeyWaitDeadline - Date.now() : 0;
       const runningSameKey = conversationKey ? [...this.turnTabs.values()].find((tab) => (
         tab.status === "running"
         && tab.traceId !== traceId
@@ -871,19 +883,19 @@ class TurnTabManager {
         && (tab.profileId || "default") === activeProfileId
       )) : null;
 
-      if (runningSameKey && remainingWaitMs > 0) {
+      if (runningSameKey && remainingSameKeyWaitMs > 0) {
         this.host.logger?.info?.("browser.turn_wait_same_key", {
           traceId,
           provider: providerId,
           activeTabId: runningSameKey.id,
-          remainingWaitMs,
+          remainingWaitMs: remainingSameKeyWaitMs,
         });
         try {
           await this.scheduler.waitForKey({
             providerId,
             profileId: activeProfileId,
             conversationKey,
-            timeoutMs: remainingWaitMs,
+            timeoutMs: remainingSameKeyWaitMs,
             signal,
           });
           continue;
@@ -1073,6 +1085,7 @@ class TurnTabManager {
 module.exports = {
   AI_STUDIO_REOPEN_COOLDOWN_MS,
   BrowserTurnCancelledError,
+  DEFAULT_SAME_KEY_WAIT_TIMEOUT_MS,
   DEFAULT_SLOT_WAIT_TIMEOUT_MS,
   HIDDEN_TURN_VIEWPORT,
   IDLE_BROWSER_URL,

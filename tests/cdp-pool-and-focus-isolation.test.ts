@@ -182,6 +182,7 @@ describe("CDP Pool, target isolation và Focus/Clipboard safety", () => {
       expect(codeOnly).not.toContain("clipboard.readText");
       expect(codeOnly).not.toContain("clipboard?.readText");
       expect(codeOnly).toContain("navigator.clipboard.write =");
+      expect(codeOnly).toContain("__codex_suppress_os_clipboard_write");
     }
 
     const insertPromptWorkers = [

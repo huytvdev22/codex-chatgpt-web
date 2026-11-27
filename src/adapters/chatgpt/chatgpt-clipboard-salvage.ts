@@ -70,6 +70,7 @@ export class ChatGptClipboardSalvage {
             if (text && text.trim()) {
               win.__chatgpt_last_copied_code = text;
             }
+            if (win.__codex_suppress_os_clipboard_write) return undefined;
             try {
               return await origWriteText(text);
             } catch {
@@ -93,6 +94,7 @@ export class ChatGptClipboardSalvage {
                 }
               }
             } catch {}
+            if (win.__codex_suppress_os_clipboard_write) return undefined;
             try {
               return await origWrite(items);
             } catch {
@@ -117,6 +119,7 @@ export class ChatGptClipboardSalvage {
         ({ selectors, baselineIds, baselineCount, baselineLatestText, token }) => {
           const win = window as unknown as Record<string, unknown>;
           win.__chatgpt_last_copied_code = null;
+          win.__codex_suppress_os_clipboard_write = true;
 
           const knownIds = new Set(baselineIds);
           const messages = Array.from(
@@ -246,6 +249,8 @@ export class ChatGptClipboardSalvage {
     } finally {
       await page
         .evaluate((token) => {
+          const win = window as unknown as Record<string, unknown>;
+          win.__codex_suppress_os_clipboard_write = false;
           document
             .querySelector(`[data-codex-response-target="${token}"]`)
             ?.removeAttribute("data-codex-response-target");
