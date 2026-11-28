@@ -21,6 +21,7 @@ import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "..
 import { getConfigDir } from "../config";
 import type { NativeCodexTurnIdentity } from "../controllers/http-turn-counter";
 import { AsyncEventQueue } from "../event-queue";
+import { ProfileFailoverCoordinator } from "../limits";
 import { adapterFailureFromMessage } from "../lib/errors";
 import type { BaseModelProvider } from "../models/base-model-provider";
 import { ModelRegistry } from "../models/model-registry";
@@ -117,6 +118,7 @@ export class AssistantResponsesService {
     }),
     private readonly promptCompiler: AssistantPromptCompiler = new AssistantPromptCompiler(),
     private readonly responseParser: AssistantResponseParser = new AssistantResponseParser(),
+    private readonly failoverCoordinator: ProfileFailoverCoordinator = ProfileFailoverCoordinator.getInstance(),
   ) {}
 
   public resolveProvider(requestedModel: unknown): AssistantProviderResolution {
@@ -453,33 +455,56 @@ export class AssistantResponsesService {
     // Control-server Launcher bắt buộc conversationKey là 64 ký tự hex SHA-256.
     const conversationKey = createHash("sha256").update(conversationKeySeed).digest("hex");
     const connectorIdentity = `${effectiveProviderId}:assistant`;
-    const existingConversationId = isEphemeral
-      ? undefined
-      : this.conversationIdByKey.get(conversationKey);
+    const failoverThreadKey = isEphemeral ? undefined : conversationKey;
+    const initialProfile = this.failoverCoordinator.resolveInitialProfile({
+      providerId: effectiveProviderId,
+      modelId: effectiveModel,
+      threadId: failoverThreadKey,
+      explicitProfileId: profileId,
+    });
+    let currentProfileId = initialProfile.profileId;
+    const attemptedProfileIds = new Set<string>();
+    if (currentProfileId) {
+      attemptedProfileIds.add(currentProfileId);
+    }
+    if (initialProfile.switchedFromStickyOrActive && !isEphemeral) {
+      this.conversationIdByKey.delete(conversationKey);
+    }
+
+    const existingConversationId =
+      isEphemeral || initialProfile.switchedFromStickyOrActive
+        ? undefined
+        : this.conversationIdByKey.get(conversationKey);
     const hasKnownSession = !isEphemeral && Boolean(this.sessionStore.get(conversationKey));
-    const isNewConversation = isEphemeral || (!existingConversationId && !hasKnownSession);
+    let effectiveIsNewConversation = initialProfile.switchedFromStickyOrActive
+      ? true
+      : isEphemeral || (!existingConversationId && !hasKnownSession);
 
     const skillInfo = this.promptCompiler.computeSkillsDigests(normalized);
-    const directives = !structuredFormat
-      ? this.sessionStore.resolveTurnDirectives(isEphemeral ? undefined : conversationKey, {
-          isNewConversation,
-          normalized,
-          availableSkillsDigest: skillInfo.availableSkillsDigest,
-          selectedSkillsDigest: skillInfo.selectedSkillsDigest,
-        })
-      : undefined;
+    const compileTurnPrompt = (isNewConv: boolean) => {
+      const directives = !structuredFormat
+        ? this.sessionStore.resolveTurnDirectives(isEphemeral ? undefined : conversationKey, {
+            isNewConversation: isNewConv,
+            normalized,
+            availableSkillsDigest: skillInfo.availableSkillsDigest,
+            selectedSkillsDigest: skillInfo.selectedSkillsDigest,
+          })
+        : undefined;
 
-    const compileResult = this.promptCompiler.compile({
-      normalized,
-      parsed,
-      assistantName: PROVIDER_ASSISTANT_NAMES[effectiveProviderId] || "trợ lý",
-      isNewConversation,
-      toolDelta: directives?.toolDelta,
-      includeEnvironment: directives?.includeEnvironment,
-      includeUserInstruction: directives?.includeUserInstruction,
-      includeAvailableSkills: directives?.includeAvailableSkills,
-      includeSelectedSkills: directives?.includeSelectedSkills,
-    });
+      return this.promptCompiler.compile({
+        normalized,
+        parsed,
+        assistantName: PROVIDER_ASSISTANT_NAMES[effectiveProviderId] || "trợ lý",
+        isNewConversation: isNewConv,
+        toolDelta: directives?.toolDelta,
+        includeEnvironment: directives?.includeEnvironment,
+        includeUserInstruction: directives?.includeUserInstruction,
+        includeAvailableSkills: directives?.includeAvailableSkills,
+        includeSelectedSkills: directives?.includeSelectedSkills,
+      });
+    };
+
+    const compileResult = compileTurnPrompt(effectiveIsNewConversation);
 
     const allowLiveStreaming =
       parsed.stream === true &&
@@ -506,6 +531,7 @@ export class AssistantResponsesService {
       let formatRetryCount = 0;
       let attemptPrompt = roundPrompt;
       let pendingDescribeCalls: StrictWebToolCall[] | undefined;
+      let restartAfterFailover = false;
 
       while (true) {
         const streamGate = allowLiveStreaming
@@ -516,30 +542,74 @@ export class AssistantResponsesService {
         finalGate = streamGate;
 
         attemptPrompts.push(attemptPrompt);
-        const turnResult = await adapter.runManagedTurn!(
-          {
-            modelId: effectiveModel,
-            prompt: attemptPrompt,
-            reasoning: parsed.options.reasoning,
-            images: isFirstExternalAttempt ? (normalized.images ?? []) : [],
-            conversationKey,
-            connectorIdentity,
-            existingConversationId: activeConversationId,
-            isNewConversation: isFirstExternalAttempt ? isNewConversation : false,
-            retain: !isEphemeral,
-            ...(profileId ? { profileId } : {}),
-            attempt: attemptPrompts.length - 1,
-            streamIncremental: allowLiveStreaming,
-            ...(streamGate
-              ? {
-                  onTextSnapshot: (snapshot: string) => {
-                    streamGate.pushSnapshot(snapshot);
-                  },
-                }
-              : {}),
-          },
-          { headers: reqHeaders, abortSignal },
-        );
+        let turnResult!: Awaited<ReturnType<NonNullable<typeof adapter.runManagedTurn>>>;
+        try {
+          turnResult = await adapter.runManagedTurn!(
+            {
+              modelId: effectiveModel,
+              prompt: attemptPrompt,
+              reasoning: parsed.options.reasoning,
+              images: isFirstExternalAttempt ? (normalized.images ?? []) : [],
+              conversationKey,
+              connectorIdentity,
+              existingConversationId: activeConversationId,
+              isNewConversation: isFirstExternalAttempt ? effectiveIsNewConversation : false,
+              retain: !isEphemeral,
+              ...(currentProfileId ? { profileId: currentProfileId } : {}),
+              attempt: attemptPrompts.length - 1,
+              streamIncremental: allowLiveStreaming,
+              ...(streamGate
+                ? {
+                    onTextSnapshot: (snapshot: string) => {
+                      streamGate.pushSnapshot(snapshot);
+                    },
+                  }
+                : {}),
+            },
+            { headers: reqHeaders, abortSignal },
+          );
+        } catch (error) {
+          const rawMsg = error instanceof Error ? error.message : String(error);
+          const classified = adapterFailureFromMessage(rawMsg);
+          if (!abortSignal.aborted && classified.error.code === "insufficient_quota") {
+            const failover = this.failoverCoordinator.handleQuotaFailure({
+              providerId: effectiveProviderId,
+              modelId: effectiveModel,
+              profileId: currentProfileId,
+              threadId: failoverThreadKey,
+              errorMessage: rawMsg,
+              pinnedByCaller: initialProfile.pinnedByCaller,
+              attemptedProfileIds,
+              hasEmittedOutput: Boolean(streamGate?.hasStreamedText()),
+            });
+            if (failover.shouldFailover && failover.nextProfileId) {
+              console.warn(
+                `[assistant/${effectiveProviderId}] Profile '${currentProfileId || "default"}' hết hạn mức model '${effectiveModel}'; tự động chuyển sang profile '${failover.nextProfileId}' và biên dịch lại ngữ cảnh đầy đủ.`,
+              );
+              currentProfileId = failover.nextProfileId;
+              attemptedProfileIds.add(failover.nextProfileId);
+              if (!isEphemeral) {
+                this.conversationIdByKey.delete(conversationKey);
+              }
+              activeConversationId = undefined;
+              effectiveIsNewConversation = true;
+              isFirstExternalAttempt = true;
+              describeRoundsUsed = 0;
+              didRepeatedFailedToolNudge = false;
+              roundPrompt = compileTurnPrompt(true).finalPrompt;
+              restartAfterFailover = true;
+              break;
+            }
+          }
+          throw error;
+        }
+
+        this.failoverCoordinator.recordTurnSuccess({
+          providerId: effectiveProviderId,
+          modelId: effectiveModel,
+          profileId: currentProfileId,
+          threadId: failoverThreadKey,
+        });
 
         isFirstExternalAttempt = false;
         if (turnResult.conversationId && !isEphemeral) {
@@ -640,6 +710,10 @@ export class AssistantResponsesService {
 
         finalParsed = parsedResp;
         break;
+      }
+
+      if (restartAfterFailover) {
+        continue;
       }
 
       if (pendingDescribeCalls && pendingDescribeCalls.length > 0) {
