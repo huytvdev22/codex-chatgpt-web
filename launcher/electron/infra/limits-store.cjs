@@ -1,7 +1,9 @@
 const fs = require("node:fs");
+const path = require("node:path");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 
 const DEFAULT_WARNING_THRESHOLD_PERCENT = 80;
+const DEFAULT_CYCLE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SUPPORTED_LIMIT_PROVIDERS = new Set(["chatgpt", "gemini"]);
 
 function toRuntimeProviderId(providerId) {
@@ -30,8 +32,73 @@ function readOfflineLimitsFile(filePath) {
   }
 }
 
+function readOfflineCycleUsageMap(limitsFilePath, nowMs) {
+  const byProfileKey = new Map();
+  if (!limitsFilePath) return byProfileKey;
+  const cyclesFilePath = path.join(path.dirname(limitsFilePath), "profile-quota-cycles.json");
+  if (!fs.existsSync(cyclesFilePath)) return byProfileKey;
+  try {
+    const raw = JSON.parse(fs.readFileSync(cyclesFilePath, "utf8"));
+    if (!isPlainObject(raw) || !isPlainObject(raw.entries)) return byProfileKey;
+    for (const rawEntry of Object.values(raw.entries)) {
+      if (!isPlainObject(rawEntry)) continue;
+      const providerId = typeof rawEntry.providerId === "string" ? rawEntry.providerId.trim().toLowerCase() : "";
+      const profileId = typeof rawEntry.profileId === "string" && rawEntry.profileId.trim()
+        ? rawEntry.profileId.trim().toLowerCase()
+        : "default";
+      const modelSlug = typeof rawEntry.modelSlug === "string" && rawEntry.modelSlug.trim()
+        ? rawEntry.modelSlug.trim().toLowerCase()
+        : "default";
+      const cycleStartedAtMs = typeof rawEntry.cycleStartedAtMs === "number" && Number.isFinite(rawEntry.cycleStartedAtMs)
+        ? rawEntry.cycleStartedAtMs
+        : typeof rawEntry.cycleStartedAt === "string" && Number.isFinite(Date.parse(rawEntry.cycleStartedAt))
+          ? Date.parse(rawEntry.cycleStartedAt)
+          : NaN;
+      if (!providerId || !Number.isFinite(cycleStartedAtMs)) continue;
+
+      const pendingResetAtMs = typeof rawEntry.pendingResetAtMs === "number" && Number.isFinite(rawEntry.pendingResetAtMs)
+        ? rawEntry.pendingResetAtMs
+        : null;
+      const hasPendingResetPassed =
+        pendingResetAtMs !== null && nowMs >= pendingResetAtMs && cycleStartedAtMs < pendingResetAtMs;
+      const hasDefaultWindowExpired =
+        pendingResetAtMs === null && nowMs - cycleStartedAtMs >= DEFAULT_CYCLE_WINDOW_MS;
+      if (hasPendingResetPassed || hasDefaultWindowExpired) continue;
+
+      const tokensUsed = typeof rawEntry.tokensUsed === "number" && Number.isFinite(rawEntry.tokensUsed)
+        ? Math.max(0, Math.round(rawEntry.tokensUsed))
+        : 0;
+      const turnsUsed = typeof rawEntry.turnsUsed === "number" && Number.isFinite(rawEntry.turnsUsed)
+        ? Math.max(0, Math.round(rawEntry.turnsUsed))
+        : 0;
+      if (tokensUsed <= 0 && turnsUsed <= 0) continue;
+
+      const profileKey = `${providerId}::${profileId}`;
+      const list = byProfileKey.get(profileKey) ?? [];
+      list.push({
+        modelSlug,
+        tokensUsed,
+        turnsUsed,
+        cycleStartedAt: typeof rawEntry.cycleStartedAt === "string"
+          ? rawEntry.cycleStartedAt
+          : new Date(cycleStartedAtMs).toISOString(),
+        lastResetAt: typeof rawEntry.lastResetAt === "string" ? rawEntry.lastResetAt : null,
+      });
+      byProfileKey.set(profileKey, list);
+    }
+    for (const list of byProfileKey.values()) {
+      list.sort((a, b) => b.tokensUsed - a.tokensUsed || b.turnsUsed - a.turnsUsed);
+    }
+  } catch {
+    return byProfileKey;
+  }
+  return byProfileKey;
+}
+
 function buildOfflineLimitsSnapshot(filePath, providersList = []) {
   const file = readOfflineLimitsFile(filePath);
+  const nowMs = Date.now();
+  const cycleUsageMap = readOfflineCycleUsageMap(filePath, nowMs);
   const normalizedProviders = [];
   const seenProviderIds = new Set();
 
@@ -66,11 +133,13 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
   }
 
   const entries = [];
-  const nowMs = Date.now();
   for (const group of normalizedProviders) {
     const support = SUPPORTED_LIMIT_PROVIDERS.has(group.runtimeId) ? "supported" : "unsupported";
     for (const profile of group.profiles) {
-      const cached = file.entries[`${group.runtimeId}::${profile.id}`];
+      const entryKey = `${group.runtimeId}::${profile.id}`;
+      const cached = file.entries[entryKey];
+      const cycleUsage = cycleUsageMap.get(entryKey);
+      const cycleUsagePatch = Array.isArray(cycleUsage) && cycleUsage.length > 0 ? { cycleUsage } : {};
       if (support === "unsupported") {
         if (
           profile.authenticated
@@ -97,6 +166,7 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
               scopeNote: cached.scopeNote ?? null,
               providerUpdatedText: cached.providerUpdatedText ?? null,
               buckets: activeBuckets,
+              ...cycleUsagePatch,
               rawSummary: cached.rawSummary ?? null,
               checkedAt: cached.checkedAt ?? null,
               lastError: cached.lastError ?? null,
@@ -118,6 +188,7 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
           scopeNote: null,
           providerUpdatedText: null,
           buckets: [],
+          ...cycleUsagePatch,
           rawSummary: null,
           checkedAt: null,
           lastError: null,
@@ -140,6 +211,7 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
           scopeNote: null,
           providerUpdatedText: null,
           buckets: [],
+          ...cycleUsagePatch,
           rawSummary: null,
           checkedAt: null,
           lastError: null,
@@ -161,6 +233,7 @@ function buildOfflineLimitsSnapshot(filePath, providersList = []) {
         scopeNote: cached.scopeNote ?? null,
         providerUpdatedText: cached.providerUpdatedText ?? null,
         buckets: profile.authenticated && Array.isArray(cached.buckets) ? cached.buckets : [],
+        ...cycleUsagePatch,
         rawSummary: cached.rawSummary ?? null,
         checkedAt: cached.checkedAt ?? null,
         lastError: cached.lastError ?? null,

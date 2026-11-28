@@ -3766,6 +3766,41 @@ dialog.models-edit-dialog::backdrop {
   color: var(--color-text-error);
 }
 
+.usage-limit-cycle-block {
+  display: grid;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--color-border-light);
+}
+
+.usage-limit-cycle-title {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.usage-limit-cycle-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.usage-limit-cycle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.usage-limit-cycle-row strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
 .usage-limits-unsupported {
   display: flex;
   align-items: center;

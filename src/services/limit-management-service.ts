@@ -12,6 +12,7 @@ import {
   formatResetRemainingText,
   LimitStore,
   ProfileCooldownStore,
+  ProfileQuotaCycleStore,
   toLauncherProviderId,
   toRuntimeProviderId,
   type LimitRefreshTargetResult,
@@ -74,6 +75,7 @@ function classifyErrorToStatus(
  */
 export class LimitManagementService {
   private readonly cooldownStore: ProfileCooldownStore;
+  private readonly cycleStore: ProfileQuotaCycleStore;
 
   constructor(
     private readonly limitStore: LimitStore = LimitStore.getInstance(),
@@ -89,6 +91,7 @@ export class LimitManagementService {
       }
     },
     cooldownStore?: ProfileCooldownStore,
+    cycleStore?: ProfileQuotaCycleStore,
   ) {
     this.cooldownStore =
       cooldownStore ??
@@ -96,6 +99,13 @@ export class LimitManagementService {
         ? ProfileCooldownStore.getInstance()
         : new ProfileCooldownStore(
             join(dirname(limitStore.resolveFilePath()), "profile-cooldowns.json"),
+          ));
+    this.cycleStore =
+      cycleStore ??
+      (limitStore === LimitStore.getInstance()
+        ? ProfileQuotaCycleStore.getInstance()
+        : new ProfileQuotaCycleStore(
+            join(dirname(limitStore.resolveFilePath()), "profile-quota-cycles.json"),
           ));
   }
 
@@ -190,6 +200,12 @@ export class LimitManagementService {
       const support = supportKindForProvider(profile.providerId);
       const key = buildLimitEntryKey(profile.providerId, profile.profileId);
       const cached = file.entries[key];
+      const cycleUsage = this.cycleStore.listUsageForProfile(
+        profile.providerId,
+        profile.profileId,
+        nowMs,
+      );
+      const cycleUsagePatch = cycleUsage.length > 0 ? { cycleUsage } : {};
       if (support === "unsupported") {
         const activeCooldowns = this.cooldownStore.listActiveCooldownsForProfile(
           profile.providerId,
@@ -229,6 +245,7 @@ export class LimitManagementService {
               scopeNote: cached?.scopeNote ?? null,
               providerUpdatedText: null,
               buckets: [],
+              ...cycleUsagePatch,
               rawSummary: null,
               checkedAt: cached?.checkedAt ?? null,
               lastError: null,
@@ -258,6 +275,7 @@ export class LimitManagementService {
               cached?.scopeNote ?? "Passive quota limit detected during turn execution.",
             providerUpdatedText: cached?.providerUpdatedText ?? null,
             buckets: activePassiveBuckets,
+            ...cycleUsagePatch,
             rawSummary,
             checkedAt: cached?.checkedAt ?? activeCooldowns[0]?.exhaustedAt ?? null,
             lastError: cached?.lastError ?? activeCooldowns[0]?.reason ?? null,
@@ -285,6 +303,7 @@ export class LimitManagementService {
           scopeNote: null,
           providerUpdatedText: null,
           buckets: [],
+          ...cycleUsagePatch,
           rawSummary: null,
           checkedAt: null,
           lastError: null,
@@ -307,6 +326,7 @@ export class LimitManagementService {
           scopeNote: null,
           providerUpdatedText: null,
           buckets: [],
+          ...cycleUsagePatch,
           rawSummary: null,
           checkedAt: null,
           lastError: null,
@@ -330,6 +350,7 @@ export class LimitManagementService {
         providerUpdatedText: cached.providerUpdatedText,
         buckets:
           fromDescriptor && !profile.authenticated ? [] : cached.buckets,
+        ...cycleUsagePatch,
         rawSummary: cached.rawSummary,
         checkedAt: cached.checkedAt,
         lastError: cached.lastError,

@@ -147,6 +147,14 @@ export interface ProviderLimitBucket {
   severity: LimitBucketSeverity;
 }
 
+export interface ProfileCycleUsageItem {
+  modelSlug: string;
+  tokensUsed: number;
+  turnsUsed: number;
+  cycleStartedAt: string;
+  lastResetAt: string | null;
+}
+
 export interface ProfileLimitEntry {
   providerId: string;
   profileId: string;
@@ -161,6 +169,7 @@ export interface ProfileLimitEntry {
   scopeNote: string | null;
   providerUpdatedText: string | null;
   buckets: ProviderLimitBucket[];
+  cycleUsage?: ProfileCycleUsageItem[];
   rawSummary: string | null;
   checkedAt: string | null;
   lastError: string | null;

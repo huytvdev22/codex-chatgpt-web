@@ -873,6 +873,7 @@ export class WebTurnEngine {
             id: turnTraceId,
             timestamp: new Date().toISOString(),
             providerId: this.definition.id,
+            ...(currentProfileId ? { profileId: currentProfileId } : {}),
             modelId: parsed.modelId,
             threadId,
             conversationKey,
@@ -936,6 +937,7 @@ export class WebTurnEngine {
             modelId: parsed.modelId,
             profileId: currentProfileId,
             threadId,
+            tokensUsed: totalTokensForRecord,
           });
           finalStatus = "completed";
           return;
@@ -1001,6 +1003,7 @@ export class WebTurnEngine {
           modelId: parsed.modelId,
           profileId: currentProfileId,
           threadId,
+          tokensUsed: totalTokensForRecord,
         });
         finalStatus = "completed";
       } catch (error) {
@@ -1240,11 +1243,19 @@ export class WebTurnEngine {
             ? this.definition.response.sanitizeRawResponse(result.rawResponse)
             : result.rawResponse;
 
+          const rawTurnUsage = computeAccurateTurnUsage({
+            prompts: [request.prompt],
+            rawOutputs: [outputText],
+            modelId: request.modelId,
+          }).usage;
           this.failoverCoordinator.recordTurnSuccess({
             providerId: this.definition.id,
             modelId: request.modelId,
             profileId: currentProfileId,
             threadId: request.conversationKey,
+            tokensUsed:
+              rawTurnUsage.totalTokens ??
+              rawTurnUsage.inputTokens + rawTurnUsage.outputTokens,
           });
           finalStatus = "completed";
           return {
@@ -1460,11 +1471,20 @@ export class WebTurnEngine {
             ? this.definition.response.sanitizeRawResponse(result.rawResponse)
             : result.rawResponse;
 
+          const managedTurnUsage = computeAccurateTurnUsage({
+            prompts: [request.prompt],
+            rawOutputs: [rawResponse],
+            providerReportedTokens: result.providerReportedTokens,
+            modelId: request.modelId,
+          }).usage;
           this.failoverCoordinator.recordTurnSuccess({
             providerId: this.definition.id,
             modelId: request.modelId,
             profileId: currentProfileId,
             threadId: request.conversationKey,
+            tokensUsed:
+              managedTurnUsage.totalTokens ??
+              managedTurnUsage.inputTokens + managedTurnUsage.outputTokens,
           });
           finalStatus = "completed";
           return {

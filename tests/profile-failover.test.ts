@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { AdapterRegistry } from "../src/adapters/adapter-registry";
 import type { ManagedTurnRequest, ProviderAdapter } from "../src/adapters/base";
 import {
   WebTurnEngine,
@@ -18,9 +19,11 @@ import {
   ProfileCooldownStore,
   ProfileFailoverCoordinator,
   ProfileFailoverSettingsStore,
+  ProfileQuotaCycleStore,
   ThreadProfileBindingStore,
 } from "../src/limits";
 import type { LauncherBrowserHostDescriptor } from "../src/launcher-browser-host";
+import { ModelRegistry } from "../src/models/model-registry";
 import { LimitManagementService } from "../src/services/limit-management-service";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
@@ -35,6 +38,7 @@ const { buildOfflineLimitsSnapshot } = require("../launcher/electron/infra/limit
       profileId: string;
       status: string;
       buckets: Array<{ id: string; label: string; resetAt?: string | null }>;
+      cycleUsage?: Array<{ modelSlug: string; tokensUsed: number; turnsUsed: number }>;
     }>;
   };
 };
@@ -660,6 +664,229 @@ describe("Profile Failover & Passive Quota Cooldown", () => {
           hasPriorHistory: false,
         },
       ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ProfileQuotaCycleStore đếm token theo chu kỳ và tự reset sau mốc mở lại hoặc cửa sổ 24h", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-quota-cycle-"));
+    try {
+      const store = new ProfileQuotaCycleStore(join(dir, "profile-quota-cycles.json"));
+      const t0 = Date.UTC(2026, 10, 28, 1, 0, 0);
+
+      store.recordTurnUsage({
+        providerId: "ai-studio",
+        profileId: "p1",
+        modelSlug: "gemini-4-neon",
+        tokensUsed: 120_000,
+        nowMs: t0,
+      });
+      store.recordTurnUsage({
+        providerId: "ai-studio",
+        profileId: "p1",
+        modelSlug: "gemini-4-neon",
+        tokensUsed: 80_000,
+        nowMs: t0 + 60_000,
+      });
+      expect(
+        store.getTokensUsedInCurrentCycle("ai-studio", "p1", "gemini-4-neon", t0 + 120_000),
+      ).toBe(200_000);
+
+      // Gặp quota limit với thời điểm mở lại sau 6h: trước khi tới 6h vẫn giữ số liệu chu kỳ vừa chạy
+      const resetAtMs = t0 + 6 * 60 * 60 * 1000;
+      store.markExhaustedWindow({
+        providerId: "ai-studio",
+        profileId: "p1",
+        modelSlug: "gemini-4-neon",
+        resetAtMs,
+        nowMs: t0 + 120_000,
+      });
+      expect(
+        store.getTokensUsedInCurrentCycle("ai-studio", "p1", "gemini-4-neon", resetAtMs - 1_000),
+      ).toBe(200_000);
+
+      // Sau khi qua resetAtMs, bộ đếm tự reset về 0 và ghi tiếp chu kỳ mới
+      expect(
+        store.getTokensUsedInCurrentCycle("ai-studio", "p1", "gemini-4-neon", resetAtMs + 1_000),
+      ).toBe(0);
+      expect(store.listUsageForProfile("ai-studio", "p1", resetAtMs + 1_000)).toEqual([]);
+
+      store.recordTurnUsage({
+        providerId: "ai-studio",
+        profileId: "p1",
+        modelSlug: "gemini-4-neon",
+        tokensUsed: 15_000,
+        nowMs: resetAtMs + 2_000,
+      });
+      expect(
+        store.getTokensUsedInCurrentCycle("ai-studio", "p1", "gemini-4-neon", resetAtMs + 10_000),
+      ).toBe(15_000);
+
+      // Nếu không có lỗi cooldown mới nhưng quá 24h kể từ resetAtMs, tự mở chu kỳ mới về 0
+      expect(
+        store.getTokensUsedInCurrentCycle(
+          "ai-studio",
+          "p1",
+          "gemini-4-neon",
+          resetAtMs + 24 * 60 * 60 * 1000 + 1,
+        ),
+      ).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ProfileFailoverCoordinator ưu tiên profile ít token nhất từ lần reset gần nhất khi failover", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-least-used-failover-"));
+    try {
+      const settingsStore = new ProfileFailoverSettingsStore(
+        join(dir, "profile-failover-settings.json"),
+      );
+      settingsStore.save({ autoSwitchProfileOnQuotaLimit: true });
+      const cooldownStore = new ProfileCooldownStore(join(dir, "profile-cooldowns.json"));
+      const threadStore = new ThreadProfileBindingStore({
+        filePath: join(dir, "thread-profile-bindings.json"),
+        debounceMs: 0,
+      });
+      const limitStore = new LimitStore(join(dir, "provider-limits.json"));
+      const cycleStore = new ProfileQuotaCycleStore(join(dir, "profile-quota-cycles.json"));
+
+      const coordinator = new ProfileFailoverCoordinator(
+        settingsStore,
+        cooldownStore,
+        threadStore,
+        limitStore,
+        () => ({
+          activeProfileId: "p1",
+          profiles: [
+            { id: "p1", name: "P1", authenticated: true, directory: "p1" },
+            { id: "p2", name: "P2", authenticated: true, directory: "p2" },
+            { id: "p3", name: "P3", authenticated: true, directory: "p3" },
+          ],
+        }),
+        cycleStore,
+      );
+
+      const nowMs = Date.UTC(2026, 10, 28, 2, 0, 0);
+      // p2 đã tiêu thụ 500k token, p3 chỉ mới tiêu thụ 10k token
+      coordinator.recordTurnSuccess({
+        providerId: "ai-studio",
+        modelId: "ai-studio/gemini-4-neon",
+        profileId: "p2",
+        tokensUsed: 500_000,
+        nowMs,
+      });
+      coordinator.recordTurnSuccess({
+        providerId: "ai-studio",
+        modelId: "ai-studio/gemini-4-neon",
+        profileId: "p3",
+        tokensUsed: 10_000,
+        nowMs,
+      });
+
+      // Khi p1 hết quota: thay vì round-robin sang p2 (500k), phải ưu tiên sang p3 (10k)
+      const failRes = coordinator.handleQuotaFailure({
+        providerId: "ai-studio",
+        modelId: "ai-studio/gemini-4-neon",
+        profileId: "p1",
+        threadId: "thread-least-used",
+        errorMessage: "Quota exceeded. Resets in 2 hours.",
+        pinnedByCaller: false,
+        attemptedProfileIds: new Set(["p1"]),
+        hasEmittedOutput: false,
+        nowMs: nowMs + 1_000,
+      });
+      expect(failRes.shouldFailover).toBe(true);
+      expect(failRes.nextProfileId).toBe("p3");
+
+      // Sau 3 tiếng khi p1 vừa qua mốc reset (2h), cycle của p1 về 0 -> nếu p2/p3 chạm limit, p1 (0 tok) được ưu tiên
+      const afterResetMs = nowMs + 3 * 60 * 60 * 1000;
+      const failP3 = coordinator.handleQuotaFailure({
+        providerId: "ai-studio",
+        modelId: "ai-studio/gemini-4-neon",
+        profileId: "p3",
+        threadId: "thread-least-used-2",
+        errorMessage: "Quota exceeded. Resets in 4 hours.",
+        pinnedByCaller: false,
+        attemptedProfileIds: new Set(["p3"]),
+        hasEmittedOutput: false,
+        nowMs: afterResetMs,
+      });
+      expect(failP3.shouldFailover).toBe(true);
+      expect(failP3.nextProfileId).toBe("p1");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("LimitManagementService và buildOfflineLimitsSnapshot trả về cycleUsage cho cả provider unsupported", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-limits-cycle-snapshot-"));
+    try {
+      const limitStore = new LimitStore(join(dir, "provider-limits.json"));
+      const cooldownStore = new ProfileCooldownStore(join(dir, "profile-cooldowns.json"));
+      const cycleStore = new ProfileQuotaCycleStore(join(dir, "profile-quota-cycles.json"));
+      cycleStore.recordTurnUsage({
+        providerId: "ai-studio",
+        profileId: "p2",
+        modelSlug: "gemini-4-neon",
+        tokensUsed: 42_500,
+      });
+
+      const service = new LimitManagementService(
+        limitStore,
+        ModelRegistry.getInstance(),
+        new AdapterRegistry([]),
+        () => ({
+          provider: "ai-studio",
+          providerProfiles: {
+            "ai-studio": {
+              activeProfileId: "p2",
+              profiles: [
+                { id: "default", name: "Default", authenticated: true, directory: "default" },
+                { id: "p2", name: "huytv8895", authenticated: true, directory: "p2" },
+              ],
+            },
+          },
+        } as unknown as LauncherBrowserHostDescriptor),
+        cooldownStore,
+        cycleStore,
+      );
+
+      const snapshot = service.getSnapshot();
+      const p2Live = snapshot.entries.find(
+        (e) => e.providerId === "ai-studio" && e.profileId === "p2",
+      );
+      expect(p2Live?.status).toBe("unsupported");
+      expect(p2Live?.cycleUsage).toHaveLength(1);
+      expect(p2Live?.cycleUsage?.[0]).toMatchObject({
+        modelSlug: "gemini-4-neon",
+        tokensUsed: 42_500,
+        turnsUsed: 1,
+      });
+
+      const offlineSnapshot = buildOfflineLimitsSnapshot(
+        join(dir, "provider-limits.json"),
+        [
+          {
+            id: "ai-studio",
+            activeProfileId: "p2",
+            profiles: [
+              { id: "default", name: "Default", authenticated: true },
+              { id: "p2", name: "huytv8895", authenticated: true },
+            ],
+          },
+        ],
+      );
+      const p2Offline = offlineSnapshot.entries.find(
+        (e) => e.providerId === "ai-studio" && e.profileId === "p2",
+      );
+      expect(p2Offline?.cycleUsage).toHaveLength(1);
+      expect(p2Offline?.cycleUsage?.[0]).toMatchObject({
+        modelSlug: "gemini-4-neon",
+        tokensUsed: 42_500,
+        turnsUsed: 1,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

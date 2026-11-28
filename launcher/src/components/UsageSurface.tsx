@@ -239,15 +239,20 @@ export function UsageSurface({
     const entries = limitsSnapshot?.entries ?? [];
     const groups = new Map<string, ProfileLimitEntry[]>();
     const unsupported = new Set<string>();
-    const providersWithPassiveExhausted = new Set(
+    const providersWithPassiveOrCycle = new Set(
       entries
-        .filter((entry) => entry.support === "unsupported" && entry.status === "exhausted")
+        .filter(
+          (entry) =>
+            entry.support === "unsupported" &&
+            (entry.status === "exhausted" ||
+              (Array.isArray(entry.cycleUsage) && entry.cycleUsage.length > 0)),
+        )
         .map((entry) => entry.providerId),
     );
     for (const entry of entries) {
       if (
         entry.support === "unsupported" &&
-        !providersWithPassiveExhausted.has(entry.providerId)
+        !providersWithPassiveOrCycle.has(entry.providerId)
       ) {
         unsupported.add(formatProviderName(entry.providerId));
         continue;
@@ -424,6 +429,28 @@ export function UsageSurface({
                             <p className="usage-limit-note">{entry.rawSummary}</p>
                           ) : !entry.authenticated ? (
                             <p className="usage-limit-note">{copy.limitsNotSignedInHint}</p>
+                          ) : null}
+
+                          {entry.cycleUsage && entry.cycleUsage.length > 0 ? (
+                            <div className="usage-limit-cycle-block">
+                              <span className="usage-limit-cycle-title">
+                                {copy.limitsCycleUsageTitle}
+                              </span>
+                              <ul className="usage-limit-cycle-list">
+                                {entry.cycleUsage.map((item) => (
+                                  <li className="usage-limit-cycle-row" key={item.modelSlug}>
+                                    <span>{item.modelSlug}</span>
+                                    <strong>
+                                      {formatNum(item.tokensUsed)} tok ·{" "}
+                                      {copy.limitsCycleUsageTurns.replace(
+                                        "{turns}",
+                                        String(item.turnsUsed),
+                                      )}
+                                    </strong>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
                           ) : null}
 
                           <footer className="usage-limit-card-foot">

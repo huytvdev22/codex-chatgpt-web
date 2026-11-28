@@ -504,7 +504,14 @@ async function start() {
   try {
     fs.mkdirSync(CORE_HOME, { recursive: true });
     limitsWatcher = fs.watch(CORE_HOME, (_eventType, filename) => {
-      if (filename && filename !== "provider-limits.json") return;
+      if (
+        filename &&
+        filename !== "provider-limits.json" &&
+        filename !== "profile-cooldowns.json" &&
+        filename !== "profile-quota-cycles.json"
+      ) {
+        return;
+      }
       if (limitsWatchDebounce) clearTimeout(limitsWatchDebounce);
       limitsWatchDebounce = setTimeout(() => {
         limitsWatchDebounce = null;

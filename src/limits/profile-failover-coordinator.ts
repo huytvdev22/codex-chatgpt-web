@@ -11,6 +11,7 @@ import {
   formatResetRemainingText,
   ProfileCooldownStore,
 } from "./profile-cooldown-store";
+import { ProfileQuotaCycleStore } from "./profile-quota-cycle-store";
 import { ProfileFailoverSettingsStore } from "./profile-failover-settings-store";
 import { ThreadProfileBindingStore } from "./thread-profile-binding-store";
 import { toLauncherProviderId, type ProviderLimitBucket } from "./types";
@@ -86,6 +87,7 @@ export class ProfileFailoverCoordinator {
       providerId: string,
       explicitDescriptorPath?: string,
     ) => LauncherDescriptorProviderProfiles | null = defaultResolveDescriptorProfiles,
+    private readonly cycleStore: ProfileQuotaCycleStore = ProfileQuotaCycleStore.getInstance(),
   ) {}
 
   public static getInstance(): ProfileFailoverCoordinator {
@@ -229,11 +231,18 @@ export class ProfileFailoverCoordinator {
       group?.activeProfileId?.trim().toLowerCase() ||
       "default";
 
-    this.cooldownStore.markExhausted({
+    const cooldownEntry = this.cooldownStore.markExhausted({
       providerId: params.providerId,
       profileId: failedProfileId,
       modelSlug,
       message: params.errorMessage,
+      nowMs,
+    });
+    this.cycleStore.markExhaustedWindow({
+      providerId: params.providerId,
+      profileId: failedProfileId,
+      modelSlug,
+      resetAtMs: cooldownEntry.cooldownUntilMs,
       nowMs,
     });
 
@@ -298,6 +307,7 @@ export class ProfileFailoverCoordinator {
     modelId: string;
     profileId?: string;
     threadId?: string;
+    tokensUsed?: number;
     nowMs?: number;
   }): void {
     const cleanProfile = params.profileId?.trim().toLowerCase();
@@ -315,6 +325,15 @@ export class ProfileFailoverCoordinator {
       );
     }
     const nowMs = params.nowMs ?? Date.now();
+    if (typeof params.tokensUsed === "number" && Number.isFinite(params.tokensUsed)) {
+      this.cycleStore.recordTurnUsage({
+        providerId: params.providerId,
+        profileId: cleanProfile,
+        modelSlug,
+        tokensUsed: params.tokensUsed,
+        nowMs,
+      });
+    }
     const activeCooldowns = this.cooldownStore.listActiveCooldownsForProfile(
       params.providerId,
       cleanProfile,
@@ -338,6 +357,8 @@ export class ProfileFailoverCoordinator {
   ): string | undefined {
     if (eligibleProfileIds.length === 0) return undefined;
     const startIdx = Math.max(0, eligibleProfileIds.indexOf(anchorProfileId));
+    let bestCandidate: string | undefined;
+    let bestTokens = Number.POSITIVE_INFINITY;
     for (let offset = 1; offset <= eligibleProfileIds.length; offset += 1) {
       const candidate =
         eligibleProfileIds[(startIdx + offset) % eligibleProfileIds.length];
@@ -352,9 +373,18 @@ export class ProfileFailoverCoordinator {
       ) {
         continue;
       }
-      return candidate;
+      const tokensUsed = this.cycleStore.getTokensUsedInCurrentCycle(
+        providerId,
+        candidate,
+        modelSlug,
+        nowMs,
+      );
+      if (tokensUsed < bestTokens) {
+        bestTokens = tokensUsed;
+        bestCandidate = candidate;
+      }
     }
-    return undefined;
+    return bestCandidate;
   }
 
   private syncPassiveCooldownToLimitStore(

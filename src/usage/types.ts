@@ -27,6 +27,7 @@ export interface UsageTurnRecord {
   id: string;
   timestamp: string;
   providerId: string;
+  profileId?: string;
   modelId: string;
   threadId?: string;
   conversationKey?: string;
