@@ -5,6 +5,7 @@ import { computeAccurateTurnUsage } from "../../usage";
 import { CodexPayloadNormalizer, CodexRawPayload } from "../web/normalization";
 import { isStructuredJsonOutputTurn } from "../web/prompt";
 import { WebProviderAdapter } from "../web/web-provider-adapter";
+import type { WebAttachmentExtractContext } from "../web/definition";
 import {
   ChatGptBrowserWorker,
   isChatGptGenerationRequest,
@@ -27,6 +28,7 @@ import { ChatGptCapabilityPicker } from "./capability-picker";
 import {
   ChatGptAttachments,
   chatGptImageFilePayloads,
+  type ChatGptAttachmentOptions,
   type ChatGptAttachmentPayload,
 } from "./attachments";
 import { chatGptConversationKey } from "./conversation-key";
@@ -76,6 +78,7 @@ export { ChatGptCapabilityPicker };
 export {
   ChatGptAttachments,
   chatGptImageFilePayloads,
+  type ChatGptAttachmentOptions,
   type ChatGptAttachmentPayload,
 };
 export { chatGptConversationKey };
@@ -117,6 +120,39 @@ export {
   type ChatGptWhamRateWindow,
   type ChatGptWhamUsagePayload,
 } from "./usage-limit-checker";
+
+function shouldIncludeChatGptAttachments(
+  context: WebAttachmentExtractContext,
+): boolean {
+  if (
+    context.isPostSubmitRetry === true ||
+    context.retryKind === "format" ||
+    context.retryKind === "tool_describe" ||
+    context.retryKind === "tool_recovery"
+  ) {
+    return false;
+  }
+
+  if (
+    context.originalMessageSubmitted === true &&
+    context.isNewConversation !== true
+  ) {
+    return false;
+  }
+
+  if (
+    context.isNewConversation === true ||
+    context.retryKind === "initial" ||
+    context.retryKind === "pre_submit" ||
+    context.retryKind === "transport" ||
+    context.retryKind === "failover" ||
+    context.originalMessageSubmitted === false
+  ) {
+    return true;
+  }
+
+  return context.attempt === 0;
+}
 
 function isEphemeralStructuredTurn(
   parsed?: CodexParsedRequest,
@@ -225,9 +261,10 @@ export class ChatGptAdapter extends WebProviderAdapter {
       },
       attachments: {
         maxInputImages: 3,
-        extractAttachments: ({ parsed, attempt, normalized }) => {
-          if (attempt !== 0) return [];
-          if (normalized) return normalized.images ?? [];
+        extractAttachments: (context) => {
+          if (!shouldIncludeChatGptAttachments(context)) return [];
+          const { parsed, normalized } = context;
+          if (normalized) return (normalized.images ?? []).slice(0, 3);
           const payload = CodexRawPayload.from(parsed._rawBody || parsed);
           return (
             CodexPayloadNormalizer.normalize(payload, { maxImages: 3 })
@@ -249,7 +286,6 @@ export class ChatGptAdapter extends WebProviderAdapter {
         executeTurn: async ({
           page,
           prompt,
-          attempt,
           parsed,
           incoming,
           conversationKey,
@@ -277,7 +313,7 @@ export class ChatGptAdapter extends WebProviderAdapter {
             conversationKey,
             existingConversationId,
             launcherReused,
-            isNewConversation: attempt === 0 ? isNewConversation : false,
+            isNewConversation,
             retain,
             heartbeat,
             modelSlug: parsed.modelId,

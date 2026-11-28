@@ -8,6 +8,11 @@ export interface ChatGptAttachmentPayload {
   buffer: Buffer;
 }
 
+export interface ChatGptAttachmentOptions {
+  settlementTimeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
 export function chatGptImageFilePayloads(
   images: readonly NormalizedImageAttachment[],
 ): ChatGptAttachmentPayload[] {
@@ -27,6 +32,7 @@ export class ChatGptAttachments {
     page: Page,
     images: readonly NormalizedImageAttachment[],
     signal?: AbortSignal,
+    options?: ChatGptAttachmentOptions,
   ): Promise<boolean> {
     if (!images || images.length === 0) return false;
     if (signal?.aborted) {
@@ -37,7 +43,7 @@ export class ChatGptAttachments {
     const directInput = page.locator(CHATGPT_SELECTORS.photoFileInput).first();
     if ((await directInput.count().catch(() => 0)) > 0) {
       await directInput.setInputFiles(payloads);
-      await this.waitForUploadSettlement(page, signal);
+      await this.waitForUploadSettlement(page, signal, options);
       return true;
     }
 
@@ -59,38 +65,141 @@ export class ChatGptAttachments {
       uploadMenuItem.click({ timeout: 3_000 }),
     ]);
     await fileChooser.setFiles(payloads);
-    await page.keyboard.press("Escape").catch(() => {});
-    await this.waitForUploadSettlement(page, signal);
+    await page.keyboard?.press("Escape").catch(() => {});
+    await this.waitForUploadSettlement(page, signal, options);
     return true;
   }
 
   private async waitForUploadSettlement(
     page: Page,
     signal?: AbortSignal,
+    options?: ChatGptAttachmentOptions,
   ): Promise<void> {
-    await page.waitForTimeout(500);
-    const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline) {
+    const timeoutMs = options?.settlementTimeoutMs ?? 15_000;
+    const pollIntervalMs = options?.pollIntervalMs ?? 250;
+    const initialDelayMs = Math.min(
+      500,
+      Math.max(0, Math.floor(timeoutMs / 3)),
+    );
+    if (initialDelayMs > 0 && typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(initialDelayMs);
+    }
+
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    let instantPolls = 0;
+    let lastReason = "";
+
+    while (true) {
       if (signal?.aborted) {
         throw new DOMException("ChatGPT upload aborted", "AbortError");
       }
-      const settled = await page
-        .evaluate(() => {
-          const form = document.querySelector("form");
-          if (!form) return true;
-          const uploading = form.querySelector(
-            '[aria-busy="true"], [role="progressbar"], [data-uploading="true"]',
-          );
-          if (uploading) return false;
-          const sendBtn = form.querySelector<HTMLButtonElement>(
-            'button[type="submit"][aria-label="Send"], button[data-testid="send-button"]',
-          );
-          // Nếu đang có file chưa upload xong, nút Send có thể bị disabled tạm thời.
-          return !sendBtn || !sendBtn.disabled;
-        })
-        .catch(() => true);
-      if (settled) return;
-      await page.waitForTimeout(250);
+      if (typeof page.isClosed === "function" && page.isClosed()) {
+        throw new Error(
+          "[chatgpt-attachments] Trang ChatGPT đã đóng trước khi upload ảnh hoàn tất.",
+        );
+      }
+
+      const status = await page
+        .evaluate(
+          ({ sendSelector, errorSelector }) => {
+            const form = document.querySelector("form");
+            if (!form) {
+              return { settled: false, reason: "missing-form" };
+            }
+
+            const errorNodes = Array.from(
+              form.querySelectorAll<HTMLElement>(errorSelector),
+            );
+            for (const node of errorNodes) {
+              const rect = node.getBoundingClientRect();
+              if (rect.width <= 0 || rect.height <= 0) continue;
+              const text = (node.innerText || node.textContent || "").trim();
+              if (
+                text &&
+                /error|fail|unable|unsupported|too large|limit|lỗi|thất bại|không thể/i.test(
+                  text,
+                )
+              ) {
+                return {
+                  settled: false,
+                  fatalError: text.replace(/\s+/g, " ").slice(0, 240),
+                };
+              }
+            }
+
+            const uploading = form.querySelector(
+              '[aria-busy="true"], [role="progressbar"], [data-uploading="true"]',
+            );
+            if (uploading) {
+              return { settled: false, reason: "uploading" };
+            }
+
+            const sendBtn = form.querySelector<HTMLButtonElement>(sendSelector);
+            // Nếu đang có file chưa upload xong, nút Send có thể bị disabled tạm thời.
+            if (
+              sendBtn &&
+              (sendBtn.disabled ||
+                sendBtn.getAttribute("aria-disabled") === "true")
+            ) {
+              return { settled: false, reason: "send-disabled" };
+            }
+
+            return { settled: true };
+          },
+          {
+            sendSelector: CHATGPT_SELECTORS.sendButton,
+            errorSelector: CHATGPT_SELECTORS.errorBanner,
+          },
+        )
+        .catch((error) => ({
+          settled: false,
+          reason: error instanceof Error ? error.message : String(error),
+        }));
+
+      if (
+        typeof status === "object" &&
+        status !== null &&
+        "fatalError" in status &&
+        status.fatalError
+      ) {
+        throw new Error(
+          `[chatgpt-attachments] Upload ảnh đính kèm lên ChatGPT thất bại: ${status.fatalError}`,
+        );
+      }
+      if (status && status.settled === true) {
+        return;
+      }
+      if (
+        typeof status === "object" &&
+        status !== null &&
+        "reason" in status &&
+        status.reason
+      ) {
+        lastReason = String(status.reason);
+      }
+
+      if (timeoutMs <= 0 || Date.now() >= deadline) {
+        break;
+      }
+      if (typeof page.waitForTimeout !== "function") {
+        break;
+      }
+
+      const before = Date.now();
+      await page.waitForTimeout(pollIntervalMs);
+      const elapsed = Date.now() - before;
+      if (elapsed < 15) {
+        instantPolls += 1;
+        if (instantPolls >= 5) {
+          break;
+        }
+      } else {
+        instantPolls = 0;
+      }
     }
+
+    throw new Error(
+      `[chatgpt-attachments] Không thể xác nhận upload ảnh đính kèm lên ChatGPT hoàn tất (${lastReason || "timeout"}).`,
+    );
   }
 }

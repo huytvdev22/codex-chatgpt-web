@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Page } from "playwright-core";
 import {
+  ChatGptAttachments,
   ChatGptBrowserWorker,
   ChatGptCapabilityPicker,
   ChatGptDomObserver,
@@ -395,5 +396,410 @@ describe("ChatGptBrowserWorker, DomObserver, ClipboardSalvage & CapabilityPicker
     });
     expect(hydratedOk).toBe(true);
     expect(thinkPressed).toBe("true");
+  });
+
+  test("ChatGptCapabilityPicker & prepareProvider chờ Model Switcher thoát disabled và fail-closed nếu vẫn disabled", async () => {
+    const picker = new ChatGptCapabilityPicker();
+    let readinessChecks = 0;
+    let triggerClicks = 0;
+    let menuOpen = false;
+    let viewMode: "simple" | "models" = "simple";
+    let currentModel = "GPT-6.2";
+
+    const makeDelayedPage = (alwaysDisabled: boolean): Page => {
+      const makeLocator = (kind: string): any => ({
+        first() {
+          return makeLocator(kind);
+        },
+        last() {
+          return makeLocator(kind);
+        },
+        nth(index: number) {
+          return makeLocator(`${kind}:${index}`);
+        },
+        async count() {
+          if (kind === "radios") return 2;
+          return 1;
+        },
+        async isVisible() {
+          if (kind === "trigger") return true;
+          if (kind === "menu") return menuOpen;
+          if (kind === "toggle") return menuOpen && viewMode === "simple";
+          if (kind === "sliderRow") return menuOpen && viewMode === "simple";
+          return menuOpen;
+        },
+        async isDisabled() {
+          if (kind !== "trigger") return false;
+          if (alwaysDisabled) return true;
+          return readinessChecks < 3;
+        },
+        async getAttribute(name: string) {
+          if (kind === "trigger" && name === "aria-disabled") {
+            if (alwaysDisabled) return "true";
+            readinessChecks += 1;
+            return readinessChecks === 1 ? "true" : "false";
+          }
+          if (kind === "trigger" && name === "data-selected-reasoning-effort") {
+            return "medium";
+          }
+          if (kind.startsWith("radios:") && name === "aria-checked") {
+            const idx = Number(kind.split(":")[1]);
+            return String((idx === 0 ? "GPT-6.2" : "GPT-6") === currentModel);
+          }
+          return null;
+        },
+        async click() {
+          if (kind === "trigger") {
+            triggerClicks += 1;
+            menuOpen = true;
+          }
+          if (kind === "toggle") viewMode = "models";
+          if (kind === "radios:1") {
+            currentModel = "GPT-6";
+            viewMode = "simple";
+          }
+        },
+        async waitFor() {},
+        async innerText() {
+          if (kind === "radios:0") return "GPT-6.2";
+          if (kind === "radios:1") return "GPT-6";
+          return "";
+        },
+        async evaluate(_fn?: unknown, arg?: unknown) {
+          if (kind === "sliderThumb") return { min: 0, max: 2, now: 1 };
+          if (kind === "menu" && arg && typeof arg === "object") {
+            return (arg as { expectedShort?: string }).expectedShort === "6" && currentModel === "GPT-6";
+          }
+          return false;
+        },
+        locator(selector: string) {
+          if (selector.includes("model-picker-view-toggle")) return makeLocator("toggle");
+          if (selector.includes("menuitemradio")) return makeLocator("radios");
+          if (selector.includes("data-reasoning-slider")) return makeLocator("sliderRow");
+          if (selector.includes('role="slider"')) return makeLocator("sliderThumb");
+          return makeLocator("unknown");
+        },
+      });
+
+      return {
+        url: () => "https://chatgpt.com/c/6afae1f3-e4f0-83ec-8aca-7c8649cfde1c",
+        waitForTimeout: async () => {},
+        keyboard: {
+          press: async (key: string) => {
+            if (key === "Escape") menuOpen = false;
+          },
+        },
+        locator(selector: string) {
+          if (selector.includes("Select ChatGPT model")) return makeLocator("trigger");
+          if (selector.includes('role="menu"')) return makeLocator("menu");
+          return makeLocator("unknown");
+        },
+      } as unknown as Page;
+    };
+
+    const recoveringPage = makeDelayedPage(false);
+    const recovered = await picker.ensureCapabilityDetailed(recoveringPage, {
+      modelSlug: "chatgpt/gpt-6",
+      modelLabel: "GPT-6",
+      shortUiVersion: "6",
+      isAccountDefault: false,
+      thinkingEffort: "medium",
+    });
+    expect(recovered.modelSelected).toBe(true);
+    expect(recovered.effortAdjusted).toBe(true);
+    expect(triggerClicks).toBe(1);
+    expect(currentModel).toBe("GPT-6");
+
+    triggerClicks = 0;
+    const stuckDisabledPage = makeDelayedPage(true);
+    const stuckResult = await picker.ensureCapabilityDetailed(stuckDisabledPage, {
+      modelSlug: "chatgpt/gpt-6",
+      modelLabel: "GPT-6",
+      shortUiVersion: "6",
+      isAccountDefault: false,
+      thinkingEffort: "medium",
+    });
+    expect(stuckResult.modelSelected).toBe(false);
+    expect(stuckResult.reason).toMatch(/vô hiệu hóa|chưa sẵn sàng/i);
+    expect(triggerClicks).toBe(0);
+
+    const worker = new ChatGptBrowserWorker();
+    const helper = worker as unknown as {
+      prepareProvider: (p: Page, o: Record<string, unknown>) => Promise<void>;
+      clipboardSalvage: { setupHook: (p: Page) => Promise<void> };
+      waitForVisibleComposer: (p: Page, t: number) => Promise<void>;
+      waitForComposerIdle: (p: Page) => Promise<void>;
+    };
+    helper.clipboardSalvage = { setupHook: async () => {} };
+    helper.waitForVisibleComposer = async () => {};
+    helper.waitForComposerIdle = async () => {};
+
+    await expect(
+      helper.prepareProvider(stuckDisabledPage, {
+        modelSlug: "chatgpt/gpt-6",
+        reasoning: "medium",
+      }),
+    ).rejects.toThrow(/Không thể chuyển sang model/);
+
+    readinessChecks = 0;
+    currentModel = "GPT-6.2";
+    menuOpen = false;
+    viewMode = "simple";
+    await helper.prepareProvider(makeDelayedPage(false), {
+      modelSlug: "chatgpt/gpt-6",
+      reasoning: "medium",
+    });
+    expect(currentModel).toBe("GPT-6");
+  });
+
+  test("ChatGptCapabilityPicker không click lại radio đã checked và cache đúng khi thiếu attr effort", async () => {
+    const picker = new ChatGptCapabilityPicker();
+    let menuOpen = false;
+    let viewMode: "simple" | "models" = "simple";
+    let triggerClicks = 0;
+    let radioClicks = 0;
+    let hasEffortAttr = true;
+
+    const makeLocator = (kind: string): any => ({
+      first() {
+        return makeLocator(kind);
+      },
+      last() {
+        return makeLocator(kind);
+      },
+      nth(index: number) {
+        return makeLocator(`${kind}:${index}`);
+      },
+      async count() {
+        if (kind === "radios") return 2;
+        return 1;
+      },
+      async isVisible() {
+        if (kind === "trigger") return true;
+        if (kind === "menu") return menuOpen;
+        if (kind === "toggle") return menuOpen && viewMode === "simple";
+        if (kind === "sliderRow") return hasEffortAttr && menuOpen && viewMode === "simple";
+        return menuOpen;
+      },
+      async click() {
+        if (kind === "trigger") {
+          triggerClicks += 1;
+          menuOpen = true;
+        }
+        if (kind === "toggle") viewMode = "models";
+        if (kind.startsWith("radios:")) {
+          radioClicks += 1;
+        }
+      },
+      async waitFor() {},
+      async getAttribute(name: string) {
+        if (kind === "trigger" && name === "data-selected-reasoning-effort") {
+          return hasEffortAttr ? "medium" : null;
+        }
+        if (kind.startsWith("radios:") && name === "aria-checked") {
+          return kind === "radios:1" ? "true" : "false";
+        }
+        return null;
+      },
+      async innerText() {
+        if (kind === "radios:0") return "GPT-6.2";
+        if (kind === "radios:1") return "GPT-6";
+        return "";
+      },
+      async evaluate() {
+        if (kind === "sliderThumb") return { min: 0, max: 2, now: 1 };
+        return false;
+      },
+      locator(selector: string) {
+        if (selector.includes("model-picker-view-toggle")) return makeLocator("toggle");
+        if (selector.includes("menuitemradio")) return makeLocator("radios");
+        if (selector.includes("data-reasoning-slider")) return makeLocator("sliderRow");
+        if (selector.includes('role="slider"')) return makeLocator("sliderThumb");
+        return makeLocator("unknown");
+      },
+    });
+
+    const pageWithCheckedRadio = {
+      waitForTimeout: async () => {},
+      keyboard: {
+        press: async (key: string) => {
+          if (key === "Escape") menuOpen = false;
+        },
+      },
+      locator(selector: string) {
+        if (selector.includes("Select ChatGPT model")) return makeLocator("trigger");
+        if (selector.includes('role="menu"')) return makeLocator("menu");
+        return makeLocator("unknown");
+      },
+    } as unknown as Page;
+
+    const target = {
+      modelSlug: "chatgpt/gpt-6",
+      modelLabel: "GPT-6",
+      shortUiVersion: "6",
+      isAccountDefault: false,
+      thinkingEffort: "medium" as const,
+    };
+
+    const first = await picker.ensureCapabilityDetailed(pageWithCheckedRadio, target);
+    expect(first).toEqual({ modelSelected: true, effortAdjusted: true });
+    expect(radioClicks).toBe(0);
+    expect(triggerClicks).toBe(1);
+
+    // Lượt thứ 2 cùng model/effort dùng cache, không mở lại menu
+    const second = await picker.ensureCapabilityDetailed(pageWithCheckedRadio, target);
+    expect(second).toEqual({ modelSelected: true, effortAdjusted: true });
+    expect(triggerClicks).toBe(1);
+
+    // Khi model không có slider / thiếu data-selected-reasoning-effort vẫn cache đúng ở lượt 2
+    picker.clearCache(pageWithCheckedRadio);
+    hasEffortAttr = false;
+    viewMode = "simple";
+    triggerClicks = 0;
+
+    const sliderless1 = await picker.ensureCapabilityDetailed(pageWithCheckedRadio, target);
+    const clicksAfterSliderless1 = triggerClicks;
+    const sliderless2 = await picker.ensureCapabilityDetailed(pageWithCheckedRadio, target);
+    expect(sliderless1).toEqual({ modelSelected: true, effortAdjusted: true });
+    expect(sliderless2).toEqual({ modelSelected: true, effortAdjusted: true });
+    expect(radioClicks).toBe(0);
+    expect(clicksAfterSliderless1).toBe(2);
+    expect(triggerClicks).toBe(clicksAfterSliderless1);
+  });
+
+  test("ChatGptAttachments không nuốt lỗi timeout/fatal upload error và resolve true khi upload settled", async () => {
+    const attachments = new ChatGptAttachments();
+    const sampleImages = [
+      {
+        ref: "web-img-1",
+        name: "shot.png",
+        mimeType: "image/png",
+        dataUrl: "data:image/png;base64,AAAA",
+        buffer: Buffer.from("png-bytes"),
+      },
+    ];
+
+    let setInputCalls = 0;
+    const makeAttachmentPage = (
+      evaluateImpl: () => Promise<unknown>,
+    ): Page =>
+      ({
+        isClosed: () => false,
+        waitForTimeout: async () => {},
+        evaluate: evaluateImpl,
+        locator: (selector: string) => {
+          if (selector.includes('input[type="file"]')) {
+            return {
+              first: () => ({
+                count: async () => 1,
+                setInputFiles: async () => {
+                  setInputCalls += 1;
+                },
+              }),
+            };
+          }
+          return {
+            first: () => ({
+              isVisible: async () => false,
+            }),
+          };
+        },
+      }) as unknown as Page;
+
+    // 1. Timeout / còn uploading mãi -> phải throw lỗi, không được im lặng trả về true
+    await expect(
+      attachments.attachImages(
+        makeAttachmentPage(async () => ({
+          settled: false,
+          reason: "uploading",
+        })),
+        sampleImages,
+        undefined,
+        { settlementTimeoutMs: 50, pollIntervalMs: 5 },
+      ),
+    ).rejects.toThrow(/Không thể xác nhận upload ảnh đính kèm/);
+    expect(setInputCalls).toBe(1);
+
+    // 2. Fatal error banner trong form -> fail fast với thông báo lỗi
+    await expect(
+      attachments.attachImages(
+        makeAttachmentPage(async () => ({
+          settled: false,
+          fatalError: "File upload failed: unsupported image",
+        })),
+        sampleImages,
+        undefined,
+        { settlementTimeoutMs: 50, pollIntervalMs: 5 },
+      ),
+    ).rejects.toThrow(/File upload failed: unsupported image/);
+
+    // 3. Thiếu cả file input lẫn nút đính kèm -> throw lỗi rõ ràng
+    const missingUiPage = {
+      locator: () => ({
+        first: () => ({
+          count: async () => 0,
+          isVisible: async () => false,
+        }),
+      }),
+    } as unknown as Page;
+    await expect(
+      attachments.attachImages(missingUiPage, sampleImages),
+    ).rejects.toThrow(/Không tìm thấy thẻ input ảnh hoặc nút đính kèm/);
+
+    // 4. Chuyển từ uploading sang settled -> trả về true
+    let pollStep = 0;
+    const settledOk = await attachments.attachImages(
+      makeAttachmentPage(async () => {
+        pollStep += 1;
+        return pollStep < 2
+          ? { settled: false, reason: "uploading" }
+          : { settled: true };
+      }),
+      sampleImages,
+      undefined,
+      { settlementTimeoutMs: 500, pollIntervalMs: 5 },
+    );
+    expect(settledOk).toBe(true);
+    expect(pollStep).toBe(2);
+  });
+
+  test("ChatGptBrowserWorker.insertPrompt không nuốt lỗi khi đính kèm ảnh thất bại", async () => {
+    const worker = new ChatGptBrowserWorker();
+    const helper = worker as unknown as {
+      attachments: { attachImages: (...args: unknown[]) => Promise<boolean> };
+      insertPrompt: (
+        page: Page,
+        promptText: string,
+        options: Record<string, unknown>,
+      ) => Promise<void>;
+    };
+    let composerLookupCalled = false;
+    helper.attachments = {
+      attachImages: async () => {
+        throw new Error("[chatgpt-attachments] Upload failed");
+      },
+    };
+    const fakePage = {
+      locator: () => {
+        composerLookupCalled = true;
+        return { count: async () => 0 };
+      },
+    } as unknown as Page;
+
+    await expect(
+      helper.insertPrompt(fakePage, "Mô tả ảnh", {
+        prompt: "Mô tả ảnh",
+        images: [
+          {
+            ref: "web-img-1",
+            name: "shot.png",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,AAAA",
+            buffer: Buffer.from("png"),
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Upload failed/);
+    expect(composerLookupCalled).toBe(false);
   });
 });

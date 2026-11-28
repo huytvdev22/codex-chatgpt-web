@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildChatGptConversationUrl,
   CHATGPT_HOME_URL,
@@ -13,7 +16,15 @@ import {
 } from "../src/adapters/chatgpt";
 import { WebTurnEngine } from "../src/adapters/web/engine";
 import type { WebProviderDefinition } from "../src/adapters/web/definition";
-import type { CodexParsedRequest } from "../src/types";
+import type { WebRuntimeLifecycleOps } from "../src/adapters/web";
+import {
+  LimitStore,
+  ProfileCooldownStore,
+  ProfileFailoverCoordinator,
+  ProfileFailoverSettingsStore,
+  ThreadProfileBindingStore,
+} from "../src/limits";
+import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 function makeParsedRequest(
   overrides: Partial<CodexParsedRequest> = {},
@@ -264,5 +275,385 @@ describe("ChatGptAdapter contract & URL helpers", () => {
     expect(result.modelSelected).toBe(true);
     expect(clickedToggle).toBe(true);
     expect(clickedGpt62Radio).toBe(true);
+  });
+
+  test("extractAttachments phân biệt pre-submit/transport/failover với post-submit format retry", () => {
+    const adapter = createChatGptAdapter() as ChatGptAdapter;
+    const def = getDefinition(adapter);
+    const dataUrl = `data:image/png;base64,${Buffer.from(
+      "real-first-turn-image-payload-for-chatgpt-retry-test",
+    ).toString("base64")}`;
+    const sampleImage = {
+      ref: "web-img-1",
+      name: "image-1.png",
+      mimeType: "image/png",
+      dataUrl,
+      buffer: Buffer.from("real-first-turn-image-payload-for-chatgpt-retry-test"),
+    };
+    const parsed = makeParsedRequest({
+      _rawBody: {
+        model: "chatgpt/gpt-6.2",
+        input: [
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: "Phân tích ảnh này" },
+              { type: "input_image", image_url: dataUrl },
+            ],
+          },
+        ],
+      },
+    });
+    const normalized = { images: [sampleImage] } as never;
+
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 0,
+        normalized,
+        isNewConversation: true,
+        retryKind: "initial",
+        originalMessageSubmitted: false,
+      }),
+    ).toHaveLength(1);
+
+    // Pre-submit failure & transport retry (chưa submit tin nhắn gốc): bảo toàn ảnh gốc dù attempt > 0
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: false,
+        retryKind: "pre_submit",
+        originalMessageSubmitted: false,
+      }),
+    ).toHaveLength(1);
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: false,
+        retryKind: "transport",
+        originalMessageSubmitted: false,
+      }),
+    ).toHaveLength(1);
+
+    // New conversation / profile failover: luôn bảo toàn ảnh gốc
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: true,
+        retryKind: "failover",
+        originalMessageSubmitted: false,
+      }),
+    ).toHaveLength(1);
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: true,
+      }),
+    ).toHaveLength(1);
+
+    // Đã submit thành công trên cùng conversation: không upload trùng khi transport/format/tool retry
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: false,
+        retryKind: "transport",
+        originalMessageSubmitted: true,
+      }),
+    ).toEqual([]);
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: false,
+        isPostSubmitRetry: true,
+        originalMessageSubmitted: true,
+        retryKind: "format",
+      }),
+    ).toEqual([]);
+    expect(
+      def.attachments?.extractAttachments?.({
+        parsed,
+        attempt: 1,
+        normalized,
+        isNewConversation: false,
+        isPostSubmitRetry: true,
+        originalMessageSubmitted: true,
+        retryKind: "tool_describe",
+      }),
+    ).toEqual([]);
+  });
+
+  test("WebTurnEngine + ChatGptAdapter giữ ảnh ở Turn 1 khi failover profile và không upload trùng khi format retry cùng conversation", async () => {
+    const dataUrl = `data:image/png;base64,${Buffer.from(
+      "first-turn-screenshot-payload-for-engine-retry-matrix",
+    ).toString("base64")}`;
+    const createImageParsed = () =>
+      makeParsedRequest({
+        context: {
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "Kiểm tra ảnh" }],
+              timestamp: 1_700_000_000_000,
+            },
+          ],
+          tools: [],
+        },
+        _rawBody: {
+          model: "chatgpt/gpt-6.2",
+          input: [
+            {
+              role: "user",
+              content: [
+                { type: "input_text", text: "Kiểm tra ảnh" },
+                { type: "input_image", image_url: dataUrl },
+              ],
+            },
+          ],
+        },
+      });
+
+    // 1. Post-submit format retry trên cùng conversation: attempt 0 có ảnh, attempt 1 không re-upload
+    const formatRetryAdapter = createChatGptAdapter() as ChatGptAdapter;
+    const formatRetryDef = getDefinition(formatRetryAdapter);
+    const formatCalls: Array<{
+      attempt: number;
+      isNewConversation: boolean;
+      existingConversationId?: string;
+      imagesCount: number;
+    }> = [];
+    const formatWorker = (
+      formatRetryAdapter as unknown as {
+        worker: {
+          executeTurn: (page: unknown, opts: Record<string, unknown>) => Promise<unknown>;
+        };
+      }
+    ).worker;
+    let formatAttempt = 0;
+    formatWorker.executeTurn = async (_page, opts) => {
+      formatCalls.push({
+        attempt: formatAttempt,
+        isNewConversation: Boolean(opts.isNewConversation),
+        existingConversationId: opts.existingConversationId as string | undefined,
+        imagesCount: Array.isArray(opts.images) ? opts.images.length : 0,
+      });
+      formatAttempt += 1;
+      if (formatAttempt === 1) {
+        return {
+          rawResponse: "Trả lời thiếu thẻ webResponse",
+          conversationId: "6afae1f3-e4f0-83ec-8aca-7c8649cfde1c",
+        };
+      }
+      return {
+        rawResponse: "````markdown\n<webResponse>\nĐã thấy ảnh\n</webResponse>\n````",
+        conversationId: "6afae1f3-e4f0-83ec-8aca-7c8649cfde1c",
+      };
+    };
+
+    const noopOps: Partial<WebRuntimeLifecycleOps> = {
+      resolveDescriptorPath: () => "/tmp/chatgpt-test-descriptor.json",
+      startTurn: async () => ({
+        surfaceId: "surface-chatgpt",
+        conversationId: undefined,
+        reused: false,
+        connectorBound: false,
+        connection: {
+          descriptor: {} as never,
+          context: {} as never,
+          page: { url: () => CHATGPT_HOME_URL } as never,
+          browser: { close: async () => {} } as never,
+        },
+      }),
+      heartbeatTurn: async () => {},
+      endTurn: async () => {},
+      closeTurn: async () => {},
+    };
+
+    const formatEvents: AdapterEvent[] = [];
+    const formatEngine = new WebTurnEngine(formatRetryDef, undefined, noopOps);
+    await formatEngine.runTurn(
+      createImageParsed(),
+      { headers: new Headers() },
+      (ev) => formatEvents.push(ev),
+    );
+    expect(formatCalls).toEqual([
+      {
+        attempt: 0,
+        isNewConversation: true,
+        existingConversationId: undefined,
+        imagesCount: 1,
+      },
+      {
+        attempt: 1,
+        isNewConversation: false,
+        existingConversationId: "6afae1f3-e4f0-83ec-8aca-7c8649cfde1c",
+        imagesCount: 0,
+      },
+    ]);
+    expect(
+      formatEvents.some(
+        (ev) => ev.type === "text_delta" && ev.text.includes("Đã thấy ảnh"),
+      ),
+    ).toBe(true);
+
+    // 2. Profile failover (runTurn + runRawTurn + runManagedTurn): sang profile mới phải giữ nguyên ảnh & isNewConversation=true
+    const tmpDir = mkdtempSync(join(tmpdir(), "codex-chatgpt-attach-failover-"));
+    try {
+      const settingsStore = new ProfileFailoverSettingsStore(
+        join(tmpDir, "settings.json"),
+      );
+      settingsStore.save({ autoSwitchProfileOnQuotaLimit: true });
+      const coordinator = new ProfileFailoverCoordinator(
+        settingsStore,
+        new ProfileCooldownStore(join(tmpDir, "cooldowns.json")),
+        new ThreadProfileBindingStore({
+          filePath: join(tmpDir, "bindings.json"),
+          debounceMs: 0,
+        }),
+        new LimitStore(join(tmpDir, "limits.json")),
+        () => ({
+          activeProfileId: "default",
+          profiles: [
+            { id: "default", name: "Default", authenticated: true },
+            { id: "p2", name: "Backup", authenticated: true },
+          ],
+        }),
+      );
+
+      const failoverAdapter = createChatGptAdapter() as ChatGptAdapter;
+      const failoverDef = getDefinition(failoverAdapter);
+      const failoverCalls: Array<{
+        profileId?: string;
+        isNewConversation: boolean;
+        existingConversationId?: string;
+        imagesCount: number;
+      }> = [];
+      let activeProfile = "default";
+      const failoverWorker = (
+        failoverAdapter as unknown as {
+          worker: {
+            executeTurn: (page: unknown, opts: Record<string, unknown>) => Promise<unknown>;
+          };
+        }
+      ).worker;
+      failoverWorker.executeTurn = async (_page, opts) => {
+        failoverCalls.push({
+          profileId: activeProfile,
+          isNewConversation: Boolean(opts.isNewConversation),
+          existingConversationId: opts.existingConversationId as string | undefined,
+          imagesCount: Array.isArray(opts.images) ? opts.images.length : 0,
+        });
+        if (activeProfile === "default") {
+          throw new Error(
+            "[ChatGPT Web Error] You've reached your usage limit / quota exceeded",
+          );
+        }
+        return {
+          rawResponse:
+            "````markdown\n<webResponse>\nFailover vẫn thấy ảnh\n</webResponse>\n````",
+          conversationId: "7bfae1f3-e4f0-83ec-8aca-7c8649cfde1d",
+        };
+      };
+
+      const failoverOps: Partial<WebRuntimeLifecycleOps> = {
+        resolveDescriptorPath: () => "/tmp/chatgpt-failover-descriptor.json",
+        startTurn: async ({ activity }) => {
+          activeProfile = activity.profileId || "default";
+          return {
+            surfaceId: `surface-${activeProfile}`,
+            conversationId: undefined,
+            reused: false,
+            connectorBound: false,
+            connection: {
+              descriptor: {} as never,
+              context: {} as never,
+              page: { url: () => CHATGPT_HOME_URL } as never,
+              browser: { close: async () => {} } as never,
+            },
+          };
+        },
+        heartbeatTurn: async () => {},
+        endTurn: async () => {},
+        closeTurn: async () => {},
+      };
+
+      const failoverEngine = new WebTurnEngine(
+        failoverDef,
+        undefined,
+        failoverOps,
+        undefined,
+        undefined,
+        coordinator,
+      );
+      await failoverEngine.runTurn(
+        createImageParsed(),
+        { headers: new Headers() },
+        () => {},
+      );
+      expect(failoverCalls).toEqual([
+        {
+          profileId: "default",
+          isNewConversation: true,
+          existingConversationId: undefined,
+          imagesCount: 1,
+        },
+        {
+          profileId: "p2",
+          isNewConversation: true,
+          existingConversationId: undefined,
+          imagesCount: 1,
+        },
+      ]);
+
+      // runManagedTurn failover (attempt >= 1) cũng không được ép isNewConversation về false
+      const managedSpyCalls: Array<{
+        isNewConversation: boolean;
+        imagesCount: number;
+      }> = [];
+      failoverWorker.executeTurn = async (_page, opts) => {
+        managedSpyCalls.push({
+          isNewConversation: Boolean(opts.isNewConversation),
+          imagesCount: Array.isArray(opts.images) ? opts.images.length : 0,
+        });
+        return {
+          rawResponse: "Managed failover OK",
+          conversationId: "8bfae1f3-e4f0-83ec-8aca-7c8649cfde1e",
+        };
+      };
+      await failoverEngine.runManagedTurn(
+        {
+          modelId: "chatgpt/gpt-6.2",
+          prompt: "Xem ảnh",
+          conversationKey: "conv-managed-failover",
+          isNewConversation: true,
+          attempt: 1,
+          images: [
+            {
+              name: "shot.png",
+              mimeType: "image/png",
+              dataUrl,
+              buffer: Buffer.from("first-turn-screenshot-payload-for-engine-retry-matrix"),
+            },
+          ],
+        },
+        { headers: new Headers() },
+      );
+      expect(managedSpyCalls).toEqual([
+        { isNewConversation: true, imagesCount: 1 },
+      ]);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

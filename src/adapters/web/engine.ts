@@ -73,6 +73,7 @@ import {
 import type { LocalBrowserRuntime } from "./local-browser-runtime";
 import { resolveLauncherDescriptorPath } from "./launcher-runtime";
 import type {
+  WebAttachmentAttemptKind,
   WebProviderDefinition,
   WebTurnFinalStatus,
 } from "./definition";
@@ -476,6 +477,9 @@ export class WebTurnEngine {
 
         let roundPrompt = initialPrompt;
         let isInitialRound = true;
+        let originalMessageSubmitted = false;
+        let currentRoundKind: "initial" | "tool_describe" | "tool_recovery" =
+          "initial";
         let describeRoundsUsed = 0;
         const failedToolResults =
           normalized.trailingToolResults.filter(isToolResultError);
@@ -512,11 +516,27 @@ export class WebTurnEngine {
               let rawWebResponseForTrace: string | undefined;
               try {
                 const isFirstExternalAttempt = isInitialRound && attempt === 0;
+                const effectiveIsNewConversation = isFirstExternalAttempt
+                  ? isNewConversation
+                  : false;
+                const retryKind: WebAttachmentAttemptKind = isFirstExternalAttempt
+                  ? failoverAttempt > 0
+                    ? "failover"
+                    : "initial"
+                  : isRetry
+                    ? "format"
+                    : currentRoundKind;
+                const isPostSubmitRetry =
+                  !isFirstExternalAttempt && originalMessageSubmitted;
                 const attachments = this.definition.attachments?.extractAttachments
                   ? this.definition.attachments.extractAttachments({
                       parsed,
                       attempt: isFirstExternalAttempt ? 0 : attempt + describeRound,
                       normalized,
+                      isNewConversation: effectiveIsNewConversation,
+                      isPostSubmitRetry,
+                      originalMessageSubmitted,
+                      retryKind,
                     })
                   : isFirstExternalAttempt
                     ? (normalized.images ?? [])
@@ -532,12 +552,13 @@ export class WebTurnEngine {
                   conversationKey,
                   existingConversationId: activeConversationId,
                   launcherReused: acquired.launcherReused,
-                  isNewConversation: isFirstExternalAttempt ? isNewConversation : false,
+                  isNewConversation: effectiveIsNewConversation,
                   retain: retainTurn,
                   attachments,
                   turnTraceId,
                   heartbeat: acquired.heartbeat,
                 });
+                originalMessageSubmitted = true;
                 rawWebResponseForTrace = result.rawResponse;
                 attemptOutputs.push(result.rawResponse);
                 if (result.providerReportedTokens) {
@@ -765,6 +786,7 @@ export class WebTurnEngine {
                   previousApplyPatchFailed || repeatedToolName === "apply_patch",
                 errorSnippet: previousErrorSnippet,
               });
+              currentRoundKind = "tool_recovery";
               isInitialRound = false;
               continue;
             }
@@ -797,6 +819,7 @@ export class WebTurnEngine {
             ...(mixedNotice ? [mixedNotice.trim()] : []),
             SHORT_OUTPUT_FORMAT_ANCHOR,
           ].join("\n\n");
+          currentRoundKind = "tool_describe";
           isInitialRound = false;
         }
 

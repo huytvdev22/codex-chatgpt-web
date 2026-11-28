@@ -71,14 +71,31 @@ export interface WebCapabilityPickerDriver {
   resolveReasoningEffort?(parsed: CodexParsedRequest): string | undefined;
 }
 
+export type WebAttachmentAttemptKind =
+  | "initial"
+  | "pre_submit"
+  | "transport"
+  | "failover"
+  | "format"
+  | "tool_describe"
+  | "tool_recovery";
+
+export interface WebAttachmentExtractContext {
+  parsed: CodexParsedRequest;
+  attempt: number;
+  normalized?: NormalizedCodexRequest;
+  isNewConversation?: boolean;
+  isPostSubmitRetry?: boolean;
+  originalMessageSubmitted?: boolean;
+  retryKind?: WebAttachmentAttemptKind;
+}
+
 export interface WebAttachmentDriver {
   /** Số lượng ảnh tối đa adapter hỗ trợ trong một lượt (mặc định 3). */
   maxInputImages?: number;
-  extractAttachments?(context: {
-    parsed: CodexParsedRequest;
-    attempt: number;
-    normalized?: NormalizedCodexRequest;
-  }): NormalizedImageAttachment[];
+  extractAttachments?(
+    context: WebAttachmentExtractContext,
+  ): NormalizedImageAttachment[];
 }
 
 export interface WebBrowserTurnExecutionInput {

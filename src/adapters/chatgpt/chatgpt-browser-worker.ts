@@ -241,7 +241,7 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     await this.waitForVisibleComposer(page, 20_000, options.signal);
 
     await this.clipboardSalvage.setupHook(page);
-    await this.waitForComposerIdle(page);
+    await this.waitForComposerIdle(page, options.signal);
 
     const target = ChatGptModelProvider.getInstance().resolveCapabilityTarget(
       options.modelSlug || CHATGPT_DEFAULT_MODEL_SLUG,
@@ -250,6 +250,10 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     const capabilityResult = await this.capabilityPicker.ensureCapabilityDetailed(
       page,
       target,
+      {
+        readyTimeoutMs: 5_000,
+        signal: options.signal,
+      },
     );
     if (!capabilityResult.modelSelected) {
       throw new Error(
@@ -275,11 +279,11 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     options: ChatGptBrowserRunOptions,
   ): Promise<void> {
     if (options.images && options.images.length > 0) {
-      await this.attachments
-        .attachImages(page, options.images.slice(0, 3), options.signal)
-        .catch((error) => {
-          console.warn("[chatgpt-worker] Lỗi khi đính kèm ảnh:", error);
-        });
+      await this.attachments.attachImages(
+        page,
+        options.images.slice(0, 3),
+        options.signal,
+      );
     }
 
     await this.waitForVisibleComposer(page, 15_000, options.signal);
@@ -666,9 +670,15 @@ export class ChatGptBrowserWorker extends BaseWebBrowserWorker<
     );
   }
 
-  private async waitForComposerIdle(page: Page): Promise<void> {
+  private async waitForComposerIdle(
+    page: Page,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
+      if (signal?.aborted) {
+        throw new DOMException("ChatGPT turn aborted", "AbortError");
+      }
       const stopBtn = await this.findVisibleLocator(
         page,
         CHATGPT_SELECTORS.stopButton,
