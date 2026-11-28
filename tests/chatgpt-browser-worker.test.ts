@@ -4,6 +4,7 @@ import {
   ChatGptAttachments,
   ChatGptBrowserWorker,
   ChatGptCapabilityPicker,
+  ChatGptClipboardSalvage,
   ChatGptDomObserver,
   isChatGptGenerationRequest,
   normalizeCopiedChatGptSnippet,
@@ -169,6 +170,69 @@ describe("ChatGptBrowserWorker, DomObserver, ClipboardSalvage & CapabilityPicker
         domFull,
       ).source,
     ).toBe("clipboard");
+  });
+
+  test("ClipboardSalvage không copy riêng code block khi câu trả lời có nội dung giải thích", async () => {
+    const baseline: ChatGptResponseBaseline = {
+      assistantIds: [],
+      assistantCount: 0,
+      initialLatestText: "",
+      previousLatestText: "",
+      hasSeenGenerating: true,
+      stableCount: 0,
+    };
+    const code = "npm run build";
+    const full = `Hướng dẫn build:\n\n\`\`\`bash\n${code}\n\`\`\`\n\nKiểm tra kết quả sau khi chạy.`;
+    const transport = "<webResponse>OK</webResponse>";
+
+    for (const scenario of [
+      { singleTransportBlock: false, assistantVisible: true, expectedButton: "assistant", expected: full },
+      { singleTransportBlock: false, assistantVisible: false, expectedButton: null, expected: null },
+      { singleTransportBlock: true, assistantVisible: true, expectedButton: "code", expected: normalizeCopiedChatGptSnippet(transport) },
+    ]) {
+      const clicked: string[] = [];
+      let evaluations = 0;
+      let copied: string | null = null;
+      const page = {
+        async evaluate() {
+          evaluations += 1;
+          if (evaluations === 1) {
+            return {
+              marked: true,
+              singleCodeBlock: true,
+              singleTransportBlock: scenario.singleTransportBlock,
+            };
+          }
+          return copied;
+        },
+        locator() {
+          return {
+            locator(selector: string) {
+              const kind = selector.includes("Copy code") ? "code" : "assistant";
+              const button = {
+                last() { return button; },
+                async isVisible() {
+                  return kind === "code" || scenario.assistantVisible;
+                },
+                async scrollIntoViewIfNeeded() {},
+                async click() {
+                  clicked.push(kind);
+                  copied = kind === "assistant"
+                    ? full
+                    : scenario.singleTransportBlock ? transport : code;
+                },
+              };
+              return button;
+            },
+          };
+        },
+        async waitForTimeout() {},
+      } as unknown as Page;
+
+      const result = await new ChatGptClipboardSalvage().extractCopiedResponse(page, baseline);
+      expect(result).toBe(scenario.expected);
+      expect(clicked).toEqual(scenario.expectedButton ? [scenario.expectedButton] : []);
+    }
   });
 
   test("ChatGptCapabilityPicker chuyển model và chỉnh thanh trượt Instant/Medium/High qua DOM", async () => {

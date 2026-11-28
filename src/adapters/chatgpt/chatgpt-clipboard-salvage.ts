@@ -85,7 +85,7 @@ export class ChatGptClipboardSalvage {
             }
           }
           if (!latestMsg) {
-            return { marked: false, singleCodeBlock: false };
+            return { marked: false, singleTransportBlock: false };
           }
 
           const responseWrapper =
@@ -95,17 +95,39 @@ export class ChatGptClipboardSalvage {
             latestMsg.closest<HTMLElement>(selectors.turnContainer) ||
             responseWrapper;
           if (!responseWrapper || !turnWrapper) {
-            return { marked: false, singleCodeBlock: false };
+            return { marked: false, singleTransportBlock: false };
           }
 
           responseWrapper.setAttribute("data-codex-response-target", token);
           turnWrapper.setAttribute("data-codex-turn-target", token);
-          const codeBlocks = responseWrapper.querySelectorAll(
-            selectors.codeBlock,
-          );
+          // Một code block không đồng nghĩa với toàn bộ câu trả lời.
+          // Chỉ được ưu tiên Copy code nếu toàn bộ nội dung là transport envelope.
+          const clone = responseWrapper.cloneNode(true) as HTMLElement;
+          for (const noise of clone.querySelectorAll(
+            'button, [data-markdown-copy="exclude"], [data-thread-find-skip="true"]',
+          )) {
+            noise.remove();
+          }
+          const codeBlocks = Array.from(
+            clone.querySelectorAll<HTMLElement>(selectors.codeBlock),
+          ).filter((block) => !block.parentElement?.closest(selectors.codeBlock));
+          let singleTransportBlock = false;
+          if (codeBlocks.length === 1) {
+            const block = codeBlocks[0]!;
+            const code = block.querySelector("pre code") ||
+              block.querySelector("code") ||
+              block.querySelector("pre") ||
+              block;
+            const codeText = (code.textContent || "").trim();
+            block.remove();
+            const outsideText = (clone.textContent || "").trim();
+            singleTransportBlock =
+              !outsideText &&
+              /^(?:markdown\s+)?<webResponse\b[\s\S]*<\/webResponse>$/i.test(codeText);
+          }
           return {
             marked: true,
-            singleCodeBlock: codeBlocks.length === 1,
+            singleTransportBlock,
           };
         },
         {
@@ -135,18 +157,17 @@ export class ChatGptClipboardSalvage {
       let usedCodeCopy = false;
       let copyButton = undefined;
       if (
-        markInfo.singleCodeBlock &&
+        markInfo.singleTransportBlock &&
         (await codeCopyBtn.isVisible().catch(() => false))
       ) {
         copyButton = codeCopyBtn;
         usedCodeCopy = true;
       } else if (await assistantCopyBtn.isVisible().catch(() => false)) {
         copyButton = assistantCopyBtn;
-      } else if (await codeCopyBtn.isVisible().catch(() => false)) {
-        copyButton = codeCopyBtn;
-        usedCodeCopy = true;
       }
 
+      // Nếu không thể copy toàn bộ phản hồi thông thường, fallback sang DOM.
+      // Không lấy riêng code block vì sẽ làm mất phần giải thích và định dạng.
       if (!copyButton) return null;
 
       const clicked = await (async () => {
